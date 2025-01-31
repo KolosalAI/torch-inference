@@ -1,29 +1,12 @@
-"""
-core/postprocessor.py
-
-Postprocessing module for PyTorch model outputs.
-
-Includes:
-    - BasePostprocessor: A no-op base class.
-    - ClassificationPostprocessor: Converts logits to probabilities, extracts top-K classes.
-    - DetectionPostprocessor: Applies NMS and thresholding to bounding boxes, labels, and scores.
-      (useful for object detection models).
-
-Key Optimization Features:
-    - Vectorized PyTorch operations (e.g., softmax, max, topk).
-    - Optional GPU usage for NMS, which can significantly speed up large batch detection tasks.
-    - Batch-friendly design (process multiple samples at once if feasible).
-    - Parameterizable thresholds for filtering out low-confidence predictions.
-"""
-
 import logging
 from typing import Any, Dict, List, Tuple, Union, Optional
-
+import threading
+import queue
 import torch
+import tensorrt as trt
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 
 class BasePostprocessor:
     """
@@ -48,9 +31,6 @@ class ClassificationPostprocessor(BasePostprocessor):
     """
     A postprocessor for classification tasks. 
     It converts logits to probabilities (softmax), then retrieves the top-K classes and scores.
-
-    If you have a known mapping from class indices to labels (like ImageNet classes),
-    you can inject or load that to produce human-readable labels.
     """
 
     def __init__(
@@ -70,7 +50,7 @@ class ClassificationPostprocessor(BasePostprocessor):
         """
         super().__init__()
         self.top_k = top_k
-        self.class_labels = class_labels  # e.g., ["cat", "dog", "car", ...]
+        self.class_labels = class_labels
         self.apply_softmax = apply_softmax
         self.device = device
 
@@ -83,20 +63,15 @@ class ClassificationPostprocessor(BasePostprocessor):
 
         Returns:
             List[List[Tuple[str, float]]]:
-                A nested list where each element corresponds to one sample's top-K results,
-                e.g., [[("cat", 0.9), ("dog", 0.05), ...], [...], ...].
+                A nested list where each element corresponds to one sample's top-K results.
         """
         if self.device is not None:
             outputs = outputs.to(self.device)
 
-        # 1. (Optional) Softmax to get probabilities
         if self.apply_softmax:
             outputs = torch.nn.functional.softmax(outputs, dim=1)
 
-        # 2. top-K extraction
         top_probs, top_idxs = outputs.topk(self.top_k, dim=1)
-
-        # 3. Convert to CPU for indexing / label mapping if needed
         top_probs = top_probs.cpu().numpy()
         top_idxs = top_idxs.cpu().numpy()
 
@@ -112,7 +87,6 @@ class ClassificationPostprocessor(BasePostprocessor):
                 if self.class_labels and class_idx < len(self.class_labels):
                     label = self.class_labels[class_idx]
                 else:
-                    # fallback to numeric index if no labels provided
                     label = f"Class_{class_idx}"
 
                 sample_results.append((label, prob))
@@ -125,20 +99,6 @@ class ClassificationPostprocessor(BasePostprocessor):
 class DetectionPostprocessor(BasePostprocessor):
     """
     A postprocessor for object detection models.
-    Typically expects model outputs in the format (for each image):
-        [
-            {
-                "boxes": Tensor[N,4],
-                "labels": Tensor[N],
-                "scores": Tensor[N],
-                ...
-            },
-            ...
-        ]
-
-    Applies:
-        - Non-Maximum Suppression (NMS) per image
-        - Confidence threshold filtering
     """
 
     def __init__(
@@ -152,10 +112,10 @@ class DetectionPostprocessor(BasePostprocessor):
         """
         Args:
             score_threshold (float): Minimum confidence score to keep a detection.
-            nms_iou_threshold (float): IoU threshold for NMS (0.5 is typical).
+            nms_iou_threshold (float): IoU threshold for NMS.
             max_detections (int): Maximum number of detections to keep after NMS.
             use_fast_nms (bool): Whether to use built-in GPU-accelerated NMS if available.
-            device (torch.device, optional): Device to run postprocessing on. None means auto-detect.
+            device (torch.device, optional): Device to run postprocessing on.
         """
         super().__init__()
         self.score_threshold = score_threshold
@@ -171,12 +131,10 @@ class DetectionPostprocessor(BasePostprocessor):
         Args:
             outputs (List[Dict[str, torch.Tensor]]):
                 A list of dicts, where each dict corresponds to one image.
-                Each dict should have keys "boxes", "labels", "scores".
 
         Returns:
             List[Dict[str, List]]:
-                A list of dicts with the same length as 'outputs'. Each dict has filtered
-                "boxes", "labels", and "scores" in Python list format (instead of Tensors).
+                A list of dicts with filtered "boxes", "labels", and "scores".
         """
         processed_results = []
 
@@ -185,18 +143,14 @@ class DetectionPostprocessor(BasePostprocessor):
             scores = per_image_output["scores"].to(self.device)
             labels = per_image_output["labels"].to(self.device)
 
-            # 1. Filter out low-confidence detections
             high_conf_indices = (scores >= self.score_threshold).nonzero(as_tuple=True)[0]
             boxes = boxes[high_conf_indices]
             scores = scores[high_conf_indices]
             labels = labels[high_conf_indices]
 
-            # 2. NMS
             keep_indices = self._nms(boxes, scores)
-            # Limit the number of detections
             keep_indices = keep_indices[: self.max_detections]
 
-            # 3. Gather final boxes/scores/labels
             final_boxes = boxes[keep_indices].cpu().numpy().tolist()
             final_scores = scores[keep_indices].cpu().numpy().tolist()
             final_labels = labels[keep_indices].cpu().numpy().tolist()
@@ -211,8 +165,7 @@ class DetectionPostprocessor(BasePostprocessor):
 
     def _nms(self, boxes: torch.Tensor, scores: torch.Tensor) -> torch.Tensor:
         """
-        Non-Maximum Suppression utility. If `use_fast_nms` is True and GPU is available,
-        it uses the built-in Torch NMS on GPU (significantly faster on large detection sets).
+        Non-Maximum Suppression utility.
 
         Args:
             boxes (torch.Tensor): [N,4]
@@ -221,7 +174,107 @@ class DetectionPostprocessor(BasePostprocessor):
         Returns:
             torch.Tensor: The indices of the boxes that remain after NMS.
         """
-        # Torch's built-in NMS is typically GPU-accelerated if the data is on CUDA.
-        # nms(boxes, scores, iou_threshold) returns indices of the kept boxes
         keep_indices = torch.ops.torchvision.nms(boxes, scores, self.nms_iou_threshold)
         return keep_indices
+
+
+class TensorRTInferenceEngine:
+    """
+    A class to handle TensorRT inference with inflight batching and concurrent request processing.
+    """
+
+    def __init__(self, engine_path: str, max_batch_size: int = 32):
+        """
+        Args:
+            engine_path (str): Path to the TensorRT engine file.
+            max_batch_size (int): Maximum batch size for inference.
+        """
+        self.logger = trt.Logger(trt.Logger.INFO)
+        with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
+            self.engine = runtime.deserialize_cuda_engine(f.read())
+        self.context = self.engine.create_execution_context()
+        self.max_batch_size = max_batch_size
+        self.request_queue = queue.Queue()
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._process_requests, daemon=True)
+        self.thread.start()
+
+    def _process_requests(self):
+        """
+        Process requests from the queue in batches.
+        """
+        while True:
+            batch = []
+            while len(batch) < self.max_batch_size and not self.request_queue.empty():
+                batch.append(self.request_queue.get())
+
+            if batch:
+                self._infer_batch(batch)
+
+    def _infer_batch(self, batch: List[Dict[str, Any]]):
+        """
+        Perform inference on a batch of requests.
+
+        Args:
+            batch (List[Dict[str, Any]]): A list of requests to process.
+        """
+        # Prepare inputs and outputs for TensorRT
+        inputs = self._prepare_inputs(batch)
+        outputs = self._prepare_outputs()
+
+        # Perform inference
+        self.context.execute_async_v2(bindings=inputs + outputs, stream_handle=torch.cuda.current_stream().cuda_stream)
+
+        # Postprocess outputs
+        results = self._postprocess_outputs(outputs)
+
+        # Notify requesters
+        for i, result in enumerate(results):
+            batch[i]["callback"](result)
+
+    def _prepare_inputs(self, batch: List[Dict[str, Any]]) -> List[torch.Tensor]:
+        """
+        Prepare inputs for TensorRT inference.
+
+        Args:
+            batch (List[Dict[str, Any]]): A list of requests.
+
+        Returns:
+            List[torch.Tensor]: A list of input tensors.
+        """
+        # Implement input preparation logic here
+        pass
+
+    def _prepare_outputs(self) -> List[torch.Tensor]:
+        """
+        Prepare outputs for TensorRT inference.
+
+        Returns:
+            List[torch.Tensor]: A list of output tensors.
+        """
+        # Implement output preparation logic here
+        pass
+
+    def _postprocess_outputs(self, outputs: List[torch.Tensor]) -> List[Dict[str, Any]]:
+        """
+        Postprocess TensorRT outputs.
+
+        Args:
+            outputs (List[torch.Tensor]): A list of output tensors.
+
+        Returns:
+            List[Dict[str, Any]]: A list of postprocessed results.
+        """
+        # Implement postprocessing logic here
+        pass
+
+    def infer(self, request: Dict[str, Any], callback: callable):
+        """
+        Add a request to the inference queue.
+
+        Args:
+            request (Dict[str, Any]): The request to process.
+            callback (callable): A callback function to handle the result.
+        """
+        with self.lock:
+            self.request_queue.put({"request": request, "callback": callback})

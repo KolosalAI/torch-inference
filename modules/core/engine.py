@@ -5,9 +5,15 @@ import torch.nn as nn
 from typing import Optional, List, Dict, Callable, Union, Any
 from concurrent.futures import ThreadPoolExecutor
 
+# For profiling
+from torch.profiler import profile, record_function, ProfilerActivity
+
 logger = logging.getLogger(__name__)
 
 class EngineConfig:
+    """
+    Configuration for the InferenceEngine.
+    """
     def __init__(
         self,
         num_workers: int = 1,
@@ -40,11 +46,13 @@ class EngineConfig:
         self.enable_dynamic_batching = enable_dynamic_batching
         self.debug_mode = debug_mode
         self.use_multigpu = use_multigpu
+        # Default to all GPUs if device_ids is None
         self.device_ids = device_ids or list(range(torch.cuda.device_count()))
         self.multigpu_strategy = multigpu_strategy
         self.log_file = log_file
 
     def configure_logging(self):
+        """Set up logging to both console and file."""
         level = logging.DEBUG if self.debug_mode else logging.INFO
         logging.basicConfig(
             level=level,
@@ -55,14 +63,27 @@ class EngineConfig:
             ]
         )
         if self.debug_mode:
-            logging.debug("Debug logging enabled")
-            
+            logger.debug("Debug logging enabled")
+
+
 class RequestItem:
+    """
+    Holds a single inference request (processed input) and a Future
+    to store the asynchronous result.
+    """
     def __init__(self, input: Any, future: asyncio.Future):
         self.input = input
         self.future = future
-        
+
+
 class InferenceEngine:
+    """
+    Asynchronous inference engine that supports:
+      - Dynamic batching
+      - Multi-GPU (DataParallel)
+      - Autoscaling batch size
+      - FP16 execution on CUDA
+    """
     def __init__(
         self,
         model: nn.Module,
@@ -74,28 +95,43 @@ class InferenceEngine:
     ):
         self.config = config or EngineConfig()
         self.config.configure_logging()
-        
+
         # Automatic device detection
         self.device = self._auto_select_device(device)
-        self.use_fp16 = use_fp16 and 'cuda' in str(self.device)
-        
-        # Multi-GPU setup
+        # Only enable fp16 if a CUDA device is being used
+        self.use_fp16 = use_fp16 and ('cuda' in str(self.device))
+
+        # Prepare the model (possibly for multi-GPU)
         self.model = self._prepare_model(model)
+
+        # Pre/post-processing
         self.preprocessor = preprocessor or (lambda x: x)
         self.postprocessor = postprocessor or (lambda x: x)
+
+        # Detect expected input shape
         self.input_shape = self._detect_input_shape()
 
+        # Thread-pool executor for offloading model inference
         self.executor = ThreadPoolExecutor(max_workers=self.config.num_workers)
+
+        # Request queue for asynchronous inference
         self.request_queue = asyncio.Queue(maxsize=self.config.queue_size)
-        
+
+        # Create tasks for batch processing and autoscaling
         self.batch_processor_task = asyncio.create_task(self._process_batches())
         self.autoscale_task = asyncio.create_task(self._autoscale())
 
+        # Warmup the model (especially important for CUDA)
         self._warmup()
+
+        # Log device info (GPU memory, etc.)
         self._log_device_info()
 
     def _auto_select_device(self, device: Optional[Union[str, torch.device]]) -> torch.device:
-        """Automatically select available device with fallback"""
+        """
+        Automatically select an available device, falling back to CPU if
+        no CUDA device is detected or if none is specified.
+        """
         if device is None:
             if torch.cuda.is_available():
                 return torch.device('cuda:0')
@@ -103,127 +139,172 @@ class InferenceEngine:
         return torch.device(device)
 
     def _prepare_model(self, model: nn.Module) -> nn.Module:
-        """Prepare model for single/multi-GPU execution"""
+        """
+        Move the model to the proper device and, if configured, wrap in
+        DataParallel for multi-GPU usage.
+        """
         model = model.to(self.device).eval()
-        
+
         if self.config.use_multigpu and torch.cuda.device_count() > 1:
             if self.config.multigpu_strategy == 'dataparallel':
-                logger.info(f"Using DataParallel on devices {self.config.device_ids}")
+                logger.info(f"Using DataParallel on devices: {self.config.device_ids}")
                 model = nn.DataParallel(model, device_ids=self.config.device_ids)
             elif self.config.multigpu_strategy == 'distributed':
-                raise NotImplementedError("DistributedDataParallel support coming soon")
-        
+                raise NotImplementedError("DistributedDataParallel support is not yet implemented.")
+            else:
+                logger.warning(f"Unknown multi-GPU strategy: {self.config.multigpu_strategy}")
+
         return model
 
     def _log_device_info(self):
-        """Log detailed device information"""
+        """
+        Log useful details about the current device, such as name and memory.
+        """
         logger.info(f"Running on device: {self.device}")
-        if 'cuda' in str(self.device):
-            logger.info(f"GPU Name: {torch.cuda.get_device_name(self.device)}")
+        if self.device.type == 'cuda':
+            # Get the actual GPU index or default to 0
+            device_index = self.device.index if self.device.index is not None else 0
+            logger.info(f"GPU Name: {torch.cuda.get_device_name(device_index)}")
             logger.info(f"CUDA Version: {torch.version.cuda}")
-            logger.info(f"Total GPU Memory: {torch.cuda.get_device_properties(self.device).total_memory/1e9:.2f} GB")
+            total_mem_gb = torch.cuda.get_device_properties(device_index).total_memory / 1e9
+            logger.info(f"Total GPU Memory: {total_mem_gb:.2f} GB")
 
-    def _detect_input_shape(self):
-        """Improved input shape detection handling batch dimensions."""
+    def _detect_input_shape(self) -> Optional[torch.Size]:
+        """
+        Attempt to infer the model's expected (non-batch) input shape by
+        running a dummy input. If that fails, fallback heuristics for
+        common layer types (Linear, Conv2d) are used.
+        """
         if self.config.debug_mode:
-            logger.debug("Starting input shape detection")
-            
-        dummy_input = torch.randn(1, 10)
+            logger.debug("Starting input shape detection...")
+
+        dummy_input = torch.randn(1, 10, device=self.device)
         try:
             with torch.no_grad():
-                output = self.model(dummy_input)
+                _ = self.model(dummy_input)
             shape = dummy_input.shape[1:]
             if self.config.debug_mode:
-                logger.debug(f"Shape detected through dummy input: {shape}")
+                logger.debug(f"Inferred input shape from dummy run: {shape}")
             return shape
         except Exception as e:
             if self.config.debug_mode:
-                logger.debug(f"Dummy input failed, searching modules: {str(e)}")
-            
+                logger.debug(f"Dummy input failed: {e} -- searching modules...")
+
             for module in self.model.modules():
-                if isinstance(module, torch.nn.Linear):
+                if isinstance(module, nn.Linear):
                     shape = (module.in_features,)
-                    if self.config.debug_mode:
-                        logger.debug(f"Detected Linear layer with input shape: {shape}")
+                    logger.debug(f"Inferred shape (Linear): {shape}")
                     return shape
-                elif isinstance(module, torch.nn.Conv2d):
+                elif isinstance(module, nn.Conv2d):
+                    # A common default shape for image data
                     shape = (3, 224, 224)
-                    if self.config.debug_mode:
-                        logger.debug(f"Detected Conv2d layer with default shape: {shape}")
+                    logger.debug(f"Inferred shape (Conv2d default): {shape}")
                     return shape
+        # If all else fails, return None
         return None
 
     def _warmup(self):
-        """Enhanced warmup with multi-GPU support"""
-        if self.input_shape and 'cuda' in str(self.device):
+        """
+        Run a few forward passes to 'warm up' the model (especially on GPU),
+        which can help stabilize performance.
+        """
+        if self.input_shape is None:
+            return  # No shape known, can't warm up
+
+        if self.device.type == 'cuda':
+            logger.info(f"Starting warmup with {self.config.warmup_runs} iterations...")
             batch_shape = (self.config.batch_size,) + self.input_shape
             dummy_input = torch.randn(*batch_shape, device=self.device)
-            
-            logger.info(f"Starting warmup with {self.config.warmup_runs} iterations")
+
             with torch.no_grad():
                 for _ in range(self.config.warmup_runs):
                     _ = self.model(dummy_input)
             torch.cuda.synchronize()
-            logger.info("Warmup completed")
+            logger.info("Warmup completed.")
 
-    def dynamic_batch_size(self, input_size: int) -> int:
-        """Enhanced batch size calculation for multi-GPU"""
-        if 'cuda' in str(self.device):
-            if self.config.use_multigpu:
-                # Calculate based on all available GPUs
-                batch_sizes = []
-                for device_id in self.config.device_ids:
-                    with torch.cuda.device(device_id):
-                        free_mem = torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
-                        batch_sizes.append(free_mem // (input_size * 4))
-                memory_based = min(batch_sizes)
-            else:
-                free_memory = torch.cuda.memory_reserved() - torch.cuda.memory_allocated()
-                memory_based = max(1, int(free_memory / (input_size * 4)))
+    def dynamic_batch_size(self, sample_tensor: torch.Tensor) -> int:
+        """
+        Calculate a batch size based on free GPU memory (naive approach)
+        and queue length. This function can be customized.
+        """
+        if self.device.type == 'cuda':
+            # Estimated input memory usage for one sample (bytes):
+            sample_bytes = sample_tensor.element_size() * sample_tensor.nelement()
+
+            # For multi-GPU, take a safe "minimum" approach across all device_ids
+            batch_sizes = []
+            for device_id in self.config.device_ids:
+                prop = torch.cuda.get_device_properties(device_id)
+                total_mem = prop.total_memory
+                used_mem = torch.cuda.memory_allocated(device_id)
+                free_mem = total_mem - used_mem
+
+                # Extremely naive: how many samples could fit into free memory alone?
+                # A real approach might use only a fraction of free_mem to avoid OOM.
+                possible_batch = int(free_mem // sample_bytes)
+                # Ensure at least 1 if there's a tiny bit of memory
+                possible_batch = max(possible_batch, 1)
+                batch_sizes.append(possible_batch)
+
+            memory_based = min(batch_sizes)
         else:
+            # On CPU, let's just use the max_batch_size by default (or a static approach)
             memory_based = self.config.max_batch_size
-        
+
+        # Also incorporate how many requests are queued up
         queue_based = min(
             self.config.max_batch_size,
             max(self.config.min_batch_size, self.request_queue.qsize() + 1)
         )
+
+        # Final batch size is the min of memory-based and queue-based constraints
         return min(memory_based, queue_based)
 
     async def _process_batches(self):
-        """Multi-GPU compatible batch processing"""
+        """
+        Core loop that aggregates requests into batches and performs inference.
+        Automatically handles dynamic batching (if enabled).
+        """
         try:
             while True:
                 batch_items = []
                 try:
+                    # Wait for at least one item in the queue
                     first_item = await asyncio.wait_for(
                         self.request_queue.get(),
                         timeout=self.config.timeout
                     )
                     batch_items.append(first_item)
                 except asyncio.TimeoutError:
+                    # No items arrived within the timeout
                     continue
 
+                # Determine batch size
                 if self.config.enable_dynamic_batching:
                     try:
-                        input_size = batch_items[0].input.numel() * 4
-                        batch_size = self.dynamic_batch_size(input_size)
+                        # We look at the first item to guess memory usage
+                        sample_tensor = first_item.input
+                        batch_size = self.dynamic_batch_size(sample_tensor)
                     except Exception as e:
-                        logger.error(f"Batch size calculation error: {str(e)}")
+                        logger.error(f"Batch size calculation error: {e}")
                         batch_size = self.config.batch_size
                 else:
                     batch_size = self.config.batch_size
 
+                # Collect as many items as we can up to batch_size
                 while len(batch_items) < batch_size and not self.request_queue.empty():
                     batch_items.append(await self.request_queue.get())
 
                 try:
+                    # Prepare the inputs as a single batch tensor
                     inputs = [item.input for item in batch_items]
                     futures = [item.future for item in batch_items]
 
                     batch_tensor = torch.stack(inputs).to(self.device)
-                    
+
                     with torch.no_grad():
                         if self.use_fp16:
+                            # Offload to thread pool for concurrency
                             with torch.cuda.amp.autocast():
                                 outputs = await asyncio.get_event_loop().run_in_executor(
                                     self.executor,
@@ -235,53 +316,84 @@ class InferenceEngine:
                                 lambda: self.model(batch_tensor)
                             )
 
+                    # Post-process each sample in the batch
                     results = [self.postprocessor(output) for output in outputs]
+
+                    # Resolve futures
                     for future, result in zip(futures, results):
                         if not future.done():
                             future.set_result(result)
+
                 except Exception as e:
-                    logger.error(f"Batch processing error: {str(e)}")
+                    logger.error(f"Batch processing error: {e}", exc_info=True)
+                    # Propagate exceptions to all futures in this batch
                     for future in futures:
                         if not future.done():
                             future.set_exception(e)
         except asyncio.CancelledError:
-            logger.info("Batch processing task cancelled")
+            logger.info("Batch processing task cancelled.")
 
-    async def run_inference_async(self, input: Any) -> Any:
-        """Asynchronous inference with proper shape validation."""
+    async def run_inference_async(self, input_data: Any) -> Any:
+        """
+        Accept a single input, pre-process it, enqueue the request, and
+        return an async future that resolves once inference completes.
+        """
         try:
-            processed = self.preprocessor(input)
-            
+            processed = self.preprocessor(input_data)
+
+            if not isinstance(processed, torch.Tensor):
+                processed = torch.tensor(processed, dtype=torch.float32)
+
             if self.config.debug_mode:
                 logger.debug(f"Preprocessed input shape: {processed.shape}")
 
-            if self.input_shape and processed.shape != self.input_shape:
-                if processed.dim() == len(self.input_shape) and processed.shape == self.input_shape:
-                    if self.config.debug_mode:
-                        logger.debug("Input shape matches without batch dimension")
-                elif processed.dim() + 1 == len(self.input_shape) and processed.shape == self.input_shape[1:]:
-                    processed = processed.unsqueeze(0)
-                    if self.config.debug_mode:
-                        logger.debug("Added batch dimension to input")
+            # Basic shape alignment logic
+            if self.input_shape is not None:
+                # If we expect e.g. (10,) but the user passes (10,), that is fine
+                # If we expect (10,) and the user passes (1,10), we might keep as is
+                # If user passes shape that doesn't match, raise an error
+                if processed.dim() == len(self.input_shape):
+                    if processed.shape != self.input_shape:
+                        raise ValueError(
+                            f"Input shape {processed.shape} doesn't match expected {self.input_shape}"
+                        )
+                elif processed.dim() + 1 == len(self.input_shape):
+                    # Possibly missing a batch dimension
+                    if processed.shape == self.input_shape[1:]:
+                        processed = processed.unsqueeze(0)
+                        if self.config.debug_mode:
+                            logger.debug("Added batch dimension to input.")
+                    else:
+                        raise ValueError(
+                            f"Input shape {processed.shape} doesn't match expected {self.input_shape}"
+                        )
                 else:
+                    # This is a rough check; you can refine as needed
                     raise ValueError(
-                        f"Input shape {processed.shape} doesn't match model expectation {self.input_shape}"
+                        f"Input shape {processed.shape} doesn't match expected {self.input_shape}"
                     )
 
+            # Create a future for the result
             future = asyncio.get_event_loop().create_future()
             await self.request_queue.put(RequestItem(input=processed, future=future))
-            
+
             if self.config.debug_mode:
                 logger.debug(f"Queued request. Queue size: {self.request_queue.qsize()}")
-                
+
             return await future
+
         except Exception as e:
             logger.error("Inference failed", exc_info=True)
+            # If something fails early, create a future and set the exception
             future = asyncio.get_event_loop().create_future()
             future.set_exception(e)
             return await future
+
     async def _autoscale(self):
-        """Autoscaling based on queue size."""
+        """
+        Periodically check the queue size and adjust the batch size
+        within configured min/max bounds.
+        """
         try:
             while True:
                 await asyncio.sleep(self.config.autoscale_interval)
@@ -291,21 +403,15 @@ class InferenceEngine:
 
                 if self.config.debug_mode:
                     logger.debug(
-                        f"Autoscale check - Queue: {current_size}/{max_size} "
+                        f"Autoscale check: queue {current_size}/{max_size} "
                         f"({utilization:.1f}% utilization)"
                     )
 
                 new_size = self.config.batch_size
                 if utilization > self.config.queue_size_threshold_high:
-                    new_size = min(
-                        self.config.batch_size * 2,
-                        self.config.max_batch_size
-                    )
+                    new_size = min(self.config.batch_size * 2, self.config.max_batch_size)
                 elif utilization < self.config.queue_size_threshold_low:
-                    new_size = max(
-                        self.config.batch_size // 2,
-                        self.config.min_batch_size
-                    )
+                    new_size = max(self.config.batch_size // 2, self.config.min_batch_size)
 
                 if new_size != self.config.batch_size:
                     old_size = self.config.batch_size
@@ -313,109 +419,158 @@ class InferenceEngine:
                     if self.config.debug_mode:
                         logger.debug(
                             f"Autoscale adjusted batch size from {old_size} to {new_size} "
-                            f"based on queue utilization {utilization:.1f}%"
+                            f"(utilization {utilization:.1f}%)"
                         )
         except asyncio.CancelledError:
             if self.config.debug_mode:
-                logger.debug("Autoscaling task cancelled")
-    def run_batch_inference(self, input_list: List[Any]) -> List[Any]:
-        """Synchronous batch inference."""
-        if self.config.debug_mode:
-            logger.debug(f"Starting synchronous batch inference on {len(input_list)} items")
+                logger.debug("Autoscaling task cancelled.")
 
-        batch_size = self.dynamic_batch_size(input_list[0].numel()) if self.config.enable_dynamic_batching else self.config.batch_size
+    def run_batch_inference(self, input_list: List[Any]) -> List[Any]:
+        """
+        Synchronous batch inference for a list of inputs. Useful for
+        smaller offline jobs or testing.
+        """
+        if self.config.debug_mode:
+            logger.debug(f"Starting synchronous batch inference on {len(input_list)} items.")
+
+        # Preprocess all inputs
+        processed_inputs = []
+        for inp in input_list:
+            tensor_inp = self.preprocessor(inp)
+            if not isinstance(tensor_inp, torch.Tensor):
+                tensor_inp = torch.tensor(tensor_inp, dtype=torch.float32)
+            processed_inputs.append(tensor_inp)
+
+        # Determine the batch size for this particular run
+        if self.config.enable_dynamic_batching and len(processed_inputs) > 0:
+            # Estimate from the first input
+            batch_size = self.dynamic_batch_size(processed_inputs[0])
+        else:
+            batch_size = self.config.batch_size
+
         results = []
-        
-        for i in range(0, len(input_list), batch_size):
-            if self.config.debug_mode:
-                logger.debug(f"Processing batch {i//batch_size + 1}/{(len(input_list)-1)//batch_size + 1}")
-                
-            batch = torch.stack([self.preprocessor(input_) for input_ in input_list[i:i + batch_size]]).to(self.device)
-            
+        for i in range(0, len(processed_inputs), batch_size):
+            batch = torch.stack(processed_inputs[i:i + batch_size]).to(self.device)
             with torch.no_grad():
-                if self.use_fp16 and "cuda" in str(self.device):
+                if self.use_fp16 and self.device.type == "cuda":
                     with torch.cuda.amp.autocast():
                         outputs = self.model(batch)
                 else:
                     outputs = self.model(batch)
-                    
-            results.extend([self.postprocessor(output) for output in outputs])
+
+            # Postprocess
+            results.extend([self.postprocessor(o) for o in outputs])
 
         if self.config.debug_mode:
             logger.debug(f"Completed synchronous batch inference. Total results: {len(results)}")
-            
-        return results
-    def profile_inference(self, inputs: Any) -> Dict[str, float]:
-        """Profile the inference process."""
-        if self.config.debug_mode:
-            logger.debug("Starting inference profiling")
 
-        metrics = {}
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+        return results
+
+    def profile_inference(self, inputs: Any) -> Dict[str, float]:
+        """
+        Profile the inference process (preprocess -> model -> postprocess).
+        Returns a dict of timing metrics in milliseconds.
+        """
+        if self.config.debug_mode:
+            logger.debug("Starting inference profiling...")
+
+        # If user passes a single sample, turn it into a batch of size 1
+        if not isinstance(inputs, torch.Tensor):
+            inputs = torch.tensor(inputs, dtype=torch.float32)
+
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=True
+        ) as prof:
             with record_function("preprocess"):
                 batch = self.preprocessor(inputs)
+                if not isinstance(batch, torch.Tensor):
+                    batch = torch.tensor(batch, dtype=torch.float32)
+                batch = batch.to(self.device)
+
             with record_function("inference"):
                 with torch.no_grad():
-                    outputs = self.model(batch)
-            with record_function("postprocess"):
-                results = self.postprocessor(outputs)
+                    _ = self.model(batch)
 
-        metrics["preprocess_ms"] = prof.key_averages().get("preprocess").cpu_time_total / 1000
-        metrics["inference_ms"] = prof.key_averages().get("inference").cpu_time_total / 1000
-        metrics["postprocess_ms"] = prof.key_averages().get("postprocess").cpu_time_total / 1000
+            with record_function("postprocess"):
+                _ = self.postprocessor(_)
+
+        # Aggregate timing
+        key_avgs = prof.key_averages()
+        metrics = {}
+        for evt in ["preprocess", "inference", "postprocess"]:
+            match = [x for x in key_avgs if x.key == evt]
+            if match:
+                metrics[f"{evt}_ms"] = match[0].cpu_time_total / 1000.0
+            else:
+                metrics[f"{evt}_ms"] = 0.0
+
         metrics["total_ms"] = sum(metrics.values())
 
         if self.config.debug_mode:
             logger.debug("Inference profile results:\n" +
-                         "\n".join([f"{k}: {v:.2f}ms" for k, v in metrics.items()]))
+                         "\n".join([f"{k}: {v:.2f} ms" for k, v in metrics.items()]))
 
         return metrics
+
     def cleanup(self):
-        """Enhanced cleanup for multi-GPU support"""
+        """
+        Cancel async tasks and release resources (GPU memory cache).
+        """
         self.batch_processor_task.cancel()
         self.autoscale_task.cancel()
         self.executor.shutdown()
-        
-        if 'cuda' in str(self.device):
-            # Check if the model is using DataParallel
+
+        if self.device.type == 'cuda':
+            # If the model is DataParallel, free each device
             if isinstance(self.model, nn.DataParallel):
-                # Use the actual device IDs from the DataParallel module
-                device_ids = self.model.device_ids
-                for device_id in device_ids:
+                for device_id in self.model.device_ids:
                     with torch.cuda.device(device_id):
                         torch.cuda.empty_cache()
             else:
                 torch.cuda.empty_cache()
-                    
-        logger.info("Cleanup completed")
-        
+
+        logger.info("Cleanup completed.")
+
+
+# Example usage:
 async def main():
-    # Model expects 10 input features
+    # Simple model that expects 10 features -> 2 outputs
     model = torch.nn.Linear(10, 2)
-    
+
     # Configuration
     config = EngineConfig(
         debug_mode=True,
         use_multigpu=True,
-        device_ids=[0, 1],  # Use first two GPUs
+        device_ids=[0, 1],  # Attempt to use first two GPUs
         multigpu_strategy='dataparallel',
         log_file="multi_gpu.log"
     )
     config.configure_logging()
+
     # Create engine
     engine = InferenceEngine(
         model=model,
         config=config,
         use_fp16=True
     )
-    
+
     # Generate valid inputs (10 features each)
     inputs = [torch.randn(10) for _ in range(100)]
-    
-    # Run inference
+
+    # Run inference asynchronously
     tasks = [engine.run_inference_async(x) for x in inputs]
     results = await asyncio.gather(*tasks)
-    
+
+    logger.info(f"Received {len(results)} inference results.")
+
+    # Profile a single inference call (optional)
+    # profile_metrics = engine.profile_inference(inputs[0])
+    # logger.info(f"Profile metrics: {profile_metrics}")
+
+    # Cleanup
     engine.cleanup()
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    asyncio.run(main())
