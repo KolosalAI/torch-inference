@@ -11,6 +11,7 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+
 class BasePreprocessor:
     """
     A minimal preprocessor that simply returns the input data as a PyTorch tensor
@@ -20,6 +21,7 @@ class BasePreprocessor:
         if isinstance(inputs, torch.Tensor):
             return inputs
         return torch.as_tensor(inputs, device="cuda", non_blocking=True)  # Zero-copy transfer
+
 
 class ImagePreprocessor(BasePreprocessor):
     """
@@ -64,6 +66,7 @@ class ImagePreprocessor(BasePreprocessor):
         else:
             raise ValueError(f"Unsupported image input type: {type(inp)}")
 
+
 class MultiTaskPreprocessor(ImagePreprocessor):
     """
     Preprocessor for multi-task models including classification, detection, and segmentation.
@@ -79,12 +82,52 @@ class MultiTaskPreprocessor(ImagePreprocessor):
             batch_tensor = (batch_tensor > self.threshold).float()  # Convert to binary mask
         return batch_tensor
 
+
+class TensorRTPreprocessor(ImagePreprocessor):
+    """
+    Preprocessor tailored for TensorRT inference.
+    Inherits from ImagePreprocessor and converts the preprocessed batch to FP16
+    if the TensorRT engine is configured for FP16 inference.
+    """
+    def __init__(
+        self,
+        image_size: Union[int, tuple] = (224, 224),
+        mean: List[float] = [0.485, 0.456, 0.406],
+        std: List[float] = [0.229, 0.224, 0.225],
+        use_pinned_memory: bool = True,
+        device: Union[str, torch.device] = "cuda",
+        trt_fp16: bool = False,
+    ):
+        super().__init__(image_size=image_size, mean=mean, std=std, use_pinned_memory=use_pinned_memory, device=device)
+        self.trt_fp16 = trt_fp16
+
+    def __call__(self, inputs: Any) -> torch.Tensor:
+        batch_tensor = super().__call__(inputs)
+        if self.trt_fp16:
+            batch_tensor = batch_tensor.half()
+        return batch_tensor
+
+
 class InflightBatcher:
     """
-    A batcher that collects requests for preprocessing, supporting streaming and batch optimizations.
+    A batcher that collects requests for preprocessing, supporting streaming and dynamic batch optimizations.
+    The batcher collects incoming preprocessing requests and groups them into a batch,
+    where the batch size is dynamically determined based on the current queue depth.
     """
-    def __init__(self, preprocessor: BasePreprocessor, max_batch_size: int = 8, max_delay: float = 0.01):
+    def __init__(self,
+                 preprocessor: BasePreprocessor,
+                 min_batch_size: int = 1,
+                 max_batch_size: int = 8,
+                 max_delay: float = 0.01):
+        """
+        Args:
+            preprocessor: A callable that accepts a list of inputs and returns a batched tensor.
+            min_batch_size: The minimum number of inputs to wait for before processing.
+            max_batch_size: The maximum number of inputs in a batch.
+            max_delay: Maximum delay (in seconds) to wait for additional requests.
+        """
         self.preprocessor = preprocessor
+        self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
         self.max_delay = max_delay
         self.queue = Queue()
@@ -92,12 +135,17 @@ class InflightBatcher:
         self.worker_thread = threading.Thread(target=self._batch_worker, daemon=True)
         self.worker_thread.start()
 
-    def submit(self, inp: Any):
+    def submit(self, inp: Any) -> Queue:
+        """
+        Submit a preprocessing request.
+        Returns a Queue from which the caller can later retrieve the processed result.
+        """
         result_queue = Queue(maxsize=1)
         self.queue.put((inp, result_queue))
         return result_queue
 
     def shutdown(self):
+        """Shutdown the batcher gracefully."""
         self._stop_event.set()
         self.worker_thread.join()
 
@@ -111,14 +159,28 @@ class InflightBatcher:
                 result_queues.append(rqueue)
             except Empty:
                 pass
+
             now = time.time()
-            if len(buffer) >= self.max_batch_size or (now - last_time >= self.max_delay and buffer):
+            # Compute a dynamic desired batch size:
+            # desired_batch_size = current buffered items plus what's still in the queue,
+            # clamped between min_batch_size and max_batch_size.
+            queued = self.queue.qsize()
+            desired_batch_size = len(buffer) + queued
+            if desired_batch_size < self.min_batch_size:
+                desired_batch_size = self.min_batch_size
+            if desired_batch_size > self.max_batch_size:
+                desired_batch_size = self.max_batch_size
+
+            # If we've collected enough items or waited long enough, process the batch.
+            if len(buffer) >= desired_batch_size or ((now - last_time) >= self.max_delay and buffer):
                 try:
+                    # Preprocess the buffered inputs as a single batch.
                     batch = self.preprocessor(buffer)
                 except Exception as e:
                     for rq in result_queues:
                         rq.put(e)
                 else:
+                    # Slice the batched tensor and return each sample to its caller.
                     for i, rq in enumerate(result_queues):
                         rq.put(batch[i])
                 buffer, result_queues = [], []
