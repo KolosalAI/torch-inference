@@ -37,13 +37,12 @@ async def main():
     )
 
     # Use a pretrained model from torchvision.
-    model = models.resnet18(pretrained=True)
-    # Optionally convert model to half precision if TRT_FP16 is enabled.
-    if config.TRT_FP16 and (
-        (isinstance(config.DEVICE, str) and config.DEVICE.lower() == "cuda") or
-        (isinstance(config.DEVICE, torch.device) and config.DEVICE.type == "cuda")
-    ):
-        model = model.half()
+    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    model.eval()  # Ensure model is in evaluation mode
+
+    # Convert model to half precision if TRT_FP16 is enabled and running on CUDA.
+    if config.TRT_FP16 and torch.cuda.is_available() and (config.DEVICE == "cuda" or isinstance(config.DEVICE, torch.device) and config.DEVICE.type == "cuda"):
+        model.half()
 
     # Initialize the inference engine with the loaded model.
     engine = InferenceEngine(model, config.DEVICE)
@@ -53,19 +52,20 @@ async def main():
 
     # Generate a random input batch (simulate images).
     batch_size = 4
-    random_input = torch.randn((batch_size, 3, *config.IMAGE_SIZE), dtype=torch.float32).to(config.DEVICE)
+    random_input = torch.randn((batch_size, 3, *config.IMAGE_SIZE), dtype=torch.float16 if config.TRT_FP16 else torch.float32).to(config.DEVICE)
     logger.info(f"Generated random input tensor of shape: {random_input.shape}")
 
     # Ensure any asynchronous GPU operations are complete before timing.
-    if (isinstance(config.DEVICE, str) and config.DEVICE.lower() == "cuda") or \
-       (isinstance(config.DEVICE, torch.device) and config.DEVICE.type == "cuda"):
+    if torch.cuda.is_available() and (config.DEVICE == "cuda" or isinstance(config.DEVICE, torch.device) and config.DEVICE.type == "cuda"):
         torch.cuda.synchronize()
 
     start_time = time.time()
-    output = engine(random_input)
-    if (isinstance(config.DEVICE, str) and config.DEVICE.lower() == "cuda") or \
-       (isinstance(config.DEVICE, torch.device) and config.DEVICE.type == "cuda"):
+    with torch.no_grad():  # Disable gradient calculations for inference
+        output = engine(random_input)
+
+    if torch.cuda.is_available() and (config.DEVICE == "cuda" or isinstance(config.DEVICE, torch.device) and config.DEVICE.type == "cuda"):
         torch.cuda.synchronize()  # Synchronize to capture accurate timing.
+
     end_time = time.time()
 
     inference_time = end_time - start_time  # Total time taken for inference.
@@ -85,5 +85,9 @@ async def main():
         logger.info(f"Result {i}: {result}")
 
 if __name__ == "__main__":
-    # Run the async main function, which creates and uses a running event loop.
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except RuntimeError:  # Fix for nested event loop issues (e.g., in Jupyter notebooks)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())

@@ -4,6 +4,9 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Optional, List, Dict, Callable, Union, Any
+import torch_tensorrt
+from preprocessor import BasePreprocessor
+from postprocessor import BasePostprocessor
 
 import torch
 import torch.nn as nn
@@ -65,7 +68,9 @@ class EngineConfig:
         trt_workspace_size: int = 1 << 30,  # 1GB default workspace
         trt_min_block_size: int = 1,
         trt_opt_shape: Optional[List[int]] = None,  # Only used in dynamic mode
-        trt_input_shape: Optional[List[int]] = None  # Override input shape for TRT compile
+        trt_input_shape: Optional[List[int]] = None,  # Override input shape for TRT compile
+        input_shape: Optional[torch.Size] = None,  # Expected input shape for the model,
+        use_tensorrt: bool = False,
     ):
         self.num_workers = num_workers
         self.queue_size = queue_size
@@ -93,6 +98,9 @@ class EngineConfig:
         self.trt_min_block_size = trt_min_block_size
         self.trt_opt_shape = trt_opt_shape
         self.trt_input_shape = trt_input_shape
+        self.input_shape = input_shape  # Add this field
+        self.use_tensorrt = use_tensorrt
+
 
     def configure_logging(self):
         """Set up logging to both console and file using a simple formatter."""
@@ -129,6 +137,7 @@ class RequestItem:
 # ------------------------------------------------------------------------------
 # Inference Engine Class with Advanced Features and Optimized TensorRT
 # ------------------------------------------------------------------------------
+
 class InferenceEngine:
     """
     An asynchronous inference engine that supports:
@@ -136,7 +145,7 @@ class InferenceEngine:
       - Multi-GPU support (DataParallel and a stub for DistributedDataParallel)
       - FP16 / mixed precision on CUDA
       - Option to use ThreadPool or ProcessPool for concurrency (if picklable)
-      - Optimized TensorRT compilation (static or dynamic) for faster GPU inference
+      - Optional TensorRT compilation for improved GPU inference performance
       - Improved error handling, logging, and profiling
     """
     def __init__(
@@ -146,22 +155,25 @@ class InferenceEngine:
         preprocessor: Optional[Callable[[Any], Any]] = None,
         postprocessor: Optional[Callable[[Any], Any]] = None,
         use_fp16: bool = False,
-        config: Optional[EngineConfig] = None,
+        use_tensorrt: bool = False,
+        config: Optional["EngineConfig"] = None,
     ):
         self.config = config or EngineConfig()
         self.config.configure_logging()
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Automatic device detection and selection
+        # Automatic device detection and selection.
         self.device = self._auto_select_device(device)
-        # Only enable FP16 if using a CUDA device
+        # Only enable FP16 if using a CUDA device.
         self.use_fp16 = use_fp16 and ('cuda' in str(self.device))
+        # Store the use_tensorrt flag.
+        self.use_tensorrt = use_tensorrt
 
-        # Prepare the model (and wrap for multi-GPU if needed)
+        # Prepare the model (and wrap for multi-GPU if needed).
         self.model = self._prepare_model(model)
 
-        # If enabled, compile the model with TensorRT for improved GPU performance.
-        if self.config.enable_trt and self.device.type == "cuda":
+        # If enabled and using a CUDA device, compile the model with TensorRT.
+        if self.use_tensorrt and self.device.type == "cuda":
             try:
                 self.logger.info("Compiling model with TensorRT optimizations...")
                 self.model, compile_time = self._compile_trt_model()
@@ -170,27 +182,28 @@ class InferenceEngine:
                 self.logger.error(f"TensorRT compilation failed: {e}", exc_info=True)
                 # Fall back to the original model if TRT compile fails.
 
-        # Pre- and post-processing hooks (allow plugin-style customization)
-        self.preprocessor = preprocessor or (lambda x: x)
-        self.postprocessor = postprocessor or (lambda x: x)
+        # Pre- and post-processing hooks.
+        # If not provided, default to instances of the base classes.
+        self.preprocessor = preprocessor if preprocessor is not None else BasePreprocessor()
+        self.postprocessor = postprocessor if postprocessor is not None else BasePostprocessor()
 
-        # Detect expected input shape (robust detection with fallback)
+        # Detect expected input shape (robust detection with fallback).
         self.input_shape = self._detect_input_shape()
 
-        # Choose executor type for offloading inference
+        # Choose executor type for offloading inference.
         if self.config.executor_type == "process":
             self.executor = ProcessPoolExecutor(max_workers=self.config.num_workers)
         else:
             self.executor = ThreadPoolExecutor(max_workers=self.config.num_workers)
 
         # Use an asyncio PriorityQueue to enable request prioritization.
-        self.request_queue: asyncio.PriorityQueue[RequestItem] = asyncio.PriorityQueue(maxsize=self.config.queue_size)
+        self.request_queue: asyncio.PriorityQueue["RequestItem"] = asyncio.PriorityQueue(maxsize=self.config.queue_size)
 
         # Create asynchronous tasks for batch processing and autoscaling.
         self.batch_processor_task = asyncio.create_task(self._process_batches())
         self.autoscale_task = asyncio.create_task(self._autoscale())
 
-        # Warm up the model (especially important for CUDA)
+        # Warm up the model (especially important for CUDA).
         self._warmup()
 
         # Log device and configuration info.
@@ -206,7 +219,7 @@ class InferenceEngine:
                 return torch.device('cuda:0')
             return torch.device('cpu')
         return torch.device(device)
-
+    
     def _prepare_model(self, model: nn.Module) -> nn.Module:
         """
         Moves the model to the selected device. Wraps the model in DataParallel if multi-GPU is enabled.
@@ -254,11 +267,11 @@ class InferenceEngine:
                 if isinstance(module, nn.Linear):
                     shape = (module.in_features,)
                     self.logger.debug(f"Inferred shape from Linear layer: {shape}")
-                    return shape
+                    return torch.Size(shape)
                 elif isinstance(module, nn.Conv2d):
                     shape = (3, 224, 224)
                     self.logger.debug(f"Inferred default shape from Conv2d: {shape}")
-                    return shape
+                    return torch.Size(shape)
         self.logger.warning("Failed to detect input shape; please specify one via preprocessor or config.")
         return None
 
@@ -281,67 +294,42 @@ class InferenceEngine:
             self.logger.info("Warmup completed.")
 
     # --- Optimized TensorRT Compilation ---
-    def _compile_trt_model(self):
+    def _compile_trt_model(self) -> Union[torch.nn.Module, tuple]:
         """
-        Compiles the model using Torch-TensorRT for optimized inference.
-        Supports both static and dynamic shape compilation.
+        Compiles the PyTorch model with TensorRT.
+        Supports multi-input models if `trt_input_shapes` is provided in the config.
+        Returns a tuple (compiled_model, compile_time).
         """
-        try:
-            import torch_tensorrt
-        except ImportError as e:
-            raise ImportError("torch_tensorrt is not installed. Please install it to use TRT optimizations.") from e
+        import torch_tensorrt  # Import here to avoid unnecessary dependency if TRT is not used.
 
+        if self.config.trt_input_shapes is None:
+            # Assume a single-input model using the detected or configured input shape.
+            inputs = [torch_tensorrt.Input(
+                min_shape=self.input_shape,
+                opt_shape=self.input_shape,
+                max_shape=self.input_shape,
+                dtype=torch.float32
+            )]
+        else:
+            inputs = []
+            for shape_tuple in self.config.trt_input_shapes:
+                try:
+                    min_shape, opt_shape, max_shape = shape_tuple
+                except Exception as e:
+                    raise ValueError("Each TensorRT input shape must be a tuple: (min_shape, opt_shape, max_shape).") from e
+                inputs.append(torch_tensorrt.Input(
+                    min_shape=torch.Size(min_shape),
+                    opt_shape=torch.Size(opt_shape),
+                    max_shape=torch.Size(max_shape),
+                    dtype=torch.float32
+                ))
         start_time = time.time()
-        # Select the precision based on FP16 flag.
-        dtype = torch.half if self.use_fp16 else torch.float32
-
-        # Determine input shape for TRT. Use the config override if available.
-        if self.config.trt_input_shape is not None:
-            input_shape = self.config.trt_input_shape
-        elif self.input_shape is not None:
-            input_shape = [1] + list(self.input_shape)
-        else:
-            input_shape = [1, 3, 224, 224]
-
-        if self.config.trt_mode.lower() == "static":
-            self.logger.info(f"Compiling static TensorRT model with input shape: {input_shape}")
-            compiled_model = torch_tensorrt.compile(
-                self.model,
-                inputs=[torch.randn(*input_shape, dtype=dtype, device=self.device)],
-                enabled_precisions={dtype},
-                workspace_size=self.config.trt_workspace_size,
-                min_block_size=self.config.trt_min_block_size,
-            )
-        elif self.config.trt_mode.lower() == "dynamic":
-            # For dynamic mode, determine min, opt, and max shapes.
-            min_shape = tuple(input_shape)
-            if self.config.trt_opt_shape is not None:
-                opt_shape = tuple(self.config.trt_opt_shape)
-            elif self.input_shape is not None:
-                opt_shape = (self.config.batch_size,) + tuple(self.input_shape)
-            else:
-                opt_shape = (1, 3, 224, 224)
-            # Use the configured maximum batch size for TRT compilation.
-            max_shape = (self.config.max_batch_size,) + opt_shape[1:]
-            self.logger.info(
-                f"Compiling dynamic TensorRT model with min_shape: {min_shape}, "
-                f"opt_shape: {opt_shape}, max_shape: {max_shape}"
-            )
-            compiled_model = torch_tensorrt.compile(
-                self.model,
-                inputs=[torch_tensorrt.Input(
-                    min_shape=min_shape,
-                    opt_shape=opt_shape,
-                    max_shape=max_shape,
-                    dtype=dtype,
-                )],
-                enabled_precisions={dtype},
-                workspace_size=self.config.trt_workspace_size,
-            )
-
-        else:
-            raise ValueError(f"Unknown TRT mode: {self.config.trt_mode}")
-
+        # Compile the model to use FP16 if desired.
+        compiled_model = torch_tensorrt.compile(
+            self.model,
+            inputs=inputs,
+            enabled_precisions={torch.half}  # Enable FP16.
+        )
         compile_time = time.time() - start_time
         return compiled_model, compile_time
 
@@ -395,7 +383,7 @@ class InferenceEngine:
         """
         self.logger.info("Starting batch processing loop...")
         while True:
-            batch_items: List[RequestItem] = []
+            batch_items: List["RequestItem"] = []
             try:
                 first_item = await asyncio.wait_for(
                     self.request_queue.get(), timeout=self.config.timeout
@@ -481,12 +469,12 @@ class InferenceEngine:
     # --- Public Inference Interfaces ---
     async def run_inference_async(self, input_data: Any, priority: int = 0) -> Any:
         try:
+            # Process the input using the preprocessor.
             processed = self.preprocessor(input_data)
             if not isinstance(processed, torch.Tensor):
                 processed = torch.tensor(processed, dtype=torch.float32)
 
             # Ensure that each request is a single sample with shape equal to self.input_shape.
-            # That is, we want processed.shape == self.input_shape.
             if self.input_shape is not None:
                 sample_expected_dim = len(self.input_shape)  # e.g. (10,) → 1
                 if processed.dim() == sample_expected_dim + 1:
@@ -516,36 +504,24 @@ class InferenceEngine:
             future.set_exception(e)
             return await future
 
-
-    def run_batch_inference(self, input_list: List[Any]) -> List[Any]:
+    def run_batch_inference(self, batch: Union[torch.Tensor, List[torch.Tensor]]) -> torch.Tensor:
         """
-        Synchronous batch inference for offline jobs or testing.
+        Runs inference on a batch of preprocessed inputs.
+        Ensures that the input is a Tensor (by stacking if a list is provided).
+        This is a synchronous method. For non-blocking behavior, consider wrapping it
+        with an executor or using an async version.
         """
-        self.logger.debug(f"Starting synchronous batch inference on {len(input_list)} items.")
-        processed_inputs = []
-        for inp in input_list:
-            tensor_inp = self.preprocessor(inp)
-            if not isinstance(tensor_inp, torch.Tensor):
-                tensor_inp = torch.tensor(tensor_inp, dtype=torch.float32)
-            processed_inputs.append(tensor_inp)
+        # If a list of tensors is provided, stack them into a single tensor.
+        if isinstance(batch, list):
+            try:
+                batch = torch.stack(batch, dim=0)
+            except Exception as e:
+                raise ValueError("Failed to stack the input list into a tensor. "
+                                "Ensure all elements are tensors with matching dimensions.") from e
 
-        if self.config.enable_dynamic_batching and processed_inputs:
-            batch_size = self.dynamic_batch_size(processed_inputs[0])
-        else:
-            batch_size = self.config.batch_size
-
-        results = []
-        for i in range(0, len(processed_inputs), batch_size):
-            batch = torch.stack(processed_inputs[i:i+batch_size]).to(self.device)
-            with torch.no_grad():
-                if self.use_fp16 and self.device.type == "cuda":
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(batch)
-                else:
-                    outputs = self.model(batch)
-            results.extend([self.postprocessor(o) for o in outputs])
-        self.logger.debug(f"Completed synchronous inference. Total results: {len(results)}")
-        return results
+        with torch.no_grad():
+            output = self.model(batch)
+        return output
 
     def profile_inference(self, inputs: Any) -> Dict[str, float]:
         if not isinstance(inputs, torch.Tensor):
@@ -586,7 +562,6 @@ class InferenceEngine:
                         "\n".join([f"{k}: {v:.2f} ms" for k, v in metrics.items()]))
         return metrics
 
-
     def cleanup(self):
         """
         Cancel async tasks and release resources.
@@ -604,62 +579,48 @@ class InferenceEngine:
                 torch.cuda.empty_cache()
         self.logger.info("Cleanup completed.")
 
+
 # ------------------------------------------------------------------------------
 # Example Usage
 # ------------------------------------------------------------------------------
-async def main():
-    # Simple model: a linear layer mapping 10 features to 2 outputs.
-    model = torch.nn.Linear(10, 2)
 
-    # Configure the engine with advanced features and optimized TensorRT enabled.
+async def main():
+    # Define a simple model: a linear layer mapping 10 features to 2 outputs.
+    model = torch.nn.Linear(10, 2).to("cuda")
+
+    # Create the engine configuration.
+    # Here we only specify the minimal configuration needed for this example.
     config = EngineConfig(
-        num_workers=2,
-        queue_size=100,
-        batch_size=32,
-        min_batch_size=1,
-        max_batch_size=128,
-        warmup_runs=5,
-        timeout=0.05,
-        autoscale_interval=2.0,
-        queue_size_threshold_high=80.0,
-        queue_size_threshold_low=20.0,
-        enable_dynamic_batching=True,
-        debug_mode=True,
-        use_multigpu=False,  # Set True if multiple GPUs are available.
-        device_ids=[0],
-        multigpu_strategy='dataparallel',
-        log_file="advanced_inference_engine.log",
-        executor_type="thread",  # Change to "process" if your model is picklable.
-        pid_kp=0.5,
-        pid_ki=0.1,
-        pid_kd=0.05,
-        # TensorRT configuration:
-        enable_trt=True,
-        trt_mode="dynamic",  # Choose between "static" and "dynamic"
-        trt_workspace_size=1 << 30,  # 1GB workspace
-        trt_min_block_size=1,
-        trt_opt_shape=[32, 10],  # Example: optimized for batch size 32 and 10 features
-        trt_input_shape=[1, 10]  # Minimum input shape for TRT compile
+        input_shape=[1, 10],  # The expected input shape (including batch dimension).
+        # Optionally, specify TensorRT input shapes if using TRT:
+        trt_input_shape=[([1, 10], [32, 10], [128, 10])],
+        use_tensorrt=False,  # Change to True if TensorRT is desired and installed.
     )
 
     # Create the inference engine.
-    engine = InferenceEngine(model=model, config=config, use_fp16=True)
+    # If your InferenceEngine supports a flag for FP16, pass it accordingly.
+    engine = InferenceEngine(model=model, config=config)  # , use_fp16=True
 
-    # Generate some valid inputs (each with 10 features).
-    inputs = [torch.randn(10) for _ in range(100)]
+    # Generate 100 valid inputs (each with 10 features).
+    # Note: Each input is a 1D tensor, so we unsqueeze(0) to get a batch dimension.
+    inputs = [torch.randn(10, device="cuda") for _ in range(100)]
 
     # Run asynchronous inference on all inputs concurrently.
-    tasks = [engine.run_inference_async(x) for x in inputs]
+    # Wrap each input with unsqueeze(0) so that it has shape [1, 10]
+    tasks = [engine.run_inference_async(x.unsqueeze(0)) for x in inputs]
     results = await asyncio.gather(*tasks, return_exceptions=False)
-    engine.logger.info(f"Received {len(results)} inference results.")
+    engine.logger.info(f"Received {len(results)} asynchronous inference results.")
 
-    # Optionally, profile a single inference call.
-    profile_metrics = engine.profile_inference(inputs[0])
-    engine.logger.info(f"Profile metrics: {profile_metrics}")
+    # Optionally, profile a single inference call (if your engine supports profiling).
+    if hasattr(engine, 'profile_inference'):
+        # Ensure the input has a batch dimension.
+        profile_metrics = engine.profile_inference(inputs[0].unsqueeze(0))
+        engine.logger.info(f"Profile metrics: {profile_metrics}")
 
     # Synchronous inference for batch processing.
-    sync_results = engine.run_batch_inference(inputs)
-    engine.logger.info(f"Synchronous inference produced {len(sync_results)} results.")
+    # Here, engine.run_batch_inference will stack the list of [1, 10] tensors into a batch.
+    sync_results = engine.run_batch_inference([x.unsqueeze(0) for x in inputs])
+    engine.logger.info(f"Synchronous inference produced {sync_results.shape[0]} results.")
 
     # Clean up resources before exit.
     engine.cleanup()

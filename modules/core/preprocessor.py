@@ -23,9 +23,13 @@ class BasePreprocessor:
         return torch.as_tensor(inputs, device="cuda", non_blocking=True)  # Zero-copy transfer
 
 
+
 class ImagePreprocessor(BasePreprocessor):
     """
-    Preprocessor for image data with batch optimizations, multi-task handling, and streaming support.
+    Preprocessor for image data with batch optimizations and streaming support.
+    
+    This class accepts inputs in the form of a PIL Image, a torch.Tensor, or a file path (string).
+    For tensor inputs, it converts them to a PIL Image before applying transformations.
     """
     def __init__(
         self,
@@ -50,8 +54,12 @@ class ImagePreprocessor(BasePreprocessor):
         ])
     
     def __call__(self, inputs: Any) -> torch.Tensor:
+        """
+        Processes a single input or a list of inputs and returns a batched tensor.
+        """
         if not isinstance(inputs, list):
             inputs = [inputs]
+        # Apply transformations to each input after loading it as a PIL image.
         processed = [self.transforms(self._load_image(inp)) for inp in inputs]
         batch_tensor = torch.stack(processed, dim=0).to(self.device, non_blocking=True)
         if self.use_pinned_memory:
@@ -59,12 +67,24 @@ class ImagePreprocessor(BasePreprocessor):
         return batch_tensor
 
     def _load_image(self, inp: Any) -> Image.Image:
+        """
+        Loads an image for processing.
+        
+        - If the input is a PIL.Image, it is returned as is.
+        - If the input is a torch.Tensor, it is converted to a PIL.Image.
+        - If the input is a string, it is assumed to be a file path.
+        - Otherwise, a ValueError is raised.
+        """
         if isinstance(inp, Image.Image):
             return inp
+        elif isinstance(inp, torch.Tensor):
+            # Convert tensor to PIL image.
+            return T.ToPILImage()(inp)
         elif isinstance(inp, str):
             return Image.open(inp).convert("RGB")
         else:
             raise ValueError(f"Unsupported image input type: {type(inp)}")
+
 
 
 class MultiTaskPreprocessor(ImagePreprocessor):
