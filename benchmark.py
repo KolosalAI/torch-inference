@@ -1,246 +1,171 @@
-#!/usr/bin/env python3
+import argparse
+import asyncio
+import time
+from dataclasses import dataclass
+from typing import Optional
 
 import torch
-import torch_tensorrt
 import torchvision.models as models
-import time
-import logging
-from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple
-from enum import Enum
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
-
-class ModelType(Enum):
-    PYTORCH = "pytorch"
-    STATIC_TRT = "static_trt"
-    DYNAMIC_TRT = "dynamic_trt"
+# Import your engine's configuration and class.
+from modules.core.engine import EngineConfig, InferenceEngine
 
 @dataclass
 class BenchmarkConfig:
-    # Model configuration
-    model_name: str = "resnet18"
-    precision: torch.dtype = torch.half
+    num_inputs: int = 4             # Number of inference requests
+    warmup_runs: int = 8
+    input_channels: int = 4
+    input_height: int = 224
+    input_width: int = 224
+    batch_size: int = 64                # Batch size for synchronous inference
+    use_tensorrt: bool = False
+    enable_dynamic_batching: bool = False
+    profile: bool = False
+    async_mode: bool = True
+    sync_mode: bool = True
+    max_concurrent: int = 16           # Maximum number of concurrent async requests
+    log_file: Optional[str] = "benchmark.log"
+    debug_mode: bool = True
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Inference Engine Benchmark")
+    parser.add_argument("--num-inputs", type=int, default=10000, help="Number of inference requests")
+    parser.add_argument("--input-channels", type=int, default=3, help="Number of input channels")
+    parser.add_argument("--input-height", type=int, default=224, help="Input image height")
+    parser.add_argument("--input-width", type=int, default=224, help="Input image width")
+    parser.add_argument("--batch-size", type=int, default=64, help="Batch size for synchronous inference")
+    parser.add_argument("--use-tensorrt", action="store_true", help="Enable TensorRT optimization")
+    parser.add_argument("--no-async", action="store_false", dest="async_mode", help="Disable async benchmarking")
+    parser.add_argument("--no-sync", action="store_false", dest="sync_mode", help="Disable sync benchmarking")
+    parser.add_argument("--profile", action="store_true", help="Run profiling")
+    parser.add_argument("--max-concurrent", type=int, default=256, help="Max number of concurrent async requests")
+    parser.add_argument("--log-file", type=str, default="benchmark.log", help="Log file path")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    return parser.parse_args()
+
+async def benchmark_async(engine, inputs, max_concurrent: int):
+    """
+    Benchmark asynchronous inference throughput with concurrency control.
+    The semaphore limits the number of concurrently running async tasks.
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
     
-    # Batch size configuration
-    pytorch_batches: List[int] = (1, 8)
-    static_batches: List[int] = (1, 8)
-    dynamic_batches: List[int] = (1, 4, 12, 16)
+    async def sem_task(x):
+        async with semaphore:
+            return await engine.run_inference_async(x)
     
-    # Execution configuration
-    concurrency_levels: List[int] = (1,)
-    warmup_runs: int = 3
-    test_runs: int = 10
+    start_time = time.perf_counter()
+    tasks = [sem_task(x) for x in inputs]
+    await asyncio.gather(*tasks, return_exceptions=False)
+    duration = time.perf_counter() - start_time
+    throughput = len(inputs) / duration
+    seconds_per_pred = duration / len(inputs)
+    return throughput, seconds_per_pred, duration
+
+def benchmark_sync(engine, inputs):
+    """
+    Benchmark synchronous batch inference throughput.
+    Splits the inputs into batches and processes each batch sequentially.
+    """
+    start_time = time.perf_counter()
     
-    # Benchmark controls
-    enable_pytorch: bool = True
-    enable_static: bool = True
-    enable_dynamic: bool = True
+    # Create batches by stacking inputs according to the engine's batch size
+    batches = [
+        torch.stack(inputs[i:i+engine.config.batch_size])
+        for i in range(0, len(inputs), engine.config.batch_size)
+    ]
     
-    # TensorRT compilation parameters
-    workspace_size: int = 20 << 30  # 20GB
-    min_block_size: int = 90
-    opt_shape: List[int] = (8, 3, 224, 224)
-
-@dataclass
-class BenchmarkResults:
-    model_type: ModelType
-    batch_size: int
-    concurrency: int
-    avg_time_per_sample: float
-    samples_per_second: float
-    compilation_time: float = 0.0
-
-class InferenceBenchmark:
-    def __init__(self, config: BenchmarkConfig):
-        self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self._init_model()
-        self.results = []
-        
-    def _init_model(self) -> torch.nn.Module:
-        """Initialize base PyTorch model"""
-        logger.info(f"Initializing {self.config.model_name} model")
-        model = getattr(models, self.config.model_name)(pretrained=True)
-        return model.half().eval().to(self.device)
+    for batch in batches:
+        engine.run_batch_inference(batch)
     
-    def _compile_trt_model(self, compilation_mode: str) -> Optional[torch.jit.ScriptModule]:
-        """Compile TensorRT model with error handling and timing"""
-        try:
-            start_time = time.time()
-            logger.info(f"Compiling {compilation_mode} TRT model...")
-            
-            if compilation_mode == ModelType.STATIC_TRT.value:
-                trt_model = torch_tensorrt.compile(
-                    self.model,
-                    ir="torch_compile",
-                    inputs=[torch.randn((1, 3, 224, 224), 
-                            dtype=self.config.precision, 
-                            device=self.device)],
-                    enabled_precisions={self.config.precision},
-                    workspace_size=self.config.workspace_size,
-                    min_block_size=self.config.min_block_size
-                )
-            elif compilation_mode == ModelType.DYNAMIC_TRT.value:
-                trt_model = torch_tensorrt.compile(
-                    self.model,
-                    ir="dynamo",
-                    inputs=[torch_tensorrt.Input(
-                        min_shape=(1, 3, 224, 224),
-                        opt_shape=self.config.opt_shape,
-                        max_shape=(16, 3, 224, 224),
-                        dtype=self.config.precision,
-                    )],
-                    enabled_precisions={self.config.precision},
-                    workspace_size=self.config.workspace_size
-                )
-            else:
-                raise ValueError(f"Invalid compilation mode: {compilation_mode}")
-            
-            compile_time = time.time() - start_time
-            logger.info(f"Compiled {compilation_mode} model in {compile_time:.2f}s")
-            return trt_model, compile_time
-            
-        except Exception as e:
-            logger.error(f"Failed to compile {compilation_mode} model: {str(e)}")
-            return None, 0.0
+    duration = time.perf_counter() - start_time
+    throughput = len(inputs) / duration
+    seconds_per_pred = duration / len(inputs)
+    return throughput, seconds_per_pred, duration
 
-    def _run_benchmark(self, model: torch.nn.Module, model_type: ModelType, compile_time: float = 0.0):
-        """Generic benchmarking function with improved timing and error handling"""
-        logger.info(f"Starting {model_type.value} benchmark...")
-        
-        # Map model type to corresponding batch configuration attribute in config
-        batch_attr_map = {
-            ModelType.PYTORCH: "pytorch_batches",
-            ModelType.STATIC_TRT: "static_batches",
-            ModelType.DYNAMIC_TRT: "dynamic_batches",
-        }
-        batch_list = getattr(self.config, batch_attr_map[model_type])
-        
-        for concurrency in self.config.concurrency_levels:
-            for batch_size in batch_list:
-                try:
-                    logger.info(f"Testing {model_type.value} - batch: {batch_size}, concurrency: {concurrency}")
-                    
-                    # Pre-allocate inputs and streams
-                    inputs = [torch.randn((batch_size, 3, 224, 224), 
-                             dtype=self.config.precision, 
-                             device=self.device) for _ in range(concurrency)]
-                    streams = [torch.cuda.Stream() for _ in range(concurrency)]
-
-                    # Warmup phase with progress
-                    logger.debug(f"Warming up ({self.config.warmup_runs} runs)")
-                    for i in range(self.config.warmup_runs):
-                        for j in range(concurrency):
-                            with torch.cuda.stream(streams[j]):
-                                _ = model(inputs[j])
-                        if (i+1) % 5 == 0:
-                            logger.debug(f"Completed {i+1}/{self.config.warmup_runs} warmup iterations")
-                    torch.cuda.synchronize()
-
-                    # Timed execution
-                    logger.debug(f"Timing ({self.config.test_runs} runs)")
-                    start_time = time.time()
-                    for i in range(self.config.test_runs):
-                        for j in range(concurrency):
-                            with torch.cuda.stream(streams[j]):
-                                _ = model(inputs[j])
-                    torch.cuda.synchronize()
-                    
-                    elapsed = time.time() - start_time
-                    total_samples = concurrency * batch_size * self.config.test_runs
-                    
-                    # Store results
-                    self.results.append(BenchmarkResults(
-                        model_type=model_type,
-                        batch_size=batch_size,
-                        concurrency=concurrency,
-                        avg_time_per_sample=elapsed / total_samples,
-                        samples_per_second=total_samples / elapsed,
-                        compilation_time=compile_time
-                    ))
-                    logger.info(f"Completed {model_type.value} batch {batch_size} concurrency {concurrency}: "
-                               f"{self.results[-1].samples_per_second:.1f} samples/s")
-                    
-                except Exception as e:
-                    logger.error(f"Benchmark failed for {model_type.value} batch {batch_size}: {str(e)}")
-                    continue
-
-    def run_all_benchmarks(self):
-        """Run all configured benchmarks with proper resource management"""
-        if self.config.enable_pytorch:
-            logger.info("\n=== Running PyTorch Benchmark ===")
-            self._run_benchmark(self.model, ModelType.PYTORCH)
-
-        if self.config.enable_static:
-            logger.info("\n=== Running Static TRT Benchmark ===")
-            static_model, compile_time = self._compile_trt_model(ModelType.STATIC_TRT.value)
-            if static_model is not None:
-                self._run_benchmark(static_model, ModelType.STATIC_TRT, compile_time)
-
-        if self.config.enable_dynamic:
-            logger.info("\n=== Running Dynamic TRT Benchmark ===")
-            dynamic_model, compile_time = self._compile_trt_model(ModelType.DYNAMIC_TRT.value)
-            if dynamic_model is not None:
-                self._run_benchmark(dynamic_model, ModelType.DYNAMIC_TRT, compile_time)
-
-    def print_comparison(self):
-        """Print enhanced comparison table with grouping by batch/concurrency"""
-        logger.info("\n=== Benchmark Comparison ===")
-        
-        # Group results by (batch_size, concurrency)
-        groups: Dict[Tuple[int, int], Dict[ModelType, BenchmarkResults]] = {}
-        for result in self.results:
-            key = (result.batch_size, result.concurrency)
-            groups.setdefault(key, {})[result.model_type] = result
-
-        # Print table header
-        header = f"| {'Batch':>5} | {'Concurrency':>11} | " \
-                 f"{'PyTorch (samples/s)':>20} | {'Static TRT':>20} | {'Dynamic TRT':>20} | " \
-                 f"{'Static Speedup':>15} | {'Dynamic Speedup':>15} |"
-        separator = "-" * len(header)
-        print(f"\n{separator}\n{header}\n{separator}")
-
-        # Print each group
-        for key in sorted(groups.keys()):
-            batch, concurrency = key
-            group = groups[key]
-            
-            # Get results for each model type
-            pytorch = group.get(ModelType.PYTORCH)
-            static = group.get(ModelType.STATIC_TRT)
-            dynamic = group.get(ModelType.DYNAMIC_TRT)
-
-            # Calculate speedups
-            static_speedup = static.samples_per_second / pytorch.samples_per_second if pytorch and static else 0
-            dynamic_speedup = dynamic.samples_per_second / pytorch.samples_per_second if pytorch and dynamic else 0
-
-            # Format row
-            row = f"| {batch:>5} | {concurrency:>11} | " \
-                  f"{pytorch.samples_per_second if pytorch else 'N/A':>20.1f} | " \
-                  f"{static.samples_per_second if static else 'N/A':>20.1f} | " \
-                  f"{dynamic.samples_per_second if dynamic else 'N/A':>20.1f} | " \
-                  f"{static_speedup:>15.1f}x | {dynamic_speedup:>15.1f}x |"
-            print(row)
-        
-        print(separator + "\n")
+async def main(benchmark_config: BenchmarkConfig):
+    # Use a larger model: ResNet-50 (or change to any other model as needed)
+    model = models.resnet18(pretrained=True)
+    # Optionally modify the final layer for binary classification
+    num_ftrs = model.fc.in_features
+    model.fc = torch.nn.Linear(num_ftrs, 2)
+    model = model.to("cuda")
+    
+    # Set up the engine configuration
+    engine_config = EngineConfig(
+        input_shape=[1, benchmark_config.input_channels, benchmark_config.input_height, benchmark_config.input_width],
+        batch_size=benchmark_config.batch_size,
+        use_tensorrt=benchmark_config.use_tensorrt,
+        enable_dynamic_batching=benchmark_config.enable_dynamic_batching,
+        log_file=benchmark_config.log_file
+    )
+    
+    engine = InferenceEngine(model=model, config=engine_config)
+    
+    # Generate test inputs (random images) with shape [C, H, W]
+    input_shape = (benchmark_config.input_channels, benchmark_config.input_height, benchmark_config.input_width)
+    inputs = [torch.randn(*input_shape, device="cuda") for _ in range(benchmark_config.num_inputs)]
+    
+    # Warmup: Run a few inferences to prepare the model/engine
+    warmup_input = inputs[0]
+    for _ in range(benchmark_config.warmup_runs):
+        await engine.run_inference_async(warmup_input)
+    
+    results = {}
+    
+    # Asynchronous Benchmark (run only once)
+    if benchmark_config.async_mode:
+        throughput, sec_per_pred, duration = await benchmark_async(engine, inputs, benchmark_config.max_concurrent)
+        results["async_throughput"] = throughput
+        results["async_sec_per_pred"] = sec_per_pred
+        print("=== Asynchronous Inference ===")
+        print(f"Total Duration: {duration:.4f} seconds")
+        print(f"Throughput: {throughput:.2f} predictions/s")
+        print(f"Seconds per Prediction: {sec_per_pred:.6f} s/pred")
+    
+    # Synchronous Benchmark (run only once)
+    if benchmark_config.sync_mode:
+        throughput, sec_per_pred, duration = benchmark_sync(engine, inputs)
+        results["sync_throughput"] = throughput
+        results["sync_sec_per_pred"] = sec_per_pred
+        print("\n=== Synchronous Inference ===")
+        print(f"Total Duration: {duration:.4f} seconds")
+        print(f"Throughput: {throughput:.2f} predictions/s")
+        print(f"Seconds per Prediction: {sec_per_pred:.6f} s/pred")
+    
+    # Profiling (if available and enabled)
+    if benchmark_config.profile and hasattr(engine, 'profile_inference'):
+        profile_input = inputs[0]
+        profile_metrics = engine.profile_inference(profile_input)
+        results["profile"] = profile_metrics
+        print("\n=== Profile Metrics ===")
+        print(profile_metrics)
+    
+    engine.cleanup()
+    return results
 
 if __name__ == "__main__":
-    config = BenchmarkConfig(
-        pytorch_batches=[1, 8, 16],
-        static_batches=[1, 8, 16],
-        dynamic_batches=[1, 8, 16],
-        concurrency_levels=[1, 2],
-        warmup_runs=3,
-        test_runs=10
+    args = parse_args()
+    
+    benchmark_config = BenchmarkConfig(
+        num_inputs=args.num_inputs,
+        warmup_runs=10,
+        input_channels=args.input_channels,
+        input_height=args.input_height,
+        input_width=args.input_width,
+        batch_size=args.batch_size,
+        use_tensorrt=args.use_tensorrt,
+        enable_dynamic_batching=True,
+        profile=args.profile,
+        async_mode=args.async_mode,
+        sync_mode=args.sync_mode,
+        max_concurrent=args.max_concurrent,
+        log_file=args.log_file,
+        debug_mode=args.debug
     )
-
-    benchmark = InferenceBenchmark(config)
-    benchmark.run_all_benchmarks()
-    benchmark.print_comparison()
+    
+    try:
+        results = asyncio.run(main(benchmark_config))
+    except KeyboardInterrupt:
+        print("Benchmark interrupted!")
+        exit(1)

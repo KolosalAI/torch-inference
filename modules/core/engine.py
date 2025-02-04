@@ -1,122 +1,139 @@
-#!/usr/bin/env python3
 import asyncio
 import logging
 import time
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from typing import Optional, List, Dict, Callable, Union, Any
-import torch_tensorrt
-from preprocessor import BasePreprocessor
-from postprocessor import BasePostprocessor
+from typing import Any, Callable, Dict, List, Optional, Union
+from .preprocessor import BasePreprocessor
+from .postprocessor import BasePostprocessor
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.profiler import profile, record_function, ProfilerActivity
 
-# ------------------------------------------------------------------------------
-# Helper: PID Controller for Autoscaling Batch Size
-# ------------------------------------------------------------------------------
-class PIDController:
-    def __init__(self, kp: float, ki: float, kd: float, setpoint: float):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.setpoint = setpoint
-        self.last_error = 0.0
-        self.integral = 0.0
+# Assume a PIDController, BasePreprocessor, and BasePostprocessor are defined elsewhere.
+# For example:
 
-    def update(self, current_value: float, dt: float) -> float:
-        error = self.setpoint - current_value
-        self.integral += error * dt
-        derivative = (error - self.last_error) / dt if dt > 0 else 0.0
-        output = self.kp * error + self.ki * self.integral + self.kd * derivative
-        self.last_error = error
-        return output
+
 
 # ------------------------------------------------------------------------------
 # Engine Configuration with Advanced Options (including TRT)
 # ------------------------------------------------------------------------------
+from dataclasses import dataclass, field
+from typing import Optional, List, Tuple
+import logging
+import torch
+
+@dataclass
 class EngineConfig:
     """
-    Configuration for the InferenceEngine.
+    Configuration dataclass for the InferenceEngine with integrated guard system parameters.
     """
-    def __init__(
-        self,
-        num_workers: int = 1,
-        queue_size: int = 100,
-        batch_size: int = 32,
-        min_batch_size: int = 1,
-        max_batch_size: int = 128,
-        warmup_runs: int = 10,
-        timeout: float = 0.1,
-        autoscale_interval: float = 5.0,
-        queue_size_threshold_high: float = 80.0,
-        queue_size_threshold_low: float = 20.0,
-        enable_dynamic_batching: bool = True,
-        debug_mode: bool = False,
-        use_multigpu: bool = False,
-        device_ids: Optional[List[int]] = None,
-        multigpu_strategy: str = 'dataparallel',  # or 'distributed'
-        log_file: str = "inference_engine.log",
-        executor_type: str = "thread",  # "thread" or "process"
-        # PID controller parameters for autoscaling
-        pid_kp: float = 0.5,
-        pid_ki: float = 0.1,
-        pid_kd: float = 0.05,
-        # TensorRT configuration parameters:
-        enable_trt: bool = False,
-        trt_mode: str = "static",  # "static" or "dynamic"
-        trt_workspace_size: int = 1 << 30,  # 1GB default workspace
-        trt_min_block_size: int = 1,
-        trt_opt_shape: Optional[List[int]] = None,  # Only used in dynamic mode
-        trt_input_shape: Optional[List[int]] = None,  # Override input shape for TRT compile
-        input_shape: Optional[torch.Size] = None,  # Expected input shape for the model,
-        use_tensorrt: bool = False,
-    ):
-        self.num_workers = num_workers
-        self.queue_size = queue_size
-        self.batch_size = batch_size
-        self.min_batch_size = min_batch_size
-        self.max_batch_size = max_batch_size
-        self.warmup_runs = warmup_runs
-        self.timeout = timeout
-        self.autoscale_interval = autoscale_interval
-        self.queue_size_threshold_high = queue_size_threshold_high
-        self.queue_size_threshold_low = queue_size_threshold_low
-        self.enable_dynamic_batching = enable_dynamic_batching
-        self.debug_mode = debug_mode
-        self.use_multigpu = use_multigpu
-        self.device_ids = device_ids or list(range(torch.cuda.device_count()))
-        self.multigpu_strategy = multigpu_strategy
-        self.log_file = log_file
-        self.executor_type = executor_type
-        # PID controller for autoscaling (aim for 50% queue utilization)
-        self.pid_controller = PIDController(pid_kp, pid_ki, pid_kd, setpoint=50.0)
-        # TensorRT-specific settings
-        self.enable_trt = enable_trt
-        self.trt_mode = trt_mode
-        self.trt_workspace_size = trt_workspace_size
-        self.trt_min_block_size = trt_min_block_size
-        self.trt_opt_shape = trt_opt_shape
-        self.trt_input_shape = trt_input_shape
-        self.input_shape = input_shape  # Add this field
-        self.use_tensorrt = use_tensorrt
+    # Core engine parameters
+    num_workers: int = 1
+    queue_size: int = 100
+    batch_size: int = 32
+    min_batch_size: int = 1
+    max_batch_size: int = 128
+    warmup_runs: int = 10
+    timeout: float = 0.1
+    autoscale_interval: float = 5.0
+    queue_size_threshold_high: float = 80.0
+    queue_size_threshold_low: float = 20.0
+    enable_dynamic_batching: bool = True
+    debug_mode: bool = False
+    use_multigpu: bool = False
+    device_ids: List[int] = field(default_factory=lambda: list(range(torch.cuda.device_count())))
+    multigpu_strategy: str = 'dataparallel'
+    log_file: str = "inference_engine.log"
+    executor_type: str = "thread"
+    
+    # PID controller parameters
+    pid_kp: float = 0.5
+    pid_ki: float = 0.1
+    pid_kd: float = 0.05
+    
+    # TensorRT parameters
+    enable_trt: bool = False
+    trt_mode: str = "static"
+    trt_workspace_size: int = 1 << 30
+    trt_min_block_size: int = 1
+    trt_opt_shape: Optional[List[int]] = None
+    trt_input_shape: Optional[List[int]] = None
+    input_shape: Optional[torch.Size] = None
+    use_tensorrt: bool = False
+    num_classes : int = 10
+    
+    # Guard system parameters
+    guard_enabled: bool = True
+    guard_num_augmentations: int = 5
+    guard_noise_level_range: Tuple[float, float] = (0.005, 0.02)
+    guard_dropout_rate: float = 0.1
+    guard_flip_prob: float = 0.5
+    guard_confidence_threshold: float = 0.5
+    guard_variance_threshold: float = 0.05
+    guard_input_range: Tuple[float, float] = (0.0, 1.0)
+    guard_augmentation_types: List[str] = field(
+        default_factory=lambda: ["noise", "dropout", "flip"]
+    )
 
+    
+    # Internal components (not configurable)
+    pid_controller: object = field(init=False)
+    
+    def __post_init__(self):
+        """Initialize derived components after dataclass construction"""
+        from .pid import PIDController  # Import locally to avoid circular dependencies
+        
+        # Initialize PID controller
+        self.pid_controller = PIDController(
+            self.pid_kp, self.pid_ki, self.pid_kd, setpoint=50.0
+        )
+        
+        # Validate device IDs
+        if self.use_multigpu and not self.device_ids:
+            self.device_ids = list(range(torch.cuda.device_count()))
+            
+        # Validate augmentation types
+        valid_augmentations = {"noise", "dropout", "flip"}
+        if invalid := set(self.guard_augmentation_types) - valid_augmentations:
+            raise ValueError(f"Invalid augmentation types: {invalid}")
 
     def configure_logging(self):
-        """Set up logging to both console and file using a simple formatter."""
+        """Set up logging with guard system awareness"""
         level = logging.DEBUG if self.debug_mode else logging.INFO
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
+        
         file_handler = logging.FileHandler(self.log_file)
         file_handler.setFormatter(formatter)
+        
         logger = logging.getLogger()
         logger.handlers.clear()
         logger.addHandler(console_handler)
         logger.addHandler(file_handler)
         logger.setLevel(level)
+        
         if self.debug_mode:
             logger.debug("Debug logging enabled.")
+            if self.guard_enabled:
+                logger.debug(f"Guard system configuration:\n{self._format_guard_config()}")
+
+    def _format_guard_config(self) -> str:
+        """Format guard configuration for debug logging"""
+        return (
+            f"Augmentations: {self.guard_num_augmentations} runs\n"
+            f"Active augmentations: {', '.join(self.guard_augmentation_types)}\n"
+            f"Noise range: {self.guard_noise_level_range}\n"
+            f"Dropout rate: {self.guard_dropout_rate}\n"
+            f"Flip probability: {self.guard_flip_prob}\n"
+            f"Confidence threshold: {self.guard_confidence_threshold}\n"
+            f"Variance threshold: {self.guard_variance_threshold}\n"
+            f"Input range: {self.guard_input_range}"
+        )
 
 # ------------------------------------------------------------------------------
 # Request Item Class
@@ -135,9 +152,8 @@ class RequestItem:
         return self.priority < other.priority
 
 # ------------------------------------------------------------------------------
-# Inference Engine Class with Advanced Features and Optimized TensorRT
+# Inference Engine Class with Advanced Features, TensorRT, and Adversarial Guard
 # ------------------------------------------------------------------------------
-
 class InferenceEngine:
     """
     An asynchronous inference engine that supports:
@@ -146,7 +162,7 @@ class InferenceEngine:
       - FP16 / mixed precision on CUDA
       - Option to use ThreadPool or ProcessPool for concurrency (if picklable)
       - Optional TensorRT compilation for improved GPU inference performance
-      - Improved error handling, logging, and profiling
+      - Improved error handling, logging, profiling, and an adversarial guard.
     """
     def __init__(
         self,
@@ -158,7 +174,8 @@ class InferenceEngine:
         use_tensorrt: bool = False,
         config: Optional["EngineConfig"] = None,
     ):
-        self.config = config or EngineConfig()
+        # If no configuration is provided, create one with debug enabled.
+        self.config = config or EngineConfig(debug_mode=True)
         self.config.configure_logging()
         self.logger = logging.getLogger(self.__class__.__name__)
 
@@ -183,7 +200,6 @@ class InferenceEngine:
                 # Fall back to the original model if TRT compile fails.
 
         # Pre- and post-processing hooks.
-        # If not provided, default to instances of the base classes.
         self.preprocessor = preprocessor if preprocessor is not None else BasePreprocessor()
         self.postprocessor = postprocessor if postprocessor is not None else BasePostprocessor()
 
@@ -302,7 +318,7 @@ class InferenceEngine:
         """
         import torch_tensorrt  # Import here to avoid unnecessary dependency if TRT is not used.
 
-        if self.config.trt_input_shapes is None:
+        if self.config.trt_input_shape is None:
             # Assume a single-input model using the detected or configured input shape.
             inputs = [torch_tensorrt.Input(
                 min_shape=self.input_shape,
@@ -312,7 +328,7 @@ class InferenceEngine:
             )]
         else:
             inputs = []
-            for shape_tuple in self.config.trt_input_shapes:
+            for shape_tuple in self.config.trt_input_shape:
                 try:
                     min_shape, opt_shape, max_shape = shape_tuple
                 except Exception as e:
@@ -431,15 +447,35 @@ class InferenceEngine:
 
     def _infer_batch(self, batch_tensor: torch.Tensor) -> torch.Tensor:
         """
-        Internal method to perform inference on a batch.
-        Applies FP16 autocast if enabled.
+        Perform optimized inference on a batch of inputs with proper precision context.
+        
+        Features:
+        - Device-aware mixed precision using autocast
+        - Inference-mode optimization
+        - Tensor compatibility checks
+        
+        Args:
+            batch_tensor: Input tensor of shape [batch_size, ...]
+            
+        Returns:
+            Model outputs tensor
+        
+        Raises:
+            RuntimeError: If tensor device mismatch occurs
         """
-        with torch.no_grad():
-            if self.use_fp16 and self.device.type == "cuda":
-                with torch.cuda.amp.autocast():
-                    return self.model(batch_tensor)
-            else:
-                return self.model(batch_tensor)
+        # Validate device compatibility
+        if batch_tensor.device != self.device:
+            raise RuntimeError(f"Input tensor device {batch_tensor.device} "
+                            f"doesn't match engine device {self.device}")
+        
+        # Unified context management
+        # Unified context management
+        with torch.inference_mode(), \
+            torch.amp.autocast(device_type=self.device.type, enabled=self.use_fp16 and self.device.type == "cuda"):
+            # For non-CUDA devices or disabled FP16, autocast has no effect
+            return self.model(batch_tensor)
+
+
 
     # --- Autoscaling Batch Size using PID ---
     async def _autoscale(self):
@@ -466,32 +502,110 @@ class InferenceEngine:
                                   f"queue utilization: {utilization:.1f}%)")
             dt = time.time() - start_time
 
+    # --- Adversarial Guard: Test-Time Augmentation for Inference ---
+    def _guard_sample(self, processed: torch.Tensor) -> bool:
+        """
+        Apply diversified test-time augmentations and analyze prediction consistency 
+        to detect adversarial samples. Returns True if the sample passes the guard.
+        """
+        # Configurable parameters (set via config or instance variables)
+        num_augmentations = self.config.guard_num_augmentations
+        noise_level_range = self.config.guard_noise_level_range
+        dropout_rate = self.config.guard_dropout_rate
+        flip_prob = self.config.guard_flip_prob
+        confidence_threshold = self.config.guard_confidence_threshold
+        variance_threshold = self.config.guard_variance_threshold
+        input_range = self.config.guard_input_range
+
+        # Ensure batch dimension and device placement
+        sample = processed.unsqueeze(0) if processed.dim() == len(self.input_shape) else processed
+        sample = sample.to(self.device)
+
+        predictions = []
+        for _ in range(num_augmentations):
+            augmented = sample.clone()
+            
+            # Random Gaussian noise
+            noise_level = torch.empty(1).uniform_(*noise_level_range).item()
+            augmented += torch.randn_like(augmented) * noise_level
+            
+            # Random dropout
+            if torch.rand(1).item() < 0.3:  # 30% chance to apply dropout
+                augmented[torch.rand_like(augmented) < dropout_rate] = 0
+                
+            # Random horizontal flip (for image data)
+            if len(self.input_shape) >= 2 and torch.rand(1).item() < flip_prob:
+                augmented = torch.flip(augmented, dims=[-1])
+
+            # Maintain valid input range
+            augmented = torch.clamp(augmented, *input_range)
+
+            # Get prediction
+            with torch.no_grad():
+                if self.use_fp16 and self.device.type == "cuda":
+                    with torch.cuda.amp.autocast():
+                        pred = self.model(augmented)
+                else:
+                    pred = self.model(augmented)
+            pred_probs = torch.softmax(pred, dim=1)
+            predictions.append(pred_probs)
+
+        # Aggregate predictions
+        predictions_tensor = torch.cat(predictions, dim=0)  # Shape: [num_aug, num_classes]
+
+        aggregated = predictions_tensor.mean(dim=0)
+        
+        # Calculate metrics
+        confidence = aggregated.max().item()
+        max_probs = predictions_tensor.max(dim=1)[0]  # Changed dim=2 -> dim=1
+        variance = max_probs.std(dim=0).item()  # Removed redundant mean()
+        if self.config.debug_mode:
+            self.logger.debug(f"Guard metrics - Confidence: {confidence:.3f}, Variance: {variance:.3f}")
+
+        return confidence >= confidence_threshold and variance <= variance_threshold
+
     # --- Public Inference Interfaces ---
     async def run_inference_async(self, input_data: Any, priority: int = 0) -> Any:
+        """
+        Processes an inference request asynchronously.
+        Before queuing the request, the input is preprocessed and passed through the guard.
+        If the guard check fails, the request is rejected.
+        """
         try:
-            # Process the input using the preprocessor.
+            # Preprocess the input.
             processed = self.preprocessor(input_data)
             if not isinstance(processed, torch.Tensor):
                 processed = torch.tensor(processed, dtype=torch.float32)
-
-            # Ensure that each request is a single sample with shape equal to self.input_shape.
-            if self.input_shape is not None:
-                sample_expected_dim = len(self.input_shape)  # e.g. (10,) → 1
-                if processed.dim() == sample_expected_dim + 1:
-                    # If there's a batch dimension and it is 1, remove it.
-                    if processed.size(0) == 1:
-                        processed = processed.squeeze(0)
-                    else:
-                        raise ValueError(
-                            f"Input contains a batch dimension > 1: {processed.shape}. "
-                            f"Expected single sample input matching shape {self.input_shape}."
-                        )
-                elif processed.dim() != sample_expected_dim:
-                    raise ValueError(
-                        f"Input shape {processed.shape} doesn't match expected shape {self.input_shape}"
-                    )
-
+#
+#            # Validate input shape.
+#            if self.input_shape is not None:
+#                sample_expected_dim = len(self.input_shape)  # e.g., (10,) → 1
+#                if processed.dim() == sample_expected_dim + 1:
+#                    # If there's a batch dimension and it is 1, remove it.
+#                    if processed.size(0) == 1:
+#                        processed = processed.squeeze(0)
+#                    else:
+#                        raise ValueError(
+#                            f"Input contains a batch dimension > 1: {processed.shape}. "
+#                            f"Expected single sample input matching shape {self.input_shape}."
+#                        )
+#                elif processed.dim() != sample_expected_dim:
+#                    raise ValueError(
+#                        f"Input shape {processed.shape} doesn't match expected shape {self.input_shape}"
+#                    )
+#
+            # --- Guard Check ---
             loop = asyncio.get_event_loop()
+            is_safe = await loop.run_in_executor(self.executor, self._guard_sample, processed)
+            if not is_safe:
+                self.logger.warning("Guard: Potential adversarial input detected. Using default response.")
+                # Generate a default prediction (example: uniform probabilities)
+                num_classes = self.config.num_classes  # Assuming num_classes is available in config
+                default_probs = torch.ones(1, num_classes, device=self.device) / num_classes
+                return default_probs
+            # Proceed with normal processing if the sample is safe
+
+            # If the guard check passes, create a future and enqueue the request.
             future = loop.create_future()
             await self.request_queue.put(RequestItem(input=processed, future=future, priority=priority))
             self.logger.debug(f"Queued request. Queue size: {self.request_queue.qsize()}")
@@ -579,7 +693,6 @@ class InferenceEngine:
                 torch.cuda.empty_cache()
         self.logger.info("Cleanup completed.")
 
-
 # ------------------------------------------------------------------------------
 # Example Usage
 # ------------------------------------------------------------------------------
@@ -603,7 +716,7 @@ async def main():
 
     # Generate 100 valid inputs (each with 10 features).
     # Note: Each input is a 1D tensor, so we unsqueeze(0) to get a batch dimension.
-    inputs = [torch.randn(10, device="cuda") for _ in range(100)]
+    inputs = [torch.randn(100, device="cuda") for _ in range(100)]
 
     # Run asynchronous inference on all inputs concurrently.
     # Wrap each input with unsqueeze(0) so that it has shape [1, 10]
