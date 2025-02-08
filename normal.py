@@ -7,27 +7,24 @@ from typing import Optional, Tuple
 
 import torch
 import torchvision.models as models
-import torchvision.transforms as transforms
-from PIL import Image
+import torchvision
+from packaging import version  # Used to check the torchvision version
 
 # -----------------------------------------------------------------------------
-# Configuration Dataclasses
+# Configuration Dataclass
 # -----------------------------------------------------------------------------
 
 @dataclass
 class BenchmarkConfig:
     num_inputs: int = 4             # Number of inference requests for timing
     warmup_runs: int = 8
-    input_channels: int = 4
+    input_channels: int = 3         # Use 3 channels by default
     input_height: int = 224
     input_width: int = 224
-    batch_size: int = 64           # Batch size for inference
-    use_tensorrt: bool = False
-    enable_dynamic_batching: bool = False
-    profile: bool = False
+    batch_size: int = 64            # Batch size for inference
     async_mode: bool = True
     sync_mode: bool = True
-    max_concurrent: int = 16       # Maximum number of concurrent async requests
+    max_concurrent: int = 16        # Maximum number of concurrent asynchronous requests
     log_file: Optional[str] = "benchmark.log"
     debug_mode: bool = True
 
@@ -42,19 +39,19 @@ def setup_logging(log_file: Optional[str] = None, debug_mode: bool = False) -> l
     logger = logging.getLogger("InferenceSystem")
     logger.setLevel(logging.DEBUG if debug_mode else logging.INFO)
 
-    # Clear existing handlers
+    # Clear existing handlers.
     if logger.hasHandlers():
         logger.handlers.clear()
 
     formatter = logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s")
 
-    # Console handler
+    # Console handler.
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.DEBUG if debug_mode else logging.INFO)
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
-    # File handler (if log_file provided)
+    # File handler (if a log_file is provided).
     if log_file:
         fh = logging.FileHandler(log_file)
         fh.setLevel(logging.DEBUG)
@@ -69,13 +66,18 @@ def setup_logging(log_file: Optional[str] = None, debug_mode: bool = False) -> l
 
 def load_model(device: torch.device, logger: logging.Logger, input_channels: int) -> torch.nn.Module:
     """
-    Loads a pre-trained ResNet18 model from Torchvision and adapts its first convolution
-    layer if the expected input channels differ from 3.
+    Loads a pre-trained ResNet50 model from Torchvision and adapts its first convolution
+    layer if the expected number of input channels is different from 3.
     """
-    logger.info("Loading pre-trained ResNet18 model from Torchvision")
+    logger.info("Loading pre-trained ResNet50 model from Torchvision")
     try:
-        model = models.resnet18(pretrained=True)
-        # If the synthetic input has a different number of channels, modify the first conv layer.
+        # Use the new weights API if available (Torchvision >= 0.13), else fallback.
+        if version.parse(torchvision.__version__) >= version.parse("0.13"):
+            weights = models.ResNet50_Weights.DEFAULT
+            model = models.resnet50(weights=weights)
+        else:
+            model = models.resnet50(pretrained=True)
+
         if input_channels != 3:
             old_conv = model.conv1
             new_conv = torch.nn.Conv2d(
@@ -86,15 +88,26 @@ def load_model(device: torch.device, logger: logging.Logger, input_channels: int
                 padding=old_conv.padding,
                 bias=(old_conv.bias is not None)
             )
-            # Copy pretrained weights for the first 3 channels.
-            new_conv.weight.data[:, :3, :, :] = old_conv.weight.data
-            # For the extra channel(s), initialize as the mean of the first 3 channels.
-            new_conv.weight.data[:, 3:input_channels, :, :] = old_conv.weight.data.mean(dim=1, keepdim=True)
+            if input_channels >= 3:
+                # Copy the weights for the first 3 channels.
+                new_conv.weight.data[:, :3, :, :] = old_conv.weight.data
+                if input_channels > 3:
+                    # For extra channels, initialize them as the mean of the first 3 channels,
+                    # and repeat to cover all extra channels.
+                    extra_channels = input_channels - 3
+                    mean_weights = old_conv.weight.data.mean(dim=1, keepdim=True)
+                    new_conv.weight.data[:, 3:input_channels, :, :] = mean_weights.repeat(1, extra_channels, 1, 1)
+            else:
+                new_conv.weight.data = old_conv.weight.data[:, :input_channels, :, :]
             model.conv1 = new_conv
             logger.info("Adjusted model.conv1 to accept %d input channels", input_channels)
 
         model.to(device)
         model.eval()
+
+        if device.type == 'cuda':
+            torch.backends.cudnn.benchmark = True
+
         logger.info("Model loaded successfully on %s", device)
     except Exception as e:
         logger.exception("Failed to load model: %s", e)
@@ -128,14 +141,12 @@ def generate_synthetic_input(b_config: BenchmarkConfig, device: torch.device,
 def predict(input_batch: torch.Tensor, model: torch.nn.Module, device: torch.device,
             logger: logging.Logger) -> torch.Tensor:
     """
-    Runs inference on a single input batch.
+    Runs inference on a single input batch and returns the computed probabilities
+    for the first sample in the batch.
     """
-    input_batch = input_batch.to(device)
-    logger.debug("Running inference...")
     try:
         with torch.no_grad():
             output = model(input_batch)
-            # Compute probabilities from the first example in the batch.
             probabilities = torch.nn.functional.softmax(output[0], dim=0)
     except Exception as e:
         logger.exception("Error during model inference: %s", e)
@@ -159,19 +170,26 @@ def synchronous_speed_test(model: torch.nn.Module, input_batch: torch.Tensor,
     """
     logger.info("Starting synchronous speed test: warmup_runs=%d, test_runs=%d", warmup_runs, test_runs)
     try:
-        # Warmup runs
-        with torch.no_grad():
-            for _ in range(warmup_runs):
-                _ = predict(input_batch, model, device, logger)
-        # Timed runs
+        # Warmup runs.
+        for _ in range(warmup_runs):
+            _ = predict(input_batch, model, device, logger)
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+
         start_time = time.time()
-        with torch.no_grad():
-            for _ in range(test_runs):
-                _ = predict(input_batch, model, device, logger)
+        for _ in range(test_runs):
+            _ = predict(input_batch, model, device, logger)
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+
         elapsed = time.time() - start_time
         throughput = test_runs / elapsed
         sec_per_pred = elapsed / test_runs
         logger.info("Synchronous speed test completed in %.4f seconds", elapsed)
+
+        # Free any unused GPU memory.
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
     except Exception as e:
         logger.exception("Synchronous speed test failed: %s", e)
         raise
@@ -190,12 +208,16 @@ def asynchronous_speed_test(model: torch.nn.Module, input_batch: torch.Tensor,
     """
     logger.info("Starting asynchronous speed test: warmup_runs=%d, test_runs=%d", warmup_runs, test_runs)
     try:
-        # Warmup runs using asynchronous calls.
+        # Warmup runs.
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
-            warmup_futures = [executor.submit(predict, input_batch, model, device, logger)
-                              for _ in range(warmup_runs)]
+            warmup_futures = [
+                executor.submit(predict, input_batch, model, device, logger)
+                for _ in range(warmup_runs)
+            ]
             for future in as_completed(warmup_futures):
                 _ = future.result()
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
     except Exception as e:
         logger.exception("Asynchronous warmup failed: %s", e)
         raise
@@ -203,14 +225,23 @@ def asynchronous_speed_test(model: torch.nn.Module, input_batch: torch.Tensor,
     start_time = time.time()
     try:
         with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
-            futures = [executor.submit(predict, input_batch, model, device, logger)
-                       for _ in range(test_runs)]
+            futures = [
+                executor.submit(predict, input_batch, model, device, logger)
+                for _ in range(test_runs)
+            ]
             for future in as_completed(futures):
                 _ = future.result()
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+
         elapsed = time.time() - start_time
         throughput = test_runs / elapsed
         sec_per_pred = elapsed / test_runs
         logger.info("Asynchronous speed test completed in %.4f seconds", elapsed)
+
+        # Free any unused GPU memory.
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
     except Exception as e:
         logger.exception("Asynchronous speed test failed: %s", e)
         raise
@@ -221,40 +252,54 @@ def asynchronous_speed_test(model: torch.nn.Module, input_batch: torch.Tensor,
 # -----------------------------------------------------------------------------
 
 def main() -> None:
-    # In this version we perform benchmark tests only.
-    benchmark_mode = True
+    # Update configuration as requested.
+    bench_config = BenchmarkConfig(
+        num_inputs=2048 * 4,           # Larger number of test inputs
+        warmup_runs=10,
+        input_channels=3,
+        input_height=224,
+        input_width=224,
+        batch_size=64,
+        async_mode=True,
+        sync_mode=True,
+        max_concurrent=256,
+        log_file="benchmark.log",
+        debug_mode=True
+    )
+    # Note: The parameters 'use_tensorrt', 'enable_dynamic_batching', and 'profile' are
+    # not added because no new variables should be introduced.
 
-    # Create benchmark configuration using the provided settings.
-    bench_config = BenchmarkConfig()
-    
-    # Setup logging.
-    log_file = bench_config.log_file if benchmark_mode else "inference_system.log"
-    logger = setup_logging(log_file=log_file, debug_mode=bench_config.debug_mode)
-    logger.info("Starting Inference System (Pre-trained ResNet18)")
-    logger.info("Benchmark mode: %s", benchmark_mode)
+    logger = setup_logging(bench_config.log_file, bench_config.debug_mode)
+    logger.info("Starting Inference System (Pre-trained ResNet50)")
+    logger.info("Benchmark mode enabled with configuration: %s", bench_config)
 
-    # Choose the device.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Using device: %s", device)
 
-    # Load a pre-trained ResNet18 model and adapt it for the configured number of input channels.
+    # If running on GPU, reduce the number of concurrent asynchronous tasks to avoid GPU memory exhaustion.
+    if device.type == 'cuda':
+        safe_max_concurrent = 16
+        if bench_config.max_concurrent > safe_max_concurrent:
+            logger.warning(
+                "Reducing max_concurrent from %d to %d to avoid GPU memory exhaustion",
+                bench_config.max_concurrent, safe_max_concurrent
+            )
+            bench_config.max_concurrent = safe_max_concurrent
+
     try:
         model = load_model(device, logger, bench_config.input_channels)
     except Exception:
         logger.error("Exiting due to model load failure.")
         sys.exit(1)
 
-    # Generate synthetic input for benchmarking.
     try:
         input_batch = generate_synthetic_input(bench_config, device, logger)
     except Exception:
         logger.error("Exiting due to synthetic input generation failure.")
         sys.exit(1)
 
-    # For benchmarking, use bench_config.num_inputs as the number of measured inferences.
     test_runs = bench_config.num_inputs
 
-    # Run asynchronous speed test (if enabled).
     if bench_config.async_mode:
         try:
             async_duration, async_throughput, async_sec_per_pred = asynchronous_speed_test(
@@ -269,7 +314,6 @@ def main() -> None:
             logger.error("Exiting due to asynchronous speed test failure.")
             sys.exit(1)
 
-    # Run synchronous speed test (if enabled).
     if bench_config.sync_mode:
         try:
             sync_duration, sync_throughput, sync_sec_per_pred = synchronous_speed_test(

@@ -211,7 +211,8 @@ class InferenceEngine:
             self.executor = ProcessPoolExecutor(max_workers=self.config.num_workers)
         else:
             self.executor = ThreadPoolExecutor(max_workers=self.config.num_workers)
-
+        self.guard_executor = ThreadPoolExecutor(max_workers=self.config.num_workers)
+        self.inference_executor = ThreadPoolExecutor(max_workers=self.config.num_workers)
         # Use an asyncio PriorityQueue to enable request prioritization.
         self.request_queue: asyncio.PriorityQueue["RequestItem"] = asyncio.PriorityQueue(maxsize=self.config.queue_size)
 
@@ -230,26 +231,38 @@ class InferenceEngine:
         """
         Automatically select an available device, falling back to CPU if no CUDA device is available.
         """
-        if device is None:
-            if torch.cuda.is_available():
-                return torch.device('cuda:0')
-            return torch.device('cpu')
+        device = device or ('cuda:0' if torch.cuda.is_available() else 'cpu')
         return torch.device(device)
-    
+
     def _prepare_model(self, model: nn.Module) -> nn.Module:
         """
-        Moves the model to the selected device. Wraps the model in DataParallel if multi-GPU is enabled.
+        Moves the model to the selected device and sets it to evaluation mode.
+        If multi-GPU is enabled and available, wraps the model in DataParallel.
         A stub is provided for DistributedDataParallel.
         """
-        model = model.to(self.device).eval()
-        if self.config.use_multigpu and torch.cuda.device_count() > 1:
-            if self.config.multigpu_strategy.lower() == 'dataparallel':
-                self.logger.info(f"Using DataParallel on devices: {self.config.device_ids}")
-                model = nn.DataParallel(model, device_ids=self.config.device_ids)
-            elif self.config.multigpu_strategy.lower() == 'distributed':
+        # Move the model to the target device.
+        model = model.to(self.device)
+
+        # Set the model to evaluation mode.
+        model.eval()
+
+        # Retrieve configuration options.
+        use_multigpu = self.config.use_multigpu
+        device_ids = self.config.device_ids
+        strategy = self.config.multigpu_strategy.lower() if hasattr(self.config, 'multigpu_strategy') else 'dataparallel'
+
+        # Only proceed with multi-GPU setup if the device is CUDA and more than one GPU is available.
+        if use_multigpu and self.device.type == 'cuda' and torch.cuda.device_count() > 1:
+            if strategy == 'dataparallel':
+                self.logger.info(f"Using DataParallel on devices: {device_ids}")
+                model = nn.DataParallel(model, device_ids=device_ids)
+            elif strategy == 'distributed':
                 raise NotImplementedError("DistributedDataParallel support is not yet implemented.")
             else:
                 self.logger.warning(f"Unknown multi-GPU strategy: {self.config.multigpu_strategy}")
+        elif use_multigpu and self.device.type != 'cuda':
+            self.logger.warning("Multi-GPU is enabled but the selected device is not CUDA.")
+
         return model
 
     def _log_device_info(self):
@@ -257,11 +270,20 @@ class InferenceEngine:
         Log useful details about the selected device.
         """
         self.logger.info(f"Running on device: {self.device}")
+        
         if self.device.type == 'cuda':
+            # Determine the GPU index; default to 0 if not specified.
             device_index = self.device.index if self.device.index is not None else 0
-            self.logger.info(f"GPU Name: {torch.cuda.get_device_name(device_index)}")
-            self.logger.info(f"CUDA Version: {torch.version.cuda}")
-            total_mem_gb = torch.cuda.get_device_properties(device_index).total_memory / 1e9
+            
+            # Retrieve device properties once.
+            device_name = torch.cuda.get_device_name(device_index)
+            device_props = torch.cuda.get_device_properties(device_index)
+            cuda_version = torch.version.cuda
+            
+            total_mem_gb = device_props.total_memory / 1e9
+            
+            self.logger.info(f"GPU Name: {device_name}")
+            self.logger.info(f"CUDA Version: {cuda_version}")
             self.logger.info(f"Total GPU Memory: {total_mem_gb:.2f} GB")
 
     def _detect_input_shape(self) -> Optional[torch.Size]:
@@ -270,24 +292,31 @@ class InferenceEngine:
         First, try running a dummy input. If that fails, fall back to heuristics.
         """
         self.logger.debug("Detecting input shape via dummy run...")
+        # Use a dummy input with an arbitrary shape. The shape can be adjusted if the expected input dimensionality is known.
         dummy_input = torch.randn(1, 10, device=self.device)
         try:
             with torch.no_grad():
                 _ = self.model(dummy_input)
+            # Exclude the batch dimension.
             shape = dummy_input.shape[1:]
             self.logger.debug(f"Inferred input shape from dummy run: {shape}")
             return shape
         except Exception as e:
             self.logger.debug(f"Dummy run failed: {e}; scanning modules for hints...")
+
+            # Fall back to scanning the model's modules for hints.
             for module in self.model.modules():
-                if isinstance(module, nn.Linear):
+                # If a Linear layer is found, infer the input shape from its in_features.
+                if hasattr(module, 'in_features'):
                     shape = (module.in_features,)
                     self.logger.debug(f"Inferred shape from Linear layer: {shape}")
                     return torch.Size(shape)
+                # If a Conv2d layer is found, assume a common image shape.
                 elif isinstance(module, nn.Conv2d):
                     shape = (3, 224, 224)
                     self.logger.debug(f"Inferred default shape from Conv2d: {shape}")
                     return torch.Size(shape)
+
         self.logger.warning("Failed to detect input shape; please specify one via preprocessor or config.")
         return None
 
@@ -299,48 +328,63 @@ class InferenceEngine:
             self.logger.warning("No input shape detected; skipping warmup.")
             return
 
-        if self.device.type == 'cuda':
-            self.logger.info(f"Starting warmup with {self.config.warmup_runs} iterations...")
-            batch_shape = (self.config.batch_size,) + tuple(self.input_shape)
-            dummy_input = torch.randn(*batch_shape, device=self.device)
-            with torch.no_grad():
-                for _ in range(self.config.warmup_runs):
-                    _ = self.model(dummy_input)
-            torch.cuda.synchronize()
-            self.logger.info("Warmup completed.")
+        self.logger.info(f"Starting warmup with {self.config.warmup_runs} iterations...")
+        # Build the dummy input batch using the configured batch size and detected input shape.
+        batch_shape = (self.config.batch_size,) + tuple(self.input_shape)
+        dummy_input = torch.randn(*batch_shape, device=self.device)
 
-    # --- Optimized TensorRT Compilation ---
+        with torch.no_grad():
+            for i in range(self.config.warmup_runs):
+                _ = self.model(dummy_input)
+                self.logger.debug(f"Warmup iteration {i + 1}/{self.config.warmup_runs} completed.")
+
+        # If running on GPU, synchronize to ensure all operations have finished.
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize()
+        self.logger.info("Warmup completed.")
+
     def _compile_trt_model(self) -> Union[torch.nn.Module, tuple]:
         """
         Compiles the PyTorch model with TensorRT.
-        Supports multi-input models if `trt_input_shapes` is provided in the config.
-        Returns a tuple (compiled_model, compile_time).
+        Supports multi-input models if `trt_input_shape` is provided in the config.
+        
+        Returns:
+            A tuple (compiled_model, compile_time).
         """
-        import torch_tensorrt  # Import here to avoid unnecessary dependency if TRT is not used.
+        import torch_tensorrt  # Import here to avoid dependency if TRT is not used.
 
+        # Build a list of TensorRT input specifications.
         if self.config.trt_input_shape is None:
-            # Assume a single-input model using the detected or configured input shape.
-            inputs = [torch_tensorrt.Input(
-                min_shape=self.input_shape,
-                opt_shape=self.input_shape,
-                max_shape=self.input_shape,
-                dtype=torch.float32
-            )]
+            # Single-input model: use the detected or configured input shape.
+            inputs = [
+                torch_tensorrt.Input(
+                    min_shape=self.input_shape,
+                    opt_shape=self.input_shape,
+                    max_shape=self.input_shape,
+                    dtype=torch.float32
+                )
+            ]
         else:
             inputs = []
             for shape_tuple in self.config.trt_input_shape:
                 try:
                     min_shape, opt_shape, max_shape = shape_tuple
                 except Exception as e:
-                    raise ValueError("Each TensorRT input shape must be a tuple: (min_shape, opt_shape, max_shape).") from e
-                inputs.append(torch_tensorrt.Input(
-                    min_shape=torch.Size(min_shape),
-                    opt_shape=torch.Size(opt_shape),
-                    max_shape=torch.Size(max_shape),
-                    dtype=torch.float32
-                ))
+                    raise ValueError(
+                        "Each TensorRT input shape must be a tuple: (min_shape, opt_shape, max_shape)."
+                    ) from e
+
+                inputs.append(
+                    torch_tensorrt.Input(
+                        min_shape=torch.Size(min_shape),
+                        opt_shape=torch.Size(opt_shape),
+                        max_shape=torch.Size(max_shape),
+                        dtype=torch.float32
+                    )
+                )
+
         start_time = time.time()
-        # Compile the model to use FP16 if desired.
+        # Compile the model, enabling FP16 if desired.
         compiled_model = torch_tensorrt.compile(
             self.model,
             inputs=inputs,
@@ -349,263 +393,360 @@ class InferenceEngine:
         compile_time = time.time() - start_time
         return compiled_model, compile_time
 
-    # --- Advanced Dynamic Batch Sizing ---
     def dynamic_batch_size(self, sample_tensor: torch.Tensor) -> int:
         """
-        Determine a batch size based on free GPU memory, queue length,
-        and a PID controller adjustment.
+        Optimized dynamic batch size computation that determines a batch size based on:
+        - Available GPU memory (if on CUDA),
+        - The current request queue length,
+        - A PID controller adjustment.
+        
+        Improvements:
+        - Cache the current queue size to avoid repeated calls.
+        - Use list comprehension to compute memory-based batch sizes.
+        - Compute delta time (dt) more cleanly with a default value.
         """
+        # Cache current queue size once.
+        current_queue = self.request_queue.qsize()
+        
+        # --- Memory-Based Computation ---
         if self.device.type == 'cuda':
-            sample_bytes = sample_tensor.element_size() * sample_tensor.nelement()
-            batch_sizes = []
-            for device_id in self.config.device_ids:
-                props = torch.cuda.get_device_properties(device_id)
-                total_mem = props.total_memory
-                used_mem = torch.cuda.memory_allocated(device_id)
-                free_mem = total_mem - used_mem
-                possible_batch = max(int(free_mem // sample_bytes), 1)
-                batch_sizes.append(possible_batch)
-            memory_based = min(batch_sizes)
+            # Compute the memory footprint of one sample once.
+            sample_bytes = sample_tensor.element_size() * sample_tensor.numel()
+            # Compute the maximum number of samples that can fit on each GPU.
+            possible_batches = [
+                max(
+                    (torch.cuda.get_device_properties(device_id).total_memory -
+                    torch.cuda.memory_allocated(device_id)) // sample_bytes,
+                    1
+                )
+                for device_id in self.config.device_ids
+            ]
+            memory_based = min(possible_batches)
         else:
             memory_based = self.config.max_batch_size
 
-        # Incorporate queued requests.
+        # --- Queue-Based Computation ---
+        # Add +1 to account for the current incoming request.
         queue_based = min(
             self.config.max_batch_size,
-            max(self.config.min_batch_size, self.request_queue.qsize() + 1)
+            max(self.config.min_batch_size, current_queue + 1)
         )
+
+        # Base batch size is the lesser of memory- and queue-based sizes.
         base_batch_size = min(memory_based, queue_based)
 
-        # Use PID controller to adjust the batch size gradually.
-        utilization = (self.request_queue.qsize() / self.config.queue_size) * 100.0
-        now = time.time()
-        dt = getattr(self, "_last_autoscale_time", now - 1.0)
+        # --- PID Controller Adjustment ---
+        # Use the cached queue length to compute utilization.
+        utilization = (current_queue / self.config.queue_size) * 100.0
+
+        # Compute dt (delta time) since the last autoscale check.
+        now = time.monotonic()
+        last_time = getattr(self, "_last_autoscale_time", None)
+        dt = now - last_time if last_time is not None else 1.0
         self._last_autoscale_time = now
+
+        # Get the PID adjustment.
         pid_adjustment = self.config.pid_controller.update(utilization, dt)
+
+        # Adjust the base batch size with the PID controller output.
         new_batch = int(round(base_batch_size + pid_adjustment))
         new_batch = max(self.config.min_batch_size, min(new_batch, self.config.max_batch_size))
+
         if self.config.debug_mode:
             self.logger.debug(
-                f"Dynamic batch size: memory_based={memory_based}, queue_based={queue_based}, "
-                f"utilization={utilization:.1f}%, pid_adjustment={pid_adjustment:.2f} -> {new_batch}"
+                f"Optimized dynamic batch size computed: memory_based={memory_based}, "
+                f"queue_based={queue_based}, utilization={utilization:.1f}%, "
+                f"pid_adjustment={pid_adjustment:.2f} -> new_batch={new_batch}"
             )
+
         return new_batch
 
     # --- Batch Processing and Inference ---
     async def _process_batches(self):
         """
-        Asynchronously aggregate requests into batches and perform inference.
-        Uses advanced dynamic batching (with timeout and partial batches).
+        Optimized asynchronous batching loop that:
+        - Minimizes waiting by quickly draining the queue.
+        - Yields control to allow more items to accumulate if near the desired batch size.
+        - Moves the input tensor to the proper device in a non-blocking way.
         """
-        self.logger.info("Starting batch processing loop...")
+        self.logger.info("Starting optimized batch processing loop...")
+        
         while True:
-            batch_items: List["RequestItem"] = []
             try:
+                # Wait for the first request with a short timeout.
                 first_item = await asyncio.wait_for(
                     self.request_queue.get(), timeout=self.config.timeout
                 )
-                batch_items.append(first_item)
             except asyncio.TimeoutError:
-                continue
+                continue  # No request arrived within the timeout period.
 
+            batch_items = [first_item]
+            
+            # Compute the desired batch size.
             if self.config.enable_dynamic_batching:
                 try:
-                    sample_tensor = first_item.input
-                    desired_batch_size = self.dynamic_batch_size(sample_tensor)
+                    desired_batch_size = self.dynamic_batch_size(first_item.input)
                 except Exception as e:
-                    self.logger.error(f"Error computing dynamic batch size: {e}")
+                    self.logger.error("Error computing dynamic batch size", exc_info=True)
                     desired_batch_size = self.config.batch_size
             else:
                 desired_batch_size = self.config.batch_size
 
+            # Drain the queue immediately for available requests.
             while len(batch_items) < desired_batch_size:
                 try:
-                    next_item = await asyncio.wait_for(self.request_queue.get(), timeout=0.01)
+                    next_item = self.request_queue.get_nowait()
                     batch_items.append(next_item)
-                except asyncio.TimeoutError:
+                except asyncio.QueueEmpty:
                     break
 
+            # Yield control to catch any straggling requests, but only once.
+            if len(batch_items) < desired_batch_size:
+                await asyncio.sleep(0)
+                while len(batch_items) < desired_batch_size:
+                    try:
+                        next_item = self.request_queue.get_nowait()
+                        batch_items.append(next_item)
+                    except asyncio.QueueEmpty:
+                        break
+
+            # Extract inputs and futures from the collected batch.
+            inputs = [item.input for item in batch_items]
+            futures = [item.future for item in batch_items]
+
             try:
-                inputs = [item.input for item in batch_items]
-                futures = [item.future for item in batch_items]
-                batch_tensor = torch.stack(inputs).to(self.device)
+                # Stack the inputs into a single tensor.
+                batch_tensor = torch.stack(inputs)
+                # Transfer tensor to the target device if not already there.
+                if batch_tensor.device != self.device:
+                    batch_tensor = batch_tensor.to(self.device, non_blocking=True)
+                
+                # Offload the inference to the executor.
+                loop = asyncio.get_running_loop()
+                outputs = await loop.run_in_executor(self.executor, self._infer_batch, batch_tensor)
+                
+                # Postprocess each output.
+                results = []
+                for output in outputs:
+                    result = self.postprocessor(output)
+                    # Ensure a consistent batch dimension.
+                    if result.dim() == 1:
+                        result = result.unsqueeze(0)
+                    results.append(result)
 
-                loop = asyncio.get_event_loop()
-                inference_fn = lambda: self._infer_batch(batch_tensor)
-                outputs = await loop.run_in_executor(self.executor, inference_fn)
-
-                results = [self.postprocessor(output) for output in outputs]
+                # Set the result for each corresponding future.
                 for fut, res in zip(futures, results):
                     if not fut.done():
                         fut.set_result(res)
                 self.logger.debug(f"Processed batch of {len(batch_items)} items.")
             except Exception as e:
                 self.logger.error("Batch processing error", exc_info=True)
+                # Propagate the exception to all pending futures.
                 for fut in futures:
                     if not fut.done():
                         fut.set_exception(e)
 
+ 
     def _infer_batch(self, batch_tensor: torch.Tensor) -> torch.Tensor:
         """
         Perform optimized inference on a batch of inputs with proper precision context.
         
         Features:
-        - Device-aware mixed precision using autocast
-        - Inference-mode optimization
-        - Tensor compatibility checks
+        - Device-aware mixed precision using autocast.
+        - Inference-mode optimization.
+        - Tensor compatibility checks.
         
         Args:
             batch_tensor: Input tensor of shape [batch_size, ...]
             
         Returns:
-            Model outputs tensor
+            Model outputs tensor.
         
         Raises:
-            RuntimeError: If tensor device mismatch occurs
+            RuntimeError: If tensor device mismatch occurs.
         """
-        # Validate device compatibility
+        # Validate device compatibility.
         if batch_tensor.device != self.device:
-            raise RuntimeError(f"Input tensor device {batch_tensor.device} "
-                            f"doesn't match engine device {self.device}")
+            raise RuntimeError(
+                f"Input tensor device {batch_tensor.device} doesn't match engine device {self.device}"
+            )
         
-        # Unified context management
-        # Unified context management
-        with torch.inference_mode(), \
-            torch.amp.autocast(device_type=self.device.type, enabled=self.use_fp16 and self.device.type == "cuda"):
-            # For non-CUDA devices or disabled FP16, autocast has no effect
+        # Determine whether to enable autocasting for mixed precision.
+        autocast_enabled = self.use_fp16 and self.device.type == "cuda"
+        
+        # Use inference mode and autocast for optimized inference.
+        with torch.inference_mode(), torch.amp.autocast(device_type=self.device.type, enabled=autocast_enabled):
             return self.model(batch_tensor)
-
-
 
     # --- Autoscaling Batch Size using PID ---
     async def _autoscale(self):
         """
-        Periodically check the queue and adjust the configured batch size using a PID controller.
+        Optimized zero-autoscaling: immediately adjust batch size based on the current queue load.
+        - When the queue is empty or below a low threshold, set the batch size to the minimum.
+        - When the queue is above a high threshold, set it to the maximum.
+        - For in-between utilization, linearly interpolate the batch size.
         """
-        self.logger.info("Starting autoscaling task...")
-        while True:
-            start_time = time.time()
-            await asyncio.sleep(self.config.autoscale_interval)
-            current_queue = self.request_queue.qsize()
-            utilization = (current_queue / self.config.queue_size) * 100.0
+        self.logger.info("Starting zero-autoscaling task...")
+        cfg = self.config
 
-            pid_adjustment = self.config.pid_controller.update(utilization, self.config.autoscale_interval)
-            new_batch_size = int(round(self.config.batch_size + pid_adjustment))
-            new_batch_size = max(self.config.min_batch_size, min(new_batch_size, self.config.max_batch_size))
-            if new_batch_size != self.config.batch_size:
-                old_size = self.config.batch_size
-                self.config.batch_size = new_batch_size
-                self.logger.info(f"Autoscale adjusted batch size from {old_size} to {new_batch_size} "
-                                 f"(queue utilization: {utilization:.1f}%)")
-            else:
-                self.logger.debug(f"No autoscale change (batch size remains {self.config.batch_size}, "
-                                  f"queue utilization: {utilization:.1f}%)")
-            dt = time.time() - start_time
+        while True:
+            try:
+                # Sleep for the defined autoscale interval.
+                await asyncio.sleep(cfg.autoscale_interval)
+                
+                # Get the current queue size and compute utilization.
+                current_queue = self.request_queue.qsize()
+                utilization = (current_queue / cfg.queue_size) * 100.0
+
+                # --- Zero-autoscaling logic ---
+                # Case 1: Low load (or no load) — scale down immediately.
+                if current_queue == 0 or utilization < cfg.queue_size_threshold_low:
+                    if cfg.batch_size != cfg.min_batch_size:
+                        self.logger.info(
+                            f"Queue utilization low ({utilization:.1f}%), setting batch size to minimum: {cfg.min_batch_size}"
+                        )
+                        cfg.batch_size = cfg.min_batch_size
+                    continue
+
+                # Case 2: High load — scale up immediately.
+                elif utilization > cfg.queue_size_threshold_high:
+                    if cfg.batch_size != cfg.max_batch_size:
+                        self.logger.info(
+                            f"Queue utilization high ({utilization:.1f}%), setting batch size to maximum: {cfg.max_batch_size}"
+                        )
+                        cfg.batch_size = cfg.max_batch_size
+                    continue
+
+                # Case 3: Moderate load — linearly interpolate between min and max batch sizes.
+                else:
+                    # Compute the scaling ratio between the low and high thresholds.
+                    scale_ratio = ((utilization - cfg.queue_size_threshold_low) /
+                                (cfg.queue_size_threshold_high - cfg.queue_size_threshold_low))
+                    new_batch_size = int(cfg.min_batch_size + scale_ratio * (cfg.max_batch_size - cfg.min_batch_size))
+                    new_batch_size = max(cfg.min_batch_size, min(new_batch_size, cfg.max_batch_size))
+
+                    if new_batch_size != cfg.batch_size:
+                        self.logger.info(
+                            f"Queue utilization moderate ({utilization:.1f}%), adjusting batch size to {new_batch_size}"
+                        )
+                        cfg.batch_size = new_batch_size
+
+            except asyncio.CancelledError:
+                self.logger.info("Autoscale task cancelled.")
+                break
+            except Exception as e:
+                self.logger.error("Error in autoscale task", exc_info=True)
+
 
     # --- Adversarial Guard: Test-Time Augmentation for Inference ---
     def _guard_sample(self, processed: torch.Tensor) -> bool:
         """
-        Apply diversified test-time augmentations and analyze prediction consistency 
-        to detect adversarial samples. Returns True if the sample passes the guard.
+        Optimized guard sample: Applies test-time augmentations in a vectorized manner.
+        
+        Instead of performing a loop with multiple forward passes (one per augmentation),
+        all augmentations are generated and processed in a single batched forward pass,
+        thereby reducing inference overhead and improving latency.
         """
-        # Configurable parameters (set via config or instance variables)
-        num_augmentations = self.config.guard_num_augmentations
-        noise_level_range = self.config.guard_noise_level_range
-        dropout_rate = self.config.guard_dropout_rate
-        flip_prob = self.config.guard_flip_prob
-        confidence_threshold = self.config.guard_confidence_threshold
-        variance_threshold = self.config.guard_variance_threshold
-        input_range = self.config.guard_input_range
+        # Retrieve configuration parameters.
+        cfg = self.config
+        num_augmentations = cfg.guard_num_augmentations
+        noise_level_range = cfg.guard_noise_level_range
+        dropout_rate = cfg.guard_dropout_rate
+        flip_prob = cfg.guard_flip_prob
+        confidence_threshold = cfg.guard_confidence_threshold
+        variance_threshold = cfg.guard_variance_threshold
+        input_range = cfg.guard_input_range
 
-        # Ensure batch dimension and device placement
-        sample = processed.unsqueeze(0) if processed.dim() == len(self.input_shape) else processed
+        # Ensure the sample has a batch dimension.
+        # If processed tensor has shape (*input_shape), add a batch dimension.
+        if processed.dim() == len(self.input_shape):
+            sample = processed.unsqueeze(0)
+        else:
+            sample = processed
         sample = sample.to(self.device)
 
-        predictions = []
-        for _ in range(num_augmentations):
-            augmented = sample.clone()
-            
-            # Random Gaussian noise
-            noise_level = torch.empty(1).uniform_(*noise_level_range).item()
-            augmented += torch.randn_like(augmented) * noise_level
-            
-            # Random dropout
-            if torch.rand(1).item() < 0.3:  # 30% chance to apply dropout
-                augmented[torch.rand_like(augmented) < dropout_rate] = 0
-                
-            # Random horizontal flip (for image data)
-            if len(self.input_shape) >= 2 and torch.rand(1).item() < flip_prob:
-                augmented = torch.flip(augmented, dims=[-1])
+        # Create a batch by repeating the sample for each augmentation.
+        # For a sample with shape [1, ...], this creates a tensor of shape [num_augmentations, ...].
+        batch = sample.repeat(num_augmentations, *(1 for _ in range(sample.dim() - 1)))
 
-            # Maintain valid input range
-            augmented = torch.clamp(augmented, *input_range)
+        # ---- Vectorized Augmentations ----
 
-            # Get prediction
-            with torch.no_grad():
-                if self.use_fp16 and self.device.type == "cuda":
-                    with torch.cuda.amp.autocast():
-                        pred = self.model(augmented)
-                else:
-                    pred = self.model(augmented)
-            pred_probs = torch.softmax(pred, dim=1)
-            predictions.append(pred_probs)
+        # 1. Random Gaussian Noise:
+        #    Generate one noise level per augmentation and broadcast it over the sample dimensions.
+        noise_levels = torch.empty(num_augmentations, device=self.device).uniform_(*noise_level_range)
+        noise_levels = noise_levels.view(num_augmentations, *([1] * (batch.dim() - 1)))
+        noise = torch.randn_like(batch) * noise_levels
+        batch = batch + noise
 
-        # Aggregate predictions
-        predictions_tensor = torch.cat(predictions, dim=0)  # Shape: [num_aug, num_classes]
+        # 2. Random Dropout:
+        #    With 30% chance per augmentation, apply dropout to randomly zero-out elements.
+        dropout_flags = torch.rand(num_augmentations, device=self.device) < 0.3
+        if dropout_flags.any():
+            dropout_indices = dropout_flags.nonzero(as_tuple=True)[0]
+            # For the selected augmentations, create a dropout mask.
+            mask = (torch.rand_like(batch[dropout_indices]) >= dropout_rate).float()
+            batch[dropout_indices] = batch[dropout_indices] * mask
 
-        aggregated = predictions_tensor.mean(dim=0)
-        
-        # Calculate metrics
+        # 3. Random Horizontal Flip:
+        #    For image-like data (assumed if input_shape has at least 2 dims), decide per augmentation.
+        if len(self.input_shape) >= 2:
+            flip_flags = torch.rand(num_augmentations, device=self.device) < flip_prob
+            if flip_flags.any():
+                flip_indices = flip_flags.nonzero(as_tuple=True)[0]
+                batch[flip_indices] = torch.flip(batch[flip_indices], dims=[-1])
+
+        # Clamp the augmented batch to the valid input range.
+        batch = torch.clamp(batch, *input_range)
+
+        # ---- Batched Inference ----
+        with torch.no_grad():
+            if self.use_fp16 and self.device.type == "cuda":
+                with torch.cuda.amp.autocast():
+                    preds = self.model(batch)
+            else:
+                preds = self.model(batch)
+
+        # Compute probabilities via softmax.
+        preds_probs = torch.softmax(preds, dim=1)
+
+        # Aggregate predictions by averaging over the augmentations.
+        aggregated = preds_probs.mean(dim=0)
+
+        # Compute guard metrics: highest average probability and variance across augmentations.
         confidence = aggregated.max().item()
-        max_probs = predictions_tensor.max(dim=1)[0]  # Changed dim=2 -> dim=1
-        variance = max_probs.std(dim=0).item()  # Removed redundant mean()
-        if self.config.debug_mode:
+        max_probs = preds_probs.max(dim=1)[0]
+        variance = max_probs.std().item()
+
+        if cfg.debug_mode:
             self.logger.debug(f"Guard metrics - Confidence: {confidence:.3f}, Variance: {variance:.3f}")
 
+        # Return True if the sample passes the guard.
         return confidence >= confidence_threshold and variance <= variance_threshold
 
     # --- Public Inference Interfaces ---
     async def run_inference_async(self, input_data: Any, priority: int = 0) -> Any:
         """
         Processes an inference request asynchronously.
-        Before queuing the request, the input is preprocessed and passed through the guard.
-        If the guard check fails, the request is rejected.
+        The input is preprocessed and passed through the guard in a thread,
+        then queued for batch inference if the guard check passes.
         """
+        loop = asyncio.get_running_loop()
         try:
-            # Preprocess the input.
-            processed = self.preprocessor(input_data)
+            # Preprocess the input in a thread via the executor.
+            processed = await loop.run_in_executor(self.guard_executor, self.preprocessor, input_data)
             if not isinstance(processed, torch.Tensor):
-                processed = torch.tensor(processed, dtype=torch.float32)
-#
-#            # Validate input shape.
-#            if self.input_shape is not None:
-#                sample_expected_dim = len(self.input_shape)  # e.g., (10,) → 1
-#                if processed.dim() == sample_expected_dim + 1:
-#                    # If there's a batch dimension and it is 1, remove it.
-#                    if processed.size(0) == 1:
-#                        processed = processed.squeeze(0)
-#                    else:
-#                        raise ValueError(
-#                            f"Input contains a batch dimension > 1: {processed.shape}. "
-#                            f"Expected single sample input matching shape {self.input_shape}."
-#                        )
-#                elif processed.dim() != sample_expected_dim:
-#                    raise ValueError(
-#                        f"Input shape {processed.shape} doesn't match expected shape {self.input_shape}"
-#                    )
-#
-            # --- Guard Check ---
-            loop = asyncio.get_event_loop()
-            is_safe = await loop.run_in_executor(self.executor, self._guard_sample, processed)
+                processed = torch.as_tensor(processed, dtype=torch.float32)
+
+            # Run the guard check concurrently in the executor.
+            is_safe = await loop.run_in_executor(self.guard_executor, self._guard_sample, processed)
             if not is_safe:
                 self.logger.warning("Guard: Potential adversarial input detected. Using default response.")
-                # Generate a default prediction (example: uniform probabilities)
-                num_classes = self.config.num_classes  # Assuming num_classes is available in config
+                num_classes = self.config.num_classes
                 default_probs = torch.ones(1, num_classes, device=self.device) / num_classes
-                return default_probs
-            # Proceed with normal processing if the sample is safe
+                # Remove the extra batch dimension before returning.
+                return default_probs.squeeze(0)
 
-            # If the guard check passes, create a future and enqueue the request.
+            # Create a future for the response and queue the request.
             future = loop.create_future()
             await self.request_queue.put(RequestItem(input=processed, future=future, priority=priority))
             self.logger.debug(f"Queued request. Queue size: {self.request_queue.qsize()}")
@@ -613,133 +754,130 @@ class InferenceEngine:
 
         except Exception as e:
             self.logger.error("Inference failed", exc_info=True)
-            loop = asyncio.get_event_loop()
-            future = loop.create_future()
-            future.set_exception(e)
-            return await future
+            raise
 
     def run_batch_inference(self, batch: Union[torch.Tensor, List[torch.Tensor]]) -> torch.Tensor:
         """
-        Runs inference on a batch of preprocessed inputs.
-        Ensures that the input is a Tensor (by stacking if a list is provided).
-        This is a synchronous method. For non-blocking behavior, consider wrapping it
-        with an executor or using an async version.
+        Optimized synchronous inference on a batch of preprocessed inputs.
+        
+        Improvements:
+        - Minimizes redundant tensor conversions.
+        - Ensures the batch tensor is contiguous.
+        - Transfers the batch to the correct device using non-blocking calls when appropriate.
+        - Uses torch.inference_mode for maximum inference performance.
+        
+        Args:
+            batch (Union[torch.Tensor, List[torch.Tensor]]): A batch of inputs.
+            
+        Returns:
+            torch.Tensor: The model output.
+        
+        Raises:
+            TypeError: If the batch is not a tensor or a list of tensors.
+            ValueError: If stacking fails due to shape mismatches.
         """
-        # If a list of tensors is provided, stack them into a single tensor.
+        # If a list is provided, convert/stack elements into a single tensor.
         if isinstance(batch, list):
             try:
-                batch = torch.stack(batch, dim=0)
+                # Convert non-tensor items on-the-fly and collect them.
+                tensor_list = [
+                    x if isinstance(x, torch.Tensor) else torch.as_tensor(x, dtype=torch.float32)
+                    for x in batch
+                ]
+                batch = torch.stack(tensor_list, dim=0)
             except Exception as e:
-                raise ValueError("Failed to stack the input list into a tensor. "
-                                "Ensure all elements are tensors with matching dimensions.") from e
+                raise ValueError(
+                    "Failed to stack the input list into a tensor. "
+                    "Ensure all elements are tensors or convertible to tensors with matching dimensions."
+                ) from e
 
-        with torch.no_grad():
+        # Confirm that batch is now a tensor.
+        if not isinstance(batch, torch.Tensor):
+            raise TypeError("The 'batch' must be a torch.Tensor or a list of tensors.")
+
+        # Ensure the tensor is contiguous in memory.
+        batch = batch.contiguous()
+
+        # Transfer the batch to the correct device (non-blocking if on CUDA).
+        if batch.device != self.device:
+            batch = batch.to(self.device, non_blocking=True)
+
+        # Perform inference using torch.inference_mode for optimal performance.
+        with torch.inference_mode():
             output = self.model(batch)
+
         return output
 
+
     def profile_inference(self, inputs: Any) -> Dict[str, float]:
+        # Convert inputs to a tensor without copying if already a tensor.
         if not isinstance(inputs, torch.Tensor):
-            inputs = torch.tensor(inputs, dtype=torch.float32)
+            inputs = torch.as_tensor(inputs, dtype=torch.float32)
 
-        # Ensure the input has a batch dimension.
+        # Ensure the input has a proper batch dimension if an input shape is defined.
         if self.input_shape is not None:
-            expected_dim = len(self.input_shape) + 1
-            while inputs.dim() > expected_dim and inputs.size(0) == 1:
-                inputs = inputs.squeeze(0)
-            if inputs.dim() < expected_dim:
+            expected_dim = len(self.input_shape) + 1  # +1 for batch dimension
+            # If the input is missing a batch dimension, add one.
+            if inputs.dim() == len(self.input_shape):
                 inputs = inputs.unsqueeze(0)
-            elif inputs.dim() > expected_dim:
-                raise ValueError(f"Input shape {inputs.shape} doesn't match expected shape with batch dimension.")
+            elif inputs.dim() != expected_dim:
+                raise ValueError(
+                    f"Input shape {inputs.shape} doesn't match expected shape with batch dimension."
+                )
 
-        with profile(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            record_shapes=True
-        ) as prof:
+        # Run the inference while profiling key parts of the pipeline.
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                    record_shapes=True) as prof:
             with record_function("preprocess"):
                 batch = self.preprocessor(inputs)
                 if not isinstance(batch, torch.Tensor):
-                    batch = torch.tensor(batch, dtype=torch.float32)
+                    batch = torch.as_tensor(batch, dtype=torch.float32)
                 batch = batch.to(self.device)
+
             with record_function("inference"):
                 with torch.no_grad():
                     inference_output = self.model(batch)
+
             with record_function("postprocess"):
                 _ = self.postprocessor(inference_output)
 
-        key_avgs = prof.key_averages()
+        # Gather profiling metrics for each recorded event.
         metrics = {}
+        # Convert the key averages into a dict for easier lookup.
+        stats = {stat.key: stat for stat in prof.key_averages()}
         for evt in ["preprocess", "inference", "postprocess"]:
-            match = [x for x in key_avgs if x.key == evt]
-            metrics[f"{evt}_ms"] = match[0].cpu_time_total / 1000.0 if match else 0.0
-        metrics["total_ms"] = sum(metrics.values())
-        self.logger.debug("Inference profile results:\n" +
-                        "\n".join([f"{k}: {v:.2f} ms" for k, v in metrics.items()]))
+            evt_stat = stats.get(evt)
+            metrics[f"{evt}_ms"] = evt_stat.cpu_time_total / 1000.0 if evt_stat else 0.0
+
+        metrics["total_ms"] = sum(metrics[step] for step in ["preprocess_ms", "inference_ms", "postprocess_ms"])
+
+        self.logger.debug(
+            "Inference profile results:\n" +
+            "\n".join([f"{k}: {v:.2f} ms" for k, v in metrics.items()])
+        )
+        
         return metrics
 
-    def cleanup(self):
-        """
-        Cancel async tasks and release resources.
-        """
+    async def cleanup(self):
         self.logger.info("Cleaning up inference engine resources...")
-        self.batch_processor_task.cancel()
-        self.autoscale_task.cancel()
+
+        # Cancel the tasks if they exist.
+        if self.batch_processor_task is not None:
+            self.batch_processor_task.cancel()
+        if self.autoscale_task is not None:
+            self.autoscale_task.cancel()
+
+        # Await the cancellation to ensure tasks are properly cleaned up.
+        await asyncio.gather(
+            *(t for t in [self.batch_processor_task, self.autoscale_task] if t is not None),
+            return_exceptions=True
+        )
+
+        # Shut down the executor.
         self.executor.shutdown(wait=False)
+
+        # Clear CUDA caches if needed.
         if self.device.type == 'cuda':
-            if isinstance(self.model, nn.DataParallel):
-                for device_id in self.model.device_ids:
-                    with torch.cuda.device(device_id):
-                        torch.cuda.empty_cache()
-            else:
-                torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
+
         self.logger.info("Cleanup completed.")
-
-# ------------------------------------------------------------------------------
-# Example Usage
-# ------------------------------------------------------------------------------
-
-async def main():
-    # Define a simple model: a linear layer mapping 10 features to 2 outputs.
-    model = torch.nn.Linear(10, 2).to("cuda")
-
-    # Create the engine configuration.
-    # Here we only specify the minimal configuration needed for this example.
-    config = EngineConfig(
-        input_shape=[1, 10],  # The expected input shape (including batch dimension).
-        # Optionally, specify TensorRT input shapes if using TRT:
-        trt_input_shape=[([1, 10], [32, 10], [128, 10])],
-        use_tensorrt=False,  # Change to True if TensorRT is desired and installed.
-    )
-
-    # Create the inference engine.
-    # If your InferenceEngine supports a flag for FP16, pass it accordingly.
-    engine = InferenceEngine(model=model, config=config)  # , use_fp16=True
-
-    # Generate 100 valid inputs (each with 10 features).
-    # Note: Each input is a 1D tensor, so we unsqueeze(0) to get a batch dimension.
-    inputs = [torch.randn(100, device="cuda") for _ in range(100)]
-
-    # Run asynchronous inference on all inputs concurrently.
-    # Wrap each input with unsqueeze(0) so that it has shape [1, 10]
-    tasks = [engine.run_inference_async(x.unsqueeze(0)) for x in inputs]
-    results = await asyncio.gather(*tasks, return_exceptions=False)
-    engine.logger.info(f"Received {len(results)} asynchronous inference results.")
-
-    # Optionally, profile a single inference call (if your engine supports profiling).
-    if hasattr(engine, 'profile_inference'):
-        # Ensure the input has a batch dimension.
-        profile_metrics = engine.profile_inference(inputs[0].unsqueeze(0))
-        engine.logger.info(f"Profile metrics: {profile_metrics}")
-
-    # Synchronous inference for batch processing.
-    # Here, engine.run_batch_inference will stack the list of [1, 10] tensors into a batch.
-    sync_results = engine.run_batch_inference([x.unsqueeze(0) for x in inputs])
-    engine.logger.info(f"Synchronous inference produced {sync_results.shape[0]} results.")
-
-    # Clean up resources before exit.
-    engine.cleanup()
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Interrupted!")
