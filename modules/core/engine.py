@@ -6,7 +6,10 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Union
 from .preprocessor import BasePreprocessor
 from .postprocessor import BasePostprocessor
-
+import sys
+import os
+# Add the parent directory to sys.path so that imports like "core.engine" work.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,116 +27,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
 import logging
 import torch
-
-@dataclass
-class EngineConfig:
-    """
-    Configuration dataclass for the InferenceEngine with integrated guard system parameters.
-    """
-    # Core engine parameters
-    num_workers: int = 1
-    queue_size: int = 100
-    batch_size: int = 32
-    min_batch_size: int = 1
-    max_batch_size: int = 128
-    warmup_runs: int = 10
-    timeout: float = 0.1
-    autoscale_interval: float = 5.0
-    queue_size_threshold_high: float = 80.0
-    queue_size_threshold_low: float = 20.0
-    enable_dynamic_batching: bool = True
-    debug_mode: bool = False
-    use_multigpu: bool = False
-    device_ids: List[int] = field(default_factory=lambda: list(range(torch.cuda.device_count())))
-    multigpu_strategy: str = 'dataparallel'
-    log_file: str = "inference_engine.log"
-    executor_type: str = "thread"
-    
-    # PID controller parameters
-    pid_kp: float = 0.5
-    pid_ki: float = 0.1
-    pid_kd: float = 0.05
-    
-    # TensorRT parameters
-    enable_trt: bool = False
-    trt_mode: str = "static"
-    trt_workspace_size: int = 1 << 30
-    trt_min_block_size: int = 1
-    trt_opt_shape: Optional[List[int]] = None
-    trt_input_shape: Optional[List[int]] = None
-    input_shape: Optional[torch.Size] = None
-    use_tensorrt: bool = False
-    num_classes : int = 10
-    
-    # Guard system parameters
-    guard_enabled: bool = True
-    guard_num_augmentations: int = 5
-    guard_noise_level_range: Tuple[float, float] = (0.005, 0.02)
-    guard_dropout_rate: float = 0.1
-    guard_flip_prob: float = 0.5
-    guard_confidence_threshold: float = 0.5
-    guard_variance_threshold: float = 0.05
-    guard_input_range: Tuple[float, float] = (0.0, 1.0)
-    guard_augmentation_types: List[str] = field(
-        default_factory=lambda: ["noise", "dropout", "flip"]
-    )
-
-    
-    # Internal components (not configurable)
-    pid_controller: object = field(init=False)
-    
-    def __post_init__(self):
-        """Initialize derived components after dataclass construction"""
-        from .pid import PIDController  # Import locally to avoid circular dependencies
-        
-        # Initialize PID controller
-        self.pid_controller = PIDController(
-            self.pid_kp, self.pid_ki, self.pid_kd, setpoint=50.0
-        )
-        
-        # Validate device IDs
-        if self.use_multigpu and not self.device_ids:
-            self.device_ids = list(range(torch.cuda.device_count()))
-            
-        # Validate augmentation types
-        valid_augmentations = {"noise", "dropout", "flip"}
-        if invalid := set(self.guard_augmentation_types) - valid_augmentations:
-            raise ValueError(f"Invalid augmentation types: {invalid}")
-
-    def configure_logging(self):
-        """Set up logging with guard system awareness"""
-        level = logging.DEBUG if self.debug_mode else logging.INFO
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        
-        file_handler = logging.FileHandler(self.log_file)
-        file_handler.setFormatter(formatter)
-        
-        logger = logging.getLogger()
-        logger.handlers.clear()
-        logger.addHandler(console_handler)
-        logger.addHandler(file_handler)
-        logger.setLevel(level)
-        
-        if self.debug_mode:
-            logger.debug("Debug logging enabled.")
-            if self.guard_enabled:
-                logger.debug(f"Guard system configuration:\n{self._format_guard_config()}")
-
-    def _format_guard_config(self) -> str:
-        """Format guard configuration for debug logging"""
-        return (
-            f"Augmentations: {self.guard_num_augmentations} runs\n"
-            f"Active augmentations: {', '.join(self.guard_augmentation_types)}\n"
-            f"Noise range: {self.guard_noise_level_range}\n"
-            f"Dropout rate: {self.guard_dropout_rate}\n"
-            f"Flip probability: {self.guard_flip_prob}\n"
-            f"Confidence threshold: {self.guard_confidence_threshold}\n"
-            f"Variance threshold: {self.guard_variance_threshold}\n"
-            f"Input range: {self.guard_input_range}"
-        )
+from utils.config import EngineConfig
 
 # ------------------------------------------------------------------------------
 # Request Item Class
