@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, Optional
-from utils.config import SEGMENTATION_CONFIG
+from modules.utils.config import SEGMENTATION_CONFIG
 
 class DoubleConv(nn.Module):
     """(Conv2d => BN => ReLU) * 2"""

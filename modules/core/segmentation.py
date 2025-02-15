@@ -20,13 +20,6 @@ from core.postprocessor import BasePostprocessor
 logger = get_logger(__name__)
 
 class SegmentationPreprocessor(ImagePreprocessor):
-    """
-    Segmentation-specific preprocessor with optimized image handling.
-    Inherits from the enhanced ImagePreprocessor that now supports:
-      - Asynchronous processing
-      - Compiled module caching
-      - Additional (custom) transforms
-    """
     def __init__(self):
         super().__init__(
             image_size=SEGMENTATION_CONFIG["input_size"],
@@ -41,30 +34,20 @@ class SegmentationPreprocessor(ImagePreprocessor):
         )
 
     def __call__(self, inputs: Any) -> torch.Tensor:
-        # If the input is a torch.Tensor
         if isinstance(inputs, torch.Tensor):
-            # If already batched: shape [batch, C, H, W]
             if inputs.ndim == 4:
-                processed_images = []
-                for i in range(inputs.size(0)):
-                    # Process each image (shape: [C, H, W])
-                    img = inputs[i]
-                    # Call the parent's __call__ method with a single image wrapped in a list
-                    processed_img = super().__call__([img])
-                    # The parent's method returns a batched tensor [1, C, H, W]; remove the extra batch dim.
-                    processed_images.append(processed_img.squeeze(0))
-                # Stack back into a single 4D tensor: [batch, C, H, W]
-                return torch.stack(processed_images, dim=0)
+                # Batched tensor input: process as a list of images
+                inputs_list = [inputs[i] for i in range(inputs.size(0))]
+                processed = super().__call__(inputs_list)
+                return processed
             elif inputs.ndim == 3:
-                # Single unbatched image: shape [C, H, W]
+                # Single image tensor
                 return super().__call__([inputs]).squeeze(0)
             else:
                 raise ValueError("Tensor input must be 3D (single image) or 4D (batched images)")
         elif isinstance(inputs, (list, tuple)):
-            # Assume it's a list of unbatched images.
             return super().__call__(inputs)
         else:
-            # For other input types, wrap them in a list.
             return super().__call__([inputs])
 
 class SegmentationPostprocessor(BasePostprocessor):

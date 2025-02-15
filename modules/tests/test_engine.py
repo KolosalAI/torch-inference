@@ -34,6 +34,7 @@ def dummy_post_init(self):
     valid_augmentations = {"noise", "dropout", "flip"}
     if (invalid := set(self.guard_augmentation_types) - valid_augmentations):
         raise ValueError(f"Invalid augmentation types: {invalid}")
+
 EngineConfig.__post_init__ = dummy_post_init
 
 # Dummy Preprocessor and Postprocessor classes.
@@ -102,7 +103,7 @@ class DummyModelIdentity(nn.Module):
 class TestInferenceEngine(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         # Create a common EngineConfig for testing.
-        # We force CPU usage to bypass CUDA/TensorRT code paths.
+        # For testing, we force CPU usage to bypass CUDA/TensorRT code paths.
         self.config = EngineConfig(
             num_workers=1,
             queue_size=10,
@@ -130,14 +131,18 @@ class TestInferenceEngine(unittest.IsolatedAsyncioTestCase):
             guard_confidence_threshold=0.5,
             guard_variance_threshold=0.05,
             guard_input_range=(0.0, 1.0),
-            guard_augmentation_types=["noise", "dropout", "flip"]
+            guard_augmentation_types=["noise", "dropout", "flip"],
+            # PID controller parameters for testing.
+            pid_kp=1.0,
+            pid_ki=0.0,
+            pid_kd=0.0
         )
         self.device = torch.device("cpu")
         self.preprocessor = DummyPreprocessor()
         self.postprocessor = DummyPostprocessor()
 
     async def asyncTearDown(self):
-        # (If needed, add any tearDown code common for all tests.)
+        # Optionally perform any global cleanup here.
         pass
 
     async def test_run_inference_async_safe(self):
@@ -145,124 +150,114 @@ class TestInferenceEngine(unittest.IsolatedAsyncioTestCase):
         Test asynchronous inference when the guard passes.
         The dummy model produces a dominant logit, so the engine returns the model's output.
         """
-        safe_model = DummyModelSafe(num_classes=self.config.num_classes)
-        engine = InferenceEngine(
-            model=safe_model,
+        async with InferenceEngine(
+            model=DummyModelSafe(num_classes=self.config.num_classes),
             device="cpu",
             preprocessor=self.preprocessor,
             postprocessor=self.postprocessor,
             use_fp16=False,
             use_tensorrt=False,
             config=self.config
-        )
-        dummy_input = torch.randn(10)
-        result = await engine.run_inference_async(dummy_input)
-        self.assertIsInstance(result, torch.Tensor)
-        self.assertEqual(result.shape, (1, self.config.num_classes))
-        self.assertGreater(result[0, 0].item(), 0)
-        await engine.cleanup()
+        ) as engine:
+            dummy_input = torch.randn(10)
+            result = await engine.run_inference_async(dummy_input)
+            self.assertIsInstance(result, torch.Tensor)
+            self.assertEqual(result.shape, (1, self.config.num_classes))
+            self.assertGreater(result[0, 0].item(), 0)
 
     async def test_run_inference_async_unsafe(self):
         """
         Test asynchronous inference when the guard fails.
         The dummy model produces uniform logits so the guard returns a default response.
         """
-        unsafe_model = DummyModelUnsafe(num_classes=self.config.num_classes)
-        engine = InferenceEngine(
-            model=unsafe_model,
+        async with InferenceEngine(
+            model=DummyModelUnsafe(num_classes=self.config.num_classes),
             device="cpu",
             preprocessor=self.preprocessor,
             postprocessor=self.postprocessor,
             use_fp16=False,
             use_tensorrt=False,
             config=self.config
-        )
-        dummy_input = torch.randn(10)
-        result = await engine.run_inference_async(dummy_input)
-        # The default response is a 1D tensor with uniform probabilities.
-        self.assertIsInstance(result, torch.Tensor)
-        self.assertEqual(result.shape, (self.config.num_classes,))
-        expected_prob = 1.0 / self.config.num_classes
-        for val in result:
-            self.assertAlmostEqual(val.item(), expected_prob, places=5)
-        await engine.cleanup()
+        ) as engine:
+            dummy_input = torch.randn(10)
+            result = await engine.run_inference_async(dummy_input)
+            # The default response is a 1D tensor with uniform probabilities.
+            self.assertIsInstance(result, torch.Tensor)
+            self.assertEqual(result.shape, (self.config.num_classes,))
+            expected_prob = 1.0 / self.config.num_classes
+            for val in result:
+                self.assertAlmostEqual(val.item(), expected_prob, places=5)
 
     async def test_run_batch_inference(self):
         """
         Test synchronous batch inference.
         The engine should stack a list of input tensors and produce a batched output.
         """
-        safe_model = DummyModelSafe(num_classes=self.config.num_classes)
-        engine = InferenceEngine(
-            model=safe_model,
+        async with InferenceEngine(
+            model=DummyModelSafe(num_classes=self.config.num_classes),
             device="cpu",
             preprocessor=self.preprocessor,
             postprocessor=self.postprocessor,
             use_fp16=False,
             use_tensorrt=False,
             config=self.config
-        )
-        # Determine the expected input shape.
-        if engine.input_shape is None:
-            input_shape = (10,)
-        else:
-            input_shape = tuple(engine.input_shape)
-        # Create a list of 4 dummy inputs.
-        batch_inputs = [torch.randn(*input_shape) for _ in range(4)]
-        output = engine.run_batch_inference(batch_inputs)
-        self.assertIsInstance(output, torch.Tensor)
-        self.assertEqual(output.shape, (4, self.config.num_classes))
-        await engine.cleanup()
+        ) as engine:
+            # Determine the expected input shape.
+            if engine.input_shape is None:
+                input_shape = (10,)
+            else:
+                input_shape = tuple(engine.input_shape)
+            # Create a list of 4 dummy inputs.
+            batch_inputs = [torch.randn(*input_shape) for _ in range(4)]
+            output = engine.run_batch_inference(batch_inputs)
+            self.assertIsInstance(output, torch.Tensor)
+            self.assertEqual(output.shape, (4, self.config.num_classes))
 
     async def test_profile_inference(self):
         """
         Test that the profiling interface returns expected metric keys.
         """
-        identity_model = DummyModelIdentity(num_classes=self.config.num_classes)
-        engine = InferenceEngine(
-            model=identity_model,
+        async with InferenceEngine(
+            model=DummyModelIdentity(num_classes=self.config.num_classes),
             device="cpu",
             preprocessor=self.preprocessor,
             postprocessor=self.postprocessor,
             use_fp16=False,
             use_tensorrt=False,
             config=self.config
-        )
-        if engine.input_shape is None:
-            input_shape = (10,)
-        else:
-            input_shape = tuple(engine.input_shape)
-        # Create a dummy input with a batch dimension.
-        dummy_input = torch.randn(*(1,) + input_shape)
-        metrics = engine.profile_inference(dummy_input)
-        for key in ["preprocess_ms", "inference_ms", "postprocess_ms", "total_ms"]:
-            self.assertIn(key, metrics)
-        await engine.cleanup()
+        ) as engine:
+            if engine.input_shape is None:
+                input_shape = (10,)
+            else:
+                input_shape = tuple(engine.input_shape)
+            # Create a dummy input with a batch dimension.
+            dummy_input = torch.randn(*(1,) + input_shape)
+            metrics = engine.profile_inference(dummy_input)
+            for key in ["preprocess_ms", "inference_ms", "postprocess_ms", "total_ms"]:
+                self.assertIn(key, metrics)
 
     async def test_dynamic_batch_size(self):
         """
         Test that the dynamic batch size computed is within the configured limits.
         """
-        safe_model = DummyModelSafe(num_classes=self.config.num_classes)
-        engine = InferenceEngine(
-            model=safe_model,
+        async with InferenceEngine(
+            model=DummyModelSafe(num_classes=self.config.num_classes),
             device="cpu",
             preprocessor=self.preprocessor,
             postprocessor=self.postprocessor,
             use_fp16=False,
             use_tensorrt=False,
             config=self.config
-        )
-        if engine.input_shape is None:
-            sample_shape = (10,)
-        else:
-            sample_shape = tuple(engine.input_shape)
-        sample_tensor = torch.randn(*sample_shape)
-        new_batch_size = engine.dynamic_batch_size(sample_tensor)
-        self.assertIsInstance(new_batch_size, int)
-        self.assertGreaterEqual(new_batch_size, self.config.min_batch_size)
-        self.assertLessEqual(new_batch_size, self.config.max_batch_size)
-        await engine.cleanup()
+        ) as engine:
+            if engine.input_shape is None:
+                sample_shape = (10,)
+            else:
+                sample_shape = tuple(engine.input_shape)
+            sample_tensor = torch.randn(*sample_shape)
+            new_batch_size = engine.dynamic_batch_size(sample_tensor)
+            self.assertIsInstance(new_batch_size, int)
+            self.assertGreaterEqual(new_batch_size, self.config.min_batch_size)
+            self.assertLessEqual(new_batch_size, self.config.max_batch_size)
 
 if __name__ == "__main__":
     unittest.main()

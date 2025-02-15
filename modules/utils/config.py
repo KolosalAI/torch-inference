@@ -143,8 +143,23 @@ class EngineConfig:
     guard_augmentation_types: List[str] = field(
         default_factory=lambda: ["noise", "dropout", "flip"]
     )
-
-    
+    model_sources: Dict[str, Any] = field(default_factory=lambda: {
+        "huggingface": {
+            "enabled": True,
+            "cache_dir": "models/hf_cache",
+            "token": None  # Add your HF token here
+        },
+        "torchhub": {
+            "enabled": True,
+            "trust_repo": False
+        }
+    })
+    max_concurrent_downloads: int = 3
+    model_validation: Dict[str, Any] = field(default_factory=lambda: {
+        "checksum_verification": True,
+        "file_types": [".pt", ".pth", ".bin"],
+        "max_size_mb": 5000
+    })
     # Internal components (not configurable)
     pid_controller: object = field(init=False)
     device = "cuda:0"

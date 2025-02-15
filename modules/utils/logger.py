@@ -12,7 +12,7 @@ import os
 import torch  # Added to support torch.nn.Module usage
 
 # Local imports
-from utils.config import LOGGING_CONFIG
+from .config import LOGGING_CONFIG
 
 class StructuredLogger:
     def __init__(self, name: str):
