@@ -49,9 +49,8 @@ SEGMENTATION_CONFIG: Dict[str, Any] = {
     
     # Input processing
     "input_size": (512, 512),
-    "mean": (0.485, 0.456, 0.406),  # ImageNet normalization
-    "std": (0.229, 0.224, 0.225),
-    
+    "mean": [0.485, 0.456, 0.406],  # 3 values for RGB
+    "std": [0.229, 0.224, 0.225],   # 3 values for RGB
     # Postprocessing
     "threshold": 0.65,
     "min_contour_area": 100,
