@@ -1,16 +1,17 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Callable
 import threading
 import queue
 import torch
 import torch.nn.functional as F
+import cv2
 import tensorrt as trt
-
+import numpy as np
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 # ---------------------------
-# (Unchanged) Postprocessor Classes
+# Base and Postprocessor Classes
 # ---------------------------
 class BasePostprocessor:
     """
@@ -24,8 +25,13 @@ class ClassificationPostprocessor(BasePostprocessor):
     Postprocessor for classification models, supporting multi-label classification.
     """
     def __init__(
-        self, top_k: int = 5, class_labels: Optional[List[str]] = None, apply_softmax: bool = True,
-        multi_label: bool = False, threshold: float = 0.5, device: Optional[torch.device] = None
+        self,
+        top_k: int = 5,
+        class_labels: Optional[List[str]] = None,
+        apply_softmax: bool = True,
+        multi_label: bool = False,
+        threshold: float = 0.5,
+        device: Optional[torch.device] = None
     ):
         super().__init__()
         self.top_k = top_k
@@ -35,7 +41,7 @@ class ClassificationPostprocessor(BasePostprocessor):
         self.threshold = threshold
         self.device = device
 
-    def __call__(self, outputs: torch.Tensor) -> List[List[tuple]]:
+    def __call__(self, outputs: torch.Tensor) -> List[List[Tuple[str, float]]]:
         if self.device:
             outputs = outputs.to(self.device)
 
@@ -45,21 +51,33 @@ class ClassificationPostprocessor(BasePostprocessor):
         if self.multi_label:
             results = []
             for sample in outputs:
-                result = [(self.class_labels[i], float(prob)) for i, prob in enumerate(sample) if prob >= self.threshold]
+                result = [
+                    (self.class_labels[i] if self.class_labels else f"Class_{i}", float(prob))
+                    for i, prob in enumerate(sample) if prob >= self.threshold
+                ]
                 results.append(result)
             return results
 
         top_probs, top_idxs = outputs.topk(self.top_k, dim=1)
-        return [[(self.class_labels[i] if self.class_labels else f'Class_{i}', float(prob))
-                 for i, prob in zip(indices, probs)]
-                for probs, indices in zip(top_probs, top_idxs)]
+        return [
+            [
+                (self.class_labels[i] if self.class_labels else f"Class_{i}", float(prob))
+                for i, prob in zip(indices, probs)
+            ]
+            for probs, indices in zip(top_probs, top_idxs)
+        ]
 
 class DetectionPostprocessor(BasePostprocessor):
     """
     Postprocessor for object detection models with zero-copy operations and batch-wise optimizations.
     """
-    def __init__(self, score_threshold: float = 0.5, nms_iou_threshold: float = 0.5, max_detections: int = 100,
-                 device: Optional[torch.device] = None):
+    def __init__(
+        self,
+        score_threshold: float = 0.5,
+        nms_iou_threshold: float = 0.5,
+        max_detections: int = 100,
+        device: Optional[torch.device] = None
+    ):
         super().__init__()
         self.score_threshold = score_threshold
         self.nms_iou_threshold = nms_iou_threshold
@@ -84,18 +102,33 @@ class DetectionPostprocessor(BasePostprocessor):
 
 class SegmentationPostprocessor(BasePostprocessor):
     """
-    Postprocessor for segmentation models that generates masks efficiently.
+    Postprocessor for segmentation models that converts raw outputs into a binary mask and extracts contours.
+    The mask is thresholded, and contours below a minimum area are filtered out.
     """
-    def __init__(self, threshold: float = 0.5, device: Optional[torch.device] = None):
+    def __init__(
+        self,
+        threshold: float = 0.5,
+        min_contour_area: int = 100,
+        device: Optional[torch.device] = None
+    ):
         super().__init__()
         self.threshold = threshold
+        self.min_contour_area = min_contour_area
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def __call__(self, outputs: torch.Tensor) -> List[torch.Tensor]:
+    def __call__(self, outputs: torch.Tensor) -> Tuple[np.ndarray, List[Any]]:
+        # Ensure outputs are on the correct device.
         if self.device:
             outputs = outputs.to(self.device)
-        masks = (outputs > self.threshold).byte().cpu()
-        return [mask.numpy() for mask in masks]
+        # Convert to numpy array and squeeze extra dimensions.
+        mask_np = outputs.squeeze().cpu().numpy()
+        # Apply threshold to produce a binary mask.
+        mask = ((mask_np > self.threshold) * 255).astype("uint8")
+        # Find contours using OpenCV.
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Filter out contours that are too small.
+        filtered_contours = [c for c in contours if cv2.contourArea(c) > self.min_contour_area]
+        return mask, filtered_contours
 
 # ---------------------------
 # Updated TensorRTInferenceEngine
@@ -104,12 +137,14 @@ class TensorRTInferenceEngine:
     """
     TensorRT inference engine supporting dynamic batching, autoscaling, and streaming.
     """
-    def __init__(self,
-                 engine_path: str,
-                 max_batch_size: int = 32,
-                 min_batch_size: int = 1,
-                 timeout: float = 0.05,
-                 dynamic_batching: bool = True):
+    def __init__(
+        self,
+        engine_path: str,
+        max_batch_size: int = 32,
+        min_batch_size: int = 1,
+        timeout: float = 0.05,
+        dynamic_batching: bool = True
+    ):
         self.logger = trt.Logger(trt.Logger.INFO)
         with open(engine_path, "rb") as f, trt.Runtime(self.logger) as runtime:
             self.engine = runtime.deserialize_cuda_engine(f.read())
@@ -118,12 +153,12 @@ class TensorRTInferenceEngine:
         self.min_batch_size = min_batch_size
         self.timeout = timeout
         self.dynamic_batching = dynamic_batching
-        self.request_queue = queue.Queue()
+        self.request_queue: queue.Queue = queue.Queue()
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._process_requests, daemon=True)
         self.thread.start()
 
-    def _process_requests(self):
+    def _process_requests(self) -> None:
         """Process requests from the queue in dynamic batches."""
         while True:
             batch = []
@@ -149,12 +184,12 @@ class TensorRTInferenceEngine:
                     batch.append(req)
             self._infer_batch(batch)
 
-    def _infer_batch(self, batch: List[Dict[str, Any]]):
+    def _infer_batch(self, batch: List[Dict[str, Any]]) -> None:
         """Perform inference on a batch with zero-copy execution."""
         actual_batch_size = len(batch)
-        inputs = self._prepare_inputs(batch)  # returns a list with one batched tensor
-        outputs = self._prepare_outputs(actual_batch_size)  # prepare outputs sized to actual batch
-        # Build bindings from input and output tensors (using data_ptr() for zero-copy)
+        inputs = self._prepare_inputs(batch)  # Returns a list with one batched tensor.
+        outputs = self._prepare_outputs(actual_batch_size)  # Prepares outputs sized to actual batch.
+        # Build bindings from input and output tensors (using data_ptr() for zero-copy).
         bindings = [inp.data_ptr() for inp in inputs] + [out.data_ptr() for out in outputs]
         stream = torch.cuda.current_stream().cuda_stream
         self.context.execute_async_v2(bindings=bindings, stream_handle=stream)
@@ -183,7 +218,10 @@ class TensorRTInferenceEngine:
         """
         # Example output shapes; update these to match your engine's outputs.
         output_shapes = [(1000,), (1, 28, 28)]
-        return [torch.empty((actual_batch_size, *shape), device="cuda") for shape in output_shapes]
+        return [
+            torch.empty((actual_batch_size, *shape), device="cuda")
+            for shape in output_shapes
+        ]
 
     def _postprocess_outputs(self, outputs: List[torch.Tensor], actual_batch_size: int) -> List[Dict[str, Any]]:
         """
@@ -198,7 +236,7 @@ class TensorRTInferenceEngine:
             sample_results.append(sample_result)
         return sample_results
 
-    def infer(self, request: Any, callback: callable):
+    def infer(self, request: Any, callback: Callable[[Any], None]) -> None:
         """
         Add a request to the inference queue with batch-wise optimization.
         'request' should contain the input data. 'callback' will be called with the inference result.

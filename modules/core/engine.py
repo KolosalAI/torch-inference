@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from utils.config import EngineConfig
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -9,7 +10,6 @@ import os
 import numpy as np
 # Add the parent directory to sys.path so that imports like "core.engine" work.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -714,104 +714,4 @@ class InferenceEngine:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.cleanup()
-
-
-################################################################################
-# Minimal EngineConfig to match your tests
-################################################################################
-class EngineConfig:
-    """
-    Basic configuration class for the InferenceEngine. Contains the attributes
-    your test code is referencing, with default values for demonstration.
-    """
-    def __init__(
-        self,
-        num_workers: int = 2,
-        queue_size: int = 16,
-        batch_size: int = 4,
-        min_batch_size: int = 1,
-        max_batch_size: int = 8,
-        warmup_runs: int = 2,
-        timeout: float = 2.0,
-        batch_wait_timeout: float = 0.01,
-        autoscale_interval: float = 0.5,
-        queue_size_threshold_high: float = 80.0,
-        queue_size_threshold_low: float = 20.0,
-        enable_dynamic_batching: bool = False,
-        debug_mode: bool = False,
-        use_multigpu: bool = False,
-        log_file: str = "engine.log",
-        executor_type: str = "thread",  # or "process"
-        enable_trt: bool = False,
-        use_tensorrt: bool = False,
-        num_classes: int = 10,
-        guard_enabled: bool = True,
-        guard_num_augmentations: int = 2,
-        guard_noise_level_range: tuple = (0.001, 0.005),
-        guard_dropout_rate: float = 0.0,
-        guard_flip_prob: float = 0.0,
-        guard_confidence_threshold: float = 0.6,
-        guard_variance_threshold: float = 0.1,
-        guard_input_range: tuple = (0.0, 1.0),
-        guard_augmentation_types: List[str] = None,
-        pid_kp: float = 0.1,
-        pid_ki: float = 0.0,
-        pid_kd: float = 0.0,
-        trt_input_shape: Optional[List[tuple]] = None,
-        async_mode: bool = True
-    ):
-        self.num_workers = num_workers
-        self.queue_size = queue_size
-        self.batch_size = batch_size
-        self.min_batch_size = min_batch_size
-        self.max_batch_size = max_batch_size
-        self.warmup_runs = warmup_runs
-        self.timeout = timeout
-        self.batch_wait_timeout = batch_wait_timeout
-        self.autoscale_interval = autoscale_interval
-        self.queue_size_threshold_high = queue_size_threshold_high
-        self.queue_size_threshold_low = queue_size_threshold_low
-        self.enable_dynamic_batching = enable_dynamic_batching
-        self.debug_mode = debug_mode
-        self.use_multigpu = use_multigpu
-        self.log_file = log_file
-        self.executor_type = executor_type
-        self.enable_trt = enable_trt
-        self.use_tensorrt = use_tensorrt
-        self.num_classes = num_classes
-        self.guard_enabled = guard_enabled
-        self.guard_num_augmentations = guard_num_augmentations
-        self.guard_noise_level_range = guard_noise_level_range
-        self.guard_dropout_rate = guard_dropout_rate
-        self.guard_flip_prob = guard_flip_prob
-        self.guard_confidence_threshold = guard_confidence_threshold
-        self.guard_variance_threshold = guard_variance_threshold
-        self.guard_input_range = guard_input_range
-        self.guard_augmentation_types = guard_augmentation_types or ["noise", "dropout", "flip"]
-        self.pid_kp = pid_kp
-        self.pid_ki = pid_ki
-        self.pid_kd = pid_kd
-        self.trt_input_shape = trt_input_shape
-        self.async_mode = async_mode
-
-        # The user’s test code overrides __post_init__, but here we implement a simple default.
-        self.__post_init__()
-
-    def __post_init__(self):
-        # Create a simple PID controller by default
-        from .pid import PIDController
-        self.pid_controller = PIDController(self.pid_kp, self.pid_ki, self.pid_kd, setpoint=50.0)
-        # Validate augmentation types
-        valid_augmentations = {"noise", "dropout", "flip"}
-        invalid = set(self.guard_augmentation_types) - valid_augmentations
-        if invalid:
-            raise ValueError(f"Invalid augmentation types: {invalid}")
-
-    def configure_logging(self):
-        level = logging.DEBUG if self.debug_mode else logging.INFO
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            filename=self.log_file if self.log_file else None
-        )
 

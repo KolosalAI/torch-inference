@@ -61,8 +61,8 @@ class BasePreprocessor:
 
 class TRTTransformsModule(torch.nn.Module):
     """
-    A TorchScript‑compatible module that resizes and normalizes images.
-    This module will be compiled using Torch‑TensorRT.
+    A TorchScript‑compatible module that center‐crops images to match the target aspect ratio
+    and then resizes and normalizes them. This module will be compiled using Torch‑TensorRT.
     """
     def __init__(self, image_size: Tuple[int, int], mean: List[float], std: List[float]):
         """
@@ -77,27 +77,51 @@ class TRTTransformsModule(torch.nn.Module):
         self.register_buffer("mean", torch.tensor(mean).view(1, -1, 1, 1))
         self.register_buffer("std", torch.tensor(std).view(1, -1, 1, 1))
 
+    def _center_crop_to_aspect(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Crop the image (or images) to match the target aspect ratio before resizing.
+        Assumes input is a 4D tensor of shape (N, C, H, W).
+        """
+        target_h, target_w = self.image_size
+        target_aspect = target_w / target_h
+        N, C, H, W = x.shape
+        current_aspect = W / H
+
+        if current_aspect > target_aspect:
+            # Image is too wide: crop width.
+            new_w = int(H * target_aspect)
+            start_x = (W - new_w) // 2
+            x = x[:, :, :, start_x:start_x+new_w]
+        elif current_aspect < target_aspect:
+            # Image is too tall: crop height.
+            new_h = int(W / target_aspect)
+            start_y = (H - new_h) // 2
+            x = x[:, :, start_y:start_y+new_h, :]
+        # Else: aspect ratios match; no crop needed.
+        return x
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Resizes and normalizes the image(s).
-
+        First, if necessary, center-crop the image(s) to match the target aspect ratio.
+        Then, resize (or downscale/upscale) to the target image size and normalize.
+        
         Args:
             x (torch.Tensor): Input tensor. Either 3D (C,H,W) or 4D (N,C,H,W).
 
         Returns:
-            torch.Tensor: Normalized tensor.
+            torch.Tensor: Processed tensor of shape (N, C, target_h, target_w) or (C, target_h, target_w).
         """
         if x.dim() == 3:
             x = x.unsqueeze(0)  # Now (1, C, H, W)
-            x = F.interpolate(x, size=self.image_size, mode='bilinear', align_corners=False)
-            x = (x - self.mean.to(x.device)) / self.std.to(x.device)
+        # First, center-crop to the target aspect ratio.
+        x = self._center_crop_to_aspect(x)
+        # Then, resize to the exact target dimensions.
+        x = F.interpolate(x, size=self.image_size, mode='bilinear', align_corners=False)
+        # Normalize.
+        x = (x - self.mean.to(x.device)) / self.std.to(x.device)
+        if x.shape[0] == 1:
             return x.squeeze(0)  # Return (C, H, W)
-        elif x.dim() == 4:
-            x = F.interpolate(x, size=self.image_size, mode='bilinear', align_corners=False)
-            x = (x - self.mean.to(x.device)) / self.std.to(x.device)
-            return x
-        else:
-            raise RuntimeError("Input tensor must be 3D (C, H, W) or 4D (N, C, H, W)")
+        return x
 
 
 class ImagePreprocessor(BasePreprocessor):
@@ -154,17 +178,6 @@ class ImagePreprocessor(BasePreprocessor):
         if len(std) == 1:
             std = std * 3  # Expand single value to three elements.
 
-        # Input validation for mean and std: allow either one value or exactly three.
-        if not (isinstance(mean, list) and (len(mean) == 3 or len(mean) == 1)):
-            raise ValueError("mean must be a list with either 1 or 3 elements for RGB")
-        if len(mean) == 1:
-            mean = mean * 3  # Expand single value to three elements.
-
-        if not (isinstance(std, list) and (len(std) == 3 or len(std) == 1)):
-            raise ValueError("std must be a list with either 1 or 3 elements for RGB")
-        if len(std) == 1:
-            std = std * 3  # Expand single value to three elements.
-
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
         elif (isinstance(image_size, tuple) and len(image_size) == 2 and 
@@ -195,7 +208,7 @@ class ImagePreprocessor(BasePreprocessor):
         # Performance monitoring metrics
         self.metrics: Dict[str, List[float]] = {"processing_time": []}
 
-        # Image cache (simple LRU-style using OrderedDict)
+        # Image cache (simple LRU‑style using OrderedDict)
         self.max_cache_size = max_cache_size
         self.image_cache: "OrderedDict[Any, torch.Tensor]" = OrderedDict()
 
@@ -277,7 +290,7 @@ class ImagePreprocessor(BasePreprocessor):
 
     def _get_cuda_stream_context(self):
         """
-        Get a CUDA stream context (round-robin).
+        Get a CUDA stream context (round‑robin).
 
         Returns:
             context manager: The current CUDA stream context.
@@ -287,7 +300,6 @@ class ImagePreprocessor(BasePreprocessor):
             self._stream_index = (self._stream_index + 1) % len(self.cuda_streams)
             return torch.cuda.stream(stream)
         else:
-            # No CUDA, return dummy context.
             from contextlib import nullcontext
             return nullcontext()
 
@@ -323,7 +335,6 @@ class ImagePreprocessor(BasePreprocessor):
             Optional[torch.Tensor]: Cached tensor if available.
         """
         if key in self.image_cache:
-            # Move the key to the end to mark it as recently used.
             self.image_cache.move_to_end(key)
             logger.debug("Image retrieved from cache.")
             return self.image_cache[key]
@@ -339,7 +350,6 @@ class ImagePreprocessor(BasePreprocessor):
         """
         self.image_cache[key] = tensor
         if len(self.image_cache) > self.max_cache_size:
-            # Remove oldest entry.
             removed = self.image_cache.popitem(last=False)
             logger.debug(f"Cache full. Removed oldest cached item: {removed[0]}")
 
@@ -371,16 +381,13 @@ class ImagePreprocessor(BasePreprocessor):
         while not self._shutdown_event.is_set():
             batch = []
             callbacks = []
-            # Try to collect a batch
             try:
-                # Block for a short time to allow batch collection.
                 item, callback = self.queue.get(timeout=0.5)
                 batch.append(item)
                 callbacks.append(callback)
             except Empty:
                 continue
 
-            # Try to get more items (non-blocking) up to max_batch_size.
             while len(batch) < self.max_batch_size:
                 try:
                     item, callback = self.queue.get_nowait()
@@ -389,7 +396,6 @@ class ImagePreprocessor(BasePreprocessor):
                 except Empty:
                     break
 
-            # Process the batch
             results = []
             for inp in batch:
                 start_time = time.perf_counter()
@@ -404,7 +410,6 @@ class ImagePreprocessor(BasePreprocessor):
                 elapsed = time.perf_counter() - start_time
                 self.metrics["processing_time"].append(elapsed)
 
-            # Return results via callbacks
             for res, cb in zip(results, callbacks):
                 cb(res)
                 self.queue.task_done()
@@ -454,7 +459,6 @@ class ImagePreprocessor(BasePreprocessor):
 
             for idx, inp in enumerate(inputs):
                 self.preprocess_async(inp, _make_callback(idx), timeout=2.0)
-            # Wait for all events
             for ev in events:
                 ev.wait()
             batch_tensor = torch.stack(results, dim=0)
@@ -469,7 +473,6 @@ class ImagePreprocessor(BasePreprocessor):
                 self.metrics["processing_time"].append(time.perf_counter() - start_time)
             batch_tensor = torch.stack(processed, dim=0)
 
-        # Use CUDA streams if available.
         with self._get_cuda_stream_context():
             batch_tensor = batch_tensor.to(self.device, non_blocking=True)
 
@@ -488,9 +491,7 @@ class ImagePreprocessor(BasePreprocessor):
         Returns:
             torch.Tensor: Processed tensor.
         """
-        # Cache key for file paths or numpy arrays (if applicable)
         cache_key = None
-
         try:
             if isinstance(inp, str):
                 cache_key = inp
@@ -505,7 +506,6 @@ class ImagePreprocessor(BasePreprocessor):
             elif isinstance(inp, torch.Tensor):
                 tensor = self._convert_tensor(inp)
             else:
-                # Assume numeric data convertible directly to tensor.
                 tensor = torch.as_tensor(inp, device=self.device)
             if cache_key is not None:
                 self._add_to_cache(cache_key, tensor)
@@ -546,7 +546,7 @@ class ImagePreprocessor(BasePreprocessor):
         """
         if image.mode != 'RGB' and self.convert_grayscale:
             image = image.convert('RGB')
-        tensor = T.functional.to_tensor(image)  # scales pixels to [0,1]
+        tensor = T.functional.to_tensor(image)
         tensor = self._ensure_valid_shape(tensor)
         tensor = tensor.to(self.device, non_blocking=True)
         with self._get_cuda_stream_context():
@@ -563,13 +563,12 @@ class ImagePreprocessor(BasePreprocessor):
         Returns:
             torch.Tensor: Normalized image tensor.
         """
-        # If image in HWC format, convert to CHW.
         if array.ndim == 3 and array.shape[2] in (1, 3):
             array = np.transpose(array, (2, 0, 1))
         tensor = torch.as_tensor(array, device=self.device, dtype=torch.float32)
         if tensor.max() > 1.0:
             tensor = tensor / 255.0
-        if tensor.dim() == 2:  # grayscale image without channel dimension
+        if tensor.dim() == 2:
             tensor = tensor.unsqueeze(0)
         if self.convert_grayscale and tensor.shape[0] == 1:
             tensor = tensor.repeat(3, 1, 1)
@@ -588,7 +587,7 @@ class ImagePreprocessor(BasePreprocessor):
         Returns:
             torch.Tensor: Normalized image tensor.
         """
-        if tensor.dim() == 2:  # Add channel dimension for grayscale.
+        if tensor.dim() == 2:
             tensor = tensor.unsqueeze(0)
         if tensor.dtype != torch.float32:
             tensor = tensor.to(dtype=torch.float32)
@@ -689,7 +688,6 @@ if __name__ == "__main__":
 
     logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 
-    # Create a preprocessor instance with async enabled and multiple CUDA streams.
     preproc = ImagePreprocessor(
         image_size=(224, 224),
         mean=[0.485],  # Single value will be expanded to [0.485, 0.485, 0.485]
@@ -702,7 +700,6 @@ if __name__ == "__main__":
         compiled_module_cache=None  # Set to a file path to enable caching
     )
 
-    # Test synchronous processing with a PIL image.
     try:
         img = Image.new("RGB", (300, 300), color="red")
         tensor = preproc(img)
@@ -710,7 +707,6 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Error during synchronous PIL processing: {e}")
 
-    # Test asynchronous processing with a NumPy array.
     def async_callback(result):
         if result is not None:
             logger.info(f"Asynchronous NumPy processing: output shape {result.shape}")
@@ -720,18 +716,15 @@ if __name__ == "__main__":
     np_img = np.random.randint(0, 255, (300, 300, 3), dtype=np.uint8)
     preproc.preprocess_async(np_img, async_callback, timeout=2.0)
 
-    # Benchmark processing time.
     try:
         mean_time, std_time = preproc.benchmark(np_img, iterations=5)
         logger.info(f"Benchmark result: {mean_time:.4f}s ± {std_time:.4f}s")
     except Exception as e:
         logger.error(f"Benchmarking failed: {e}")
 
-    # Save and load configuration.
     config_path = "preproc_config.pt"
     preproc.save_config(config_path)
     loaded_config = ImagePreprocessor.load_config(config_path)
     logger.info(f"Loaded config: {loaded_config}")
 
-    # Cleanup resources before exit.
     preproc.cleanup()
