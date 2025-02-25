@@ -1,10 +1,10 @@
 # utils/config.py
 import logging
 import torch
-from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
-from core.pid import PIDController
-
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, Union
+import logging
 # ------------------------------------------------------------------------------
 # Base Configuration
 # ------------------------------------------------------------------------------
@@ -91,90 +91,87 @@ TENSORRT_SETTINGS: Dict[str, Any] = {
 ################################################################################
 # Minimal EngineConfig to match your tests
 ################################################################################
+
 @dataclass
 class EngineConfig:
     """
-    Basic configuration class for the InferenceEngine. Contains the attributes
-    your test code is referencing, with default values for demonstration.
+    Configuration class for the InferenceEngine.
+    
+    Attributes:
+        num_workers: Number of workers for thread/process executors.
+        queue_size: Maximum size of the request queue.
+        batch_size: Initial batch size for inference.
+        min_batch_size: Minimum allowable batch size.
+        max_batch_size: Maximum allowable batch size.
+        warmup_runs: Number of warmup iterations.
+        timeout: Timeout (in seconds) for waiting on new requests.
+        batch_wait_timeout: Time (in seconds) to wait for additional requests in a batch.
+        autoscale_interval: Interval (in seconds) to run the PID-based autoscaling.
+        queue_size_threshold_high: Upper threshold for queue utilization (percentage).
+        queue_size_threshold_low: Lower threshold for queue utilization (percentage).
+        enable_dynamic_batching: Flag to enable dynamic batching.
+        debug_mode: If True, enables debug logging.
+        use_multigpu: If True, allows multiple GPUs to be used.
+        log_file: Filename for logging output (None means console only).
+        executor_type: Type of executor to use ("thread" or "process").
+        use_tensorrt: Enable TensorRT optimizations.
+        num_classes: Number of output classes (used for default responses in guard mode).
+        guard_enabled: If True, activates guard logic for adversarial checks.
+        guard_num_augmentations: Number of augmented samples for guard evaluation.
+        guard_noise_level_range: Tuple specifying the range of noise levels to add.
+        guard_dropout_rate: Dropout rate applied during guard augmentations.
+        guard_flip_prob: Probability of flipping the image during guard augmentations.
+        guard_confidence_threshold: Minimum confidence required for guard approval.
+        guard_variance_threshold: Maximum variance allowed across augmentations.
+        guard_input_range: Valid range for input tensor values.
+        guard_augmentation_types: List of augmentation types to apply ("noise", "dropout", "flip").
+        pid_kp: Proportional gain for PID controller.
+        pid_ki: Integral gain for PID controller.
+        pid_kd: Derivative gain for PID controller.
+        trt_input_shape: Optional list of tuples specifying (min, opt, max) shapes for TRT.
+        async_mode: If True, enables asynchronous processing.
+        device: Device(s) to use for inference (e.g. "cuda:0" or ["cuda:0", "cuda:1"]).
     """
-    def __init__(
-        self,
-        num_workers: int = 2,
-        queue_size: int = 16,
-        batch_size: int = 4,
-        min_batch_size: int = 1,
-        max_batch_size: int = 8,
-        warmup_runs: int = 2,
-        timeout: float = 2.0,
-        batch_wait_timeout: float = 0.01,
-        autoscale_interval: float = 0.5,
-        queue_size_threshold_high: float = 80.0,
-        queue_size_threshold_low: float = 20.0,
-        enable_dynamic_batching: bool = False,
-        debug_mode: bool = True,
-        use_multigpu: bool = False,
-        log_file: str = "engine.log",
-        executor_type: str = "thread",  # or "process"
-        enable_trt: bool = False,
-        use_tensorrt: bool = False,
-        num_classes: int = 10,
-        guard_enabled: bool = True,
-        guard_num_augmentations: int = 2,
-        guard_noise_level_range: tuple = (0.001, 0.005),
-        guard_dropout_rate: float = 0.0,
-        guard_flip_prob: float = 0.0,
-        guard_confidence_threshold: float = 0.6,
-        guard_variance_threshold: float = 0.1,
-        guard_input_range: tuple = (0.0, 1.0),
-        guard_augmentation_types: List[str] = None,
-        pid_kp: float = 0.1,
-        pid_ki: float = 0.0,
-        pid_kd: float = 0.0,
-        trt_input_shape: Optional[List[tuple]] = None,
-        async_mode: bool = True
-    ):
-        self.num_workers = num_workers
-        self.queue_size = queue_size
-        self.batch_size = batch_size
-        self.min_batch_size = min_batch_size
-        self.max_batch_size = max_batch_size
-        self.warmup_runs = warmup_runs
-        self.timeout = timeout
-        self.batch_wait_timeout = batch_wait_timeout
-        self.autoscale_interval = autoscale_interval
-        self.queue_size_threshold_high = queue_size_threshold_high
-        self.queue_size_threshold_low = queue_size_threshold_low
-        self.enable_dynamic_batching = enable_dynamic_batching
-        self.debug_mode = debug_mode
-        self.use_multigpu = use_multigpu
-        self.log_file = log_file
-        self.executor_type = executor_type
-        self.enable_trt = enable_trt
-        self.use_tensorrt = use_tensorrt
-        self.num_classes = num_classes
-        self.guard_enabled = guard_enabled
-        self.guard_num_augmentations = guard_num_augmentations
-        self.guard_noise_level_range = guard_noise_level_range
-        self.guard_dropout_rate = guard_dropout_rate
-        self.guard_flip_prob = guard_flip_prob
-        self.guard_confidence_threshold = guard_confidence_threshold
-        self.guard_variance_threshold = guard_variance_threshold
-        self.guard_input_range = guard_input_range
-        self.guard_augmentation_types = guard_augmentation_types or ["noise", "dropout", "flip"]
-        self.pid_kp = pid_kp
-        self.pid_ki = pid_ki
-        self.pid_kd = pid_kd
-        self.trt_input_shape = trt_input_shape
-        self.async_mode = async_mode
-
-        # The user’s test code overrides __post_init__, but here we implement a simple default.
-        self.__post_init__()
+    num_workers: int = 2
+    queue_size: int = 16
+    batch_size: int = 4
+    min_batch_size: int = 1
+    max_batch_size: int = 8
+    warmup_runs: int = 2
+    timeout: float = 2.0
+    batch_wait_timeout: float = 0.01
+    autoscale_interval: float = 0.5
+    queue_size_threshold_high: float = 80.0
+    queue_size_threshold_low: float = 20.0
+    enable_dynamic_batching: bool = False
+    debug_mode: bool = True
+    use_multigpu: bool = False
+    log_file: Optional[str] = "engine.log"
+    executor_type: str = "thread"  # Options: "thread", "process"
+    use_tensorrt: bool = False
+    num_classes: int = 10
+    guard_enabled: bool = True
+    guard_num_augmentations: int = 2
+    guard_noise_level_range: Tuple[float, float] = (0.001, 0.005)
+    guard_dropout_rate: float = 0.0
+    guard_flip_prob: float = 0.0
+    guard_confidence_threshold: float = 0.6
+    guard_variance_threshold: float = 0.1
+    guard_input_range: Tuple[float, float] = (0.0, 1.0)
+    guard_augmentation_types: List[str] = field(default_factory=lambda: ["noise", "dropout", "flip"])
+    pid_kp: float = 0.1
+    pid_ki: float = 0.0
+    pid_kd: float = 0.0
+    trt_input_shape: Optional[List[Tuple[int, ...]]] = None
+    async_mode: bool = True
+    device: Union[str, List[str]] = "cuda:0"
 
     def __post_init__(self):
-        # Create a simple PID controller by default
+        # Create a simple PID controller by default.
         from core.pid import PIDController
         self.pid_controller = PIDController(self.pid_kp, self.pid_ki, self.pid_kd, setpoint=50.0)
-        # Validate augmentation types
+        
+        # Validate guard augmentation types.
         valid_augmentations = {"noise", "dropout", "flip"}
         invalid = set(self.guard_augmentation_types) - valid_augmentations
         if invalid:
@@ -187,6 +184,7 @@ class EngineConfig:
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             filename=self.log_file if self.log_file else None
         )
+
 # ------------------------------------------------------------------------------
 # Runtime Configuration
 # ------------------------------------------------------------------------------
