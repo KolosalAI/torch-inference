@@ -8,7 +8,7 @@ import torch
 import torchvision.models as models
 
 # Import your engine's configuration and class.
-from modules.core.engine import EngineConfig, InferenceEngine
+from modules.core.inference_engine import EngineConfig, InferenceEngine
 
 @dataclass
 class BenchmarkConfig:
