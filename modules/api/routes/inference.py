@@ -13,7 +13,7 @@ import logging
 import traceback
 from fastapi import APIRouter, HTTPException
 from api.schemas import InferenceRequest, InferenceResponse
-from core.engine import run_inference  # Ensure this function is implemented in your core engine module
+from modules.core.inference_engine import run_inference  # Ensure this function is implemented in your core engine module
 
 # -----------------------------------------------------------------------------
 # Logging Configuration
