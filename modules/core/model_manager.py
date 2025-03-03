@@ -8,12 +8,10 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 from shutil import move, rmtree
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from models.segmentation_model import SegmentationModel
-from utils.downloader import DownloadHandler
-from utils.checksum import validate_checksum
-from models.model_sources import get_downloader_for_source
+from modules.models.segmentation_model import SegmentationModel
+from modules.utils.downloader import DownloadHandler
+from modules.utils.checksum import validate_checksum
+from modules.models.model_sources import get_downloader_for_source
 
 log = logging.getLogger(__name__)
 
