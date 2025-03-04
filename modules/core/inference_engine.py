@@ -1,23 +1,16 @@
 import asyncio
-import contextlib
-import functools
 import logging
 import time
-from contextlib import nullcontext, AsyncExitStack
+from contextlib import AsyncExitStack
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from typing import Any, Callable, Dict, List, Optional, Union, TypeVar, Tuple, cast, Set, Deque
-import sys
+from typing import Any, Callable, Dict, List, Optional, Union, TypeVar, Tuple, Deque
 import os
-import numpy as np
 from enum import Enum, auto
 from dataclasses import dataclass, field
-import weakref
 from collections import deque
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.profiler import profile, record_function, ProfilerActivity
 
 
 ################################################################################
@@ -1071,7 +1064,7 @@ class InferenceEngine:
 
         except Exception as e:
             self.logger.error(f"Error in inflight batch processing: {e}", exc_info=True)
-            
+
     async def _process_inflight_batch(self, batch: BatchContainer):
         """
         Process a single inflight batch, which may receive new items while processing.
@@ -1130,8 +1123,14 @@ class InferenceEngine:
             preprocessing_time = time.monotonic() - preprocessing_start
             batch.preprocessing_time = preprocessing_time
             
-            # Calculate preprocessing ratio and update state
-            time_ratio = preprocessing_time / (time.monotonic() - batch_start_time)
+            # Safely compute the ratio of preprocessing time to total elapsed time
+            total_elapsed = time.monotonic() - batch_start_time
+            if total_elapsed <= 0:
+                # Default or fallback for extremely small/zero elapsed times
+                time_ratio = 1.0
+            else:
+                time_ratio = preprocessing_time / total_elapsed
+            
             if time_ratio < self.config.inflight_preprocessing_limit:
                 # Fast preprocessing - keep accepting new items
                 batch.state = BatchState.PROCESSING
@@ -1156,7 +1155,7 @@ class InferenceEngine:
                         base_shape = tensor.shape
                     elif tensor.shape != base_shape:
                         raise ValueError(f"Shape mismatch: {tensor.shape} vs {base_shape}")
-                        
+                    
                     valid_inputs.append(tensor)
                     valid_futures.append(future)
                 except Exception as e:
@@ -1186,14 +1185,13 @@ class InferenceEngine:
                 batch.inference_time = time.monotonic() - inference_start
                 self._distribute_results(outputs, valid_futures)
                 self._successful_requests += len(valid_futures)
-
             except Exception as e:
                 self.logger.error(f"Batch inference failed: {e}", exc_info=True)
                 for fut in valid_futures:
                     if not fut.done():
                         fut.set_exception(ModelInferenceError(f"Inference failed: {str(e)}"))
                 self._failed_requests += len(valid_futures)
-                
+            
             # Update batch statistics
             batch_time = time.monotonic() - batch_start_time
             self._batch_processing_times.append(batch_time)

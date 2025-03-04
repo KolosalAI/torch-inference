@@ -1,176 +1,246 @@
+#!/usr/bin/env python3
+
 import asyncio
-import time
 import logging
+import time
+from statistics import mean, median
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
+import torch.nn as nn
 import torchvision.models as models
 
-# Import your engine's configuration and class.
-from modules.core.inference_engine import EngineConfig, InferenceEngine
+from modules.core.inference_engine import InferenceEngine, EngineConfig
 
 @dataclass
 class BenchmarkConfig:
-    num_inputs: int = 10000           # Larger number of inference requests
-    warmup_runs: int = 10
-    input_channels: int = 3            # ResNet expects 3-channel images
+    num_inputs: int = 4
+    warmup_runs: int = 8
+    input_channels: int = 3
     input_height: int = 224
     input_width: int = 224
-    batch_size: int = 64               # Batch size for synchronous inference
-    use_tensorrt: bool = True
-    enable_dynamic_batching: bool = True
-    profile: bool = True
+    batch_size: int = 64
     async_mode: bool = True
     sync_mode: bool = True
-    max_concurrent: int = 256          # Maximum number of concurrent async requests
-    log_file: Optional[str] = "benchmark.log"
-    debug_mode: bool = True
+    max_concurrent: int = 16
+    log_file: str = "benchmark.log"
+    debug_mode: bool = False
 
-async def benchmark_async(engine, inputs, max_concurrent: int):
-    """
-    Benchmark asynchronous inference throughput with concurrency control.
-    The semaphore limits the number of concurrently running async tasks.
-    """
-    semaphore = asyncio.Semaphore(max_concurrent)
-    logger = logging.getLogger(__name__)
+def setup_logging(log_file: str, debug_mode: bool):
+    log_level = logging.DEBUG if debug_mode else logging.INFO
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    if logger.hasHandlers():
+        logger.handlers.clear()
 
-    async def sem_task(x):
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
+    # File Handler
+    file_handler = logging.FileHandler(log_file, mode="w")
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # Stream Handler
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(log_level)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
+    logger.info("Logging initialized. Log file: %s", log_file)
+
+def create_resnet18_model(pretrained: bool = False) -> nn.Module:
+    logging.info("Creating ResNet-18 model with pretrained=%s", pretrained)
+    try:
+        if pretrained:
+            model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        else:
+            model = models.resnet18(weights=None)
+
+        # Disable torch.compile
+        # try:
+        #     model = torch.compile(model)
+        #     logging.info("Model compiled with torch.compile()")
+        # except Exception as e:
+        #     logging.warning("torch.compile not available or failed: %s", str(e))
+
+        logging.info("Model created successfully.")
+        return model
+    except Exception as e:
+        logging.error("Failed to create model: %s", str(e))
+        raise
+
+
+async def warmup(engine, warmup_runs: int, input_data: torch.Tensor):
+    logging.info("Starting warmup with %d runs", warmup_runs)
+    for i in range(warmup_runs):
+        try:
+            await engine.infer(input_data)
+        except Exception as e:
+            logging.error("Warmup failed on run %d: %s", i, str(e))
+            raise
+    logging.info("Warmup complete.")
+
+async def async_infer_requests(engine, total_requests: int, concurrency: int, input_data: torch.Tensor):
+    latencies = []
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def infer_one():
         async with semaphore:
-            return await engine.run_inference_async(x)
+            try:
+                start = time.perf_counter()
+                await engine.infer(input_data)
+                end = time.perf_counter()
+                return (end - start)
+            except Exception as e:
+                logging.error("Inference failed: %s", str(e))
+                return None
 
-    start_time = time.perf_counter()
-    tasks = [sem_task(x) for x in inputs]
-    await asyncio.gather(*tasks, return_exceptions=False)
-    duration = time.perf_counter() - start_time
-    throughput = len(inputs) / duration
-    seconds_per_pred = duration / len(inputs)
-    logger.debug("Asynchronous benchmark completed in %.4f seconds", duration)
-    return throughput, seconds_per_pred, duration
+    # Use chunking to avoid thousands of tasks at once
+    CHUNK_SIZE = concurrency  # Or you can tune this further
+    requests_done = 0
 
-def benchmark_sync(engine, inputs):
-    """
-    Benchmark synchronous batch inference throughput.
-    Splits the inputs into batches and processes each batch sequentially.
-    """
-    logger = logging.getLogger(__name__)
-    start_time = time.perf_counter()
+    while requests_done < total_requests:
+        batch_size = min(CHUNK_SIZE, total_requests - requests_done)
+        tasks = [asyncio.create_task(infer_one()) for _ in range(batch_size)]
+        latencies_chunk = await asyncio.gather(*tasks)
+        latencies.extend([lat for lat in latencies_chunk if lat is not None])
+        requests_done += batch_size
 
-    # Create batches by stacking inputs according to the engine's batch size
-    batches = [
-        torch.stack(inputs[i:i+engine.config.batch_size])
-        for i in range(0, len(inputs), engine.config.batch_size)
-    ]
+    return latencies
 
-    for batch in batches:
-        engine.run_batch_inference(batch)
+def sync_infer_requests(engine, total_requests: int, input_data: torch.Tensor):
+    latencies = []
+    for i in range(total_requests):
+        try:
+            start = time.perf_counter()
+            if asyncio.iscoroutinefunction(engine.infer):
+                asyncio.run(engine.infer(input_data))
+            else:
+                engine.infer(input_data)
+            end = time.perf_counter()
+            latencies.append(end - start)
+        except Exception as e:
+            logging.error("Sync inference failed on request %d: %s", i, str(e))
+    return latencies
 
-    duration = time.perf_counter() - start_time
-    throughput = len(inputs) / duration
-    seconds_per_pred = duration / len(inputs)
-    logger.debug("Synchronous benchmark completed in %.4f seconds", duration)
-    return throughput, seconds_per_pred, duration
-
-async def main(benchmark_config: BenchmarkConfig):
-    logger = logging.getLogger(__name__)
-    logger.info("Starting benchmark with configuration: %s", benchmark_config)
-
-    # Use ResNet-50 (or change to any other model as needed)
-    model = models.resnet50(pretrained=True)
-    # Optionally modify the final layer for binary classification
-    num_ftrs = model.fc.in_features
-    model.fc = torch.nn.Linear(num_ftrs, 2)
-    model = model.to("cuda")
-
-    # Set up the engine configuration
-    engine_config = EngineConfig(
-        input_shape=[1, benchmark_config.input_channels, benchmark_config.input_height, benchmark_config.input_width],
-        batch_size=benchmark_config.batch_size,
-        use_tensorrt=benchmark_config.use_tensorrt,
-        enable_dynamic_batching=benchmark_config.enable_dynamic_batching,
-        log_file=benchmark_config.log_file,
-        autoscale_interval=0
+def log_benchmark_stats(latencies, total_time, mode):
+    n = len(latencies)
+    if n == 0:
+        logging.warning("No latencies to log for %s mode", mode)
+        return
+    avg = mean(latencies) * 1000.0
+    med = median(latencies) * 1000.0
+    throughput = n / total_time
+    msg = (
+        f"{mode} benchmark results:\n"
+        f"  Requests: {n}\n"
+        f"  Total time: {total_time:.4f} s\n"
+        f"  Throughput: {throughput:.2f} req/s\n"
+        f"  Avg latency: {avg:.2f} ms\n"
+        f"  Median latency: {med:.2f} ms"
     )
+    logging.info(msg)
+    print(msg)
 
-    engine = InferenceEngine(model=model, config=engine_config)
+async def benchmark(config: BenchmarkConfig):
+    setup_logging(config.log_file, config.debug_mode)
+    logging.info("===== Starting Benchmark =====")
 
-    # Generate test inputs (random images) with shape [C, H, W]
-    input_shape = (benchmark_config.input_channels, benchmark_config.input_height, benchmark_config.input_width)
-    inputs = [torch.randn(*input_shape, device="cuda") for _ in range(benchmark_config.num_inputs)]
-    logger.debug("Generated %d test inputs with shape %s", benchmark_config.num_inputs, input_shape)
+    try:
+        # Create the model
+        model = create_resnet18_model(pretrained=False)
 
-    # Warmup: Run a few inferences to prepare the model/engine
-    warmup_input = inputs[0]
-    logger.info("Warming up the model with %d runs", benchmark_config.warmup_runs)
-    for _ in range(benchmark_config.warmup_runs):
-        await engine.run_inference_async(warmup_input)
+        # Move model to device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        logging.info("Using device: %s", device)
 
-    results = {}
+        # Engine config
+        engine_cfg = EngineConfig(
+            debug_mode=config.debug_mode,
+            batch_size=config.batch_size,
+            async_mode=config.async_mode,
+            warmup_runs=0
+        )
 
-    # Asynchronous Benchmark
-    if benchmark_config.async_mode:
-        throughput, sec_per_pred, duration = await benchmark_async(engine, inputs, benchmark_config.max_concurrent)
-        results["async_throughput"] = throughput
-        results["async_sec_per_pred"] = sec_per_pred
-        logger.info("=== Asynchronous Inference ===")
-        logger.info("Total Duration: %.4f seconds", duration)
-        logger.info("Throughput: %.2f predictions/s", throughput)
-        logger.info("Seconds per Prediction: %.6f s/pred", sec_per_pred)
+        # Instantiate engine
+        engine = InferenceEngine(
+            model=model,
+            device=device,
+            config=engine_cfg
+        )
 
-    # Synchronous Benchmark
-    if benchmark_config.sync_mode:
-        throughput, sec_per_pred, duration = benchmark_sync(engine, inputs)
-        results["sync_throughput"] = throughput
-        results["sync_sec_per_pred"] = sec_per_pred
-        logger.info("=== Synchronous Inference ===")
-        logger.info("Total Duration: %.4f seconds", duration)
-        logger.info("Throughput: %.2f predictions/s", throughput)
-        logger.info("Seconds per Prediction: %.6f s/pred", sec_per_pred)
+        # Create a single input tensor to reuse
+        input_shape = (config.input_channels, config.input_height, config.input_width)
+        input_data = torch.randn(input_shape, dtype=torch.float32)
+        if torch.cuda.is_available():
+            input_data = input_data.pin_memory().to(device, non_blocking=True)
 
-    # Profiling (if available and enabled)
-    if benchmark_config.profile and hasattr(engine, 'profile_inference'):
-        profile_input = inputs[0]
-        profile_metrics = engine.profile_inference(profile_input)
-        results["profile"] = profile_metrics
-        logger.info("=== Profile Metrics ===")
-        logger.info("Profile Metrics: %s", profile_metrics)
+        # Warmup
+        await warmup(engine, config.warmup_runs, input_data)
 
-    await engine.cleanup()
-    logger.info("Engine cleanup completed.")
+        # Async benchmark
+        if config.async_mode:
+            start_time = time.perf_counter()
+            async_latencies = await async_infer_requests(
+                engine,
+                config.num_inputs,
+                config.max_concurrent,
+                input_data
+            )
+            total_time = time.perf_counter() - start_time
+            log_benchmark_stats(async_latencies, total_time, "Async")
 
-    return results
+        # Sync benchmark
+        if config.sync_mode:
+            logging.info("Switching to synchronous benchmark...")
+            engine_cfg_sync = EngineConfig(
+                debug_mode=config.debug_mode,
+                batch_size=config.batch_size,
+                async_mode=False,
+                warmup_runs=0
+            )
+            engine_sync = InferenceEngine(
+                model=model,
+                device=device,
+                config=engine_cfg_sync
+            )
+            # Warmup for sync
+            await warmup(engine_sync, config.warmup_runs, input_data)
+            logging.info("Running synchronous benchmark...")
+            start_time = time.perf_counter()
+            sync_latencies = sync_infer_requests(
+                engine_sync,
+                config.num_inputs,
+                input_data
+            )
+            total_time = time.perf_counter() - start_time
+            log_benchmark_stats(sync_latencies, total_time, "Sync")
+
+            # Shutdown sync
+            await engine_sync.shutdown()
+
+        # Shutdown async
+        await engine.shutdown()
+        logging.info("Benchmark complete. Engines shut down.")
+    except Exception as e:
+        logging.error("Benchmark failed: %s", str(e))
+        raise
 
 if __name__ == "__main__":
-    # Directly create a benchmark configuration with all options enabled
-    benchmark_config = BenchmarkConfig(
-        num_inputs=2048*4,           # Larger number of test inputs
+    config = BenchmarkConfig(
+        num_inputs=8192,          # Large number for demonstration
         warmup_runs=10,
         input_channels=3,
         input_height=224,
         input_width=224,
         batch_size=64,
-        use_tensorrt=True,
-        enable_dynamic_batching=False,
-        profile=True,
         async_mode=True,
         sync_mode=True,
         max_concurrent=256,
         log_file="benchmark.log",
-        debug_mode=True
+        debug_mode=False  # Turn off debug logs by default
     )
 
-    # Configure logging: set level based on debug_mode and add both console and file handlers.
-    handlers = [logging.StreamHandler()]
-    if benchmark_config.log_file:
-        handlers.append(logging.FileHandler(benchmark_config.log_file))
-    logging.basicConfig(
-        level=logging.DEBUG if benchmark_config.debug_mode else logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=handlers
-    )
-
-    try:
-        asyncio.run(main(benchmark_config))
-    except KeyboardInterrupt:
-        logging.warning("Benchmark interrupted!")
-        exit(1)
+    asyncio.run(benchmark(config))

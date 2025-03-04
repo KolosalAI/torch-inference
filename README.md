@@ -7,3 +7,7 @@ Inference serve for torch models
 tests\test_inference_engine.py FAILED 2 CASES
 
 tests\test_preprocessor.py 
+
+# Testing
+
+python -m unittest discover -s tests
