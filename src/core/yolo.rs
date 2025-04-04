@@ -2,15 +2,23 @@
 // Supports YOLOv5, YOLOv8, YOLOv10, YOLOv11, and YOLOv12 (YOLO11)
 
 #![allow(dead_code)]
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[cfg(feature = "torch")]
-use tch::{nn, Tensor, Device, Kind, vision};
+use tch::{Device, Kind, Tensor, vision};
 
 #[cfg(not(feature = "torch"))]
 type Device = ();
+
+#[cfg(feature = "torch")]
+use crate::torch_optimization::{OptimizedTorchModel, TorchOptimizationConfig,
+    TorchOptimizationConfigBuilder};
+
+use crate::core::model_cache::{ModelCache, CacheStats};
+#[cfg(feature = "torch")]
+use crate::core::model_cache::cache_key;
 
 /// YOLO Model Version
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,21 +154,19 @@ pub struct YoloResults {
 /// YOLO Object Detector
 pub struct YoloDetector {
     #[cfg(feature = "torch")]
-    model: tch::CModule,
+    optimizer: OptimizedTorchModel,
+
     #[cfg(not(feature = "torch"))]
-    model: (),
-    
-    #[cfg(feature = "torch")]
-    device: Device,
-    #[cfg(not(feature = "torch"))]
-    device: (),
-    
+    _optimizer: (),
+
     version: YoloVersion,
     size: YoloSize,
     class_names: Vec<String>,
     input_size: (i64, i64),
     conf_threshold: f32,
     iou_threshold: f32,
+    cache: ModelCache,
+    model_id: String,
 }
 
 impl YoloDetector {
@@ -172,37 +178,43 @@ impl YoloDetector {
         size: YoloSize,
         class_names: Vec<String>,
         device: Option<Device>,
+        opt_config: Option<TorchOptimizationConfig>,
     ) -> Result<Self> {
         let device = device.unwrap_or(Device::Cpu);
-        
+        let model_id = model_path.to_string_lossy().to_string();
+
+        let config = opt_config.unwrap_or_else(|| {
+            let is_accel = device != Device::Cpu;
+            TorchOptimizationConfigBuilder::new()
+                .device(device)
+                .cudnn_benchmark(true)
+                .warmup_iterations(3)
+                .autocast(is_accel)
+                .fp16(is_accel)
+                .warmup_shape(vec![1, 3, 640, 640])
+                .build()
+        });
+
         log::info!("Loading {} ({}) model from {:?}", version.as_str(), size.suffix(), model_path);
-        
-        let model = tch::CModule::load_on_device(model_path, device)
-            .context("Failed to load YOLO model")?;
-        
-        // Default input size (can be overridden)
-        let input_size = match version {
-            YoloVersion::V5 => (640, 640),
-            YoloVersion::V8 => (640, 640),
-            YoloVersion::V10 => (640, 640),
-            YoloVersion::V11 => (640, 640),
-            YoloVersion::V12 => (640, 640), // YOLO12 uses 640x640 by default
-        };
-        
-        log::info!("{} detector loaded successfully with {} classes", version.as_str(), class_names.len());
-        
+        let model_path_str = model_path.to_str()
+            .ok_or_else(|| anyhow::anyhow!("model path is not valid UTF-8"))?;
+        let mut optimizer = OptimizedTorchModel::new(model_path_str, config)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        optimizer.warmup().map_err(|e| anyhow::anyhow!("{}", e))?;
+
         Ok(Self {
-            model,
-            device,
+            optimizer,
             version,
             size,
             class_names,
-            input_size,
+            input_size: (640, 640),
             conf_threshold: 0.25,
             iou_threshold: 0.45,
+            cache: ModelCache::new(128),
+            model_id,
         })
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn new(
         _model_path: &Path,
@@ -210,6 +222,7 @@ impl YoloDetector {
         _size: YoloSize,
         _class_names: Vec<String>,
         _device: Option<()>,
+        _opt_config: Option<()>,
     ) -> Result<Self> {
         bail!("PyTorch feature not enabled. Compile with --features torch");
     }
@@ -247,7 +260,7 @@ impl YoloDetector {
         // Add batch dimension
         tensor = tensor.unsqueeze(0);
         
-        Ok(tensor.to_device(self.device))
+        Ok(tensor.to_device(self.optimizer.device()))
     }
     
     #[cfg(not(feature = "torch"))]
@@ -267,7 +280,8 @@ impl YoloDetector {
         
         // Inference
         let inference_start = std::time::Instant::now();
-        let output = self.model.forward_ts(&[input])?;
+        let output = self.optimizer.infer(&input)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         let inference_time_ms = inference_start.elapsed().as_secs_f64() * 1000.0;
         
         // Postprocess
@@ -288,6 +302,30 @@ impl YoloDetector {
     
     #[cfg(not(feature = "torch"))]
     pub fn detect(&self, _image_path: &Path) -> Result<YoloResults> {
+        bail!("PyTorch feature not enabled");
+    }
+
+    /// Detect objects from raw image bytes. Result is cached by (model_id, bytes, conf+iou thresholds).
+    #[cfg(feature = "torch")]
+    pub fn detect_bytes(&self, image_bytes: &[u8]) -> Result<YoloResults> {
+        let mut params = Vec::with_capacity(8);
+        params.extend_from_slice(&self.conf_threshold.to_le_bytes());
+        params.extend_from_slice(&self.iou_threshold.to_le_bytes());
+        let key = cache_key(&self.model_id, image_bytes, &params);
+
+        self.cache.get_or_run(key, || {
+            // Write temp file for image loading.
+            let temp_path = std::env::temp_dir()
+                .join(format!("yolo_{}.jpg", uuid::Uuid::new_v4()));
+            std::fs::write(&temp_path, image_bytes)?;
+            let result = self.detect(&temp_path);
+            let _ = std::fs::remove_file(&temp_path);
+            result
+        })
+    }
+
+    #[cfg(not(feature = "torch"))]
+    pub fn detect_bytes(&self, _image_bytes: &[u8]) -> Result<YoloResults> {
         bail!("PyTorch feature not enabled");
     }
 
@@ -468,6 +506,31 @@ impl YoloDetector {
         }
         
         keep
+    }
+
+    /// Return cache hit/miss statistics.
+    pub fn cache_stats(&self) -> CacheStats {
+        self.cache.stats()
+    }
+
+    #[cfg(all(test, not(feature = "torch")))]
+    pub fn new_stub(
+        version: YoloVersion,
+        size: YoloSize,
+        class_names: Vec<String>,
+    ) -> Self {
+        Self {
+            #[cfg(not(feature = "torch"))]
+            _optimizer: (),
+            version,
+            size,
+            class_names,
+            input_size: (640, 640),
+            conf_threshold: 0.25,
+            iou_threshold: 0.45,
+            cache: ModelCache::new(128),
+            model_id: "stub".to_string(),
+        }
     }
 
     /// Get model information
@@ -747,6 +810,7 @@ mod tests {
             YoloSize::Nano,
             vec!["person".to_string()],
             None,
+            None,
         );
         assert!(result.is_err(), "new() should error when torch feature is disabled");
         if let Err(e) = result {
@@ -755,28 +819,27 @@ mod tests {
         }
     }
 
-    // ─── NMS via YoloDetector helper ────────────────────────────────────────
-
-    fn make_detector() -> YoloDetector {
-        // Construct the struct directly to bypass model loading.
-        YoloDetector {
-            #[cfg(feature = "torch")]
-            model: unsafe { std::mem::zeroed() },
-            #[cfg(not(feature = "torch"))]
-            model: (),
-            #[cfg(feature = "torch")]
-            device: tch::Device::Cpu,
-            #[cfg(not(feature = "torch"))]
-            device: (),
-            version: YoloVersion::V8,
-            size: YoloSize::Nano,
-            class_names: load_coco_names(),
-            input_size: (640, 640),
-            conf_threshold: 0.25,
-            iou_threshold: 0.45,
-        }
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_yolo_cache_stats_initially_zero() {
+        let detector = YoloDetector::new_stub(
+            YoloVersion::V8,
+            YoloSize::Nano,
+            vec!["person".to_string()],
+        );
+        let stats = detector.cache_stats();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
     }
 
+    // ─── NMS via YoloDetector helper ────────────────────────────────────────
+
+    #[cfg(not(feature = "torch"))]
+    fn make_detector() -> YoloDetector {
+        YoloDetector::new_stub(YoloVersion::V8, YoloSize::Nano, load_coco_names())
+    }
+
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_nms_empty_input_returns_empty() {
         let detector = make_detector();
@@ -784,6 +847,7 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_nms_single_detection_is_kept() {
         let detector = make_detector();
@@ -797,6 +861,7 @@ mod tests {
         assert_eq!(result.len(), 1);
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_nms_suppresses_high_iou_same_class() {
         let detector = make_detector();
@@ -820,6 +885,7 @@ mod tests {
         assert!((result[0].confidence - 0.9).abs() < 1e-5);
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_nms_keeps_different_class_same_location() {
         let detector = make_detector();
@@ -842,6 +908,7 @@ mod tests {
         assert_eq!(result.len(), 2, "different classes at same location should both be kept");
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_nms_keeps_non_overlapping_same_class() {
         let detector = make_detector();
@@ -864,6 +931,7 @@ mod tests {
         assert_eq!(result.len(), 2, "non-overlapping boxes should both be kept");
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_nms_output_sorted_by_confidence_descending() {
         let detector = make_detector();
@@ -888,6 +956,7 @@ mod tests {
 
     // ─── YoloDetector methods that do not require a model ───────────────────
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_set_conf_threshold_clamps() {
         let mut detector = make_detector();
@@ -899,6 +968,7 @@ mod tests {
         assert!((detector.conf_threshold - 0.5).abs() < 1e-6);
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_set_iou_threshold_clamps() {
         let mut detector = make_detector();
@@ -908,6 +978,7 @@ mod tests {
         assert!((detector.iou_threshold - 0.0).abs() < 1e-6);
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_set_input_size() {
         let mut detector = make_detector();
@@ -915,6 +986,7 @@ mod tests {
         assert_eq!(detector.input_size, (1280, 720));
     }
 
+    #[cfg(not(feature = "torch"))]
     #[test]
     fn test_info_string_contains_expected_fields() {
         let detector = make_detector();

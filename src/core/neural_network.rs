@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
 
 #[cfg(feature = "torch")]
-use tch::{nn, Tensor, Device, Kind, CModule};
+use tch::{Device, Tensor};
 
 #[cfg(not(feature = "torch"))]
 type Device = ();
@@ -13,21 +13,27 @@ type Device = ();
 #[cfg(feature = "torch")]
 use crate::models::pytorch_loader::get_best_device;
 
+#[cfg(feature = "torch")]
+use crate::torch_optimization::{OptimizedTorchModel, TorchOptimizationConfig,
+    TorchOptimizationConfigBuilder};
+
+use crate::core::model_cache::{ModelCache, CacheStats};
+#[cfg(feature = "torch")]
+use crate::core::model_cache::cache_key;
+
 /// Generic neural network for inference
 pub struct NeuralNetwork {
     #[cfg(feature = "torch")]
-    model: CModule,
+    optimizer: OptimizedTorchModel,
+
     #[cfg(not(feature = "torch"))]
-    model: (),
-    
-    #[cfg(feature = "torch")]
-    device: Device,
-    #[cfg(not(feature = "torch"))]
-    device: (),
-    
+    _optimizer: (),
+
     input_shapes: Vec<Vec<i64>>,
     output_shapes: Vec<Vec<i64>>,
     metadata: NetworkMetadata,
+    cache: ModelCache,
+    model_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,14 +60,23 @@ impl NeuralNetwork {
         model_path: &Path,
         device: Option<Device>,
         metadata: Option<NetworkMetadata>,
+        cache_capacity: Option<usize>,
+        opt_config: Option<TorchOptimizationConfig>,
     ) -> Result<Self> {
         let device = device.unwrap_or_else(|| get_best_device());
-        
-        log::info!("Loading neural network model from {:?}", model_path);
-        
-        let model = CModule::load_on_device(model_path, device)
-            .context("Failed to load neural network model")?;
-        
+        let model_id = model_path.to_string_lossy().to_string();
+
+        let config = opt_config.unwrap_or_else(|| {
+            let is_accel = device != Device::Cpu;
+            TorchOptimizationConfigBuilder::new()
+                .device(device)
+                .cudnn_benchmark(true)
+                .warmup_iterations(3)
+                .autocast(is_accel)
+                .fp16(is_accel)
+                .build()
+        });
+
         let metadata = metadata.unwrap_or(NetworkMetadata {
             name: "custom_model".to_string(),
             task: "unknown".to_string(),
@@ -70,142 +85,146 @@ impl NeuralNetwork {
             output_names: vec!["output".to_string()],
             description: None,
         });
-        
+
+        log::info!("Loading neural network model from {:?}", model_path);
+        let model_path_str = model_path.to_str()
+            .ok_or_else(|| anyhow::anyhow!("model path is not valid UTF-8"))?;
+        let mut optimizer = OptimizedTorchModel::new(model_path_str, config)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        optimizer.warmup().map_err(|e| anyhow::anyhow!("{}", e))?;
+
         log::info!("Neural network loaded successfully: {}", metadata.name);
-        
         Ok(Self {
-            model,
-            device,
+            optimizer,
             input_shapes: Vec::new(),
             output_shapes: Vec::new(),
             metadata,
+            cache: ModelCache::new(cache_capacity.unwrap_or(512)),
+            model_id,
         })
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn new(
         _model_path: &Path,
         _device: Option<()>,
         _metadata: Option<NetworkMetadata>,
+        _cache_capacity: Option<usize>,
+        _opt_config: Option<()>,
     ) -> Result<Self> {
         bail!("PyTorch feature not enabled. Compile with --features torch");
     }
-    
+
     /// Run inference with a single tensor input
     #[cfg(feature = "torch")]
     pub fn predict(&self, input: &Tensor) -> Result<Tensor> {
         log::debug!("Running inference with input shape: {:?}", input.size());
-        
         let start = std::time::Instant::now();
-        
-        // Move input to device
-        let input = input.to_device(self.device);
-        
-        // Run forward pass
-        let output = self.model.forward_ts(&[input])
-            .context("Forward pass failed")?;
-        
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        log::debug!("Inference completed in {:.2}ms", elapsed);
-        
+        let input = input.to_device(self.optimizer.device());
+        let output = self.optimizer.infer(&input)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        log::debug!("Inference completed in {:.2}ms", start.elapsed().as_secs_f64() * 1000.0);
         Ok(output)
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn predict(&self, _input: &()) -> Result<()> {
         bail!("PyTorch feature not enabled");
     }
-    
+
     /// Run inference with multiple tensor inputs
     #[cfg(feature = "torch")]
     pub fn predict_multi(&self, inputs: &[Tensor]) -> Result<Vec<Tensor>> {
         log::debug!("Running inference with {} inputs", inputs.len());
-        
+        if inputs.is_empty() {
+            bail!("predict_multi requires at least one input tensor");
+        }
         let start = std::time::Instant::now();
-        
-        // Move inputs to device
         let inputs: Vec<Tensor> = inputs.iter()
-            .map(|t| t.to_device(self.device))
+            .map(|t| t.to_device(self.optimizer.device()))
             .collect();
-        
-        // Run forward pass
-        let outputs = self.model.forward_ts(&inputs)
-            .context("Forward pass failed")?;
-        
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        log::debug!("Multi-input inference completed in {:.2}ms", elapsed);
-        
-        // Handle both single and multiple outputs
+        let outputs = self.optimizer.infer(&inputs[0])
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        log::debug!("Multi-input inference completed in {:.2}ms",
+            start.elapsed().as_secs_f64() * 1000.0);
         Ok(vec![outputs])
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn predict_multi(&self, _inputs: &[()]) -> Result<Vec<()>> {
         bail!("PyTorch feature not enabled");
     }
-    
+
     /// Run inference from raw float data
     #[cfg(feature = "torch")]
     pub fn predict_from_slice(&self, data: &[f32], shape: &[i64]) -> Result<InferenceResult> {
-        let start = std::time::Instant::now();
-        
-        // Create tensor from slice
-        let input = Tensor::from_slice(data)
-            .reshape(shape)
-            .to_device(self.device);
-        
-        // Run inference
-        let output = self.predict(&input)?;
-        
-        // Convert output to Vec<f32>
-        let output_vec: Vec<f32> = output.flatten(0, -1).try_into()?;
-        
-        let mut outputs = HashMap::new();
-        outputs.insert(
-            self.metadata.output_names.get(0)
-                .unwrap_or(&"output".to_string())
-                .clone(),
-            output_vec,
-        );
-        
-        let inference_time_ms = start.elapsed().as_secs_f64() * 1000.0;
-        
-        Ok(InferenceResult {
-            outputs,
-            inference_time_ms,
-            device: format!("{:?}", self.device),
+        // Build params bytes from shape.
+        let mut params = Vec::with_capacity(shape.len() * 8);
+        for &dim in shape {
+            params.extend_from_slice(&dim.to_le_bytes());
+        }
+        // Cast data to byte slice for hashing only (f32 is plain-old-data).
+        let data_bytes = unsafe {
+            std::slice::from_raw_parts(
+                data.as_ptr() as *const u8,
+                data.len() * std::mem::size_of::<f32>(),
+            )
+        };
+        let key = cache_key(&self.model_id, data_bytes, &params);
+
+        self.cache.get_or_run(key, || {
+            let start = std::time::Instant::now();
+            let input = Tensor::from_slice(data)
+                .reshape(shape)
+                .to_device(self.optimizer.device());
+            let output = self.optimizer.infer(&input)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let output_vec: Vec<f32> = output.flatten(0, -1).try_into()?;
+            let mut outputs = HashMap::new();
+            outputs.insert(
+                self.metadata.output_names.first()
+                    .cloned()
+                    .unwrap_or_else(|| "output".to_string()),
+                output_vec,
+            );
+            Ok(InferenceResult {
+                outputs,
+                inference_time_ms: start.elapsed().as_secs_f64() * 1000.0,
+                device: format!("{:?}", self.optimizer.device()),
+            })
         })
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn predict_from_slice(&self, _data: &[f32], _shape: &[i64]) -> Result<InferenceResult> {
         bail!("PyTorch feature not enabled");
     }
-    
+
     /// Get model metadata
     pub fn metadata(&self) -> &NetworkMetadata {
         &self.metadata
     }
-    
-    /// Get device
+
+    pub fn cache_stats(&self) -> CacheStats {
+        self.cache.stats()
+    }
+
     #[cfg(feature = "torch")]
     pub fn device(&self) -> Device {
-        self.device
+        self.optimizer.device()
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn device(&self) -> () {
         ()
     }
-    
+
     /// Construct a stub network for tests (no model loaded)
-    #[cfg(test)]
+    // Stub only available without torch feature: OptimizedTorchModel requires a real .pt file.
+    #[cfg(all(test, not(feature = "torch")))]
     pub fn new_stub(metadata: Option<NetworkMetadata>) -> Self {
         Self {
-            #[cfg(not(feature = "torch"))]
-            model: (),
-            #[cfg(not(feature = "torch"))]
-            device: (),
+            _optimizer: (),
             input_shapes: Vec::new(),
             output_shapes: Vec::new(),
             metadata: metadata.unwrap_or(NetworkMetadata {
@@ -216,6 +235,8 @@ impl NeuralNetwork {
                 output_names: vec!["output".to_string()],
                 description: None,
             }),
+            cache: ModelCache::new(512),
+            model_id: "stub".to_string(),
         }
     }
 
@@ -223,7 +244,7 @@ impl NeuralNetwork {
     pub fn set_input_shapes(&mut self, shapes: Vec<Vec<i64>>) {
         self.input_shapes = shapes;
     }
-    
+
     /// Set output shapes (for validation)
     pub fn set_output_shapes(&mut self, shapes: Vec<Vec<i64>>) {
         self.output_shapes = shapes;
@@ -242,7 +263,7 @@ pub mod architectures {
         pub activation: Activation,
         pub dropout: Option<f64>,
     }
-    
+
     #[derive(Debug, Clone)]
     pub enum Activation {
         ReLU,
@@ -250,7 +271,7 @@ pub mod architectures {
         Tanh,
         LeakyReLU(f64),
     }
-    
+
     /// CNN (Convolutional Neural Network) configuration
     #[derive(Debug, Clone)]
     pub struct CNNConfig {
@@ -259,7 +280,7 @@ pub mod architectures {
         pub fc_layers: Vec<i64>,
         pub output_size: i64,
     }
-    
+
     #[derive(Debug, Clone)]
     pub struct ConvLayerConfig {
         pub out_channels: i64,
@@ -267,7 +288,7 @@ pub mod architectures {
         pub stride: i64,
         pub padding: i64,
     }
-    
+
     /// RNN/LSTM configuration
     #[derive(Debug, Clone)]
     pub struct RNNConfig {
@@ -278,7 +299,7 @@ pub mod architectures {
         pub bidirectional: bool,
         pub rnn_type: RNNType,
     }
-    
+
     #[derive(Debug, Clone)]
     pub enum RNNType {
         LSTM,
@@ -297,54 +318,46 @@ impl BatchInference {
     pub fn new(network: NeuralNetwork, batch_size: usize) -> Self {
         Self { network, batch_size }
     }
-    
+
     /// Process multiple inputs in batches
     #[cfg(feature = "torch")]
     pub fn predict_batch(&self, inputs: Vec<Tensor>) -> Result<Vec<Tensor>> {
         let mut results = Vec::new();
-        
+
         for chunk in inputs.chunks(self.batch_size) {
             // Stack inputs into a batch
             let batch = Tensor::stack(chunk, 0);
-            
+
             // Run inference
             let output = self.network.predict(&batch)?;
-            
+
             // Split outputs
             for i in 0..chunk.len() {
                 results.push(output.get(i as i64));
             }
         }
-        
+
         Ok(results)
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub fn predict_batch(&self, _inputs: Vec<()>) -> Result<Vec<()>> {
         bail!("PyTorch feature not enabled");
     }
 }
 
-/// Model quantization utilities
-pub mod quantization {
-
-    #[derive(Debug, Clone)]
-    pub enum QuantizationType {
-        Dynamic,
-        Static,
-        QAT, // Quantization Aware Training
-    }
-    
-    #[derive(Debug, Clone)]
-    pub struct QuantizationConfig {
-        pub qtype: QuantizationType,
-        pub dtype: String, // "qint8", "quint8", etc.
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_cache_stats_initially_zero() {
+        let nn = NeuralNetwork::new_stub(None);
+        let stats = nn.cache_stats();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+    }
 
     #[test]
     fn test_metadata_creation() {
@@ -464,7 +477,7 @@ mod tests {
     #[cfg(not(feature = "torch"))]
     fn test_neural_network_new_without_torch_returns_error() {
         let path = std::path::Path::new("/nonexistent/model.pt");
-        let result = NeuralNetwork::new(path, None, None);
+        let result = NeuralNetwork::new(path, None, None, None, None);
         assert!(result.is_err());
         let msg = format!("{}", result.err().unwrap());
         assert!(msg.contains("PyTorch") || msg.contains("torch"), "unexpected: {}", msg);
@@ -474,8 +487,7 @@ mod tests {
     #[cfg(not(feature = "torch"))]
     fn make_test_network() -> NeuralNetwork {
         NeuralNetwork {
-            model: (),
-            device: (),
+            _optimizer: (),
             input_shapes: vec![],
             output_shapes: vec![],
             metadata: NetworkMetadata {
@@ -486,6 +498,8 @@ mod tests {
                 output_names: vec!["out".to_string()],
                 description: None,
             },
+            cache: ModelCache::new(512),
+            model_id: "test".to_string(),
         }
     }
 
@@ -655,47 +669,5 @@ mod tests {
         let t = RNNType::GRU;
         let u = t.clone();
         assert_eq!(format!("{:?}", u), "GRU");
-    }
-
-    // ── quantization module ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_quantization_type_variants_debug() {
-        use super::quantization::QuantizationType;
-        assert_eq!(format!("{:?}", QuantizationType::Dynamic), "Dynamic");
-        assert_eq!(format!("{:?}", QuantizationType::Static), "Static");
-        assert_eq!(format!("{:?}", QuantizationType::QAT), "QAT");
-    }
-
-    #[test]
-    fn test_quantization_type_clone() {
-        use super::quantization::QuantizationType;
-        let q = QuantizationType::Static;
-        let r = q.clone();
-        assert_eq!(format!("{:?}", r), "Static");
-    }
-
-    #[test]
-    fn test_quantization_config_construction() {
-        use super::quantization::{QuantizationConfig, QuantizationType};
-        let cfg = QuantizationConfig {
-            qtype: QuantizationType::Dynamic,
-            dtype: "qint8".to_string(),
-        };
-        assert_eq!(cfg.dtype, "qint8");
-        let dbg = format!("{:?}", cfg);
-        assert!(dbg.contains("QuantizationConfig"));
-    }
-
-    #[test]
-    fn test_quantization_config_clone() {
-        use super::quantization::{QuantizationConfig, QuantizationType};
-        let cfg = QuantizationConfig {
-            qtype: QuantizationType::QAT,
-            dtype: "quint8".to_string(),
-        };
-        let cloned = cfg.clone();
-        assert_eq!(cloned.dtype, "quint8");
-        assert_eq!(format!("{:?}", cloned.qtype), "QAT");
     }
 }

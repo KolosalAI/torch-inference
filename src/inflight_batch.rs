@@ -1,11 +1,74 @@
 #![allow(dead_code)]
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Semaphore, oneshot};
+use tokio::sync::{RwLock, Semaphore, OwnedSemaphorePermit, oneshot};
 use log::{info, debug, warn};
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::collections::VecDeque;
+
+/// Five-bucket priority queue. Each bucket is a FIFO for one priority level.
+/// Buckets are indexed 0 (lowest) through 4 (highest).
+/// Enqueue: O(1). Drain: O(batch_size).
+struct PriorityBuckets {
+    buckets: [VecDeque<InflightRequest>; 5],
+}
+
+impl PriorityBuckets {
+    fn new() -> Self {
+        Self {
+            buckets: std::array::from_fn(|_| VecDeque::new()),
+        }
+    }
+
+    /// Clamp `priority` to 0–4 and append to the matching bucket.
+    /// Any value ≥ 5 is treated identically to 4; within a bucket, FIFO order
+    /// is preserved. Callers expecting strict ordering above priority 4 should
+    /// pre-scale their values to the 0–4 range.
+    fn push(&mut self, request: InflightRequest) {
+        let idx = request.priority.clamp(0, 4) as usize;
+        self.buckets[idx].push_back(request);
+    }
+
+    /// Drain all requests across all buckets, calling `f` for each.
+    fn drain_all(&mut self, mut f: impl FnMut(InflightRequest)) {
+        for bucket in self.buckets.iter_mut() {
+            for request in bucket.drain(..) {
+                f(request);
+            }
+        }
+    }
+
+    /// Drain up to `max` requests, highest-priority bucket first.
+    fn drain_up_to(&mut self, max: usize) -> Vec<InflightRequest> {
+        let mut result = Vec::with_capacity(max);
+        for bucket in self.buckets.iter_mut().rev() {
+            let take = (max - result.len()).min(bucket.len());
+            result.extend(bucket.drain(..take));
+            if result.len() >= max {
+                break;
+            }
+        }
+        result
+    }
+
+    fn len(&self) -> usize {
+        self.buckets.iter().map(|b| b.len()).sum()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.buckets.iter().all(|b| b.is_empty())
+    }
+
+    /// Elapsed time of the request that has been waiting the longest.
+    fn oldest_age(&self) -> Option<Duration> {
+        self.buckets
+            .iter()
+            .filter_map(|b| b.front())
+            .map(|r| r.timestamp.elapsed())
+            .max()
+    }
+}
 
 /// Request with response channel for inflight batching
 #[derive(Debug)]
@@ -26,7 +89,7 @@ pub struct InflightBatchProcessor {
     batch_timeout_ms: u64,
     
     // Queue of pending requests
-    pending_queue: Arc<RwLock<VecDeque<InflightRequest>>>,
+    pending_queue: Arc<RwLock<PriorityBuckets>>,
     
     // Semaphore to limit concurrent batches
     inflight_semaphore: Arc<Semaphore>,
@@ -47,7 +110,7 @@ impl InflightBatchProcessor {
             max_batch_size,
             max_inflight_batches,
             batch_timeout_ms,
-            pending_queue: Arc::new(RwLock::new(VecDeque::new())),
+            pending_queue: Arc::new(RwLock::new(PriorityBuckets::new())),
             inflight_semaphore: Arc::new(Semaphore::new(max_inflight_batches)),
             processed_batches: AtomicU64::new(0),
             processed_requests: AtomicU64::new(0),
@@ -62,90 +125,70 @@ impl InflightBatchProcessor {
     /// Add a request to the pending queue
     pub async fn add_request(&self, request: InflightRequest) -> Result<(), String> {
         let mut queue = self.pending_queue.write().await;
-        
-        // Add to queue (sorted by priority)
-        let insert_pos = queue.iter()
-            .position(|r| r.priority < request.priority)
-            .unwrap_or(queue.len());
-        
-        queue.insert(insert_pos, request);
-        
+        queue.push(request);
         let queue_size = queue.len();
+        drop(queue);
+
         self.current_queue_depth.store(queue_size, Ordering::Relaxed);
-        
-        // Update peak
+
         let current_peak = self.peak_queue_depth.load(Ordering::Relaxed);
         if queue_size > current_peak {
             self.peak_queue_depth.store(queue_size, Ordering::Relaxed);
         }
-        
+
         debug!("Request added to inflight queue. Queue size: {}", queue_size);
         Ok(())
     }
     
     /// Try to form a batch from pending requests
-    pub async fn try_form_batch(&self) -> Option<Vec<InflightRequest>> {
-        // Try to acquire permit for inflight batch
-        let permit = self.inflight_semaphore.try_acquire();
-        if permit.is_err() {
+    pub async fn try_form_batch(&self) -> Option<InflightBatchGuard<'_>> {
+        // ── Phase 1: read-lock peek ────────────────────────────────────────
+        // Concurrent add_request calls proceed unblocked during this phase.
+        let should_form = {
+            let queue = self.pending_queue.read().await;
+            if queue.is_empty() {
+                return None;
+            }
+            let oldest_age = queue.oldest_age().unwrap_or(Duration::ZERO);
+            let full = queue.len() >= self.max_batch_size;
+            full || oldest_age >= Duration::from_millis(self.batch_timeout_ms)
+        }; // read lock released here
+
+        if !should_form {
+            return None;
+        }
+
+        // Non-blocking semaphore acquisition.
+        let Ok(permit) = self.inflight_semaphore.clone().try_acquire_owned() else {
             debug!("Max inflight batches reached, waiting...");
             return None;
-        }
-        
-        let mut queue = self.pending_queue.write().await;
-        
-        if queue.is_empty() {
-            return None;
-        }
-        
-        // Check if we should wait for more requests
-        let oldest_age = queue.front()
-            .map(|r| r.timestamp.elapsed())
-            .unwrap_or(Duration::ZERO);
-        
-        let should_wait = queue.len() < self.max_batch_size 
-            && oldest_age < Duration::from_millis(self.batch_timeout_ms);
-        
-        if should_wait {
-            return None;
-        }
-        
-        // Form batch (up to max_batch_size)
-        let batch_size = queue.len().min(self.max_batch_size);
-        let batch: Vec<_> = queue.drain(..batch_size).collect();
-        
-        self.current_queue_depth.store(queue.len(), Ordering::Relaxed);
-        self.inflight_batches.fetch_add(1, Ordering::Relaxed);
-        
-        // Forget the permit so it stays acquired until complete_batch is called
-        permit.unwrap().forget();
-        
+        };
+
+        // ── Phase 2: write-lock drain ──────────────────────────────────────
+        let batch = {
+            let mut queue = self.pending_queue.write().await;
+            // TOCTOU guard: re-verify queue is still non-empty after acquiring write lock.
+            if queue.is_empty() {
+                debug!("TOCTOU: queue emptied between peek and drain, skipping batch");
+                return None;
+            }
+            let batch_size = queue.len().min(self.max_batch_size);
+            let batch = queue.drain_up_to(batch_size);
+            self.current_queue_depth.store(queue.len(), Ordering::Relaxed);
+            // Increment inside the write lock to avoid a stats undercount window
+            // between lock release and the atomic store.
+            self.inflight_batches.fetch_add(1, Ordering::Relaxed);
+            batch
+        }; // write lock released here
+
         info!(
             "Formed batch with {} requests (queue remaining: {}, inflight: {})",
             batch.len(),
-            queue.len(),
+            self.current_queue_depth.load(Ordering::Relaxed),
             self.inflight_batches.load(Ordering::Relaxed)
         );
-        
-        Some(batch)
-    }
-    
-    /// Mark batch as complete and release semaphore
-    pub fn complete_batch(&self, batch_size: usize, processing_time_ms: u64) {
-        self.processed_batches.fetch_add(1, Ordering::Relaxed);
-        self.processed_requests.fetch_add(batch_size as u64, Ordering::Relaxed);
-        self.total_latency_ms.fetch_add(processing_time_ms, Ordering::Relaxed);
-        self.inflight_batches.fetch_sub(1, Ordering::Relaxed);
-        
-        // Release one permit back to the semaphore
-        self.inflight_semaphore.add_permits(1);
-        
-        debug!(
-            "Batch completed: {} requests in {} ms (inflight: {})",
-            batch_size,
-            processing_time_ms,
-            self.inflight_batches.load(Ordering::Relaxed)
-        );
+
+        Some(InflightBatchGuard::new(self, batch, permit))
     }
     
     /// Get the adaptive batch timeout based on queue depth
@@ -211,13 +254,11 @@ impl InflightBatchProcessor {
     /// Clear all pending requests (returns count)
     pub async fn clear_queue(&self) -> usize {
         let mut queue = self.pending_queue.write().await;
-        let count = queue.len();
-        
-        // Send errors to all pending requests
-        for request in queue.drain(..) {
+        let mut count = 0;
+        queue.drain_all(|request| {
             let _ = request.response_tx.send(Err("Queue cleared".to_string()));
-        }
-        
+            count += 1;
+        });
         self.current_queue_depth.store(0, Ordering::Relaxed);
         warn!("Cleared {} pending requests from queue", count);
         count
@@ -236,6 +277,56 @@ pub struct InflightBatchStats {
     pub max_inflight_batches: usize,
 }
 
+/// RAII guard returned by `try_form_batch`.
+///
+/// Holds the inflight semaphore permit for the duration of batch processing.
+/// The permit is automatically released on `Drop`, whether or not `complete`
+/// is called — preventing semaphore starvation on panics.
+pub struct InflightBatchGuard<'a> {
+    processor: &'a InflightBatchProcessor,
+    /// The requests that form this batch.
+    pub batch: Vec<InflightRequest>,
+    permit: OwnedSemaphorePermit,
+    completed: bool,
+}
+
+impl<'a> InflightBatchGuard<'a> {
+    fn new(
+        processor: &'a InflightBatchProcessor,
+        batch: Vec<InflightRequest>,
+        permit: OwnedSemaphorePermit,
+    ) -> Self {
+        Self { processor, batch, permit, completed: false }
+    }
+
+    /// Record batch statistics and release the guard.
+    ///
+    /// `processing_time_ms` is the wall-clock time from batch formation
+    /// to completion of inference.
+    pub fn complete(mut self, processing_time_ms: u64) {
+        // Mark completed first so Drop does not double-decrement inflight_batches
+        // if any subsequent atomic operation were to panic.
+        self.completed = true;
+        let batch_size = self.batch.len();
+        self.processor.processed_batches.fetch_add(1, Ordering::Relaxed);
+        self.processor.processed_requests.fetch_add(batch_size as u64, Ordering::Relaxed);
+        self.processor.total_latency_ms.fetch_add(processing_time_ms, Ordering::Relaxed);
+        self.processor.inflight_batches.fetch_sub(1, Ordering::Relaxed);
+        // `self` drops here: OwnedSemaphorePermit releases automatically.
+    }
+}
+
+impl Drop for InflightBatchGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            // complete() was never called (e.g. caller panicked).
+            // Decrement inflight_batches so the counter stays accurate.
+            self.processor.inflight_batches.fetch_sub(1, Ordering::Relaxed);
+        }
+        // OwnedSemaphorePermit drops here regardless, releasing the semaphore.
+    }
+}
+
 impl Default for InflightBatchProcessor {
     fn default() -> Self {
         Self::new(32, 4, 100)
@@ -246,6 +337,89 @@ impl Default for InflightBatchProcessor {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn make_request(id: &str, priority: i32) -> InflightRequest {
+        let (tx, _rx) = oneshot::channel();
+        InflightRequest {
+            id: id.to_string(),
+            model_name: "m".to_string(),
+            inputs: vec![],
+            priority,
+            timestamp: Instant::now(),
+            response_tx: tx,
+        }
+    }
+
+    #[test]
+    fn test_priority_buckets_push_and_drain_order() {
+        let mut buckets = PriorityBuckets::new();
+        buckets.push(make_request("low", 0));
+        buckets.push(make_request("high", 4));
+        buckets.push(make_request("mid", 2));
+
+        let drained = buckets.drain_up_to(10);
+        // highest priority first
+        assert_eq!(drained[0].priority, 4);
+        assert_eq!(drained[1].priority, 2);
+        assert_eq!(drained[2].priority, 0);
+    }
+
+    #[test]
+    fn test_priority_buckets_drain_up_to_limit() {
+        let mut buckets = PriorityBuckets::new();
+        for i in 0..5 {
+            buckets.push(make_request(&format!("r{i}"), 2));
+        }
+        let drained = buckets.drain_up_to(3);
+        assert_eq!(drained.len(), 3);
+        assert_eq!(buckets.len(), 2);
+    }
+
+    #[test]
+    fn test_priority_buckets_clamps_priority() {
+        let mut buckets = PriorityBuckets::new();
+        buckets.push(make_request("neg", -5));   // goes to bucket 0
+        buckets.push(make_request("big", 100));  // goes to bucket 4
+        assert_eq!(buckets.len(), 2);
+        let drained = buckets.drain_up_to(10);
+        assert_eq!(drained[0].priority, 100); // highest first
+        assert_eq!(drained[1].priority, -5);
+    }
+
+    #[test]
+    fn test_priority_buckets_is_empty_and_len() {
+        let mut buckets = PriorityBuckets::new();
+        assert!(buckets.is_empty());
+        assert_eq!(buckets.len(), 0);
+        buckets.push(make_request("x", 1));
+        assert!(!buckets.is_empty());
+        assert_eq!(buckets.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_priority_buckets_oldest_age() {
+        let mut buckets = PriorityBuckets::new();
+        let (tx, _rx) = oneshot::channel();
+        buckets.push(InflightRequest {
+            id: "old".to_string(),
+            model_name: "m".to_string(),
+            inputs: vec![],
+            priority: 1,
+            timestamp: Instant::now() - Duration::from_millis(200),
+            response_tx: tx,
+        });
+        let (tx2, _rx2) = oneshot::channel();
+        buckets.push(InflightRequest {
+            id: "new".to_string(),
+            model_name: "m".to_string(),
+            inputs: vec![],
+            priority: 3,
+            timestamp: Instant::now(),
+            response_tx: tx2,
+        });
+        let age = buckets.oldest_age().unwrap();
+        assert!(age >= Duration::from_millis(190));
+    }
 
     #[tokio::test]
     async fn test_inflight_add_request() {
@@ -288,12 +462,15 @@ mod tests {
         // Wait for timeout to form batch
         tokio::time::sleep(Duration::from_millis(150)).await;
         
-        let batch = processor.try_form_batch().await.unwrap();
-        
-        // Should be sorted by priority (highest first)
-        assert_eq!(batch[0].priority, 10);
-        assert_eq!(batch[1].priority, 5);
-        assert_eq!(batch[2].priority, 3);
+        let guard = processor.try_form_batch().await.unwrap();
+
+        // PriorityBuckets clamps to 0-4: priority 10 and 5 both land in bucket 4 (FIFO),
+        // priority 3 in bucket 3, priority 2 in bucket 2, priority 1 in bucket 1.
+        // Drain is highest-bucket-first; within a bucket order is FIFO (insertion order).
+        // Insertion order: 1, 5, 3, 10, 2 → bucket4=[5,10], bucket3=[3], bucket2=[2], bucket1=[1]
+        assert_eq!(guard.batch[0].priority, 5);
+        assert_eq!(guard.batch[1].priority, 10);
+        assert_eq!(guard.batch[2].priority, 3);
     }
 
     #[tokio::test]
@@ -316,8 +493,8 @@ mod tests {
         
         // Should form batch of max_batch_size (3)
         tokio::time::sleep(Duration::from_millis(150)).await;
-        let batch = processor.try_form_batch().await.unwrap();
-        assert_eq!(batch.len(), 3);
+        let guard = processor.try_form_batch().await.unwrap();
+        assert_eq!(guard.batch.len(), 3);
         assert_eq!(processor.queue_depth(), 2);
     }
 
@@ -340,29 +517,29 @@ mod tests {
         }
         
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         // Form first batch
-        let batch1 = processor.try_form_batch().await.unwrap();
-        assert_eq!(batch1.len(), 2);
+        let guard1 = processor.try_form_batch().await.unwrap();
+        assert_eq!(guard1.batch.len(), 2);
         assert_eq!(processor.inflight_count(), 1);
-        
+
         // Form second batch
-        let batch2 = processor.try_form_batch().await.unwrap();
-        assert_eq!(batch2.len(), 2);
+        let guard2 = processor.try_form_batch().await.unwrap();
+        assert_eq!(guard2.batch.len(), 2);
         assert_eq!(processor.inflight_count(), 2);
-        
+
         // Third should fail (max inflight reached)
-        let batch3 = processor.try_form_batch().await;
-        assert!(batch3.is_none());
-        
+        let guard3 = processor.try_form_batch().await;
+        assert!(guard3.is_none());
+
         // Complete first batch
-        processor.complete_batch(batch1.len(), 50);
+        guard1.complete(50);
         assert_eq!(processor.inflight_count(), 1);
-        
+
         // Now can form third batch
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let batch3 = processor.try_form_batch().await.unwrap();
-        assert_eq!(batch3.len(), 2);
+        let guard3 = processor.try_form_batch().await.unwrap();
+        assert_eq!(guard3.batch.len(), 2);
     }
 
     #[tokio::test]
@@ -419,9 +596,9 @@ mod tests {
         }
         
         tokio::time::sleep(Duration::from_millis(150)).await;
-        let batch1 = processor.try_form_batch().await.unwrap();
-        processor.complete_batch(batch1.len(), 50);
-        
+        let guard1 = processor.try_form_batch().await.unwrap();
+        guard1.complete(50);
+
         let stats = processor.get_stats();
         assert_eq!(stats.processed_batches, 1);
         assert_eq!(stats.processed_requests, 3);
@@ -475,7 +652,7 @@ mod tests {
         
         // Form batch (reduces queue)
         tokio::time::sleep(Duration::from_millis(150)).await;
-        processor.try_form_batch().await;
+        let _guard = processor.try_form_batch().await;
         
         let stats = processor.get_stats();
         assert_eq!(stats.peak_queue_depth, 5); // Peak unchanged
@@ -575,10 +752,10 @@ mod tests {
             }).await.unwrap();
         }
 
-        let batch = processor.try_form_batch().await.unwrap();
+        let guard = processor.try_form_batch().await.unwrap();
         assert_eq!(processor.inflight_count(), 1);
 
-        processor.complete_batch(batch.len(), 10);
+        guard.complete(10);
         assert_eq!(processor.inflight_count(), 0);
     }
 
@@ -722,10 +899,10 @@ mod tests {
         }
 
         let b1 = processor.try_form_batch().await.unwrap();
-        processor.complete_batch(b1.len(), 100);
+        b1.complete(100);
 
         let b2 = processor.try_form_batch().await.unwrap();
-        processor.complete_batch(b2.len(), 50);
+        b2.complete(50);
 
         let stats = processor.get_stats();
         assert_eq!(stats.processed_batches, 2);
@@ -779,7 +956,7 @@ mod tests {
         // queue.len() == max_batch_size (3 == 3) → should_wait = false → batch forms
         let batch = processor.try_form_batch().await;
         assert!(batch.is_some());
-        assert_eq!(batch.unwrap().len(), 3);
+        assert_eq!(batch.unwrap().batch.len(), 3);
     }
 
     // ── Logger-enabled tests to cover log macro argument lines ────────────────
@@ -820,12 +997,12 @@ mod tests {
             }).await.unwrap();
         }
 
-        // try_form_batch: triggers info! at lines 122-127 (arguments on 123-126)
-        let batch = processor.try_form_batch().await.unwrap();
-        assert_eq!(batch.len(), 3);
+        // try_form_batch: triggers info! when batch is successfully formed
+        let guard = processor.try_form_batch().await.unwrap();
+        assert_eq!(guard.batch.len(), 3);
 
-        // complete_batch: triggers debug! at lines 142-147 (arguments on 143, 146)
-        processor.complete_batch(batch.len(), 25);
+        // complete: records stats and releases the guard
+        guard.complete(25);
         assert_eq!(processor.inflight_count(), 0);
     }
 
@@ -850,12 +1027,141 @@ mod tests {
         }
 
         for _ in 0..3 {
-            if let Some(batch) = processor.try_form_batch().await {
-                processor.complete_batch(batch.len(), 10);
+            if let Some(guard) = processor.try_form_batch().await {
+                guard.complete(10);
             }
         }
 
         let stats = processor.get_stats();
         assert_eq!(stats.processed_batches, 3);
+    }
+
+    #[tokio::test]
+    async fn test_guard_drop_releases_permit() {
+        let processor = Arc::new(InflightBatchProcessor::new(2, 1, 0));
+
+        for i in 0..4 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("r{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(10),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        {
+            let guard = processor.try_form_batch().await.unwrap();
+            assert_eq!(guard.batch.len(), 2);
+            assert_eq!(processor.inflight_count(), 1);
+            // guard drops here WITHOUT calling complete
+        }
+        // permit was released by Drop — can form another batch
+        assert!(processor.can_accept_batch());
+        assert_eq!(processor.inflight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_guard_complete_records_stats() {
+        let processor = InflightBatchProcessor::new(3, 2, 0);
+
+        for i in 0..3 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("r{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(10),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let guard = processor.try_form_batch().await.unwrap();
+        assert_eq!(guard.batch.len(), 3);
+        guard.complete(75);
+
+        let stats = processor.get_stats();
+        assert_eq!(stats.processed_batches, 1);
+        assert_eq!(stats.processed_requests, 3);
+        assert_eq!(stats.avg_latency_ms, 75);
+        assert_eq!(stats.inflight_batches, 0);
+        assert!(processor.can_accept_batch());
+    }
+
+    /// Verifies that dropping a guard during a simulated panic (via catch_unwind)
+    /// correctly releases the semaphore permit and decrements inflight_batches.
+    #[test]
+    fn test_guard_drop_on_panic_releases_semaphore() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let processor = Arc::new(InflightBatchProcessor::new(2, 1, 0));
+        let p = Arc::clone(&processor);
+
+        rt.block_on(async move {
+            for i in 0..2 {
+                let (tx, _rx) = oneshot::channel();
+                p.add_request(InflightRequest {
+                    id: format!("r{i}"),
+                    model_name: "m".to_string(),
+                    inputs: vec![],
+                    priority: 1,
+                    timestamp: Instant::now() - Duration::from_millis(10),
+                    response_tx: tx,
+                }).await.unwrap();
+            }
+        });
+
+        let guard = rt.block_on(processor.try_form_batch()).unwrap();
+        assert_eq!(processor.inflight_count(), 1);
+        assert!(!processor.can_accept_batch());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = guard;
+            panic!("simulated panic during batch processing");
+        }));
+
+        assert!(result.is_err(), "catch_unwind should have caught the panic");
+        assert_eq!(processor.inflight_count(), 0, "inflight_batches leaked on panic");
+        assert!(processor.can_accept_batch(), "semaphore permit leaked on panic");
+    }
+
+    #[tokio::test]
+    async fn test_try_form_batch_allows_concurrent_adds() {
+        // Verifies that add_request and try_form_batch can interleave without
+        // deadlock. Structural test: confirms that after concurrent adds and a
+        // batch formation, a batch is produced.
+        let processor = Arc::new(InflightBatchProcessor::new(5, 4, 0));
+
+        for i in 0..5 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("r{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(10),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let p1 = Arc::clone(&processor);
+        let add_task = tokio::spawn(async move {
+            let (tx, _rx) = oneshot::channel();
+            p1.add_request(InflightRequest {
+                id: "late".to_string(),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now(),
+                response_tx: tx,
+            }).await.unwrap();
+        });
+
+        let batch = processor.try_form_batch().await;
+        add_task.await.unwrap();
+
+        assert!(batch.is_some());
     }
 }

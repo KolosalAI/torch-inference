@@ -1,7 +1,35 @@
 use tch::{CModule, Device, Tensor, Kind};
 use log::{info, debug, warn};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+
+/// Precision target for model weights/activations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationDtype {
+    F32,
+    F16,
+    Int8,
+}
+
+/// When quantization was applied.
+/// `Dynamic` = apply FP16 at inference time (INT8 must be done at Python export time).
+/// `Static`  = model was already quantized before loading; config is informational.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuantizationMode {
+    Dynamic,
+    Static,
+}
+
+/// Quantization configuration attached to a model.
+/// INT8 + Dynamic: logs a warning — use `torch.quantization.quantize_dynamic` in Python
+///   before exporting the TorchScript `.pt` file, then load the quantized file here.
+/// F16 + Dynamic: handled automatically via `enable_fp16` at inference time.
+/// Any  + Static:  informational — logged on load, no runtime action.
+#[derive(Debug, Clone, Copy)]
+pub struct QuantizationConfig {
+    pub dtype: QuantizationDtype,
+    pub mode: QuantizationMode,
+}
 
 /// PyTorch inference optimization configuration
 #[derive(Debug, Clone)]
@@ -29,6 +57,12 @@ pub struct TorchOptimizationConfig {
     
     /// Device to use
     pub device: Device,
+
+    /// Convert input tensors to f16 before forward pass (GPU/MPS only, no-op on CPU).
+    pub enable_fp16: bool,
+
+    /// Optional quantization config — informational for Static, drives FP16 for Dynamic/F16.
+    pub quantization: Option<QuantizationConfig>,
 }
 
 impl Default for TorchOptimizationConfig {
@@ -42,9 +76,24 @@ impl Default for TorchOptimizationConfig {
             warmup_shape: vec![1, 3, 224, 224],
             enable_inference_mode: true,
             device: Device::cuda_if_available(),
+            enable_fp16: false,
+            quantization: None,
         }
     }
 }
+
+/// Returns true when all tensors share the same shape (required for stacking).
+pub fn shapes_are_homogeneous(inputs: &[&Tensor]) -> bool {
+    match inputs.first() {
+        None => true,
+        Some(first) => {
+            let target = first.size();
+            inputs.iter().all(|t| t.size() == target)
+        }
+    }
+}
+
+static INT8_DYNAMIC_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Optimized PyTorch model wrapper
 pub struct OptimizedTorchModel {
@@ -188,27 +237,57 @@ impl OptimizedTorchModel {
         self.forward(input)
     }
     
-    /// Optimized inference (automatically chooses best path)
+    /// Optimized inference (automatically chooses best path, applies FP16 if configured).
     pub fn infer(&self, input: &Tensor) -> Result<Tensor, String> {
-        if self.config.enable_autocast {
-            self.forward_with_autocast(input)
+        // Warn once if Int8+Dynamic requested — must be done at export time in Python.
+        if let Some(ref qcfg) = self.config.quantization {
+            if matches!(qcfg.dtype, QuantizationDtype::Int8)
+                && matches!(qcfg.mode, QuantizationMode::Dynamic)
+                && !INT8_DYNAMIC_WARNED.swap(true, Ordering::Relaxed)
+            {
+                warn!(
+                    "INT8 dynamic quantization is not supported at Rust inference time. \
+                     Quantize the model in Python with torch.quantization.quantize_dynamic \
+                     before exporting the .pt file."
+                );
+            }
+        }
+
+        let input = if self.config.enable_fp16 && self.device != Device::Cpu {
+            input.to_kind(Kind::Half)
         } else {
-            self.forward(input)
+            input.shallow_clone()
+        };
+
+        if self.config.enable_autocast {
+            self.forward_with_autocast(&input)
+        } else {
+            self.forward(&input)
         }
     }
     
-    /// Batch inference
+    /// Batch inference.
+    ///
+    /// When all inputs share the same shape, they are stacked into a single
+    /// batched tensor and processed in **one** forward pass (GPU/CPU kernel
+    /// fusion, no per-sample overhead).  FP16 conversion (if configured) is
+    /// applied to the stacked tensor before the forward pass.  When shapes
+    /// differ, falls back to N serial forward passes to preserve correctness.
     pub fn infer_batch(&self, inputs: Vec<&Tensor>) -> Result<Vec<Tensor>, String> {
-        let _guard = tch::no_grad_guard();
-        
-        let mut outputs = Vec::with_capacity(inputs.len());
-        
-        for input in inputs {
-            let output = self.infer(input)?;
-            outputs.push(output);
+        if inputs.is_empty() {
+            return Ok(vec![]);
         }
-        
-        Ok(outputs)
+
+        if shapes_are_homogeneous(&inputs) {
+            // Stack → [N, original_dims...], one forward pass, then unbind back.
+            let batched = Tensor::stack(&inputs, 0);
+            let batched_output = self.infer(&batched)?;
+            Ok(batched_output.unbind(0))
+        } else {
+            // Heterogeneous shapes: serial fallback.
+            debug!("infer_batch: heterogeneous shapes, falling back to serial inference");
+            inputs.iter().map(|input| self.infer(input)).collect()
+        }
     }
     
     /// Get device
@@ -273,7 +352,17 @@ impl TorchOptimizationConfigBuilder {
         self.config.device = device;
         self
     }
-    
+
+    pub fn fp16(mut self, enabled: bool) -> Self {
+        self.config.enable_fp16 = enabled;
+        self
+    }
+
+    pub fn quantization(mut self, config: Option<QuantizationConfig>) -> Self {
+        self.config.quantization = config;
+        self
+    }
+
     pub fn cpu_only(mut self) -> Self {
         self.config.device = Device::Cpu;
         self.config.cudnn_benchmark = false;
@@ -344,11 +433,87 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = TorchOptimizationConfig::default();
-        
+
         assert_eq!(config.num_threads, num_cpus::get());
         assert_eq!(config.num_interop_threads, 1);
         assert!(config.cudnn_benchmark);
         assert_eq!(config.warmup_iterations, 5);
         assert_eq!(config.warmup_shape, vec![1, 3, 224, 224]);
+    }
+
+    #[test]
+    fn test_same_shape_check_passes() {
+        let t1 = tch::Tensor::zeros(&[3, 224, 224], (tch::Kind::Float, tch::Device::Cpu));
+        let t2 = tch::Tensor::zeros(&[3, 224, 224], (tch::Kind::Float, tch::Device::Cpu));
+        assert!(shapes_are_homogeneous(&[&t1, &t2]));
+    }
+
+    #[test]
+    fn test_same_shape_check_fails_on_mismatch() {
+        let t1 = tch::Tensor::zeros(&[3, 224, 224], (tch::Kind::Float, tch::Device::Cpu));
+        let t2 = tch::Tensor::zeros(&[3, 128, 128], (tch::Kind::Float, tch::Device::Cpu));
+        assert!(!shapes_are_homogeneous(&[&t1, &t2]));
+    }
+
+    #[test]
+    fn test_same_shape_check_single_input() {
+        let t1 = tch::Tensor::zeros(&[1, 3, 224, 224], (tch::Kind::Float, tch::Device::Cpu));
+        assert!(shapes_are_homogeneous(&[&t1]));
+    }
+
+    #[test]
+    fn test_same_shape_check_empty() {
+        assert!(shapes_are_homogeneous(&[]));
+    }
+
+    #[test]
+    fn test_config_fp16_builder() {
+        let config = TorchOptimizationConfigBuilder::new()
+            .fp16(true)
+            .build();
+        assert!(config.enable_fp16);
+    }
+
+    #[test]
+    fn test_config_fp16_default_is_false() {
+        let config = TorchOptimizationConfig::default();
+        assert!(!config.enable_fp16);
+    }
+
+    #[test]
+    fn test_config_quantization_builder() {
+        use QuantizationDtype::*;
+        use QuantizationMode::*;
+        let qcfg = QuantizationConfig { dtype: F16, mode: Dynamic };
+        let config = TorchOptimizationConfigBuilder::new()
+            .quantization(Some(qcfg))
+            .build();
+        assert!(config.quantization.is_some());
+        assert!(matches!(config.quantization.unwrap().dtype, F16));
+    }
+
+    #[test]
+    fn test_quantization_dtype_variants() {
+        use QuantizationDtype::*;
+        let _ = format!("{:?}", F32);
+        let _ = format!("{:?}", F16);
+        let _ = format!("{:?}", Int8);
+    }
+
+    #[test]
+    fn test_quantization_mode_variants() {
+        use QuantizationMode::*;
+        let _ = format!("{:?}", Dynamic);
+        let _ = format!("{:?}", Static);
+    }
+
+    #[test]
+    fn test_quantization_config_clone() {
+        use QuantizationDtype::*;
+        use QuantizationMode::*;
+        let qcfg = QuantizationConfig { dtype: Int8, mode: Static };
+        let cloned = qcfg.clone();
+        assert!(matches!(cloned.dtype, Int8));
+        assert!(matches!(cloned.mode, Static));
     }
 }
