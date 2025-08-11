@@ -36,11 +36,16 @@ if project_root not in sys.path:
 
 # Import framework components
 from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
+from framework.core.config_manager import get_config_manager, ConfigManager
 from framework.core.base_model import BaseModel, ModelManager, get_model_manager
 from framework.core.inference_engine import InferenceEngine, create_inference_engine
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Initialize configuration manager
+config_manager = get_config_manager()
+
+# Setup logging with configuration
+server_config = config_manager.get_server_config()
+logging.basicConfig(level=getattr(logging, server_config['log_level']))
 logger = logging.getLogger(__name__)
 
 # Global variables
@@ -200,24 +205,13 @@ async def initialize_inference_engine():
     global inference_engine
     
     try:
-        # Create configuration
-        config = InferenceConfig(
-            device=DeviceConfig(
-                device_type=DeviceType.CUDA if torch.cuda.is_available() else DeviceType.CPU,
-                use_fp16=False,  # Disable for example model
-                use_torch_compile=False  # Disable for stability
-            ),
-            batch=BatchConfig(
-                batch_size=4,
-                max_batch_size=16,
-                min_batch_size=1,
-                timeout_seconds=5.0
-            ),
-            performance=PerformanceConfig(
-                warmup_iterations=3,
-                max_workers=4
-            )
-        )
+        # Get configuration from config manager
+        config = config_manager.get_inference_config()
+        
+        logger.info(f"Initializing inference engine with configuration:")
+        logger.info(f"  Device: {config.device.device_type.value}")
+        logger.info(f"  Batch size: {config.batch.batch_size}")
+        logger.info(f"  FP16: {config.device.use_fp16}")
         
         # Create and load example model
         example_model = ExampleModel(config)
@@ -232,7 +226,7 @@ async def initialize_inference_engine():
         await inference_engine.start()
         
         # Warmup
-        example_model.warmup(3)
+        example_model.warmup(config.performance.warmup_iterations)
         
         logger.info("Inference engine initialized successfully")
         
@@ -259,16 +253,16 @@ async def root():
         "message": "PyTorch Inference Framework API",
         "version": "1.0.0",
         "status": "running",
+        "environment": config_manager.environment,
         "endpoints": {
             "inference": "/predict",
             "batch_inference": "/predict/batch",
             "health": "/health",
             "stats": "/stats",
-            "models": "/models"
+            "models": "/models",
+            "config": "/config"
         }
-    }
-
-@app.post("/predict")
+    }@app.post("/predict")
 async def predict(request: InferenceRequest) -> InferenceResponse:
     """Single prediction endpoint."""
     if not inference_engine:
@@ -381,6 +375,25 @@ async def get_stats() -> StatsResponse:
         logger.error(f"Failed to get stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/config")
+async def get_config():
+    """Get current configuration information."""
+    try:
+        return {
+            "configuration": config_manager.export_config(),
+            "inference_config": {
+                "device_type": config_manager.get('DEVICE', 'auto', 'device.type'),
+                "batch_size": config_manager.get('BATCH_SIZE', 4, 'batch.batch_size'),
+                "use_fp16": config_manager.get('USE_FP16', False, 'device.use_fp16'),
+                "enable_profiling": config_manager.get('ENABLE_PROFILING', False, 'performance.enable_profiling')
+            },
+            "server_config": server_config
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get configuration: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/models")
 async def list_models():
     """List available models."""
@@ -442,11 +455,15 @@ async def batch_example():
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    # Start the FastAPI server
+    # Get server configuration
+    server_config = config_manager.get_server_config()
+    
+    # Start the FastAPI server with configuration
+    logger.info(f"Starting server with configuration: {server_config}")
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=False,  # Set to True for development
-        log_level="info"
+        host=server_config['host'],
+        port=server_config['port'],
+        reload=server_config['reload'],
+        log_level=server_config['log_level'].lower()
     )

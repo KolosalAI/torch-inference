@@ -1,0 +1,191 @@
+# PyTorch Inference Framework Configuration
+# This file contains the main configuration for the inference framework
+
+# Application Configuration
+app:
+  name: "PyTorch Inference Framework"
+  version: "1.0.0"
+  description: "High-performance PyTorch model inference with optimization and monitoring"
+
+# Server Configuration
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+  log_level: "INFO"
+  workers: 1
+
+# Model Configuration
+models:
+  default_model: "example"
+  model_path: "models/"
+  supported_formats:
+    - ".pt"
+    - ".pth"
+    - ".onnx"
+    - ".torchscript"
+
+# Device Configuration
+device:
+  type: "auto"  # auto, cpu, cuda, mps
+  id: 0  # GPU ID if using CUDA
+  use_fp16: false
+  use_torch_compile: false
+  memory_fraction: 0.8
+
+# Batch Processing Configuration
+batch:
+  batch_size: 4
+  min_batch_size: 1
+  max_batch_size: 16
+  adaptive_batching: true
+  timeout_seconds: 5.0
+  queue_size: 100
+
+# Preprocessing Configuration
+preprocessing:
+  input_size:
+    width: 224
+    height: 224
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  interpolation: "bilinear"
+  center_crop: true
+  normalize: true
+  to_rgb: true
+
+# Postprocessing Configuration
+postprocessing:
+  threshold: 0.5
+  nms_threshold: 0.5
+  max_detections: 100
+  apply_sigmoid: false
+  apply_softmax: false
+
+# Performance Configuration
+performance:
+  enable_profiling: false
+  enable_metrics: true
+  warmup_iterations: 3
+  benchmark_iterations: 10
+  enable_async: true
+  max_workers: 4
+
+# Caching Configuration
+cache:
+  enable_caching: true
+  cache_size: 100
+  cache_ttl_seconds: 3600
+  disk_cache_path: null
+
+# Security Configuration
+security:
+  max_file_size_mb: 100
+  allowed_extensions:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".bmp"
+    - ".tiff"
+    - ".webp"
+  validate_inputs: true
+  sanitize_outputs: true
+
+# Optimization Configuration
+optimization:
+  enable_jit: true
+  enable_quantization: false
+  quantization_mode: "dynamic"  # dynamic, static, qat
+  enable_tensorrt: false
+  tensorrt_precision: "fp32"  # fp32, fp16, int8
+  enable_onnx: false
+  onnx_providers:
+    - "CPUExecutionProvider"
+
+# Monitoring Configuration
+monitoring:
+  enable_metrics: true
+  enable_logging: true
+  enable_tracing: false
+  metrics:
+    port: 9090
+    path: "/metrics"
+    retention_days: 30
+  logging:
+    level: "INFO"
+    format: "json"
+    retention_days: 30
+  tracing:
+    service_name: "torch-inference"
+    sampling_rate: 0.1
+    jaeger_endpoint: ""
+    zipkin_endpoint: ""
+
+# Enterprise Configuration (optional)
+enterprise:
+  enabled: false
+  auth:
+    provider: "jwt"  # jwt, oauth2, saml, ldap
+    secret_key: ""
+    algorithm: "HS256"
+    access_token_expire_minutes: 30
+    enable_mfa: false
+    enable_api_keys: true
+  rbac:
+    enable_rbac: false
+    default_role: "user"
+    admin_users: []
+  security:
+    enable_encryption_at_rest: false
+    enable_rate_limiting: true
+    rate_limit_requests_per_minute: 100
+    enable_audit_logging: false
+  integration:
+    database_url: ""
+    cache_url: "redis://localhost:6379/0"
+    message_broker_url: ""
+  scaling:
+    enable_auto_scaling: false
+    min_replicas: 1
+    max_replicas: 10
+    cpu_target_utilization: 70
+
+# Environment-specific overrides
+environments:
+  development:
+    server:
+      reload: true
+      log_level: "DEBUG"
+    security:
+      validate_inputs: false
+    performance:
+      enable_profiling: true
+    enterprise:
+      security:
+        enable_rate_limiting: false
+  
+  staging:
+    security:
+      validate_inputs: true
+    monitoring:
+      enable_tracing: true
+    enterprise:
+      security:
+        rate_limit_requests_per_minute: 500
+  
+  production:
+    server:
+      workers: 4
+    security:
+      validate_inputs: true
+      sanitize_outputs: true
+    enterprise:
+      enabled: true
+      auth:
+        enable_mfa: true
+      security:
+        enable_encryption_at_rest: true
+        enable_audit_logging: true
+      scaling:
+        enable_auto_scaling: true

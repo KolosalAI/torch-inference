@@ -76,10 +76,20 @@ tensorrt = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-mock>=3.11.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-html>=3.2.0",
+    "pytest-json-report>=1.5.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
+    "tox>=4.0.0",
+    "bandit[toml]>=1.7.0",
+    "safety>=2.0.0",
 ]
 
 # Documentation dependencies
@@ -108,11 +118,21 @@ optimize-model = "optimization_demo:main"
 [tool.uv]
 dev-dependencies = [
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0", 
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0", 
+    "pytest-timeout>=2.1.0",
+    "pytest-mock>=3.11.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-html>=3.2.0",
+    "pytest-json-report>=1.5.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.0.0",
     "pre-commit>=3.0.0",
+    "tox>=4.0.0",
+    "bandit[toml]>=1.7.0",
+    "safety>=2.0.0",
 ]
 
 # PyTorch CUDA index for uv
@@ -169,3 +189,111 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+
+[tool.pytest.ini_options]
+# Pytest configuration in pyproject.toml
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*", "*Tests"] 
+python_functions = ["test_*"]
+
+# Add project paths
+pythonpath = [
+    ".",
+    "framework"
+]
+
+# Default options
+addopts = [
+    "--strict-markers",
+    "--strict-config", 
+    "--tb=short",
+    "--durations=10",
+    "--color=yes",
+    "--disable-warnings",
+    "--maxfail=5"
+]
+
+# Asyncio support
+asyncio_mode = "auto"
+
+# Test markers
+markers = [
+    "unit: Unit tests (fast, isolated)",
+    "integration: Integration tests (slower, end-to-end)",
+    "slow: Slow running tests (>5 seconds)", 
+    "gpu: Tests requiring GPU/CUDA",
+    "tensorrt: Tests requiring TensorRT",
+    "onnx: Tests requiring ONNX runtime",
+    "enterprise: Enterprise feature tests",
+    "benchmark: Performance benchmark tests",
+    "smoke: Smoke tests for quick validation",
+    "regression: Regression tests",
+    "security: Security-related tests",
+    "api: API endpoint tests",
+    "model: Tests requiring real models",
+    "mock: Tests using only mock objects"
+]
+
+# Filter warnings
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning", 
+    "ignore::UserWarning:torch.*",
+    "ignore::FutureWarning:transformers.*",
+    "ignore::UserWarning:huggingface_hub.*",
+    "error::RuntimeWarning",
+    "error::ImportWarning"
+]
+
+# Logging
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+# JUnit XML for CI/CD
+junit_family = "xunit2"
+junit_suite_name = "torch_inference_tests"
+
+# Timeout (if pytest-timeout is installed)
+timeout = 300
+
+[tool.coverage.run]
+source = ["framework"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/.*",
+    "setup.py",
+    "run_tests.py"
+]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError", 
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]
+ignore_errors = true
+show_missing = true
+precision = 2
+skip_covered = false
+skip_empty = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"

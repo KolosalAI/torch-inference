@@ -58,6 +58,30 @@ class PerformanceStats:
         self.avg = self.sum / self.count
 
 
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics for inference operations."""
+    inference_time: float = 0.0
+    preprocessing_time: float = 0.0
+    postprocessing_time: float = 0.0
+    total_time: float = 0.0
+    throughput: float = 0.0
+    memory_usage: int = 0
+    gpu_utilization: Optional[float] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert metrics to dictionary."""
+        return {
+            'inference_time': self.inference_time,
+            'preprocessing_time': self.preprocessing_time,
+            'postprocessing_time': self.postprocessing_time,
+            'total_time': self.total_time,
+            'throughput': self.throughput,
+            'memory_usage': self.memory_usage,
+            'gpu_utilization': self.gpu_utilization
+        }
+
+
 class MetricsCollector:
     """Thread-safe metrics collector."""
     
@@ -195,6 +219,12 @@ class PerformanceMonitor:
         self.metrics_collector = metrics_collector or MetricsCollector()
         self._timers: Dict[str, float] = {}
         self._lock = threading.RLock()
+        
+        # Additional attributes for request tracking
+        self.request_times = deque(maxlen=1000)
+        self.total_requests = 0
+        self.active_requests: Dict[str, float] = {}
+        self.start_time = time.time()
     
     def start_timer(self, name: str) -> None:
         """Start a named timer."""
@@ -214,6 +244,69 @@ class PerformanceMonitor:
         self.metrics_collector.record_timer(name, duration, tags)
         return duration
     
+    def start_request(self, request_id: str) -> None:
+        """Start timing a request."""
+        with self._lock:
+            self.active_requests[request_id] = time.time()
+    
+    def end_request(self, request_id: str) -> float:
+        """End timing a request and record the duration."""
+        with self._lock:
+            if request_id not in self.active_requests:
+                logger.warning(f"Request '{request_id}' not found")
+                return 0.0
+            
+            start_time = self.active_requests.pop(request_id)
+            duration = time.time() - start_time
+            
+            self.request_times.append(duration)
+            self.total_requests += 1
+        
+        self.metrics_collector.record_timer("request_duration", duration)
+        return duration
+    
+    def get_current_stats(self) -> Dict[str, Any]:
+        """Get current performance statistics."""
+        with self._lock:
+            stats = {
+                "total_requests": self.total_requests,
+                "active_requests": len(self.active_requests),
+                "uptime": time.time() - self.start_time
+            }
+            
+            if self.request_times:
+                times = list(self.request_times)
+                stats.update({
+                    "avg_request_time": statistics.mean(times),
+                    "min_request_time": min(times),
+                    "max_request_time": max(times),
+                    "recent_requests": len(times)
+                })
+                
+                if len(times) > 1:
+                    try:
+                        stats["median_request_time"] = statistics.median(times)
+                    except statistics.StatisticsError:
+                        pass
+        
+        return stats
+    
+    def get_performance_report(self) -> Dict[str, Any]:
+        """Get comprehensive performance report."""
+        stats = self.get_current_stats()
+        metrics_summary = self.metrics_collector.get_summary()
+        
+        return {
+            "timestamp": time.time(),
+            "stats": stats,
+            "metrics": metrics_summary,
+            "system_info": {
+                "uptime": stats.get("uptime", 0),
+                "total_requests": stats.get("total_requests", 0),
+                "active_requests": stats.get("active_requests", 0)
+            }
+        }
+    
     def time_context(self, name: str, tags: Optional[Dict[str, str]] = None):
         """Context manager for timing operations."""
         return TimerContext(self, name, tags)
@@ -232,6 +325,7 @@ class PerformanceMonitor:
         summary = {
             "window_seconds": window_seconds,
             "timestamp": time.time(),
+            "total_requests": self.total_requests,
             "metrics": {}
         }
         
