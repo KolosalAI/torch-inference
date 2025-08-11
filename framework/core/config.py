@@ -29,6 +29,15 @@ class DeviceType(Enum):
     CUDA = "cuda"
     MPS = "mps"  # Apple Silicon
     AUTO = "auto"
+    
+    @classmethod
+    def from_string(cls, value: str) -> "DeviceType":
+        """Create DeviceType from string value."""
+        value = value.lower()
+        for device_type in cls:
+            if device_type.value == value:
+                return device_type
+        return cls.AUTO  # Default fallback
 
 
 class OptimizationLevel(Enum):
