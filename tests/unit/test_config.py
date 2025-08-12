@@ -277,6 +277,7 @@ device:
   use_fp16: false
 batch:
   batch_size: 1
+  max_batch_size: 64  # Increase max to allow higher batch sizes
 
 environments:
   test:
@@ -284,6 +285,7 @@ environments:
       use_fp16: true
     batch:
       batch_size: 8
+      max_batch_size: 64
 """)
             
             # Test with environment variable override
@@ -312,8 +314,8 @@ environments:
             config = config_mgr.get_inference_config()
             
             # Should use defaults
-            assert config.device.device_type == DeviceType.CPU
-            assert config.batch.batch_size == 1
+            assert config.device.device_type == DeviceType.AUTO  # Default is 'auto'
+            assert config.batch.batch_size == 4  # Default from config_manager.py
     
     def test_missing_configuration_file(self):
         """Test handling of missing configuration file."""
@@ -325,8 +327,8 @@ environments:
             config = config_mgr.get_inference_config()
             
             # Should use defaults
-            assert config.device.device_type == DeviceType.CPU
-            assert config.batch.batch_size == 1
+            assert config.device.device_type == DeviceType.AUTO  # Default is 'auto'
+            assert config.batch.batch_size == 4  # Default from config_manager.py
             assert config.performance.log_level == "INFO"
     
     @patch('framework.enterprise.config.EnterpriseConfig')

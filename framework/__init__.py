@@ -67,7 +67,7 @@ class TorchInferenceFramework:
         self.config = config
         self.model: Optional[BaseModel] = None
         self.engine: Optional[InferenceEngine] = None
-        self.model_manager = get_model_manager()
+        self.model_manager = get_model_manager  # Store the function, not call it
         self.performance_monitor = get_performance_monitor()
         self.metrics_collector = get_metrics_collector()
         
@@ -108,7 +108,7 @@ class TorchInferenceFramework:
             if model_name is None:
                 model_name = Path(model_path).stem if isinstance(model_path, (str, Path)) else str(model_path)
             
-            self.model_manager.register_model(model_name, self.model)
+            self.model_manager().register_model(model_name, self.model)
             
             # Create inference engine
             self.engine = create_inference_engine(self.model, self.config)
@@ -153,7 +153,16 @@ class TorchInferenceFramework:
         if not self._initialized:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        return self.model.predict(inputs)
+        # Track performance
+        request_id = f"sync_{int(time.time() * 1000000)}"
+        self.performance_monitor.start_request(request_id)
+        try:
+            result = self.model.predict(inputs)
+            self.performance_monitor.end_request(request_id)
+            return result
+        except Exception as e:
+            self.performance_monitor.end_request(request_id)
+            raise
     
     async def predict_async(self, inputs: Any, priority: int = 0, 
                            timeout: Optional[float] = None, **kwargs) -> Any:
@@ -191,7 +200,24 @@ class TorchInferenceFramework:
         if not self._initialized:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
-        return self.model.predict_batch(inputs_list)
+        # Use the model's predict_batch method if available
+        if hasattr(self.model, 'predict_batch'):
+            return self.model.predict_batch(inputs_list)
+        
+        # Fallback to individual predictions
+        results = []
+        for i, inputs in enumerate(inputs_list):
+            request_id = f"batch_{int(time.time() * 1000000)}_{i}"
+            self.performance_monitor.start_request(request_id)
+            try:
+                result = self.model.predict(inputs)
+                results.append(result)
+                self.performance_monitor.end_request(request_id)
+            except Exception as e:
+                self.performance_monitor.end_request(request_id)
+                raise
+        
+        return results
     
     async def predict_batch_async(self, inputs_list: List[Any], priority: int = 0,
                                  timeout: Optional[float] = None, **kwargs) -> List[Any]:
@@ -343,7 +369,7 @@ class TorchInferenceFramework:
         if self.model:
             self.model.cleanup()
         
-        self.model_manager.cleanup_all()
+        self.model_manager().cleanup_all()
         
         self.logger.info("Framework cleanup complete")
     
@@ -557,7 +583,7 @@ def create_optimized_framework(config: Optional[InferenceConfig] = None) -> Torc
             if model_name is None:
                 model_name = Path(model_path).stem if isinstance(model_path, (str, Path)) else str(model_path)
             
-            self.model_manager.register_model(model_name, self.model)
+            self.model_manager().register_model(model_name, self.model)
             
             # Create inference engine
             self.engine = create_inference_engine(self.model, self.config)

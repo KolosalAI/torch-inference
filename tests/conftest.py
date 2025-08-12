@@ -16,7 +16,7 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig
+from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
 from framework.core.config_manager import ConfigManager
 
 # Test model loader
@@ -32,7 +32,7 @@ except ImportError:
 def test_config():
     """Create a test configuration."""
     return InferenceConfig(
-        device=DeviceConfig(device_type="cpu", use_fp16=False),
+        device=DeviceConfig(device_type=DeviceType.CPU, use_fp16=False),
         batch=BatchConfig(batch_size=1, max_batch_size=4),
         performance=PerformanceConfig(log_level="INFO")
     )
@@ -189,7 +189,7 @@ environments:
         
         # Set environment variables to use test config
         os.environ["CONFIG_DIR"] = str(config_dir)
-        yield ConfigManager(config_dir=config_dir, environment="test")
+        yield ConfigManager(env_file=env_file, config_file=yaml_file, environment="test")
         # Cleanup
         if "CONFIG_DIR" in os.environ:
             del os.environ["CONFIG_DIR"]
@@ -220,9 +220,9 @@ def mock_no_cuda():
 def sample_batch_data():
     """Create sample batch data for testing."""
     return [
-        torch.randn(1, 3, 224, 224),
-        torch.randn(1, 3, 224, 224),
-        torch.randn(1, 3, 224, 224),
+        torch.randn(1, 10),
+        torch.randn(1, 10),
+        torch.randn(1, 10),
     ]
 
 
@@ -370,3 +370,41 @@ def cleanup_test_environment(env_vars: Dict[str, str]):
     for key in env_vars.keys():
         if key in os.environ:
             del os.environ[key]
+
+
+# Additional missing fixtures
+
+@pytest.fixture
+def simple_model():
+    """Create a simple PyTorch model for testing."""
+    model = torch.nn.Sequential(
+        torch.nn.Linear(10, 5),
+        torch.nn.ReLU(),
+        torch.nn.Linear(5, 1)
+    )
+    model.eval()
+    return model
+
+
+@pytest.fixture
+def framework(test_config):
+    """Create a framework instance for testing."""
+    from framework import TorchInferenceFramework
+    return TorchInferenceFramework(test_config)
+
+
+@pytest.fixture
+def mock_model(test_config):
+    """Create a mock model for testing."""
+    from tests.unit.test_inference_engine import MockInferenceModel
+    return MockInferenceModel(test_config)
+
+
+@pytest.fixture
+def inference_config():
+    """Create inference config for testing."""
+    from framework.core.config import InferenceConfig, BatchConfig, DeviceConfig, DeviceType
+    return InferenceConfig(
+        device=DeviceConfig(device_type=DeviceType.CPU),
+        batch=BatchConfig(batch_size=2, max_batch_size=8)
+    )

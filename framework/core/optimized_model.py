@@ -351,6 +351,68 @@ class OptimizedModel(BaseModel):
         active_model = self.get_active_model()
         return active_model(inputs)
     
+    def preprocess(self, inputs: Any) -> torch.Tensor:
+        """
+        Preprocess inputs for inference.
+        
+        Args:
+            inputs: Raw inputs
+            
+        Returns:
+            Preprocessed tensor
+        """
+        # Basic preprocessing - convert to tensor and move to device
+        if isinstance(inputs, torch.Tensor):
+            return inputs.to(self.device)
+        elif isinstance(inputs, (list, tuple)):
+            return torch.tensor(inputs, dtype=torch.float32, device=self.device)
+        else:
+            # For other types, try to convert to tensor
+            return torch.tensor(inputs, dtype=torch.float32, device=self.device)
+    
+    def postprocess(self, outputs: torch.Tensor) -> Any:
+        """
+        Postprocess model outputs.
+        
+        Args:
+            outputs: Raw model outputs
+            
+        Returns:
+            Processed outputs
+        """
+        # Basic postprocessing - return as list or dict based on config
+        outputs_cpu = outputs.detach().cpu()
+        
+        if self.config.model_type.value == "classification":
+            # Apply softmax for classification
+            if self.config.postprocessing.apply_softmax:
+                outputs_cpu = torch.softmax(outputs_cpu, dim=-1)
+            
+            return {
+                "predictions": outputs_cpu.tolist(),
+                "raw_output": outputs.detach().cpu().tolist(),
+                "shape": outputs.shape,
+                "prediction": "optimized_result",
+                "metadata": {
+                    "output_type": "classification",
+                    "shape": list(outputs.shape),
+                    "dtype": str(outputs.dtype)
+                }
+            }
+        else:
+            # Generic output format
+            return {
+                "predictions": outputs_cpu.tolist(),
+                "raw_output": outputs.detach().cpu().tolist(),
+                "shape": outputs.shape,
+                "prediction": "optimized_result",
+                "metadata": {
+                    "output_type": "optimized",
+                    "shape": list(outputs.shape),
+                    "dtype": str(outputs.dtype)
+                }
+            }
+    
     def get_optimization_report(self) -> Dict[str, Any]:
         """Get detailed optimization report."""
         report = {

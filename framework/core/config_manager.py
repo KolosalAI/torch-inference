@@ -45,21 +45,28 @@ class ConfigManager:
     def __init__(self, 
                  env_file: Optional[Union[str, Path]] = None,
                  config_file: Optional[Union[str, Path]] = None,
+                 config_dir: Optional[Union[str, Path]] = None,
                  environment: str = "development"):
         """
         Initialize the configuration manager.
         
         Args:
-            env_file: Path to .env file (defaults to .env in project root)
-            config_file: Path to config.yaml file (defaults to config.yaml in project root)
+            env_file: Path to .env file (defaults to .env in project root or config_dir)
+            config_file: Path to config.yaml file (defaults to config.yaml in project root or config_dir)
+            config_dir: Base directory for config files
             environment: Current environment (development, staging, production)
         """
         self.environment = environment
         
+        # Determine base directory
+        if config_dir:
+            base_dir = Path(config_dir)
+        else:
+            base_dir = Path(__file__).parent.parent.parent
+        
         # Determine file paths
-        project_root = Path(__file__).parent.parent.parent
-        self.env_file = Path(env_file) if env_file else project_root / ".env"
-        self.config_file = Path(config_file) if config_file else project_root / "config.yaml"
+        self.env_file = Path(env_file) if env_file else base_dir / ".env"
+        self.config_file = Path(config_file) if config_file else base_dir / "config.yaml"
         
         # Load configurations
         self._env_config = self._load_env_config()
@@ -88,10 +95,13 @@ class ConfigManager:
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f) or {}
             
-            # Apply environment-specific overrides
+            # Apply environment-specific overrides  
             if 'environments' in config and self.environment in config['environments']:
                 env_overrides = config['environments'][self.environment]
                 config = self._deep_merge(config, env_overrides)
+                # Remove the environments key to avoid confusion
+                if 'environments' in config:
+                    del config['environments']
             
             logger.debug(f"Loaded YAML configuration from {self.config_file}")
             return config
@@ -186,20 +196,50 @@ class ConfigManager:
     
     def get_inference_config(self) -> InferenceConfig:
         """Create InferenceConfig from loaded configuration."""
+        # Reload environment to catch any changes made via patch.dict
+        current_env = dict(os.environ)
+        
         # Device configuration
-        device_type = self.get('DEVICE', 'auto', 'device.type').lower()
+        device_type = current_env.get('DEVICE', self._yaml_config.get('device', {}).get('device_type', 'auto')).lower()
         device_config = DeviceConfig(
             device_type=DeviceType.from_string(device_type),
-            device_id=self.get('DEVICE_ID', None, 'device.id'),
-            use_fp16=self.get('USE_FP16', False, 'device.use_fp16'),
-            use_torch_compile=self.get('USE_TORCH_COMPILE', False, 'device.use_torch_compile')
+            device_id=current_env.get('DEVICE_ID') and int(current_env.get('DEVICE_ID')),
+            use_fp16=current_env.get('USE_FP16', 'false').lower() == 'true' if 'USE_FP16' in current_env else self._yaml_config.get('device', {}).get('use_fp16', False),
+            use_torch_compile=current_env.get('USE_TORCH_COMPILE', 'false').lower() == 'true' if 'USE_TORCH_COMPILE' in current_env else self._yaml_config.get('device', {}).get('use_torch_compile', False)
         )
         
-        # Batch configuration
+        # Batch configuration - handle environment variables properly
+        batch_size = 2  # Default
+        if 'BATCH_SIZE' in current_env:
+            try:
+                batch_size = int(current_env['BATCH_SIZE'])
+            except (ValueError, TypeError):
+                pass
+        elif self._yaml_config.get('batch', {}).get('batch_size'):
+            batch_size = self._yaml_config['batch']['batch_size']
+                
+        min_batch_size = 1
+        if 'MIN_BATCH_SIZE' in current_env:
+            try:
+                min_batch_size = int(current_env['MIN_BATCH_SIZE'])
+            except (ValueError, TypeError):
+                pass
+        elif self._yaml_config.get('batch', {}).get('min_batch_size'):
+            min_batch_size = self._yaml_config['batch']['min_batch_size']
+            
+        max_batch_size = 16
+        if 'MAX_BATCH_SIZE' in current_env:
+            try:
+                max_batch_size = int(current_env['MAX_BATCH_SIZE'])
+            except (ValueError, TypeError):
+                pass
+        elif self._yaml_config.get('batch', {}).get('max_batch_size'):
+            max_batch_size = self._yaml_config['batch']['max_batch_size']
+        
         batch_config = BatchConfig(
-            batch_size=self.get('BATCH_SIZE', 4, 'batch.batch_size'),
-            min_batch_size=self.get('MIN_BATCH_SIZE', 1, 'batch.min_batch_size'),
-            max_batch_size=self.get('MAX_BATCH_SIZE', 16, 'batch.max_batch_size'),
+            batch_size=batch_size,
+            min_batch_size=min_batch_size,
+            max_batch_size=max_batch_size,
             adaptive_batching=self.get('ADAPTIVE_BATCHING', True, 'batch.adaptive_batching'),
             timeout_seconds=self.get('BATCH_TIMEOUT', 5.0, 'batch.timeout_seconds'),
             queue_size=self.get('QUEUE_SIZE', 100, 'batch.queue_size')

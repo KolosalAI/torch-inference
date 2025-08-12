@@ -62,12 +62,12 @@ class TestTorchInferenceFramework:
         model_path = temp_model_dir / "test_model.pt"
         torch.save(simple_model, model_path)
         
-        with patch('framework.adapters.model_adapters.load_model') as mock_load:
+        with patch('framework.load_model') as mock_load:
             mock_model = Mock()
             mock_model.is_loaded = True
             mock_load.return_value = mock_model
             
-            with patch('framework.core.inference_engine.create_inference_engine') as mock_engine:
+            with patch('framework.create_inference_engine') as mock_engine:
                 mock_engine_instance = Mock()
                 mock_engine.return_value = mock_engine_instance
                 
@@ -83,7 +83,7 @@ class TestTorchInferenceFramework:
         model_path = temp_model_dir / "auto_name_model.pt"
         torch.save(simple_model, model_path)
         
-        with patch('framework.adapters.model_adapters.load_model') as mock_load:
+        with patch('framework.load_model') as mock_load:
             mock_model = Mock()
             mock_load.return_value = mock_model
             
@@ -95,7 +95,7 @@ class TestTorchInferenceFramework:
     
     def test_load_model_error(self, framework):
         """Test model loading error handling."""
-        with patch('framework.adapters.model_adapters.load_model') as mock_load:
+        with patch('framework.load_model') as mock_load:
             mock_load.side_effect = Exception("Load failed")
             
             with pytest.raises(Exception):

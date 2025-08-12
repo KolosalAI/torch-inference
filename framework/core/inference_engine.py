@@ -412,6 +412,12 @@ class InferenceEngine:
         finally:
             await self.stop()
     
+    @asynccontextmanager
+    async def async_context(self):
+        """Alias for engine_context for backward compatibility."""
+        async with self.engine_context() as context:
+            yield context
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get current engine statistics."""
         stats = self._stats.copy()
@@ -433,6 +439,21 @@ class InferenceEngine:
         })
         
         return stats
+    
+    async def cleanup(self) -> None:
+        """Clean up engine resources."""
+        await self.stop()
+        
+        # Clear queues and stats
+        self.request_queue.clear()
+        self._stats = {
+            "requests_processed": 0,
+            "batches_processed": 0,
+            "total_processing_time": 0.0,
+            "average_batch_size": 0.0,
+        }
+        
+        self.logger.info("Engine cleanup completed")
     
     def get_performance_report(self) -> Dict[str, Any]:
         """Get detailed performance report."""

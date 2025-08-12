@@ -7,7 +7,7 @@ including performance metrics, resource usage tracking, and alerting.
 
 import time
 import threading
-from typing import Dict, List, Any, Optional, Callable
+from typing import Dict, List, Any, Optional, Callable, Union
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 import logging
@@ -91,6 +91,18 @@ class MetricsCollector:
         self._lock = threading.RLock()
         self._callbacks: List[Callable[[Metric], None]] = []
     
+    def record(self, name: str, value: float, metric_type: str = "gauge",
+               labels: Optional[Dict[str, str]] = None) -> None:
+        """Record a metric (alias for record_metric with string type)."""
+        type_mapping = {
+            "counter": MetricType.COUNTER,
+            "gauge": MetricType.GAUGE,
+            "histogram": MetricType.HISTOGRAM,
+            "timer": MetricType.TIMER
+        }
+        metric_type_enum = type_mapping.get(metric_type, MetricType.GAUGE)
+        self.record_metric(name, value, metric_type_enum, labels)
+    
     def record_metric(self, name: str, value: float, metric_type: MetricType = MetricType.GAUGE,
                      tags: Optional[Dict[str, str]] = None) -> None:
         """Record a metric."""
@@ -128,15 +140,157 @@ class MetricsCollector:
         """Record a timer metric (duration in seconds)."""
         self.record_metric(name, duration, MetricType.TIMER, tags)
     
-    def record_batch_metrics(self, batch_size: int, processing_time: float, 
-                           queue_size: int, memory_usage: Dict[str, float]) -> None:
-        """Record batch processing metrics."""
+    def record_batch_metrics(self, batch_size: int, metrics_or_processing_time=None, 
+                           queue_size: int = None, memory_usage: Dict[str, float] = None, **kwargs) -> None:
+        """Record batch processing metrics with flexible input."""
         self.record_gauge("batch_size", batch_size)
-        self.record_timer("batch_processing_time", processing_time)
-        self.record_gauge("queue_size", queue_size)
         
-        for key, value in memory_usage.items():
-            self.record_gauge(f"memory_{key}", value)
+        # Handle PerformanceMetrics object
+        if isinstance(metrics_or_processing_time, PerformanceMetrics):
+            metrics = metrics_or_processing_time
+            self.record_timer("batch_processing_time", metrics.total_time)
+            self.record_timer("inference_time", metrics.inference_time)
+            self.record_timer("preprocessing_time", metrics.preprocessing_time)
+            self.record_timer("postprocessing_time", metrics.postprocessing_time)
+            self.record_gauge("throughput", metrics.throughput)
+            # Record memory and GPU metrics if available
+            if metrics.memory_usage:
+                self.record_gauge("memory_usage", metrics.memory_usage)
+            if metrics.gpu_utilization is not None:
+                self.record_gauge("gpu_utilization", metrics.gpu_utilization)
+        
+        # Handle keyword arguments (legacy call style)
+        elif "processing_time" in kwargs:
+            processing_time = kwargs.get("processing_time", 0.0)
+            self.record_timer("batch_processing_time", processing_time)
+            if queue_size is not None:
+                self.record_gauge("queue_size", queue_size)
+            if memory_usage:
+                for key, value in memory_usage.items():
+                    self.record_gauge(f"memory_{key}", value)
+        
+        # Handle positional processing_time argument (legacy)
+        elif metrics_or_processing_time is not None and not isinstance(metrics_or_processing_time, PerformanceMetrics):
+            processing_time = metrics_or_processing_time
+            self.record_timer("batch_processing_time", processing_time)
+            if queue_size is not None:
+                self.record_gauge("queue_size", queue_size)
+            if memory_usage:
+                for key, value in memory_usage.items():
+                    self.record_gauge(f"memory_{key}", value)
+    
+    def get_metric(self, name: str) -> Union[float, List[float], None]:
+        """
+        Get metric value(s).
+        - For counters: returns sum of all values
+        - For histograms: returns list of all values
+        - For gauges: returns latest value
+        """
+        with self._lock:
+            if name not in self._metrics or not self._metrics[name]:
+                return None
+            
+            metrics = self._metrics[name]
+            
+            if not metrics:
+                return None
+            
+            # For counter metrics, sum all values
+            if metrics[0].metric_type == MetricType.COUNTER:
+                return sum(m.value for m in metrics)
+            
+            # For histogram metrics, return list of all values
+            elif metrics[0].metric_type == MetricType.HISTOGRAM:
+                return [m.value for m in metrics]
+            
+            # For gauge and other metric types, return latest value
+            return metrics[-1].value
+    
+    def get_all_metrics(self) -> Dict[str, Any]:
+        """Get all metrics (raw format for compatibility)."""
+        all_metrics = {}
+        
+        with self._lock:
+            for name, metrics in self._metrics.items():
+                if not metrics:
+                    continue
+                
+                # Check if metrics have different tags/labels - if so, return raw
+                unique_tags = set()
+                for metric in metrics:
+                    tag_key = tuple(sorted(metric.tags.items())) if metric.tags else ()
+                    unique_tags.add(tag_key)
+                
+                if len(unique_tags) > 1:
+                    # Multiple different labels - return raw metrics
+                    all_metrics[name] = [
+                        {
+                            "value": m.value,
+                            "timestamp": m.timestamp,
+                            "tags": m.tags,
+                            "metric_type": m.metric_type.value
+                        } for m in metrics
+                    ]
+                else:
+                    # Single label or no labels - return summary
+                    all_metrics[name] = self.get_summary()[name]
+        
+        return all_metrics
+    
+    def calculate_percentiles(self, name: str, percentiles: List[float]) -> Dict[int, float]:
+        """Calculate percentiles for a metric."""
+        with self._lock:
+            if name not in self._metrics or not self._metrics[name]:
+                return {}
+            
+            values = [m.value for m in self._metrics[name]]
+            if len(values) < 2:
+                return {}
+            
+            result = {}
+            for p in percentiles:
+                try:
+                    if p == 50:
+                        result[int(p)] = statistics.median(values)
+                    else:
+                        # Use quantiles for other percentiles
+                        n = int(100 / (100 - p)) if p > 50 else int(100 / p)
+                        quantiles = statistics.quantiles(values, n=n)
+                        idx = int((p / 100) * n) - 1
+                        result[int(p)] = quantiles[max(0, min(idx, len(quantiles) - 1))]
+                except (statistics.StatisticsError, IndexError, ZeroDivisionError):
+                    continue
+            
+            return result
+    
+    def export_metrics(self, format_type: str = "dict") -> Union[str, Dict]:
+        """Export metrics in specified format."""
+        import time
+        
+        # Get the metrics data
+        metrics_data = self.get_summary()
+        
+        # Wrap in expected format
+        data = {
+            "timestamp": time.time(),
+            "metrics": metrics_data,
+            "collection_duration": 0.0  # Placeholder for actual collection time
+        }
+        
+        if format_type.lower() == "json":
+            return json.dumps(data, indent=2)
+        elif format_type.lower() == "dict":
+            return data
+        else:
+            raise ValueError(f"Unsupported format: {format_type}")
+    
+    def reset_metrics(self) -> None:
+        """Reset all metrics."""
+        self.clear_history()
+
+    def reset(self) -> None:
+        """Alias for reset_metrics for compatibility."""
+        self.reset_metrics()
     
     def get_stats(self, name: str) -> Optional[PerformanceStats]:
         """Get statistics for a metric."""
@@ -210,6 +364,12 @@ class MetricsCollector:
         """Clear all metric history."""
         with self._lock:
             self._metrics.clear()
+    
+    @property
+    def metrics(self) -> Dict[str, List[Metric]]:
+        """Get all metrics (read-only property for compatibility)."""
+        with self._lock:
+            return dict(self._metrics)
 
 
 class PerformanceMonitor:
@@ -224,6 +384,7 @@ class PerformanceMonitor:
         self.request_times = deque(maxlen=1000)
         self.total_requests = 0
         self.active_requests: Dict[str, float] = {}
+        self.batch_metrics = deque(maxlen=100)  # Store batch metrics
         self.start_time = time.time()
     
     def start_timer(self, name: str) -> None:
@@ -268,16 +429,20 @@ class PerformanceMonitor:
     def get_current_stats(self) -> Dict[str, Any]:
         """Get current performance statistics."""
         with self._lock:
+            uptime = time.time() - self.start_time
             stats = {
                 "total_requests": self.total_requests,
                 "active_requests": len(self.active_requests),
-                "uptime": time.time() - self.start_time
+                "uptime": uptime,
+                "uptime_seconds": uptime  # Alias for compatibility
             }
             
             if self.request_times:
                 times = list(self.request_times)
+                avg_time = statistics.mean(times)
                 stats.update({
-                    "avg_request_time": statistics.mean(times),
+                    "avg_request_time": avg_time,
+                    "average_response_time": avg_time,  # Alias for compatibility
                     "min_request_time": min(times),
                     "max_request_time": max(times),
                     "recent_requests": len(times)
@@ -353,6 +518,55 @@ class PerformanceMonitor:
                 summary["metrics"][metric_name] = stats
         
         return summary
+    
+    def record_batch_metrics(self, batch_size: int, metrics: PerformanceMetrics) -> None:
+        """Record batch processing metrics with PerformanceMetrics object."""
+        self.metrics_collector.record_batch_metrics(batch_size, metrics)
+        # Also store in local batch_metrics for compatibility
+        with self._lock:
+            self.batch_metrics.append({
+                'batch_size': batch_size,
+                'metrics': metrics,
+                'timestamp': time.time()
+            })
+    
+    def get_batch_performance(self) -> Dict[str, Any]:
+        """Get batch performance statistics."""
+        with self._lock:
+            if not self.batch_metrics:
+                return {
+                    "total_batches": 0,
+                    "average_batch_size": 0.0,
+                    "average_inference_time": 0.0,
+                    "average_throughput": 0.0
+                }
+            
+            total_batches = len(self.batch_metrics)
+            
+            batch_sizes = [bm['batch_size'] for bm in self.batch_metrics]
+            inference_times = [bm['metrics'].inference_time for bm in self.batch_metrics]
+            throughputs = [bm['metrics'].throughput for bm in self.batch_metrics]
+            
+            return {
+                "total_batches": total_batches,
+                "average_batch_size": sum(batch_sizes) / total_batches if total_batches > 0 else 0.0,
+                "average_inference_time": sum(inference_times) / total_batches if total_batches > 0 else 0.0,
+                "average_throughput": sum(throughputs) / total_batches if total_batches > 0 else 0.0
+            }
+    
+    def reset(self) -> None:
+        """Reset performance monitor statistics."""
+        with self._lock:
+            self.request_times.clear()
+            self.total_requests = 0
+            self.active_requests.clear()
+            self.batch_metrics.clear()
+            self.start_time = time.time()
+        self.metrics_collector.clear_history()
+    
+    def time_request(self, request_id: str):
+        """Context manager for timing requests."""
+        return RequestTimerContext(self, request_id)
 
 
 class TimerContext:
@@ -369,6 +583,21 @@ class TimerContext:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.monitor.end_timer(self.name, self.tags)
+
+
+class RequestTimerContext:
+    """Context manager for request timing."""
+    
+    def __init__(self, monitor: PerformanceMonitor, request_id: str):
+        self.monitor = monitor
+        self.request_id = request_id
+    
+    def __enter__(self):
+        self.monitor.start_request(self.request_id)
+        return self.request_id
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.monitor.end_request(self.request_id)
 
 
 class AlertManager:

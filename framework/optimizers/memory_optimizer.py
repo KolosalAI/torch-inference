@@ -156,6 +156,36 @@ class MemoryOptimizer:
         if torch.cuda.is_available():
             self._configure_cuda_memory()
     
+    def optimize(self, model: nn.Module) -> nn.Module:
+        """
+        Apply memory optimizations to model.
+        
+        Args:
+            model: PyTorch model to optimize
+            
+        Returns:
+            Optimized model
+        """
+        # Apply in-place optimizations
+        self.enable_gradient_checkpointing(model)
+        return model
+    
+    def enable_gradient_checkpointing(self, model: nn.Module) -> None:
+        """
+        Enable gradient checkpointing for model.
+        
+        Args:
+            model: PyTorch model
+        """
+        try:
+            # Apply gradient checkpointing to eligible layers
+            for module in model.modules():
+                if hasattr(module, 'gradient_checkpointing_enable'):
+                    module.gradient_checkpointing_enable()
+                    self.logger.info(f"Enabled gradient checkpointing for {type(module).__name__}")
+        except Exception as e:
+            self.logger.warning(f"Failed to enable gradient checkpointing: {e}")
+    
     def _configure_cuda_memory(self) -> None:
         """Configure CUDA memory allocation settings."""
         try:

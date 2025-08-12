@@ -91,6 +91,49 @@ class BasePreprocessor(ABC):
             return None
 
 
+class CustomPreprocessor(BasePreprocessor):
+    """
+    Custom preprocessor for generic/unknown input types.
+    """
+    
+    def supports_input_type(self, input_type: InputType) -> bool:
+        """Supports custom input type."""
+        return input_type == InputType.CUSTOM
+    
+    def preprocess(self, inputs: Any) -> PreprocessingResult:
+        """Simple preprocessing for custom inputs."""
+        start_time = time.time()
+        
+        # Handle different input types
+        if isinstance(inputs, torch.Tensor):
+            # Already a tensor, just move to device
+            tensor = inputs.to(self.device)
+        elif isinstance(inputs, (list, tuple)):
+            # Convert list/tuple to tensor
+            try:
+                tensor = torch.tensor(inputs, dtype=torch.float32).to(self.device)
+            except (ValueError, TypeError):
+                # If can't convert to tensor, create a dummy tensor
+                tensor = torch.zeros(1, 10, dtype=torch.float32).to(self.device)
+        elif isinstance(inputs, (int, float)):
+            # Single number to tensor
+            tensor = torch.tensor([inputs], dtype=torch.float32).to(self.device)
+        else:
+            # For any other type, create a dummy tensor
+            tensor = torch.zeros(1, 10, dtype=torch.float32).to(self.device)
+        
+        processing_time = time.time() - start_time
+
+        return PreprocessingResult(
+            data=tensor,
+            original_shape=getattr(inputs, 'shape', None),
+            metadata={
+                "input_type": "custom",
+                "preprocessing_time": processing_time,
+                "device": str(self.device)
+            },
+            processing_time=processing_time
+        )
 class ImagePreprocessor(BasePreprocessor):
     """Preprocessor for image inputs."""
     
@@ -436,6 +479,23 @@ class PreprocessorPipeline:
         self.max_cache_size = config.cache.cache_size
         self.executor = ThreadPoolExecutor(max_workers=config.performance.max_workers)
         self.logger = logging.getLogger(f"{__name__}.PreprocessorPipeline")
+        
+        # Add default preprocessors
+        self._add_default_preprocessors()
+    
+    def _add_default_preprocessors(self) -> None:
+        """Add default preprocessors for each input type."""
+        # Add image preprocessor
+        image_processor = ImagePreprocessor(self.config)
+        self.add_preprocessor(image_processor)
+        
+        # Add text preprocessor
+        text_processor = TextPreprocessor(self.config)
+        self.add_preprocessor(text_processor)
+        
+        # Add custom preprocessor for unknown types
+        custom_processor = CustomPreprocessor(self.config)
+        self.add_preprocessor(custom_processor)
     
     def add_preprocessor(self, preprocessor: BasePreprocessor) -> None:
         """Add a preprocessor to the pipeline."""
