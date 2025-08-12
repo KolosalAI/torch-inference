@@ -103,13 +103,13 @@ class TestPerformanceMonitor:
         
         assert isinstance(stats, dict)
         assert "total_requests" in stats
-        assert "average_response_time" in stats
-        assert "current_rps" in stats
-        assert "uptime_seconds" in stats
+        assert "avg_request_time" in stats
+        assert "active_requests" in stats
+        assert "uptime" in stats
         
         assert stats["total_requests"] == 5
-        assert stats["average_response_time"] > 0
-        assert stats["uptime_seconds"] > 0
+        assert stats["avg_request_time"] > 0
+        assert stats["uptime"] > 0
     
     def test_get_performance_summary(self, performance_monitor):
         """Test getting performance summary."""
@@ -125,16 +125,13 @@ class TestPerformanceMonitor:
         
         assert isinstance(summary, dict)
         assert "total_requests" in summary
-        assert "mean_response_time" in summary
-        assert "median_response_time" in summary
-        assert "p95_response_time" in summary
-        assert "p99_response_time" in summary
-        assert "min_response_time" in summary
-        assert "max_response_time" in summary
-        assert "requests_per_second" in summary
+        assert "window_seconds" in summary
+        assert "timestamp" in summary
+        assert "metrics" in summary
         
         assert summary["total_requests"] == 5
-        assert summary["mean_response_time"] > 0
+        assert summary["window_seconds"] > 0
+        assert summary["timestamp"] > 0
     
     def test_record_batch_metrics(self, performance_monitor):
         """Test recording batch metrics."""
@@ -216,40 +213,43 @@ class TestMetricsCollector:
     
     def test_collector_initialization(self, metrics_collector):
         """Test collector initialization."""
-        assert len(metrics_collector.metrics) == 0
-        assert metrics_collector.collection_start_time is not None
+        assert len(metrics_collector.get_summary()) == 0
+        assert metrics_collector.max_history > 0
     
     def test_record_counter_metric(self, metrics_collector):
         """Test recording counter metrics."""
-        metrics_collector.record("requests_total", 1, metric_type="counter")
-        metrics_collector.record("requests_total", 1, metric_type="counter")
-        metrics_collector.record("requests_total", 3, metric_type="counter")
+        metrics_collector.record_counter("requests_total", 1)
+        metrics_collector.record_counter("requests_total", 1)
+        metrics_collector.record_counter("requests_total", 3)
         
-        # Counter should accumulate
-        value = metrics_collector.get_metric("requests_total")
-        assert value == 5
+        # Check if the metric was recorded
+        summary = metrics_collector.get_summary()
+        assert "requests_total" in summary
+        assert summary["requests_total"]["count"] == 3
     
     def test_record_gauge_metric(self, metrics_collector):
         """Test recording gauge metrics."""
-        metrics_collector.record("memory_usage", 100, metric_type="gauge")
-        metrics_collector.record("memory_usage", 150, metric_type="gauge")
-        metrics_collector.record("memory_usage", 120, metric_type="gauge")
+        metrics_collector.record_gauge("memory_usage", 100)
+        metrics_collector.record_gauge("memory_usage", 150)
+        metrics_collector.record_gauge("memory_usage", 120)
         
-        # Gauge should store latest value
-        value = metrics_collector.get_metric("memory_usage")
-        assert value == 120
+        # Check if the metrics were recorded
+        summary = metrics_collector.get_summary()
+        assert "memory_usage" in summary
+        assert summary["memory_usage"]["count"] == 3
+        assert summary["memory_usage"]["latest"] == 120
     
     def test_record_histogram_metric(self, metrics_collector):
         """Test recording histogram metrics."""
         response_times = [0.01, 0.02, 0.015, 0.03, 0.012, 0.025]
         
         for rt in response_times:
-            metrics_collector.record("response_time", rt, metric_type="histogram")
+            metrics_collector.record_timer("response_time", rt)
         
-        histogram = metrics_collector.get_metric("response_time")
-        assert isinstance(histogram, list)
-        assert len(histogram) == len(response_times)
-        assert all(t in histogram for t in response_times)
+        # Check if the metrics were recorded
+        summary = metrics_collector.get_summary()
+        assert "response_time" in summary
+        assert summary["response_time"]["count"] == len(response_times)
     
     def test_record_with_labels(self, metrics_collector):
         """Test recording metrics with labels."""

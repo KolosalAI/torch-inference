@@ -21,12 +21,32 @@ from enum import Enum
 import logging
 from abc import ABC, abstractmethod
 
-import jwt
-from passlib.context import CryptContext
-from passlib.hash import bcrypt
-import pyotp
-import qrcode
-from io import BytesIO
+try:
+    import jwt
+    JWT_AVAILABLE = True
+except ImportError:
+    JWT_AVAILABLE = False
+    jwt = None
+
+try:
+    from passlib.context import CryptContext
+    from passlib.hash import bcrypt
+    PASSLIB_AVAILABLE = True
+except ImportError:
+    PASSLIB_AVAILABLE = False
+    CryptContext = None
+    bcrypt = None
+
+try:
+    import pyotp
+    import qrcode
+    from io import BytesIO
+    MFA_AVAILABLE = True
+except ImportError:
+    MFA_AVAILABLE = False
+    pyotp = None
+    qrcode = None
+    BytesIO = None
 
 from .config import EnterpriseConfig, AuthProvider
 
@@ -198,6 +218,9 @@ class JWTManager:
     
     def create_access_token(self, user: User, expires_delta: Optional[timedelta] = None) -> str:
         """Create access token for user."""
+        if not JWT_AVAILABLE:
+            raise RuntimeError("JWT library not available. Please install PyJWT: pip install PyJWT")
+            
         if expires_delta:
             expire = datetime.now(timezone.utc) + expires_delta
         else:
@@ -218,6 +241,8 @@ class JWTManager:
     
     def create_refresh_token(self, user: User) -> str:
         """Create refresh token for user."""
+        if not JWT_AVAILABLE:
+            raise RuntimeError("JWT library not available. Please install PyJWT: pip install PyJWT")
         expire = datetime.now(timezone.utc) + self.refresh_token_expire
         
         payload = {

@@ -292,19 +292,25 @@ class TestBaseModel:
             mock_compile.assert_called_once()
     
     @patch('torch.cuda.is_available', return_value=True)
-    def test_optimize_for_inference_cuda(self, mock_cuda, test_config):
+    @patch('torch.cuda.device_count', return_value=1)
+    @patch('torch.cuda.get_device_name', return_value='Mock GPU')
+    def test_optimize_for_inference_cuda(self, mock_device_name, mock_device_count, mock_cuda, test_config):
         """Test optimization with CUDA."""
         # Set CUDA device
         test_config.device.device_type = "cuda"
         test_config.device.use_fp16 = True
-        
+
         model = MockModel(test_config)
         model.load_model("test_path")
-        
-        with patch('torch.backends.cudnn') as mock_cudnn:
-            model.optimize_for_inference()
-            
-            # Should enable cudnn optimizations
+
+        # Mock the model.to method to avoid actual CUDA calls
+        with patch.object(model.model, 'to', return_value=model.model) as mock_to:
+            with patch('torch.backends.cudnn') as mock_cudnn:
+                model.optimize_for_inference()
+                
+                # Verify CUDA optimizations were attempted
+                mock_to.assert_called()
+                assert mock_cudnn.benchmark is True            # Should enable cudnn optimizations
             assert mock_cudnn.benchmark
             assert not mock_cudnn.deterministic
     

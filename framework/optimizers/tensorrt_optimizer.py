@@ -30,13 +30,25 @@ def _ensure_tensorrt_imported():
     
     try:
         import tensorrt as trt_module
-        import torch_tensorrt as torch_tensorrt_module
+        # Handle Windows DLL loading issues
+        try:
+            import torch_tensorrt as torch_tensorrt_module
+        except (ImportError, OSError, FileNotFoundError) as e:
+            # On Windows, torch_tensorrt might have DLL loading issues
+            logger.warning(f"torch_tensorrt failed to load: {e}")
+            TRT_AVAILABLE = False
+            return False
+            
         trt = trt_module
         torch_tensorrt = torch_tensorrt_module
         TRT_AVAILABLE = True
         return True
     except ImportError as e:
         warnings.warn(f"TensorRT not available: {e}. Install torch-tensorrt and tensorrt for optimization.")
+        TRT_AVAILABLE = False
+        return False
+    except Exception as e:
+        logger.warning(f"TensorRT initialization failed: {e}")
         TRT_AVAILABLE = False
         return False
 

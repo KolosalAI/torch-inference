@@ -340,12 +340,12 @@ class TestMemoryOptimizer:
         optimizer = MemoryOptimizer()
         assert optimizer is not None
     
-    def test_memory_optimization(self):
+    def test_memory_optimization(self, simple_model):
         """Test memory optimization techniques."""
         optimizer = MemoryOptimizer()
         
         # Test gradient checkpointing enablement
-        optimizer.enable_gradient_checkpointing()
+        optimizer.enable_gradient_checkpointing(simple_model)
         
         # Test memory cleanup
         optimizer.cleanup_memory()
@@ -373,7 +373,11 @@ class TestOptimizerFunctions:
     @pytest.mark.skipif(convert_to_tensorrt is None, reason="TensorRT function not available")
     def test_convert_to_tensorrt_function(self, simple_model, sample_input):
         """Test convert_to_tensorrt convenience function."""
-        with patch('framework.optimizers.TensorRTOptimizer') as mock_optimizer_class:
+        # Only run test if TensorRT is actually available
+        if convert_to_tensorrt is None:
+            pytest.skip("TensorRT not available")
+            
+        with patch('framework.optimizers.tensorrt_optimizer.TensorRTOptimizer') as mock_optimizer_class:
             mock_optimizer = Mock()
             mock_optimizer.optimize.return_value = simple_model
             mock_optimizer_class.return_value = mock_optimizer
@@ -387,7 +391,11 @@ class TestOptimizerFunctions:
     @pytest.mark.skipif(convert_to_onnx is None, reason="ONNX function not available")
     def test_convert_to_onnx_function(self, simple_model, sample_input, temp_model_dir):
         """Test convert_to_onnx convenience function."""
-        with patch('framework.optimizers.ONNXOptimizer') as mock_optimizer_class:
+        # Only run test if ONNX is actually available
+        if convert_to_onnx is None:
+            pytest.skip("ONNX not available")
+            
+        with patch('framework.optimizers.onnx_optimizer.ONNXOptimizer') as mock_optimizer_class:
             mock_optimizer = Mock()
             mock_optimizer.optimize.return_value = simple_model
             mock_optimizer_class.return_value = mock_optimizer
@@ -420,7 +428,10 @@ class TestOptimizerFunctions:
     @pytest.mark.skipif(jit_compile_model is None, reason="JIT function not available")
     def test_jit_compile_model_function(self, simple_model, sample_input):
         """Test jit_compile_model convenience function."""
-        with patch('framework.optimizers.JITOptimizer') as mock_optimizer_class:
+        if jit_compile_model is None:
+            pytest.skip("JIT not available")
+            
+        with patch('framework.optimizers.jit_optimizer.JITOptimizer') as mock_optimizer_class:
             mock_optimizer = Mock()
             mock_optimizer.optimize.return_value = simple_model
             mock_optimizer_class.return_value = mock_optimizer
@@ -434,7 +445,10 @@ class TestOptimizerFunctions:
     @pytest.mark.skipif(enable_cuda_optimizations is None, reason="CUDA function not available")
     def test_enable_cuda_optimizations_function(self):
         """Test enable_cuda_optimizations convenience function."""
-        with patch('framework.optimizers.CUDAOptimizer') as mock_optimizer_class:
+        if enable_cuda_optimizations is None:
+            pytest.skip("CUDA optimizations not available")
+            
+        with patch('framework.optimizers.cuda_optimizer.CUDAOptimizer') as mock_optimizer_class:
             mock_optimizer = Mock()
             mock_optimizer_class.return_value = mock_optimizer
             

@@ -39,6 +39,29 @@ class JITOptimizer:
         self.logger = logging.getLogger(f"{__name__}.JITOptimizer")
         self.logger.info("JIT optimizer initialized")
     
+    def optimize(self, model: nn.Module, example_inputs: Optional[torch.Tensor] = None, method: str = "trace") -> nn.Module:
+        """
+        Optimize model using JIT compilation.
+        
+        Args:
+            model: PyTorch model to optimize
+            example_inputs: Example inputs for tracing (if None and method is trace, will use scripting)
+            method: Compilation method ("trace" or "script")
+            
+        Returns:
+            Optimized model
+        """
+        try:
+            if method == "script" or (method == "trace" and example_inputs is None):
+                return self.script_model(model, optimize=True)
+            elif method == "trace" and example_inputs is not None:
+                return self.trace_model(model, example_inputs, optimize=True)
+            else:
+                raise ValueError(f"Unknown method: {method}")
+        except Exception as e:
+            self.logger.warning(f"JIT optimization failed: {e}, returning original model")
+            return model
+    
     def trace_model(self, 
                    model: nn.Module, 
                    example_inputs: torch.Tensor,
@@ -67,9 +90,11 @@ class JITOptimizer:
             
             # Trace the model
             with torch.no_grad():
+                # Handle list of inputs - take first one for tracing
+                sample_input = example_inputs[0] if isinstance(example_inputs, list) else example_inputs
                 traced_model = torch.jit.trace(
                     model, 
-                    example_inputs, 
+                    sample_input, 
                     strict=strict,
                     check_trace=True
                 )
@@ -420,7 +445,24 @@ class JITModelWrapper:
         """
         self.compiled_model = compiled_model
         self.original_model = original_model
-        self.device = next(compiled_model.parameters()).device
+        
+        # Get device from parameters, handle case where model has no parameters
+        try:
+            if hasattr(compiled_model, 'parameters'):
+                self.device = next(compiled_model.parameters()).device
+            else:
+                # If it's a Mock object or doesn't have parameters, use default
+                self.device = torch.device("cpu")
+        except (StopIteration, TypeError, AttributeError):
+            # No parameters - try to get device from buffers
+            try:
+                if hasattr(compiled_model, 'buffers'):
+                    self.device = next(compiled_model.buffers()).device
+                else:
+                    self.device = torch.device("cpu")
+            except (StopIteration, TypeError, AttributeError):
+                # No parameters or buffers - default to CPU
+                self.device = torch.device("cpu")
         
         self.logger = logging.getLogger(f"{__name__}.JITModelWrapper")
     

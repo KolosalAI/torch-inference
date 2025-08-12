@@ -53,11 +53,37 @@ class CUDAOptimizer:
         if config and hasattr(config.device, 'device_id') and config.device.device_id is not None:
             self.device = torch.device(f"cuda:{config.device.device_id}")
         else:
-            self.device = torch.device("cuda")
+            self.device = torch.device("cuda:0")  # Default to first GPU
         
-        torch.cuda.set_device(self.device)
+        # Only set device if CUDA is properly available
+        try:
+            if hasattr(torch.cuda, 'set_device'):
+                torch.cuda.set_device(self.device)
+        except (AttributeError, RuntimeError) as e:
+            self.logger.warning(f"Could not set CUDA device: {e}")
+            # Continue without setting device explicitly
         
         self.logger.info(f"CUDA optimizer initialized on device: {self.device}")
+        self._apply_cuda_optimizations()
+    
+    def optimize(self, model: nn.Module) -> nn.Module:
+        """
+        Apply CUDA optimizations to model.
+        
+        Args:
+            model: PyTorch model to optimize
+            
+        Returns:
+            Optimized model
+        """
+        if not self.enabled:
+            self.logger.warning("CUDA not available, returning original model")
+            return model
+        
+        return self.optimize_model_for_cuda(model)
+    
+    def apply_cuda_optimizations(self) -> None:
+        """Apply CUDA optimizations (public interface)."""
         self._apply_cuda_optimizations()
     
     def _apply_cuda_optimizations(self) -> None:
@@ -532,7 +558,9 @@ def enable_cuda_optimizations(config: Optional[InferenceConfig] = None) -> CUDAO
     Returns:
         CUDA optimizer instance
     """
+    # Import here to avoid issues with mocking in tests
     optimizer = CUDAOptimizer(config)
+    optimizer.apply_cuda_optimizations()  # Actually apply some optimizations
     return optimizer
 
 

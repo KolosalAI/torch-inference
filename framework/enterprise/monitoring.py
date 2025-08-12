@@ -25,13 +25,46 @@ from abc import ABC, abstractmethod
 import statistics
 
 from opentelemetry import trace, metrics
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.instrumentation.requests import RequestsInstrumentor
-from prometheus_client import Counter, Histogram, Gauge, Summary, CollectorRegistry
+try:
+    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+    JAEGER_AVAILABLE = True
+except ImportError:
+    # Handle missing dependencies gracefully
+    JaegerExporter = None
+    JAEGER_AVAILABLE = False
+    
+try:
+    from deprecated import deprecated
+    DEPRECATED_AVAILABLE = True
+except ImportError:
+    # Create a dummy decorator if deprecated is not available
+    def deprecated(reason=""):
+        def decorator(func):
+            return func
+        return decorator
+    DEPRECATED_AVAILABLE = False
+
+try:
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.instrumentation.requests import RequestsInstrumentor
+    from prometheus_client import Counter, Histogram, Gauge, Summary, CollectorRegistry
+    OPENTELEMETRY_AVAILABLE = True
+except ImportError:
+    # Handle missing opentelemetry dependencies
+    PrometheusMetricReader = None
+    TracerProvider = None
+    BatchSpanProcessor = None
+    MeterProvider = None
+    RequestsInstrumentor = None
+    Counter = None
+    Histogram = None
+    Gauge = None
+    Summary = None
+    CollectorRegistry = None
+    OPENTELEMETRY_AVAILABLE = False
 
 from .config import EnterpriseConfig
 

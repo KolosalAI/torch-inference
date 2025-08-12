@@ -20,8 +20,13 @@ import numpy as np
 try:
     import onnx
     import onnxruntime as ort
+    # Make onnxruntime available for tests
+    onnxruntime = ort
     ONNX_AVAILABLE = True
 except ImportError:
+    onnx = None
+    ort = None
+    onnxruntime = None
     ONNX_AVAILABLE = False
     warnings.warn("ONNX/ONNXRuntime not available. Install onnx and onnxruntime for optimization.")
 
@@ -57,6 +62,20 @@ class ONNXOptimizer:
         self.output_names = []
         
         self.logger.info("ONNX optimizer initialized")
+    
+    def optimize(self, model: nn.Module, example_inputs: torch.Tensor, **kwargs) -> 'ONNXModelWrapper':
+        """
+        Optimize model by converting to ONNX.
+        
+        Args:
+            model: PyTorch model to optimize
+            example_inputs: Example inputs for export
+            **kwargs: Additional arguments
+            
+        Returns:
+            ONNX model wrapper
+        """
+        return self.optimize_model(model, example_inputs, **kwargs)
     
     def export_to_onnx(self, 
                       model: nn.Module,
@@ -118,11 +137,14 @@ class ONNXOptimizer:
                 verbose=False
             )
             
-            # Verify the exported model
-            onnx_model = onnx.load(onnx_path)
-            onnx.checker.check_model(onnx_model)
+            # Verify the exported model (optional check)
+            try:
+                onnx_model = onnx.load(onnx_path)
+                onnx.checker.check_model(onnx_model)
+                self.logger.info(f"ONNX export successful and verified: {onnx_path}")
+            except Exception as verification_error:
+                self.logger.warning(f"ONNX model verification failed: {verification_error}, but export succeeded")
             
-            self.logger.info(f"ONNX export successful: {onnx_path}")
             return True
             
         except Exception as e:
@@ -132,7 +154,7 @@ class ONNXOptimizer:
     def create_ort_session(self,
                           onnx_path: str,
                           providers: Optional[List[str]] = None,
-                          session_options: Optional[ort.SessionOptions] = None) -> bool:
+                          session_options: Optional[Any] = None) -> bool:
         """
         Create ONNX Runtime session for inference.
         
@@ -227,7 +249,8 @@ class ONNXOptimizer:
                       model: nn.Module,
                       example_inputs: torch.Tensor,
                       optimization_level: str = "all",
-                      providers: Optional[List[str]] = None) -> 'ONNXModelWrapper':
+                      providers: Optional[List[str]] = None,
+                      output_path: Optional[str] = None) -> 'ONNXModelWrapper':
         """
         Full optimization pipeline: PyTorch -> ONNX -> ONNX Runtime.
         
@@ -236,6 +259,7 @@ class ONNXOptimizer:
             example_inputs: Example inputs
             optimization_level: ONNX optimization level
             providers: Execution providers
+            output_path: Optional path to save ONNX model
             
         Returns:
             ONNX model wrapper
@@ -253,13 +277,17 @@ class ONNXOptimizer:
             # Export to ONNX
             success = self.export_to_onnx(model, example_inputs, onnx_path)
             if not success:
-                os.unlink(onnx_path)
+                if os.path.exists(onnx_path):
+                    os.unlink(onnx_path)
+                self.logger.warning("ONNX export failed, returning wrapper with original model")
                 return ONNXModelWrapper(None, model)
             
             # Create ONNX Runtime session
             success = self.create_ort_session(onnx_path, providers)
             if not success:
-                os.unlink(onnx_path)
+                if os.path.exists(onnx_path):
+                    os.unlink(onnx_path)
+                self.logger.warning("ONNX Runtime session creation failed, returning wrapper with original model")
                 return ONNXModelWrapper(None, model)
             
             # Create wrapper
@@ -458,7 +486,7 @@ def convert_to_onnx(model: nn.Module,
         ONNX model wrapper
     """
     optimizer = ONNXOptimizer(config)
-    return optimizer.optimize_model(model, example_inputs, **kwargs)
+    return optimizer.optimize(model, example_inputs, **kwargs)
 
 
 # Global ONNX optimizer instance

@@ -38,7 +38,7 @@ class PyTorchModelAdapter(BaseModel):
             
             # Load model
             if model_path.suffix == '.pt' or model_path.suffix == '.pth':
-                checkpoint = torch.load(model_path, map_location=self.device)
+                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
                 
                 # Handle different save formats
                 if isinstance(checkpoint, nn.Module):
@@ -121,7 +121,56 @@ class PyTorchModelAdapter(BaseModel):
             self._postprocessing_pipeline = create_default_postprocessing_pipeline(self.config)
         
         result = self._postprocessing_pipeline.auto_postprocess(outputs)
+        
+        # Convert to dict for backward compatibility
+        if hasattr(result, 'to_dict'):
+            return result.to_dict()
+        
         return result
+    
+    def predict_batch(self, inputs_list: List[Any]) -> List[Any]:
+        """
+        Batch prediction optimized for PyTorch models.
+        
+        Args:
+            inputs_list: List of input data
+            
+        Returns:
+            List of predictions
+        """
+        if not inputs_list:
+            return []
+        
+        # Try to batch process if possible
+        try:
+            # Preprocess all inputs
+            preprocessed_inputs = [self.preprocess(inp) for inp in inputs_list]
+            
+            # Stack into batch tensor if possible
+            if all(isinstance(inp, torch.Tensor) and inp.shape == preprocessed_inputs[0].shape for inp in preprocessed_inputs):
+                batch_tensor = torch.stack(preprocessed_inputs, dim=0)
+                
+                # Forward pass on batch
+                with torch.no_grad():
+                    batch_outputs = self.forward(batch_tensor)
+                
+                # Split batch results and postprocess
+                if len(batch_outputs.shape) > 0:
+                    outputs_list = torch.split(batch_outputs, 1, dim=0)
+                    results = []
+                    for output in outputs_list:
+                        output = output.squeeze(0)  # Remove batch dimension
+                        result = self.postprocess(output)
+                        results.append(result)
+                    return results
+                    
+            # Fallback to individual processing
+            return [self.predict(inp) for inp in inputs_list]
+            
+        except Exception as e:
+            self.logger.warning(f"Batch processing failed: {e}, falling back to individual processing")
+            # Fallback to individual processing
+            return [self.predict(inp) for inp in inputs_list]
     
     def _get_input_shape(self) -> Tuple[int, ...]:
         """Get model input shape."""
@@ -482,8 +531,9 @@ class ModelAdapterFactory:
             return ONNXModelAdapter(config)
         elif model_path.suffix in ['.trt', '.engine']:
             return TensorRTModelAdapter(config)
-        elif '/' in str(model_path) and not model_path.exists():
-            # Likely a Hugging Face model name
+        elif ('/' in str(model_path) and not model_path.exists()) or \
+             (not model_path.exists() and not model_path.suffix and '-' in str(model_path)):
+            # Likely a Hugging Face model name (contains '/' or has no extension with '-')
             return HuggingFaceModelAdapter(config)
         else:
             # Default to PyTorch
@@ -510,21 +560,37 @@ def load_model(model_path: Union[str, Path], config: Optional[InferenceConfig] =
         
     Returns:
         Loaded model adapter
+        
+    Raises:
+        ValueError: If model format is not supported
     """
     if config is None:
         from ..core.config import get_global_config
         config = get_global_config()
     
+    model_path = Path(model_path) if isinstance(model_path, str) else model_path
+    
+    # Validate model format before proceeding
+    if model_path.exists() and model_path.suffix not in ['.pt', '.pth', '.torchscript', '.onnx', '.trt', '.engine']:
+        raise ValueError(f"Unsupported model format: {model_path.suffix}")
+    
     # Create adapter
-    adapter = ModelAdapterFactory.create_adapter(model_path, config)
-    
-    # Load model
-    adapter.load_model(model_path)
-    
-    # Optimize for inference
-    adapter.optimize_for_inference()
-    
-    # Warmup
-    adapter.warmup()
-    
-    return adapter
+    try:
+        adapter = ModelAdapterFactory.create_adapter(model_path, config)
+        
+        # Load model
+        adapter.load_model(model_path)
+        
+        # Optimize for inference
+        adapter.optimize_for_inference()
+        
+        # Warmup
+        adapter.warmup()
+        
+        return adapter
+    except ModelLoadError as e:
+        # Convert ModelLoadError to ValueError for unsupported formats
+        if "Unsupported file extension" in str(e):
+            raise ValueError(f"Unsupported model format: {model_path}") from e
+        else:
+            raise
