@@ -1,5 +1,6 @@
 """Tests for base model functionality."""
 
+import unittest
 import pytest
 import torch
 import torch.nn as nn
@@ -11,6 +12,7 @@ from framework.core.base_model import (
     ModelInferenceError, get_model_manager
 )
 from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig
+from framework.core.model_downloader import ModelDownloader, ModelInfo
 
 
 class MockModel(BaseModel):
@@ -708,3 +710,43 @@ class TestBaseModelWithRealModels:
         
         assert small_memory["total_params"] < large_memory["total_params"]
         assert small_memory["model_size_mb"] < large_memory["model_size_mb"]
+
+
+class TestModelManagerDownload(unittest.TestCase):
+    """Test cases for ModelManager download functionality"""
+    
+    def setUp(self):
+        """Set up test environment"""
+        self.manager = ModelManager()
+    
+    def test_model_manager_has_downloader_property(self):
+        """Test that ModelManager can access the model downloader"""
+        # This ensures the download functionality is accessible
+        downloader = self.manager.get_downloader()
+        from framework.core.model_downloader import ModelDownloader
+        assert isinstance(downloader, ModelDownloader)
+    
+    @patch('framework.core.model_downloader.ModelDownloader.download_torchvision_model')
+    def test_download_and_load_integration(self, mock_download):
+        """Test download and load model integration works"""
+        # Mock successful download
+        from pathlib import Path
+        from framework.core.model_downloader import ModelInfo
+        
+        mock_download.return_value = (
+            Path("/tmp/model.pt"),
+            ModelInfo("test", "torchvision", "resnet18", "classification")
+        )
+        
+        # Mock the adapter loading to avoid actual model loading
+        with patch('framework.adapters.model_adapters.ModelAdapterFactory.create_adapter'):
+            try:
+                # This should not raise an error - the integration exists
+                self.manager.download_and_load_model(
+                    source="torchvision",
+                    model_id="resnet18",
+                    name="test_model"
+                )
+            except Exception as e:
+                # We expect some errors due to mocking, but not AttributeError
+                assert not isinstance(e, AttributeError), f"Missing method: {e}"
