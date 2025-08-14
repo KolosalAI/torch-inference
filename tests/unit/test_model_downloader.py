@@ -215,7 +215,7 @@ class TestModelDownloader:
             model_path, model_info = downloader.download_torchvision_model("resnet18")
         
         # Verify calls
-        mock_resnet18.assert_called_once_with(pretrained=True)
+        mock_resnet18.assert_called_once_with(weights='DEFAULT')
         assert mock_torch_save.call_count == 2  # Full model + state dict
         
         # Verify model info
@@ -244,7 +244,7 @@ class TestModelDownloader:
                 "pytorch/vision", "resnet18"
             )
         
-        # Verify calls
+        # Verify calls - PyTorch Hub still uses pretrained parameter
         mock_hub_load.assert_called_once_with(
             "pytorch/vision", "resnet18", pretrained=True
         )

@@ -91,6 +91,11 @@ class TorchInferenceFramework:
         """Backward compatibility property for model_manager."""
         return self._model_manager
     
+    @property
+    def is_loaded(self) -> bool:
+        """Check if a model is loaded and ready for inference."""
+        return self._initialized and self.model is not None and self.model.is_loaded
+    
     def _setup_logging(self):
         """Setup logging configuration."""
         log_level = getattr(self.config.performance, 'log_level', 'INFO')

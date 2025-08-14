@@ -77,7 +77,8 @@ class TestModelLoader:
             if not model_path.exists():
                 raise FileNotFoundError(f"Model file not found: {model_path}")
             
-            model = torch.load(model_path, map_location=device)
+            # Use weights_only=False for test models (trusted source)
+            model = torch.load(model_path, map_location=device, weights_only=False)
             model.eval()
             
             return model, model_info
