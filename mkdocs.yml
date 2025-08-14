@@ -1,0 +1,75 @@
+site_name: Torch Inference Framework
+site_description: Optimized PyTorch inference framework with TensorRT, ONNX, and other acceleration techniques
+site_url: https://evintkoo.github.io/torch-inference/
+repo_url: https://github.com/Evintkoo/torch-inference
+repo_name: Evintkoo/torch-inference
+
+nav:
+  - Home: README.md
+  - Installation: docs/installation.md
+  - Quick Start: docs/quickstart.md
+  - Configuration: docs/configuration.md
+  - Examples: docs/examples.md
+  - Testing: docs/testing.md
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+  language: en
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to dark mode
+      primary: teal
+      accent: purple
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to light mode
+      primary: teal
+      accent: lime
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [framework]
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: false
+            heading_level: 1
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - attr_list
+  - def_list
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github-alt
+      link: https://github.com/Evintkoo/torch-inference
