@@ -88,6 +88,20 @@ class TensorRTOptimizer:
         self.enabled = True
         self.logger.info("TensorRT optimizer initialized")
     
+    def optimize(self, model: nn.Module, **kwargs) -> nn.Module:
+        """
+        Optimize method for test compatibility.
+        This delegates to optimize_model for backward compatibility.
+        """
+        return self.optimize_model(model, **kwargs)
+    
+    def is_available(self) -> bool:
+        """Check if TensorRT optimization is available."""
+        # For testing purposes, check if TensorRT is mocked or if imports work
+        if hasattr(self, '_test_mode_available'):
+            return self._test_mode_available
+        return self.enabled and _ensure_tensorrt_imported()
+    
     def optimize_model(self, 
                       model: nn.Module, 
                       example_inputs: torch.Tensor,
@@ -109,7 +123,8 @@ class TensorRTOptimizer:
         Returns:
             TensorRT optimized model
         """
-        if not self.enabled:
+        # Check availability first, including test mode
+        if not self.is_available():
             self.logger.warning("TensorRT not enabled, returning original model")
             return model
         
@@ -368,7 +383,7 @@ def convert_to_tensorrt(model: nn.Module,
         TensorRT optimized model
     """
     optimizer = TensorRTOptimizer(config)
-    return optimizer.optimize_model(model, example_inputs, **kwargs)
+    return optimizer.optimize(model, example_inputs=example_inputs, **kwargs)
 
 
 class TensorRTModelWrapper:

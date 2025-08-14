@@ -550,7 +550,7 @@ def jit_compile_model(model: nn.Module,
         JIT model wrapper
     """
     optimizer = JITOptimizer(config)
-    compiled_model = optimizer.compile_model(model, example_inputs, method, **kwargs)
+    compiled_model = optimizer.optimize(model, example_inputs, method, **kwargs)
     return JITModelWrapper(compiled_model, model)
 
 

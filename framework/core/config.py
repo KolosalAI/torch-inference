@@ -33,19 +33,17 @@ class DeviceType(Enum):
     @classmethod
     def from_string(cls, value: str) -> "DeviceType":
         """Create DeviceType from string value."""
+        if not value:
+            return cls.AUTO
+        
         value = value.lower()
         for device_type in cls:
             if device_type.value == value:
                 return device_type
-        # Handle invalid device strings by raising an error if explicitly invalid
+        
+        # For explicitly invalid device types, raise an error
         valid_values = [dt.value for dt in cls]
-        if value and value not in valid_values:
-            # Only raise error for explicitly invalid values, not empty/None
-            if value not in ['auto', 'cpu', 'cuda', 'mps']:
-                # For test compatibility, don't raise error for invalid strings
-                # Just return AUTO as fallback
-                pass
-        return cls.AUTO  # Default fallback
+        raise ValueError(f"Invalid device type: '{value}'. Must be one of: {valid_values}")
 
 
 class OptimizationLevel(Enum):

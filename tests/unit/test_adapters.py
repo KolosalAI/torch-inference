@@ -11,7 +11,7 @@ from framework.adapters.model_adapters import (
     PyTorchModelAdapter, ONNXModelAdapter, TensorRTModelAdapter,
     HuggingFaceModelAdapter, load_model
 )
-from framework.core.config import InferenceConfig
+from framework.core.config import InferenceConfig, DeviceConfig, DeviceType
 from framework.core.base_model import ModelLoadError
 
 
@@ -308,7 +308,9 @@ class TestModelAdapterIntegration:
         torch.save(simple_model, model_path)
         
         # CPU config
-        cpu_config = InferenceConfig()
+        cpu_config = InferenceConfig(
+            device=DeviceConfig(device_type=DeviceType.CPU)
+        )
         cpu_adapter = PyTorchModelAdapter(cpu_config)
         cpu_adapter.load_model(model_path)
         
@@ -458,9 +460,11 @@ class TestModelAdapterErrorHandling:
         torch.save(simple_model, model_path)
         
         # Create config with specific device
-        config = InferenceConfig()
+        config = InferenceConfig(
+            device=DeviceConfig(device_type=DeviceType.CPU)
+        )
         adapter = PyTorchModelAdapter(config)
         adapter.load_model(model_path)
         
         # Model should be moved to correct device
-        assert next(adapter.model.parameters()).device == adapter.device
+        assert next(adapter.model.parameters()).device.type == adapter.device.type

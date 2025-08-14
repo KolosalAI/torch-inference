@@ -53,14 +53,26 @@ class OptimizedModel(BaseModel):
     
     def _initialize_optimizers(self) -> Dict[str, Any]:
         """Initialize all available optimizers."""
-        optimizers = {
-            'tensorrt': TensorRTOptimizer(self.config),
-            'onnx': ONNXOptimizer(self.config),
-            'quantization': QuantizationOptimizer(self.config),
-            'memory': MemoryOptimizer(self.config),
-            'cuda': CUDAOptimizer(self.config),
-            'jit': JITOptimizer(self.config)
-        }
+        optimizers = {}
+        
+        # Only initialize optimizers that are actually available
+        if TensorRTOptimizer is not None:
+            optimizers['tensorrt'] = TensorRTOptimizer(self.config)
+            
+        if ONNXOptimizer is not None:
+            optimizers['onnx'] = ONNXOptimizer(self.config)
+            
+        if QuantizationOptimizer is not None:
+            optimizers['quantization'] = QuantizationOptimizer(self.config)
+            
+        if MemoryOptimizer is not None:
+            optimizers['memory'] = MemoryOptimizer(self.config)
+            
+        if CUDAOptimizer is not None:
+            optimizers['cuda'] = CUDAOptimizer(self.config)
+            
+        if JITOptimizer is not None:
+            optimizers['jit'] = JITOptimizer(self.config)
         
         return optimizers
     
