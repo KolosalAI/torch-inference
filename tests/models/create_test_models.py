@@ -454,8 +454,8 @@ def verify_models(models_dir: Path):
         try:
             model_path = Path(model_info["full_model_path"])
             if model_path.exists():
-                # Try to load the model
-                model = torch.load(model_path, map_location='cpu')
+                # Try to load the model (use weights_only=False for test models)
+                model = torch.load(model_path, map_location='cpu', weights_only=False)
                 print(f"✓ {model_id:<25} - Verified")
                 verified_count += 1
             else:

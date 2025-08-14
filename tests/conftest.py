@@ -420,3 +420,27 @@ def inference_config():
         device=DeviceConfig(device_type=DeviceType.CPU),
         batch=BatchConfig(batch_size=2, max_batch_size=8)
     )
+
+
+@pytest.fixture
+def model_manager():
+    """Create a model manager for testing."""
+    from framework.core.base_model import ModelManager
+    return ModelManager()
+
+
+@pytest.fixture
+def async_client():
+    """Create async test client."""
+    import httpx
+    from main import app
+    transport = httpx.ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://test")
+
+
+@pytest.fixture
+def client():
+    """Create test client."""
+    from fastapi.testclient import TestClient
+    from main import app
+    return TestClient(app)

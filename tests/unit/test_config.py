@@ -14,6 +14,29 @@ from framework.core.config import (
 from framework.core.config_manager import ConfigManager
 
 
+@pytest.fixture
+def clean_env():
+    """Ensure a clean environment for config tests."""
+    # List of env vars that might affect config tests
+    config_env_vars = [
+        'BATCH_SIZE', 'DEVICE', 'USE_FP16', 'LOG_LEVEL', 'ENVIRONMENT',
+        'CONFIG_DIR', 'MAX_BATCH_SIZE', 'DEVICE_TYPE'
+    ]
+    
+    # Save original values
+    original_values = {}
+    for var in config_env_vars:
+        if var in os.environ:
+            original_values[var] = os.environ[var]
+            del os.environ[var]
+    
+    yield
+    
+    # Restore original values
+    for var, value in original_values.items():
+        os.environ[var] = value
+
+
 class TestDeviceConfig:
     """Test DeviceConfig class."""
     
@@ -204,7 +227,7 @@ class TestConfigManager:
         assert "port" in server_config
         assert "log_level" in server_config
     
-    def test_environment_override(self):
+    def test_environment_override(self, clean_env):
         """Test environment-specific configuration override."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir)
@@ -230,6 +253,7 @@ environments:
             config_mgr = ConfigManager(config_dir=config_dir, environment="production")
             config = config_mgr.get_inference_config()
             
+            # Environment override should work for production
             assert config.device.device_type == DeviceType.CUDA
             assert config.device.use_fp16
     
@@ -265,7 +289,7 @@ performance:
                 assert config.batch.batch_size == 16
                 assert config.performance.log_level == "DEBUG"
     
-    def test_configuration_precedence(self):
+    def test_configuration_precedence(self, clean_env):
         """Test configuration precedence: ENV > YAML env > YAML base."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir)
@@ -301,7 +325,7 @@ environments:
                 # Base should be used for unoverridden values
                 assert config.device.device_type == DeviceType.CPU
     
-    def test_invalid_configuration_file(self):
+    def test_invalid_configuration_file(self, clean_env):
         """Test handling of invalid configuration file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir)
@@ -318,7 +342,7 @@ environments:
             assert config.device.device_type == DeviceType.AUTO  # Default is 'auto'
             assert config.batch.batch_size == 2  # Default from config_manager.py
     
-    def test_missing_configuration_file(self):
+    def test_missing_configuration_file(self, clean_env):
         """Test handling of missing configuration file."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir)
@@ -366,7 +390,7 @@ environments:
 class TestConfigIntegration:
     """Integration tests for configuration system."""
     
-    def test_full_configuration_workflow(self):
+    def test_full_configuration_workflow(self, clean_env):
         """Test complete configuration loading workflow."""
         with tempfile.TemporaryDirectory() as temp_dir:
             config_dir = Path(temp_dir)

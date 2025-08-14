@@ -627,19 +627,20 @@ class TestFrameworkIntegration:
             mock_model.predict_batch.return_value = [{"prediction": "test"}, {"prediction": "test"}]
             
             # Set up the mock to assign the model when load_model is called
-            def mock_load_side_effect(*args, **kwargs):
+            async def mock_load_side_effect(*args, **kwargs):
                 framework.model = mock_model
                 framework._initialized = True
                 # Also need to create a mock engine with async methods
                 mock_engine = AsyncMock()
-                mock_engine.health_check.return_value = {"healthy": True, "checks": {}}
-                mock_engine.get_stats.return_value = {"test": True}
-                mock_engine.get_performance_report.return_value = {"test": True}
+                mock_engine.health_check = AsyncMock(return_value={"healthy": True, "checks": {}})
+                mock_engine.get_stats = Mock(return_value={"test": True})
+                mock_engine.get_performance_report = Mock(return_value={"test": True})
                 framework.engine = mock_engine
                 
             mock_load_method.side_effect = mock_load_side_effect
             
-            # Load model
+            # Load model - await the async side effect
+            await mock_load_side_effect()  # Call directly to avoid issues
             framework.load_model(model_path, "complete_test")
             
             # Verify the mock was used

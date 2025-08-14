@@ -1,0 +1,10 @@
+{
+  "total_models": 10,
+  "total_size_mb": 1231.496989250183,
+  "models_by_source": {
+    "huggingface": 4,
+    "torchvision": 3,
+    "custom": 3
+  },
+  "download_timestamp": "None"
+}
