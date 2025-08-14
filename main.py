@@ -260,7 +260,13 @@ async def root():
             "health": "/health",
             "stats": "/stats",
             "models": "/models",
-            "config": "/config"
+            "config": "/config",
+            "model_downloads": {
+                "download": "/models/download",
+                "available": "/models/available", 
+                "cache_info": "/models/cache/info",
+                "remove": "/models/download/{model_name}"
+            }
         }
     }@app.post("/predict")
 async def predict(request: InferenceRequest) -> InferenceResponse:
@@ -413,6 +419,140 @@ async def list_models():
         
     except Exception as e:
         logger.error(f"Failed to list models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Model download endpoints
+@app.post("/models/download")
+async def download_model_endpoint(
+    source: str,
+    model_id: str,
+    name: str,
+    task: str = "classification",
+    pretrained: bool = True,
+    background_tasks: BackgroundTasks = None
+):
+    """Download a model from a source."""
+    try:
+        # Validate source
+        valid_sources = ["pytorch_hub", "torchvision", "huggingface", "url"]
+        if source not in valid_sources:
+            raise HTTPException(status_code=400, detail=f"Invalid source. Must be one of: {valid_sources}")
+        
+        # Start download in background
+        if background_tasks:
+            background_tasks.add_task(
+                model_manager.download_and_load_model,
+                source, model_id, name, None, task=task, pretrained=pretrained
+            )
+            return {
+                "message": f"Started downloading model '{name}' from {source}",
+                "model_name": name,
+                "source": source,
+                "model_id": model_id,
+                "status": "downloading"
+            }
+        else:
+            # Download synchronously
+            model_manager.download_and_load_model(
+                source, model_id, name, None, task=task, pretrained=pretrained
+            )
+            return {
+                "message": f"Successfully downloaded and loaded model '{name}'",
+                "model_name": name,
+                "source": source,
+                "model_id": model_id,
+                "status": "completed"
+            }
+        
+    except Exception as e:
+        logger.error(f"Failed to download model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/models/available")
+async def list_available_downloads():
+    """List available models that can be downloaded."""
+    try:
+        available_models = model_manager.list_available_downloads()
+        
+        return {
+            "available_models": {
+                name: {
+                    "name": info.name,
+                    "source": info.source,
+                    "model_id": info.model_id,
+                    "task": info.task,
+                    "description": info.description,
+                    "size_mb": info.size_mb,
+                    "tags": info.tags
+                } for name, info in available_models.items()
+            },
+            "total_available": len(available_models)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to list available models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/models/download/{model_name}/info")
+async def get_download_info(model_name: str):
+    """Get information about a downloadable model."""
+    try:
+        info = model_manager.get_download_info(model_name)
+        
+        if info is None:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_name}")
+        
+        return {
+            "model_name": model_name,
+            "info": info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get model info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/models/download/{model_name}")
+async def remove_downloaded_model(model_name: str):
+    """Remove a downloaded model from cache."""
+    try:
+        downloader = model_manager.get_downloader()
+        
+        if not downloader.is_model_cached(model_name):
+            raise HTTPException(status_code=404, detail=f"Model not found in cache: {model_name}")
+        
+        success = downloader.remove_model(model_name)
+        
+        if success:
+            return {
+                "message": f"Successfully removed model from cache: {model_name}",
+                "model_name": model_name
+            }
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to remove model: {model_name}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/models/cache/info")
+async def get_cache_info():
+    """Get information about the model cache."""
+    try:
+        downloader = model_manager.get_downloader()
+        
+        return {
+            "cache_directory": str(downloader.cache_dir),
+            "total_models": len(downloader.registry),
+            "total_size_mb": downloader.get_cache_size(),
+            "models": list(downloader.registry.keys())
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get cache info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Example usage endpoints
