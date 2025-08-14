@@ -1,0 +1,299 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "torch-inference-optimized"
+version = "1.0.0"
+description = "Optimized PyTorch inference framework with TensorRT, ONNX, and other acceleration techniques"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "Genta", email = "genta@example.com"},
+]
+keywords = ["pytorch", "inference", "tensorrt", "optimization", "onnx", "cuda"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    # Core FastAPI and async dependencies
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "aiohttp>=3.11.0",
+    "anyio>=4.8.0",
+    "click>=8.1.0",
+    "pydantic>=2.10.0",
+    
+    # Core ML dependencies
+    "numpy>=2.1.0",
+    "pillow>=11.0.0",
+    "opencv-python>=4.11.0",
+    "psutil>=7.0.0",
+    "tqdm>=4.67.0",
+    "requests>=2.32.0",
+    "pyyaml>=6.0.0",
+    
+    # PyTorch core (CPU version - CUDA version specified in extras)
+    "torch>=2.6.0",
+    "torchvision>=0.20.0",
+    "torchaudio>=2.5.0",
+    
+    # ONNX optimization dependencies
+    "onnx>=1.14.0",
+    "onnxruntime>=1.16.0",
+    "onnxsim>=0.4.0",
+    
+    # Hugging Face integration
+    "huggingface-hub>=0.29.0",
+]
+
+[project.optional-dependencies]
+# CUDA GPU support
+cuda = [
+    "torch>=2.6.0",
+    "torchvision>=0.20.0", 
+    "torchaudio>=2.5.0",
+    "onnxruntime-gpu>=1.16.0",
+]
+
+# TensorRT support (separate due to special requirements)
+tensorrt = [
+    "tensorrt>=10.7.0",
+    "torch-tensorrt>=2.6.0",
+]
+
+# Development dependencies
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0",
+    "pytest-timeout>=2.1.0",
+    "pytest-mock>=3.11.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-html>=3.2.0",
+    "pytest-json-report>=1.5.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "tox>=4.0.0",
+    "bandit[toml]>=1.7.0",
+    "safety>=2.0.0",
+]
+
+# Documentation dependencies
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.24.0",
+]
+
+# All extras combined
+all = [
+    "torch-inference-optimized[cuda,tensorrt,dev,docs]"
+]
+
+[project.urls]
+Homepage = "https://github.com/Evintkoo/torch-inference"
+Repository = "https://github.com/Evintkoo/torch-inference"
+Documentation = "https://github.com/Evintkoo/torch-inference#readme"
+Issues = "https://github.com/Evintkoo/torch-inference/issues"
+
+[project.scripts]
+torch-inference = "main:main"
+benchmark-inference = "benchmark:main"
+optimize-model = "optimization_demo:main"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0", 
+    "pytest-timeout>=2.1.0",
+    "pytest-mock>=3.11.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-html>=3.2.0",
+    "pytest-json-report>=1.5.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "tox>=4.0.0",
+    "bandit[toml]>=1.7.0",
+    "safety>=2.0.0",
+]
+
+# PyTorch CUDA index for uv
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+# NVIDIA PyPI index for TensorRT
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com/"
+explicit = false
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.hatch.build.targets.wheel]
+packages = ["framework"]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long, handled by black
+    "B008", # do not perform function calls in argument defaults
+    "C901", # too complex
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+# Pytest configuration in pyproject.toml
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*", "*Tests"] 
+python_functions = ["test_*"]
+
+# Add project paths
+pythonpath = [
+    ".",
+    "framework"
+]
+
+# Default options
+addopts = [
+    "--strict-markers",
+    "--strict-config", 
+    "--tb=short",
+    "--durations=10",
+    "--color=yes",
+    "--disable-warnings",
+    "--maxfail=5"
+]
+
+# Asyncio support
+asyncio_mode = "auto"
+
+# Test markers
+markers = [
+    "unit: Unit tests (fast, isolated)",
+    "integration: Integration tests (slower, end-to-end)",
+    "slow: Slow running tests (>5 seconds)", 
+    "gpu: Tests requiring GPU/CUDA",
+    "tensorrt: Tests requiring TensorRT",
+    "onnx: Tests requiring ONNX runtime",
+    "enterprise: Enterprise feature tests",
+    "benchmark: Performance benchmark tests",
+    "smoke: Smoke tests for quick validation",
+    "regression: Regression tests",
+    "security: Security-related tests",
+    "api: API endpoint tests",
+    "model: Tests requiring real models",
+    "mock: Tests using only mock objects"
+]
+
+# Filter warnings
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning", 
+    "ignore::UserWarning:torch.*",
+    "ignore::FutureWarning:transformers.*",
+    "ignore::UserWarning:huggingface_hub.*",
+    "error::RuntimeWarning",
+    "error::ImportWarning"
+]
+
+# Logging
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(name)s: %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+# JUnit XML for CI/CD
+junit_family = "xunit2"
+junit_suite_name = "torch_inference_tests"
+
+# Timeout (if pytest-timeout is installed)
+timeout = 300
+
+[tool.coverage.run]
+source = ["framework"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/.*",
+    "setup.py",
+    "run_tests.py"
+]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError", 
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]
+ignore_errors = true
+show_missing = true
+precision = 2
+skip_covered = false
+skip_empty = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
