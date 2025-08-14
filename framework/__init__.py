@@ -16,6 +16,10 @@ from .core.config import InferenceConfig, ModelType, ConfigFactory
 from .core.base_model import BaseModel, get_model_manager
 from .core.inference_engine import InferenceEngine, create_inference_engine
 from .core.optimized_model import OptimizedModel, create_optimized_model
+from .core.model_downloader import (
+    ModelDownloader, get_model_downloader, download_model,
+    list_available_models, ModelInfo
+)
 from .adapters.model_adapters import load_model
 from .utils.monitoring import get_performance_monitor, get_metrics_collector
 
@@ -87,6 +91,11 @@ class TorchInferenceFramework:
         """Backward compatibility property for model_manager."""
         return self._model_manager
     
+    @property
+    def is_loaded(self) -> bool:
+        """Check if a model is loaded and ready for inference."""
+        return self._initialized and self.model is not None and self.model.is_loaded
+    
     def _setup_logging(self):
         """Setup logging configuration."""
         log_level = getattr(self.config.performance, 'log_level', 'INFO')
@@ -124,6 +133,56 @@ class TorchInferenceFramework:
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             raise
+    
+    def download_and_load_model(
+        self, 
+        source: str,
+        model_id: str,
+        model_name: Optional[str] = None,
+        **kwargs
+    ) -> None:
+        """
+        Download and load a model from a source.
+        
+        Args:
+            source: Model source ('pytorch_hub', 'torchvision', 'huggingface', 'url')
+            model_id: Model identifier
+            model_name: Name for the model. If None, will be generated.
+            **kwargs: Additional arguments for download
+        """
+        try:
+            # Generate model name if not provided
+            if model_name is None:
+                import re
+                model_name = re.sub(r'[^a-zA-Z0-9_-]', '_', str(model_id))
+                model_name = f"{source}_{model_name}"
+            
+            self.logger.info(f"Downloading and loading model: {model_name}")
+            
+            # Download model
+            model_path, model_info = download_model(
+                source=source,
+                model_id=model_id,
+                model_name=model_name,
+                **kwargs
+            )
+            
+            # Load the downloaded model
+            self.load_model(model_path, model_name)
+            
+            self.logger.info(f"Successfully downloaded and loaded: {model_name}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to download and load model: {e}")
+            raise
+    
+    def list_available_downloads(self) -> Dict[str, Any]:
+        """List available models that can be downloaded."""
+        return list_available_models()
+    
+    def get_model_downloader(self) -> ModelDownloader:
+        """Get the model downloader instance."""
+        return get_model_downloader()
     
     async def start_engine(self) -> None:
         """Start the inference engine for async processing."""
@@ -585,7 +644,99 @@ def set_global_framework(framework: TorchInferenceFramework) -> None:
     _global_framework = framework
 
 
-# Convenience functions for optimization
+# Convenience functions for downloading popular models
+
+def download_torchvision_model(model_name: str, pretrained: bool = True) -> TorchInferenceFramework:
+    """
+    Download and create a framework with a torchvision model.
+    
+    Args:
+        model_name: Name of the torchvision model (e.g., 'resnet18', 'vgg16')
+        pretrained: Whether to download pretrained weights
+        
+    Returns:
+        Framework instance with the downloaded model
+    """
+    framework = TorchInferenceFramework()
+    framework.download_and_load_model(
+        source="torchvision",
+        model_id=model_name,
+        pretrained=pretrained
+    )
+    return framework
+
+
+def download_pytorch_hub_model(repo: str, model: str, pretrained: bool = True) -> TorchInferenceFramework:
+    """
+    Download and create a framework with a PyTorch Hub model.
+    
+    Args:
+        repo: Repository name (e.g., 'pytorch/vision')
+        model: Model name (e.g., 'resnet50')  
+        pretrained: Whether to download pretrained weights
+        
+    Returns:
+        Framework instance with the downloaded model
+    """
+    framework = TorchInferenceFramework()
+    framework.download_and_load_model(
+        source="pytorch_hub",
+        model_id=f"{repo}/{model}",
+        pretrained=pretrained
+    )
+    return framework
+
+
+def download_huggingface_model(model_id: str, task: str = "feature-extraction") -> TorchInferenceFramework:
+    """
+    Download and create a framework with a Hugging Face model.
+    
+    Args:
+        model_id: Hugging Face model identifier (e.g., 'bert-base-uncased')
+        task: Task type for the model
+        
+    Returns:
+        Framework instance with the downloaded model
+    """
+    framework = TorchInferenceFramework()
+    framework.download_and_load_model(
+        source="huggingface",
+        model_id=model_id,
+        task=task
+    )
+    return framework
+
+
+# Popular model presets
+
+def download_resnet18(pretrained: bool = True) -> TorchInferenceFramework:
+    """Download ResNet-18 model."""
+    return download_torchvision_model("resnet18", pretrained)
+
+
+def download_resnet50(pretrained: bool = True) -> TorchInferenceFramework:
+    """Download ResNet-50 model."""
+    return download_torchvision_model("resnet50", pretrained)
+
+
+def download_mobilenet_v2(pretrained: bool = True) -> TorchInferenceFramework:
+    """Download MobileNet v2 model."""
+    return download_torchvision_model("mobilenet_v2", pretrained)
+
+
+def download_efficientnet_b0(pretrained: bool = True) -> TorchInferenceFramework:
+    """Download EfficientNet B0 model."""
+    return download_torchvision_model("efficientnet_b0", pretrained)
+
+
+def download_bert_base(task: str = "feature-extraction") -> TorchInferenceFramework:
+    """Download BERT base model."""
+    return download_huggingface_model("bert-base-uncased", task)
+
+
+def download_distilbert(task: str = "text-classification") -> TorchInferenceFramework:
+    """Download DistilBERT model."""
+    return download_huggingface_model("distilbert-base-uncased-finetuned-sst-2-english", task)
 def create_optimized_framework(config: Optional[InferenceConfig] = None) -> TorchInferenceFramework:
     """
     Create an optimized framework with automatic optimization selection.

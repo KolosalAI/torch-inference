@@ -1067,11 +1067,12 @@ async def global_exception_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
     
-    print("🚀 Starting PyTorch Inference API Server")
-    print("📖 API Documentation: http://localhost:8000/docs")
-    print("🔍 Health Check: http://localhost:8000/health")
-    print("⚙️  Configuration: http://localhost:8000/config")
-    print("🔑 Demo Token: demo-token-12345")
+    # Start server without banner prints
+    logger.info("Starting PyTorch Inference API Server")
+    logger.info("API Documentation available at: http://localhost:8000/docs")
+    logger.info("Health Check available at: http://localhost:8000/health")
+    logger.info("Configuration available at: http://localhost:8000/config")
+    logger.info("Demo Token: demo-token-12345")
     
     uvicorn.run(
         "fastapi_server:app",

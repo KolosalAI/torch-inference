@@ -109,15 +109,21 @@ class CustomPreprocessor(BasePreprocessor):
             # Already a tensor, just move to device
             tensor = inputs.to(self.device)
         elif isinstance(inputs, (list, tuple)):
-            # Convert list/tuple to tensor
+            # Convert list/tuple to tensor, preserving appropriate dtype
             try:
-                tensor = torch.tensor(inputs, dtype=torch.float32).to(self.device)
+                # Try to infer dtype from the data
+                first_elem = inputs[0] if inputs else 0
+                if isinstance(first_elem, int):
+                    tensor = torch.tensor(inputs, dtype=torch.long).to(self.device)
+                else:
+                    tensor = torch.tensor(inputs, dtype=torch.float32).to(self.device)
             except (ValueError, TypeError):
                 # If can't convert to tensor, create a dummy tensor
                 tensor = torch.zeros(1, 10, dtype=torch.float32).to(self.device)
         elif isinstance(inputs, (int, float)):
             # Single number to tensor
-            tensor = torch.tensor([inputs], dtype=torch.float32).to(self.device)
+            dtype = torch.long if isinstance(inputs, int) else torch.float32
+            tensor = torch.tensor([inputs], dtype=dtype).to(self.device)
         else:
             # For any other type, create a dummy tensor
             tensor = torch.zeros(1, 10, dtype=torch.float32).to(self.device)
@@ -437,7 +443,11 @@ class TensorPreprocessor(BasePreprocessor):
             if isinstance(inputs, torch.Tensor):
                 tensor = inputs.clone()
             elif isinstance(inputs, np.ndarray):
-                tensor = torch.from_numpy(inputs)
+                # Preserve integer dtypes for token IDs
+                if inputs.dtype in [np.int32, np.int64]:
+                    tensor = torch.from_numpy(inputs).long()
+                else:
+                    tensor = torch.from_numpy(inputs)
             else:
                 tensor = torch.tensor(inputs)
             
@@ -513,10 +523,33 @@ class PreprocessorPipeline:
             else:
                 return InputType.TEXT
         elif isinstance(inputs, (np.ndarray, torch.Tensor)):
-            # Heuristic: if 3D or 4D with appropriate dimensions, likely image
             shape = inputs.shape
-            if len(shape) >= 3 and (shape[-1] == 3 or shape[-3] == 3):
-                return InputType.IMAGE
+            dtype = inputs.dtype if isinstance(inputs, torch.Tensor) else inputs.dtype
+            
+            # If integer tensor, likely text tokens
+            if isinstance(inputs, torch.Tensor):
+                if inputs.dtype in [torch.int32, torch.int64, torch.long]:
+                    return InputType.TENSOR
+            elif isinstance(inputs, np.ndarray):
+                if inputs.dtype in [np.int32, np.int64]:
+                    return InputType.TENSOR
+            
+            # Handle batched tensors - if already batched, treat as tensor
+            if len(shape) == 4:  # [batch, channels, height, width] 
+                if shape[1] == 3 or shape[1] == 1:  # RGB or grayscale channels
+                    # This is a batch of images - treat as tensor for batch processing
+                    return InputType.TENSOR
+                else:
+                    # Some other 4D tensor
+                    return InputType.TENSOR
+            elif len(shape) == 3:
+                if shape[0] == 3 or shape[-1] == 3:  # Single image [C, H, W] or [H, W, C]
+                    return InputType.IMAGE
+                else:
+                    return InputType.TENSOR
+            elif len(shape) == 2:
+                # Could be a batch of 1D features or single 2D feature map
+                return InputType.TENSOR
             else:
                 return InputType.TENSOR
         elif hasattr(inputs, 'convert'):  # PIL Image

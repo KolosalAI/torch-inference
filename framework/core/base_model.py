@@ -327,6 +327,23 @@ class BaseModel(ABC):
         except ImportError:
             pass
         
+        # Add model parameter info if available
+        if self._is_loaded and self.model:
+            try:
+                # Handle both real models and Mock objects
+                if hasattr(self.model, 'parameters') and callable(self.model.parameters):
+                    total_params = sum(p.numel() for p in self.model.parameters())
+                    trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+                    memory_info["total_params"] = total_params
+                    memory_info["trainable_params"] = trainable_params
+                    
+                    # Estimate model size (very rough approximation)
+                    # Assume 4 bytes per parameter (float32)
+                    memory_info["model_size_mb"] = total_params * 4 / (1024 ** 2)
+            except (TypeError, AttributeError):
+                # Skip parameter counting for Mock objects or other types
+                pass
+        
         return memory_info
     
     def cleanup(self) -> None:
@@ -338,6 +355,11 @@ class BaseModel(ABC):
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self._is_loaded
+    
+    @is_loaded.setter
+    def is_loaded(self, value: bool):
+        """Set model loaded status."""
+        self._is_loaded = value
     
     @property
     def model_info(self) -> Dict[str, Any]:
@@ -388,6 +410,9 @@ class ModelManager:
     def __init__(self):
         self._models: Dict[str, BaseModel] = {}
         self.logger = logging.getLogger(f"{__name__}.ModelManager")
+        
+        # Import downloader here to avoid circular imports
+        self._downloader = None
     
     def register_model(self, name: str, model: BaseModel) -> None:
         """Register a model instance."""
@@ -426,6 +451,97 @@ class ModelManager:
         """Cleanup all models."""
         for name in list(self._models.keys()):
             self.unload_model(name)
+    
+    def get_downloader(self):
+        """Get the model downloader instance."""
+        if self._downloader is None:
+            from .model_downloader import get_model_downloader
+            self._downloader = get_model_downloader()
+        return self._downloader
+    
+    def download_and_load_model(
+        self, 
+        source: str, 
+        model_id: str, 
+        name: str,
+        config: Optional['InferenceConfig'] = None,
+        **kwargs
+    ) -> None:
+        """
+        Download a model from a source and load it into the framework.
+        
+        Args:
+            source: Model source ('pytorch_hub', 'torchvision', 'huggingface', 'url')
+            model_id: Model identifier
+            name: Name to register the model with
+            config: Inference configuration
+            **kwargs: Additional arguments for download
+        """
+        try:
+            # Download the model
+            downloader = self.get_downloader()
+            
+            if source == "pytorch_hub":
+                if "/" not in model_id:
+                    raise ValueError("PyTorch Hub model_id should be in format 'repo/model'")
+                # Parse PyTorch Hub model_id: repo/model or repo:version/model
+                parts = model_id.rsplit("/", 1)  # Split from right to get last part as model
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid PyTorch Hub model_id format: {model_id}. Expected: repo/model or repo:version/model")
+                repo = parts[0]
+                model = parts[1]
+                model_path, model_info = downloader.download_pytorch_hub_model(
+                    repo, model, name, **kwargs
+                )
+            elif source == "torchvision":
+                model_path, model_info = downloader.download_torchvision_model(
+                    model_id, custom_name=name, **kwargs
+                )
+            elif source == "huggingface":
+                model_path, model_info = downloader.download_huggingface_model(
+                    model_id, custom_name=name, **kwargs
+                )
+            elif source == "url":
+                model_path, model_info = downloader.download_from_url(
+                    model_id, name, **kwargs
+                )
+            else:
+                raise ValueError(f"Unsupported source: {source}")
+            
+            # Create appropriate model adapter and load
+            if config is None:
+                from .config import get_global_config
+                config = get_global_config()
+            
+            # Import here to avoid circular imports
+            from ..adapters.model_adapters import ModelAdapterFactory
+            
+            adapter = ModelAdapterFactory.create_adapter(model_path, config)
+            
+            # Load the model
+            adapter.load_model(model_path)
+            adapter.optimize_for_inference()
+            adapter.warmup()
+            
+            # Register the model
+            self.register_model(name, adapter)
+            
+            self.logger.info(f"Successfully downloaded and loaded model '{name}' from {source}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to download and load model '{name}': {e}")
+            raise
+    
+    def list_available_downloads(self) -> Dict[str, Any]:
+        """List available models that can be downloaded."""
+        downloader = self.get_downloader()
+        return downloader.list_available_models()
+    
+    def get_download_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """Get information about a downloadable model."""
+        downloader = self.get_downloader()
+        info = downloader.get_model_info(model_name)
+        return info.__dict__ if info else None
 
 
 # Global model manager instance
