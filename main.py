@@ -341,7 +341,9 @@ async def root():
     }
     
     logger.debug(f"[ENDPOINT] Root endpoint response: {response_data}")
-    return response_data@app.post("/predict")
+    return response_data
+
+@app.post("/predict")
 async def predict(request: InferenceRequest) -> InferenceResponse:
     """Single prediction endpoint."""
     logger.info(f"[ENDPOINT] Single prediction requested - Priority: {request.priority}, Timeout: {request.timeout}")

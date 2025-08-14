@@ -1,0 +1,108 @@
+{
+  "distilbert_sentiment": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\distilbert_sentiment\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\distilbert_sentiment\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\distilbert_sentiment\\config.json",
+    "source": "huggingface",
+    "model_name": "distilbert-base-uncased-finetuned-sst-2-english",
+    "task": "text-classification",
+    "size_mb": 255.45227336883545,
+    "architecture": "DistilBertForSequenceClassification"
+  },
+  "dialogpt_small": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\dialogpt_small\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\dialogpt_small\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\dialogpt_small\\config.json",
+    "source": "huggingface",
+    "model_name": "microsoft/DialoGPT-small",
+    "task": "text-generation",
+    "size_mb": 474.7486448287964,
+    "architecture": "GPT2LMHeadModel"
+  },
+  "vit_base": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\vit_base\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\vit_base\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\vit_base\\config.json",
+    "source": "huggingface",
+    "model_name": "google/vit-base-patch16-224",
+    "task": "image-classification",
+    "size_mb": 330.3046293258667,
+    "architecture": "ViTForImageClassification"
+  },
+  "sentence_transformer": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\sentence_transformer\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\sentence_transformer\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\sentence_transformer\\config.json",
+    "source": "huggingface",
+    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "task": "feature-extraction",
+    "size_mb": 86.68255519866943,
+    "architecture": "BertModel"
+  },
+  "mobilenet_v2": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\mobilenet_v2\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\mobilenet_v2\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\mobilenet_v2\\config.json",
+    "source": "torchvision",
+    "model_name": "mobilenet_v2",
+    "task": "image-classification",
+    "size_mb": 13.61774730682373,
+    "architecture": "MobileNetV2",
+    "pretrained": true
+  },
+  "resnet18": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\resnet18\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\resnet18\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\resnet18\\config.json",
+    "source": "torchvision",
+    "model_name": "resnet18",
+    "task": "image-classification",
+    "size_mb": 44.67182445526123,
+    "architecture": "ResNet",
+    "pretrained": true
+  },
+  "efficientnet_b0": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\efficientnet_b0\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\efficientnet_b0\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\efficientnet_b0\\config.json",
+    "source": "torchvision",
+    "model_name": "efficientnet_b0",
+    "task": "image-classification",
+    "size_mb": 20.48915386199951,
+    "architecture": "EfficientNet",
+    "pretrained": true
+  },
+  "simple_cnn": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_cnn\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_cnn\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_cnn\\config.json",
+    "source": "custom",
+    "model_name": "simple_cnn",
+    "task": "classification",
+    "size_mb": 0.08141803741455078,
+    "architecture": "Custom",
+    "model_type": "simple_cnn"
+  },
+  "simple_transformer": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_transformer\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_transformer\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_transformer\\config.json",
+    "source": "custom",
+    "model_name": "simple_transformer",
+    "task": "classification",
+    "size_mb": 5.0274810791015625,
+    "architecture": "Custom",
+    "model_type": "simple_transformer"
+  },
+  "simple_linear": {
+    "path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_linear\\pytorch_model.pt",
+    "full_model_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_linear\\model.pt",
+    "config_path": "D:\\Works\\Genta\\codes\\torch-inference\\tests\\models\\simple_linear\\config.json",
+    "source": "custom",
+    "model_name": "simple_linear",
+    "task": "classification",
+    "size_mb": 0.4212617874145508,
+    "architecture": "Custom",
+    "model_type": "simple_linear"
+  }
+}

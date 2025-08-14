@@ -146,7 +146,7 @@ class TestPyTorchModelAdapter:
         assert isinstance(result, dict)
 
 
-@pytest.mark.skipif(True, reason="ONNX adapter may not be available in test environment")
+@pytest.mark.skipif(ONNXModelAdapter is None, reason="ONNX adapter not available")
 class TestONNXModelAdapter:
     """Test ONNX model adapter."""
     
@@ -155,20 +155,19 @@ class TestONNXModelAdapter:
         """Create ONNX model adapter."""
         return ONNXModelAdapter(test_config)
     
-    @patch('framework.adapters.model_adapters.onnxruntime')
-    def test_onnx_adapter_initialization(self, mock_onnxruntime, onnx_adapter):
+    def test_onnx_adapter_initialization(self, onnx_adapter):
         """Test ONNX adapter initialization."""
         assert not onnx_adapter.is_loaded
         assert onnx_adapter.session is None
     
-    @patch('framework.adapters.model_adapters.onnxruntime')
-    def test_load_onnx_model(self, mock_onnxruntime, onnx_adapter, temp_model_dir):
+    @patch('onnxruntime.InferenceSession')
+    def test_load_onnx_model(self, mock_inference_session, onnx_adapter, temp_model_dir):
         """Test loading ONNX model."""
         # Mock ONNX Runtime session
         mock_session = Mock()
         mock_session.get_inputs.return_value = [Mock(name="input", shape=[1, 10])]
         mock_session.get_outputs.return_value = [Mock(name="output", shape=[1, 5])]
-        mock_onnxruntime.InferenceSession.return_value = mock_session
+        mock_inference_session.return_value = mock_session
         
         model_path = temp_model_dir / "model.onnx"
         model_path.touch()  # Create empty file
@@ -177,17 +176,17 @@ class TestONNXModelAdapter:
         
         assert onnx_adapter.is_loaded
         assert onnx_adapter.session == mock_session
-        mock_onnxruntime.InferenceSession.assert_called_once()
+        mock_inference_session.assert_called_once()
     
-    @patch('framework.adapters.model_adapters.onnxruntime')
-    def test_onnx_inference(self, mock_onnxruntime, onnx_adapter, temp_model_dir):
+    @patch('onnxruntime.InferenceSession')
+    def test_onnx_inference(self, mock_inference_session, onnx_adapter, temp_model_dir):
         """Test ONNX model inference."""
         # Mock ONNX Runtime session
         mock_session = Mock()
         mock_session.get_inputs.return_value = [Mock(name="input", shape=[1, 10])]
         mock_session.get_outputs.return_value = [Mock(name="output", shape=[1, 5])]
         mock_session.run.return_value = [np.random.randn(1, 5)]
-        mock_onnxruntime.InferenceSession.return_value = mock_session
+        mock_inference_session.return_value = mock_session
         
         model_path = temp_model_dir / "model.onnx"
         model_path.touch()
@@ -201,7 +200,7 @@ class TestONNXModelAdapter:
         mock_session.run.assert_called_once()
 
 
-@pytest.mark.skipif(True, reason="TensorRT adapter may not be available in test environment")
+@pytest.mark.skipif(TensorRTModelAdapter is None, reason="TensorRT adapter not available")
 class TestTensorRTModelAdapter:
     """Test TensorRT model adapter."""
     
@@ -215,7 +214,7 @@ class TestTensorRTModelAdapter:
         assert not tensorrt_adapter.is_loaded
 
 
-@pytest.mark.skipif(True, reason="HuggingFace adapter may not be available in test environment")
+@pytest.mark.skipif(HuggingFaceModelAdapter is None, reason="HuggingFace adapter not available")
 class TestHuggingFaceModelAdapter:
     """Test HuggingFace model adapter."""
     
@@ -224,14 +223,12 @@ class TestHuggingFaceModelAdapter:
         """Create HuggingFace model adapter."""
         return HuggingFaceModelAdapter(test_config)
     
-    @patch('framework.adapters.model_adapters.AutoModel')
-    @patch('framework.adapters.model_adapters.AutoTokenizer')
-    def test_hf_adapter_initialization(self, mock_tokenizer, mock_model, hf_adapter):
+    def test_hf_adapter_initialization(self, hf_adapter):
         """Test HuggingFace adapter initialization."""
         assert not hf_adapter.is_loaded
     
-    @patch('framework.adapters.model_adapters.AutoModel')
-    @patch('framework.adapters.model_adapters.AutoTokenizer')
+    @patch('transformers.AutoModel')
+    @patch('transformers.AutoTokenizer')
     def test_load_hf_model(self, mock_tokenizer, mock_model, hf_adapter):
         """Test loading HuggingFace model."""
         # Mock HuggingFace model and tokenizer

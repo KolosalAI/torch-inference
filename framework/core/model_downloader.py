@@ -155,12 +155,16 @@ class ModelDownloader:
                 return cached_path, ModelInfo(**self.registry[model_name]["info"])
         
         try:
+            # Filter out non-PyTorch Hub parameters
+            # PyTorch Hub models don't accept 'task' as a parameter
+            hub_kwargs = {k: v for k, v in kwargs.items() if k not in ['task']}
+            
             # Download model from PyTorch Hub
             hub_model = torch.hub.load(
                 repo_or_dir, 
                 model, 
                 pretrained=pretrained,
-                **kwargs
+                **hub_kwargs
             )
             
             # Create model cache directory
@@ -176,11 +180,12 @@ class ModelDownloader:
             torch.save(hub_model.state_dict(), state_dict_path)
             
             # Create model info
+            task = kwargs.get('task', 'classification')  # Get task from kwargs, default to classification
             model_info = ModelInfo(
                 name=model_name,
                 source="pytorch_hub",
                 model_id=f"{repo_or_dir}/{model}",
-                task="classification",  # Default, can be overridden
+                task=task,
                 description=f"PyTorch Hub model: {repo_or_dir}/{model}",
                 size_mb=model_path.stat().st_size / (1024 * 1024),
                 tags=["pytorch_hub", "pretrained" if pretrained else "random"]
@@ -244,8 +249,20 @@ class ModelDownloader:
             # Get model constructor
             model_fn = getattr(tv_models, model_name)
             
-            # Create model
-            model = model_fn(pretrained=pretrained, **kwargs)
+            # Create model - use 'weights' instead of deprecated 'pretrained'
+            if pretrained:
+                # For newer torchvision versions, use weights="DEFAULT" or weights="IMAGENET1K_V1"
+                try:
+                    model = model_fn(weights="DEFAULT", **kwargs)
+                except TypeError:
+                    # Fallback for older versions or models that still use pretrained
+                    model = model_fn(pretrained=pretrained, **kwargs)
+            else:
+                try:
+                    model = model_fn(weights=None, **kwargs)
+                except TypeError:
+                    # Fallback for older versions
+                    model = model_fn(pretrained=pretrained, **kwargs)
             
             # Create model cache directory
             model_dir = self._get_model_cache_dir(custom_name)

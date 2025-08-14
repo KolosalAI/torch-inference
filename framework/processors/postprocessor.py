@@ -63,12 +63,32 @@ class PostprocessingResult:
 
 
 @dataclass
+@dataclass
 class ClassificationResult:
     """Classification result."""
     predicted_class: int
     class_name: Optional[str]
     confidence: float
     top_k_classes: Optional[List[Tuple[int, str, float]]] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        # For single predictions, create tensor with single element
+        predictions_tensor = torch.tensor([self.predicted_class])
+        
+        result = {
+            "predictions": predictions_tensor,  # Return as tensor for compatibility
+            "confidence": self.confidence,
+            "predicted_class": self.predicted_class,
+        }
+        
+        if self.class_name is not None:
+            result["class_name"] = self.class_name
+            
+        if self.top_k_classes is not None:
+            result["top_k_classes"] = self.top_k_classes
+            
+        return result
 
 
 @dataclass
@@ -79,6 +99,23 @@ class DetectionResult:
     class_names: Optional[List[str]]
     confidences: List[float]
     masks: Optional[np.ndarray] = None  # For instance segmentation
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        result = {
+            "boxes": self.boxes,
+            "classes": self.classes,
+            "confidences": self.confidences,
+            "predictions": torch.tensor(self.classes)  # For compatibility
+        }
+        
+        if self.class_names is not None:
+            result["class_names"] = self.class_names
+            
+        if self.masks is not None:
+            result["masks"] = self.masks
+            
+        return result
 
 
 @dataclass
@@ -89,6 +126,17 @@ class SegmentationResult:
     area_pixels: int
     coverage_percentage: float
     largest_contour_area: float
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "mask": self.mask,
+            "contours": self.contours,
+            "area_pixels": self.area_pixels,
+            "coverage_percentage": self.coverage_percentage,
+            "largest_contour_area": self.largest_contour_area,
+            "predictions": self.mask  # For compatibility
+        }
 
 
 class PostprocessingError(Exception):
@@ -171,59 +219,141 @@ class ClassificationPostprocessor(BasePostprocessor):
         
         try:
             # Handle batch dimension
-            if outputs.dim() == 2 and outputs.size(0) == 1:
-                logits = outputs[0]
+            if outputs.dim() == 2:
+                # Batch of classifications (batch_size, num_classes)
+                batch_size = outputs.size(0)
+                
+                if batch_size == 1:
+                    # Single sample in batch
+                    logits = outputs[0]
+                    
+                    # Apply softmax if requested
+                    if self.apply_softmax:
+                        probabilities = torch.softmax(logits, dim=0)
+                    else:
+                        probabilities = logits
+                    
+                    # Get top prediction
+                    predicted_class_idx = torch.argmax(probabilities).item()
+                    confidence = probabilities[predicted_class_idx].item()
+                    
+                    # Get class name if available
+                    predicted_class_name = None
+                    if self.class_names and 0 <= predicted_class_idx < len(self.class_names):
+                        predicted_class_name = self.class_names[predicted_class_idx]
+                    
+                    # Get top-k predictions
+                    top_k_classes = None
+                    if self.top_k > 0:
+                        top_k_indices = torch.topk(probabilities, min(self.top_k, len(probabilities))).indices
+                        top_k_classes = []
+                        
+                        for idx in top_k_indices:
+                            idx = idx.item()
+                            class_name = self.class_names[idx] if self.class_names else None
+                            top_k_classes.append((idx, class_name, probabilities[idx].item()))
+                    
+                    # Create result
+                    result = ClassificationResult(
+                        predicted_class=predicted_class_idx,
+                        class_name=predicted_class_name,
+                        confidence=confidence,
+                        top_k_classes=top_k_classes
+                    )
+                    
+                    processing_time = time.time() - start_time
+                    
+                    return PostprocessingResult(
+                        predictions=result,
+                        confidence_scores=[confidence],
+                        metadata={
+                            "output_type": "classification",
+                            "num_classes": len(probabilities),
+                            "top_k": self.top_k
+                        },
+                        processing_time=processing_time
+                    )
+                else:
+                    # Multiple samples in batch - return dict format for compatibility
+                    # Apply softmax if requested
+                    if self.apply_softmax:
+                        probabilities = torch.softmax(outputs, dim=1)
+                    else:
+                        probabilities = outputs
+                    
+                    # Get predictions for entire batch
+                    predicted_classes = torch.argmax(probabilities, dim=1)
+                    confidences = torch.max(probabilities, dim=1).values
+                    
+                    processing_time = time.time() - start_time
+                    
+                    # Return dict format for batch compatibility
+                    result = {
+                        "predictions": predicted_classes,  # Tensor with batch_size predictions
+                        "confidence": confidences.mean().item(),  # Average confidence
+                        "confidences": confidences,  # Per-sample confidences
+                        "probabilities": probabilities,
+                        "metadata": {
+                            "output_type": "classification",
+                            "batch_size": batch_size,
+                            "num_classes": outputs.size(1),
+                            "processing_time": processing_time
+                        }
+                    }
+                    return result
+                    
             elif outputs.dim() == 1:
+                # Single prediction without batch dimension
                 logits = outputs
+                
+                # Apply softmax if requested
+                if self.apply_softmax:
+                    probabilities = torch.softmax(logits, dim=0)
+                else:
+                    probabilities = logits
+                
+                # Get top prediction
+                predicted_class_idx = torch.argmax(probabilities).item()
+                confidence = probabilities[predicted_class_idx].item()
+                
+                # Get class name if available
+                predicted_class_name = None
+                if self.class_names and 0 <= predicted_class_idx < len(self.class_names):
+                    predicted_class_name = self.class_names[predicted_class_idx]
+                
+                # Get top-k predictions
+                top_k_classes = None
+                if self.top_k > 0:
+                    top_k_indices = torch.topk(probabilities, min(self.top_k, len(probabilities))).indices
+                    top_k_classes = []
+                    
+                    for idx in top_k_indices:
+                        idx = idx.item()
+                        class_name = self.class_names[idx] if self.class_names else None
+                        top_k_classes.append((idx, class_name, probabilities[idx].item()))
+                
+                # Create result
+                result = ClassificationResult(
+                    predicted_class=predicted_class_idx,
+                    class_name=predicted_class_name,
+                    confidence=confidence,
+                    top_k_classes=top_k_classes
+                )
+                
+                processing_time = time.time() - start_time
+                
+                return PostprocessingResult(
+                    predictions=result,
+                    confidence_scores=[confidence],
+                    metadata={
+                        "output_type": "classification",
+                        "num_classes": len(probabilities),
+                        "top_k": self.top_k
+                    },
+                    processing_time=processing_time
+                )
             else:
                 raise ValueError(f"Unexpected output shape: {outputs.shape}")
-            
-            # Apply softmax if requested
-            if self.apply_softmax:
-                probabilities = torch.softmax(logits, dim=0)
-            else:
-                probabilities = logits
-            
-            # Get top prediction
-            predicted_class_idx = torch.argmax(probabilities).item()
-            confidence = probabilities[predicted_class_idx].item()
-            
-            # Get class name if available
-            predicted_class_name = None
-            if self.class_names and 0 <= predicted_class_idx < len(self.class_names):
-                predicted_class_name = self.class_names[predicted_class_idx]
-            
-            # Get top-k predictions
-            top_k_classes = None
-            if self.top_k > 0:
-                top_k_indices = torch.topk(probabilities, min(self.top_k, len(probabilities))).indices
-                top_k_classes = []
-                
-                for idx in top_k_indices:
-                    idx = idx.item()
-                    class_name = self.class_names[idx] if self.class_names else None
-                    top_k_classes.append((idx, class_name, probabilities[idx].item()))
-            
-            # Create result
-            result = ClassificationResult(
-                predicted_class=predicted_class_idx,
-                class_name=predicted_class_name,
-                confidence=confidence,
-                top_k_classes=top_k_classes
-            )
-            
-            processing_time = time.time() - start_time
-            
-            return PostprocessingResult(
-                predictions=result,
-                confidence_scores=[confidence],
-                metadata={
-                    "output_type": "classification",
-                    "num_classes": len(probabilities),
-                    "top_k": self.top_k
-                },
-                processing_time=processing_time
-            )
             
         except Exception as e:
             self.logger.error(f"Classification postprocessing failed: {e}")
@@ -686,35 +816,69 @@ class PostprocessorPipeline:
         self.postprocessors[output_type] = postprocessor
         self.logger.info(f"Added postprocessor for {output_type.value}: {postprocessor.__class__.__name__}")
     
-    def postprocess(self, outputs: torch.Tensor, output_type: OutputType, **kwargs) -> Union[Dict[str, Any], PostprocessingResult]:
+    def postprocess(self, outputs, output_type: OutputType, **kwargs) -> Union[Dict[str, Any], PostprocessingResult]:
         """Postprocess outputs using the appropriate postprocessor."""
         if output_type not in self.postprocessors:
             raise PostprocessingError(f"No postprocessor found for output type: {output_type}")
         
         postprocessor = self.postprocessors[output_type]
         
+        # Extract tensor from outputs if needed
+        tensor_outputs = outputs
+        if hasattr(outputs, 'logits'):
+            tensor_outputs = outputs.logits
+        elif hasattr(outputs, 'last_hidden_state'):
+            tensor_outputs = outputs.last_hidden_state
+        elif isinstance(outputs, (tuple, list)) and len(outputs) > 0:
+            tensor_outputs = outputs[0]
+            if hasattr(tensor_outputs, 'logits'):
+                tensor_outputs = tensor_outputs.logits
+        
         # Validate outputs
-        if not postprocessor.validate_outputs(outputs):
+        if isinstance(tensor_outputs, torch.Tensor) and not postprocessor.validate_outputs(tensor_outputs):
             raise PostprocessingError("Output validation failed")
         
-        return postprocessor.postprocess(outputs, **kwargs)
+        return postprocessor.postprocess(tensor_outputs, **kwargs)
     
-    def detect_output_type(self, outputs: torch.Tensor) -> OutputType:
+    def detect_output_type(self, outputs) -> OutputType:
         """Detect the type of model outputs."""
+        # Handle different output types
+        
+        # Check if it's a Hugging Face output object
+        if hasattr(outputs, 'logits'):
+            # Extract logits tensor for analysis
+            tensor_outputs = outputs.logits
+        elif hasattr(outputs, 'last_hidden_state'):
+            tensor_outputs = outputs.last_hidden_state
+        elif isinstance(outputs, torch.Tensor):
+            tensor_outputs = outputs
+        elif isinstance(outputs, (tuple, list)) and len(outputs) > 0:
+            # Take the first tensor from tuple/list outputs
+            tensor_outputs = outputs[0]
+            if hasattr(tensor_outputs, 'logits'):
+                tensor_outputs = tensor_outputs.logits
+        else:
+            # If we can't determine the type, assume custom
+            return OutputType.CUSTOM
+        
+        # Now analyze the tensor
+        if not isinstance(tensor_outputs, torch.Tensor):
+            return OutputType.CUSTOM
+            
         # Simple heuristics for output type detection
-        if outputs.dim() == 2 and outputs.size(1) > 1:
+        if tensor_outputs.dim() == 2 and tensor_outputs.size(1) > 1:
             # Likely classification (batch_size, num_classes)
             return OutputType.CLASSIFICATION
-        elif outputs.dim() == 3 and outputs.size(-1) > 5:
+        elif tensor_outputs.dim() == 3 and tensor_outputs.size(-1) > 5:
             # Likely detection (batch_size, num_detections, [x, y, w, h, conf, classes...])
             return OutputType.DETECTION
-        elif outputs.dim() >= 3 and min(outputs.shape[-2:]) > 10:
+        elif tensor_outputs.dim() >= 3 and min(tensor_outputs.shape[-2:]) > 10:
             # Likely segmentation (has spatial dimensions)
             return OutputType.SEGMENTATION
         else:
             return OutputType.CUSTOM
     
-    def auto_postprocess(self, outputs: torch.Tensor, **kwargs) -> Union[Dict[str, Any], PostprocessingResult]:
+    def auto_postprocess(self, outputs, **kwargs) -> Union[Dict[str, Any], PostprocessingResult]:
         """Automatically detect output type and postprocess."""
         output_type = self.detect_output_type(outputs)
         return self.postprocess(outputs, output_type, **kwargs)

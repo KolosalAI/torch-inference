@@ -327,6 +327,23 @@ class BaseModel(ABC):
         except ImportError:
             pass
         
+        # Add model parameter info if available
+        if self._is_loaded and self.model:
+            try:
+                # Handle both real models and Mock objects
+                if hasattr(self.model, 'parameters') and callable(self.model.parameters):
+                    total_params = sum(p.numel() for p in self.model.parameters())
+                    trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+                    memory_info["total_params"] = total_params
+                    memory_info["trainable_params"] = trainable_params
+                    
+                    # Estimate model size (very rough approximation)
+                    # Assume 4 bytes per parameter (float32)
+                    memory_info["model_size_mb"] = total_params * 4 / (1024 ** 2)
+            except (TypeError, AttributeError):
+                # Skip parameter counting for Mock objects or other types
+                pass
+        
         return memory_info
     
     def cleanup(self) -> None:
@@ -338,6 +355,11 @@ class BaseModel(ABC):
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         return self._is_loaded
+    
+    @is_loaded.setter
+    def is_loaded(self, value: bool):
+        """Set model loaded status."""
+        self._is_loaded = value
     
     @property
     def model_info(self) -> Dict[str, Any]:
@@ -462,13 +484,12 @@ class ModelManager:
             if source == "pytorch_hub":
                 if "/" not in model_id:
                     raise ValueError("PyTorch Hub model_id should be in format 'repo/model'")
-                parts = model_id.split("/", 1)
-                if ":" in parts[0]:
-                    repo = parts[0]
-                    model = parts[1]
-                else:
-                    repo = parts[0]
-                    model = parts[1]
+                # Parse PyTorch Hub model_id: repo/model or repo:version/model
+                parts = model_id.rsplit("/", 1)  # Split from right to get last part as model
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid PyTorch Hub model_id format: {model_id}. Expected: repo/model or repo:version/model")
+                repo = parts[0]
+                model = parts[1]
                 model_path, model_info = downloader.download_pytorch_hub_model(
                     repo, model, name, **kwargs
                 )
