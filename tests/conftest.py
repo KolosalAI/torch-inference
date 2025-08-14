@@ -420,3 +420,10 @@ def inference_config():
         device=DeviceConfig(device_type=DeviceType.CPU),
         batch=BatchConfig(batch_size=2, max_batch_size=8)
     )
+
+
+@pytest.fixture
+def model_manager():
+    """Create a model manager for testing."""
+    from framework.core.base_model import ModelManager
+    return ModelManager()
