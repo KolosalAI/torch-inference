@@ -187,12 +187,24 @@ environments:
       log_level: DEBUG
 """)
         
-        # Set environment variables to use test config
-        os.environ["CONFIG_DIR"] = str(config_dir)
-        yield ConfigManager(env_file=env_file, config_file=yaml_file, environment="test")
-        # Cleanup
-        if "CONFIG_DIR" in os.environ:
-            del os.environ["CONFIG_DIR"]
+        # Save original environment variables (including those from .env file)
+        original_env = {}
+        env_vars_from_fixture = {"CONFIG_DIR": str(config_dir), "ENVIRONMENT": "test", "DEVICE": "cpu", "BATCH_SIZE": "2", "LOG_LEVEL": "DEBUG"}
+        
+        for key, value in env_vars_from_fixture.items():
+            if key in os.environ:
+                original_env[key] = os.environ[key]
+            os.environ[key] = value
+        
+        try:
+            yield ConfigManager(env_file=env_file, config_file=yaml_file, environment="test")
+        finally:
+            # Clean up ALL environment variables that could have been set by this fixture
+            for key in env_vars_from_fixture.keys():
+                if key in original_env:
+                    os.environ[key] = original_env[key]
+                elif key in os.environ:
+                    del os.environ[key]
 
 
 @pytest.fixture

@@ -67,7 +67,7 @@ class TorchInferenceFramework:
         self.config = config
         self.model: Optional[BaseModel] = None
         self.engine: Optional[InferenceEngine] = None
-        self.model_manager = get_model_manager  # Store the function, not call it
+        self._model_manager = get_model_manager()  # Store the manager instance
         self.performance_monitor = get_performance_monitor()
         self.metrics_collector = get_metrics_collector()
         
@@ -81,6 +81,11 @@ class TorchInferenceFramework:
         self._setup_logging()
         
         self.logger.info("TorchInferenceFramework initialized")
+    
+    @property
+    def model_manager(self):
+        """Backward compatibility property for model_manager."""
+        return self._model_manager
     
     def _setup_logging(self):
         """Setup logging configuration."""
@@ -108,7 +113,7 @@ class TorchInferenceFramework:
             if model_name is None:
                 model_name = Path(model_path).stem if isinstance(model_path, (str, Path)) else str(model_path)
             
-            self.model_manager().register_model(model_name, self.model)
+            self._model_manager.register_model(model_name, self.model)
             
             # Create inference engine
             self.engine = create_inference_engine(self.model, self.config)
@@ -359,8 +364,8 @@ class TorchInferenceFramework:
         
         return health
     
-    async def cleanup(self) -> None:
-        """Cleanup all resources."""
+    async def cleanup_async(self) -> None:
+        """Cleanup all resources (async version)."""
         self.logger.info("Cleaning up framework resources")
         
         if self.engine and self._engine_running:
@@ -369,9 +374,28 @@ class TorchInferenceFramework:
         if self.model:
             self.model.cleanup()
         
-        self.model_manager().cleanup_all()
+        self._model_manager.cleanup_all()
         
         self.logger.info("Framework cleanup complete")
+    
+    def cleanup_sync(self) -> None:
+        """Synchronous cleanup for backward compatibility."""
+        self.logger.info("Cleaning up framework resources (sync)")
+        
+        if self.engine and self._engine_running:
+            # For sync cleanup, we can't await, so just stop without awaiting
+            self._engine_running = False
+        
+        if self.model:
+            self.model.cleanup()
+        
+        self._model_manager.cleanup_all()
+        
+        self.logger.info("Framework cleanup complete (sync)")
+    
+    def cleanup(self) -> None:
+        """Backward compatible cleanup method."""
+        return self.cleanup_sync()
     
     @asynccontextmanager
     async def async_context(self):
@@ -381,7 +405,7 @@ class TorchInferenceFramework:
                 await self.start_engine()
             yield self
         finally:
-            await self.cleanup()
+            await self.cleanup_async()
     
     def __enter__(self):
         """Sync context manager entry."""
@@ -583,7 +607,7 @@ def create_optimized_framework(config: Optional[InferenceConfig] = None) -> Torc
             if model_name is None:
                 model_name = Path(model_path).stem if isinstance(model_path, (str, Path)) else str(model_path)
             
-            self.model_manager().register_model(model_name, self.model)
+            self._model_manager.register_model(model_name, self.model)
             
             # Create inference engine
             self.engine = create_inference_engine(self.model, self.config)

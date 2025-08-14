@@ -148,7 +148,13 @@ class PyTorchModelAdapter(BaseModel):
             
             # Stack into batch tensor if possible
             if all(isinstance(inp, torch.Tensor) and inp.shape == preprocessed_inputs[0].shape for inp in preprocessed_inputs):
-                batch_tensor = torch.stack(preprocessed_inputs, dim=0)
+                # Check if inputs already have batch dimension of 1 - if so, remove it before stacking
+                if len(preprocessed_inputs[0].shape) == 4 and preprocessed_inputs[0].shape[0] == 1:
+                    # Remove the batch dimension from each input before stacking
+                    squeezed_inputs = [inp.squeeze(0) for inp in preprocessed_inputs]
+                    batch_tensor = torch.stack(squeezed_inputs, dim=0)
+                else:
+                    batch_tensor = torch.stack(preprocessed_inputs, dim=0)
                 
                 # Forward pass on batch
                 with torch.no_grad():

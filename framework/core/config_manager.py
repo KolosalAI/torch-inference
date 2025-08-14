@@ -200,7 +200,16 @@ class ConfigManager:
         current_env = dict(os.environ)
         
         # Device configuration
-        device_type = current_env.get('DEVICE', self._yaml_config.get('device', {}).get('device_type', 'auto')).lower()
+        device_type = 'auto'  # Default
+        if 'DEVICE' in current_env:
+            device_type = current_env['DEVICE'].lower()
+        elif 'device' in self._yaml_config:
+            # Support both 'device_type' and 'type' keys for flexibility
+            if 'device_type' in self._yaml_config['device']:
+                device_type = str(self._yaml_config['device']['device_type']).lower()
+            elif 'type' in self._yaml_config['device']:
+                device_type = str(self._yaml_config['device']['type']).lower()
+        
         device_config = DeviceConfig(
             device_type=DeviceType.from_string(device_type),
             device_id=current_env.get('DEVICE_ID') and int(current_env.get('DEVICE_ID')),
@@ -235,6 +244,10 @@ class ConfigManager:
                 pass
         elif self._yaml_config.get('batch', {}).get('max_batch_size'):
             max_batch_size = self._yaml_config['batch']['max_batch_size']
+        
+        # Ensure batch_size doesn't exceed max_batch_size
+        if batch_size > max_batch_size:
+            max_batch_size = max(batch_size, 16)  # Expand max_batch_size if needed
         
         batch_config = BatchConfig(
             batch_size=batch_size,
