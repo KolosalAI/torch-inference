@@ -17,7 +17,7 @@ Before starting, ensure you have:
 pip install uv
 
 # Clone and setup the framework
-git clone https://github.com/Evintkoo/torch-inference.git
+git clone https://github.com/kolosalai/torch-inference.git
 cd torch-inference
 
 # Run automated setup

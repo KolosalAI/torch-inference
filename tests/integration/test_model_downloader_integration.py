@@ -64,12 +64,31 @@ class TestModelDownloaderFrameworkIntegration:
             mock_adapter.warmup = Mock()
             mock_adapter_factory.return_value = mock_adapter
             
-            # Download and load model
-            model_manager.download_and_load_model(
-                source="torchvision",
-                model_id="resnet18",
-                name="test_resnet"
-            )
+            # Use temporary directory for cache to avoid path issues
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Patch the default cache directory in Path.home()
+                with patch('pathlib.Path.home') as mock_home:
+                    mock_home.return_value = Path(temp_dir)
+                    
+                    # Mock the size calculation specifically
+                    def mock_save_with_file_creation(obj, path, *args, **kwargs):
+                        # Ensure parent directory exists
+                        Path(path).parent.mkdir(parents=True, exist_ok=True)
+                        # Create a dummy file to simulate the save
+                        Path(path).touch()
+                        # Write some dummy data to give it a size
+                        Path(path).write_bytes(b'x' * 1024 * 1024)  # 1MB dummy file
+                        return None
+                    
+                    mock_torch_save.side_effect = mock_save_with_file_creation
+                    
+                    # Download and load model
+                    model_manager.download_and_load_model(
+                        source="torchvision",
+                        model_id="resnet18",
+                        name="test_resnet"
+                    )
             
             # Verify model was registered
             assert "test_resnet" in model_manager.list_models()
@@ -145,21 +164,40 @@ class TestModelDownloaderFrameworkIntegration:
         framework = TorchInferenceFramework()
         
         # Mock model loading
-        with patch('framework.adapters.model_adapters.load_model') as mock_load_model:
+        with patch('framework.load_model') as mock_load_model:
             mock_adapter = Mock()
             mock_load_model.return_value = mock_adapter
             
             # Mock inference engine creation
-            with patch('framework.core.inference_engine.create_inference_engine') as mock_create_engine:
+            with patch('framework.create_inference_engine') as mock_create_engine:
                 mock_engine = Mock()
                 mock_create_engine.return_value = mock_engine
                 
-                # Download and load model
-                framework.download_and_load_model(
-                    source="torchvision",
-                    model_id="resnet18",
-                    model_name="test_resnet"
-                )
+                # Use temporary directory for cache to avoid path issues
+                import tempfile
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    # Patch the default cache directory in Path.home()
+                    with patch('pathlib.Path.home') as mock_home:
+                        mock_home.return_value = Path(temp_dir)
+                        
+                        # Mock the size calculation specifically
+                        def mock_save_with_file_creation(obj, path, *args, **kwargs):
+                            # Ensure parent directory exists
+                            Path(path).parent.mkdir(parents=True, exist_ok=True)
+                            # Create a dummy file to simulate the save
+                            Path(path).touch()
+                            # Write some dummy data to give it a size
+                            Path(path).write_bytes(b'x' * 1024 * 1024)  # 1MB dummy file
+                            return None
+                        
+                        mock_torch_save.side_effect = mock_save_with_file_creation
+                        
+                        # Download and load model
+                        framework.download_and_load_model(
+                            source="torchvision",
+                            model_id="resnet18",
+                            model_name="test_resnet"
+                        )
                 
                 # Verify framework state
                 assert framework._initialized
@@ -170,7 +208,8 @@ class TestModelDownloaderFrameworkIntegration:
         """Test listing available downloads through TorchInferenceFramework."""
         framework = TorchInferenceFramework()
         
-        with patch('framework.core.model_downloader.list_available_models') as mock_list:
+        # Mock the function at the framework level where it's actually imported
+        with patch('framework.list_available_models') as mock_list:
             mock_models = {
                 "test_model": ModelInfo("test", "torchvision", "resnet18", "classification")
             }
@@ -185,7 +224,8 @@ class TestModelDownloaderFrameworkIntegration:
         """Test getting model downloader through TorchInferenceFramework."""
         framework = TorchInferenceFramework()
         
-        with patch('framework.core.model_downloader.get_model_downloader') as mock_get:
+        # Mock the function at the framework level where it's actually imported
+        with patch('framework.get_model_downloader') as mock_get:
             mock_downloader = Mock()
             mock_get.return_value = mock_downloader
             
@@ -401,8 +441,11 @@ class TestModelDownloaderErrorScenarios:
     
     def test_model_manager_download_nonexistent_model(self, model_manager):
         """Test error handling when downloading non-existent model."""
-        # Mock download to raise exception
-        with patch('framework.core.model_downloader.download_model') as mock_download:
+        # Initialize the downloader first
+        downloader = model_manager.get_downloader()
+        
+        # Mock downloader to raise exception
+        with patch.object(downloader, 'download_torchvision_model') as mock_download:
             mock_download.side_effect = Exception("Model not found")
             
             with pytest.raises(Exception, match="Model not found"):
