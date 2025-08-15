@@ -5,9 +5,10 @@ import tempfile
 import torch
 import pytest
 import numpy as np
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, AsyncMock
 import warnings
 
 # Add project root to path
@@ -116,6 +117,41 @@ def mock_torch_model():
     
     model.side_effect = mock_forward
     model.__call__ = mock_forward
+    return model
+
+
+@pytest.fixture
+def mock_model_with_config(test_config):
+    """Create a mock model with proper configuration for autoscaling tests."""
+    model = Mock()
+    
+    # Set the config attribute that autoscaling expects
+    model.config = test_config
+    
+    # Standard model methods
+    model.eval.return_value = model
+    model.cuda.return_value = model  
+    model.cpu.return_value = model
+    model.to.return_value = model
+    model.parameters.return_value = [torch.randn(10, 10)]
+    model.state_dict.return_value = {"layer.weight": torch.randn(10, 10)}
+    
+    # Mock predict method
+    async def mock_predict(inputs):
+        await asyncio.sleep(0.001)  # Simulate processing
+        return {
+            "predictions": [0.1, 0.2, 0.7],
+            "confidence": 0.8,
+            "model_name": "mock_model"
+        }
+    
+    model.predict = mock_predict
+    
+    # Mock other required methods
+    model.warmup = AsyncMock()
+    model.is_loaded = True
+    model.model_name = "mock_model"
+    
     return model
 
 
@@ -439,8 +475,106 @@ def async_client():
 
 
 @pytest.fixture
+def mock_model_manager_with_config(test_config):
+    """Create a mock model manager with proper configuration for autoscaling tests."""
+    manager = Mock()
+    manager._loaded_models = {}
+    
+    async def mock_load_model(model_id):
+        # Create mock model with proper config
+        mock_model = Mock()
+        mock_model.config = test_config
+        
+        # Mock predict method
+        async def mock_predict(inputs):
+            await asyncio.sleep(0.001)  # Simulate processing
+            return {
+                "predictions": [0.1, 0.2, 0.7],
+                "confidence": 0.8,
+                "model_name": model_id
+            }
+        
+        mock_model.predict = mock_predict
+        mock_model.warmup = AsyncMock()
+        mock_model.is_loaded = True
+        mock_model.model_name = model_id
+        
+        manager._loaded_models[model_id] = mock_model
+        return mock_model
+    
+    async def mock_unload_model(model_id):
+        if model_id in manager._loaded_models:
+            del manager._loaded_models[model_id]
+    
+    def mock_get_model(model_id):
+        return manager._loaded_models.get(model_id)
+    
+    def mock_is_model_loaded(model_id):
+        return model_id in manager._loaded_models
+    
+    def mock_get_loaded_models():
+        return list(manager._loaded_models.keys())
+    
+    manager.load_model.side_effect = mock_load_model
+    manager.unload_model.side_effect = mock_unload_model
+    manager.get_model.side_effect = mock_get_model
+    manager.is_model_loaded.side_effect = mock_is_model_loaded
+    manager.get_loaded_models.side_effect = mock_get_loaded_models
+    
+    return manager
+
+
+@pytest.fixture  
+def autoscaler_config():
+    """Create a test configuration for autoscaling."""
+    from framework.autoscaling.autoscaler import AutoscalerConfig
+    from framework.autoscaling.zero_scaler import ZeroScalingConfig
+    from framework.autoscaling.model_loader import ModelLoaderConfig
+    from framework.autoscaling.metrics import MetricsConfig
+    
+    return AutoscalerConfig(
+        enable_zero_scaling=True,
+        enable_dynamic_loading=True,
+        enable_monitoring=True,
+        monitoring_interval=0.1,
+        scaling_cooldown=0.1,
+        max_concurrent_scalings=5,
+        enable_predictive_scaling=False,
+        zero_scaling=ZeroScalingConfig(
+            enabled=True,
+            scale_to_zero_delay=1.0,
+            max_loaded_models=5,
+            preload_popular_models=False,
+            popularity_threshold=3
+        ),
+        model_loader=ModelLoaderConfig(
+            enabled=True,
+            max_instances_per_model=3,
+            min_instances_per_model=1,
+            health_check_interval=0.5
+        ),
+        metrics=MetricsConfig(
+            enabled=True,
+            collection_interval=0.1,
+            retention_period=300.0
+        )
+    )
+
+
+@pytest.fixture
 def client():
     """Create test client."""
     from fastapi.testclient import TestClient
     from main import app
     return TestClient(app)
+
+
+@pytest.fixture
+def test_autoscaler(autoscaler_config, mock_model_manager_with_config):
+    """Create a test autoscaler instance."""
+    from framework.autoscaling.autoscaler import Autoscaler
+    
+    return Autoscaler(
+        config=autoscaler_config,
+        model_manager=mock_model_manager_with_config
+    )

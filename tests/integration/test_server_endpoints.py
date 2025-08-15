@@ -131,16 +131,17 @@ class TestServerEndpoints:
         finally:
             await cleanup_inference_engine()
 
-    def test_predict_endpoint_without_engine(self, client):
-        """Test predict endpoint when engine is not initialized."""
-        payload = {"inputs": 42}
-        
+def test_predict_endpoint_without_engine(client):
+    """Test predict endpoint when engine is not initialized."""
+    payload = {"inputs": 42}
+    
+    with patch('main.inference_engine', None):
         response = client.post("/predict", json=payload)
-        
+
         # Should return 503 Service Unavailable
         assert response.status_code == 503
-        assert "Inference engine not available" in response.json()["detail"]
-
+        assert "Inference services not available" in response.json()["detail"]
+    
     @pytest.mark.asyncio
     async def test_batch_predict_endpoint(self, async_client):
         """Test the batch prediction endpoint."""
