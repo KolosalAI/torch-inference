@@ -1,0 +1,200 @@
+{
+  "72f93c6f1fed7f2259be7785a69c76e6": {
+    "name": "tuned_72f93c6f",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 2,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 1,
+      "max_throughput": 7671.0573001444845
+    },
+    "performance_score": 9048418.690943608,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "90f351ebadde25e58fca59bd69ae1709": {
+    "name": "tuned_90f351eb",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 14,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 2,
+      "max_throughput": 24949.759086312533
+    },
+    "performance_score": 24954212.27986673,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "8606775db3a72f4b284310042523f619": {
+    "name": "tuned_8606775d",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 7,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 565.8450770729286
+    },
+    "performance_score": 143587.04701809736,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "e2a1f5154680b7c8fc990c46005da7ab": {
+    "name": "tuned_e2a1f515",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 14,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 841.6365172338371
+    },
+    "performance_score": 218546.67097406185,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "ed18589224724788ec0cb974a7f08057": {
+    "name": "tuned_ed185892",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 14,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 124.4025093436004
+    },
+    "performance_score": 30656.889918020326,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "879d761d8ebe9d64a0ee475800219ee2": {
+    "name": "tuned_879d761d",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 2,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 2,
+      "max_throughput": 2413.1407103117754
+    },
+    "performance_score": 1280281.3118116774,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "036d3fe47cf69ce9d1d67ea581736b64": {
+    "name": "tuned_036d3fe4",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 4,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 2778.752103456957
+    },
+    "performance_score": 615596.324889189,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "5d26a1f027f328349014b1e992c481c6": {
+    "name": "tuned_5d26a1f0",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 7,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 2,
+      "max_throughput": 952.8567728803087
+    },
+    "performance_score": 499069.9932415067,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "ed5e6720d3599501555d517e3d34e692": {
+    "name": "tuned_ed5e6720",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 7,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 1389.5739810032435
+    },
+    "performance_score": 334820.57185188495,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "9e56148da63dd12f949b0a3269bbbdfb": {
+    "name": "tuned_9e56148d",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 7,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 1207.598624922983
+    },
+    "performance_score": 302322.24898764706,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  },
+  "167a3951f61858ea33eb34f0386e426d": {
+    "name": "tuned_167a3951",
+    "parameters": {
+      "cpu_threads": 14,
+      "vectorization": "avx2",
+      "optimal_cpu_threads": 14,
+      "cache_optimized": true,
+      "cache_batch_hint": "small",
+      "instruction_optimization": true,
+      "instruction_set": "avx2",
+      "optimal_batch_size": 4,
+      "max_throughput": 69.62988934397926
+    },
+    "performance_score": 17220.408704207664,
+    "memory_usage_mb": 0.0,
+    "energy_efficiency": 0.0,
+    "tested_on_hardware": "Unknown CPU"
+  }
+}
