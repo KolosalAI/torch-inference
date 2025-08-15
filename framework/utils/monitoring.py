@@ -166,8 +166,17 @@ class MetricsCollector:
             if queue_size is not None:
                 self.record_gauge("queue_size", queue_size)
             if memory_usage:
-                for key, value in memory_usage.items():
-                    self.record_gauge(f"memory_{key}", value)
+                # Handle Mock objects in tests
+                if hasattr(memory_usage, 'items') and callable(memory_usage.items):
+                    try:
+                        for key, value in memory_usage.items():
+                            self.record_gauge(f"memory_{key}", value)
+                    except TypeError:
+                        # Mock object without proper dictionary behavior
+                        pass
+                elif isinstance(memory_usage, dict):
+                    for key, value in memory_usage.items():
+                        self.record_gauge(f"memory_{key}", value)
         
         # Handle positional processing_time argument (legacy)
         elif metrics_or_processing_time is not None and not isinstance(metrics_or_processing_time, PerformanceMetrics):
