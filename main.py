@@ -40,6 +40,7 @@ from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, Pe
 from framework.core.config_manager import get_config_manager, ConfigManager
 from framework.core.base_model import BaseModel, ModelManager, get_model_manager
 from framework.core.inference_engine import InferenceEngine, create_inference_engine
+from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
 
 # Initialize configuration manager
 config_manager = get_config_manager()
@@ -52,6 +53,7 @@ logger = logging.getLogger(__name__)
 # Global variables
 inference_engine: Optional[InferenceEngine] = None
 model_manager: ModelManager = get_model_manager()
+autoscaler: Optional[Autoscaler] = None
 
 def print_api_endpoints():
     """Print all available API endpoints at startup"""
@@ -70,6 +72,13 @@ def print_api_endpoints():
         ("GET", "/models/cache/info", "Get model cache information"),
         ("POST", "/examples/simple", "Simple prediction example"),
         ("POST", "/examples/batch", "Batch prediction example"),
+        # New autoscaling endpoints
+        ("GET", "/autoscaler/stats", "Get autoscaler statistics"),
+        ("GET", "/autoscaler/health", "Get autoscaler health status"),
+        ("POST", "/autoscaler/scale", "Scale a model to target instances"),
+        ("POST", "/autoscaler/load", "Load a model with autoscaling"),
+        ("DELETE", "/autoscaler/unload", "Unload a model"),
+        ("GET", "/autoscaler/metrics", "Get detailed autoscaling metrics"),
     ]
     
     print("\n" + "="*80)
@@ -268,8 +277,8 @@ async def log_requests(request: Request, call_next):
     return response
 
 async def initialize_inference_engine():
-    """Initialize the inference engine with example model."""
-    global inference_engine
+    """Initialize the inference engine with example model and autoscaler."""
+    global inference_engine, autoscaler
     
     try:
         # Get configuration from config manager
@@ -288,22 +297,47 @@ async def initialize_inference_engine():
         # Register model
         model_manager.register_model("example", example_model)
         
-        # Create inference engine
+        # Initialize autoscaler
+        autoscaler_config = AutoscalerConfig(
+            enable_zero_scaling=True,
+            enable_dynamic_loading=True,
+            zero_scaling=ZeroScalingConfig(
+                enabled=True,
+                scale_to_zero_delay=300.0,  # 5 minutes
+                max_loaded_models=5,
+                preload_popular_models=True
+            ),
+            model_loading=ModelLoaderConfig(
+                max_instances_per_model=3,
+                min_instances_per_model=1,
+                enable_model_caching=True,
+                prefetch_popular_models=True
+            )
+        )
+        
+        autoscaler = Autoscaler(autoscaler_config, model_manager)
+        await autoscaler.start()
+        
+        # Create inference engine (fallback for direct requests)
         inference_engine = create_inference_engine(example_model, config)
         await inference_engine.start()
         
         # Warmup
         example_model.warmup(config.performance.warmup_iterations)
         
-        logger.info("Inference engine initialized successfully")
+        logger.info("Inference engine and autoscaler initialized successfully")
         
     except Exception as e:
         logger.error(f"Failed to initialize inference engine: {e}")
         raise
 
 async def cleanup_inference_engine():
-    """Cleanup inference engine."""
-    global inference_engine
+    """Cleanup inference engine and autoscaler."""
+    global inference_engine, autoscaler
+    
+    if autoscaler:
+        await autoscaler.stop()
+        autoscaler = None
     
     if inference_engine:
         await inference_engine.stop()
@@ -345,23 +379,27 @@ async def root():
 
 @app.post("/predict")
 async def predict(request: InferenceRequest) -> InferenceResponse:
-    """Single prediction endpoint."""
+    """Single prediction endpoint with autoscaling support."""
     logger.info(f"[ENDPOINT] Single prediction requested - Priority: {request.priority}, Timeout: {request.timeout}")
     
-    if not inference_engine:
-        logger.error("[ENDPOINT] Prediction failed - Inference engine not available")
-        raise HTTPException(status_code=503, detail="Inference engine not available")
+    if not autoscaler and not inference_engine:
+        logger.error("[ENDPOINT] Prediction failed - Neither autoscaler nor inference engine available")
+        raise HTTPException(status_code=503, detail="Inference services not available")
     
     try:
         start_time = time.time()
         
         logger.debug(f"[ENDPOINT] Processing prediction with inputs type: {type(request.inputs)}")
         
-        result = await inference_engine.predict(
-            inputs=request.inputs,
-            priority=request.priority,
-            timeout=request.timeout
-        )
+        # Try autoscaler first, fallback to direct engine
+        if autoscaler:
+            result = await autoscaler.predict("example", request.inputs, priority=request.priority, timeout=request.timeout)
+        else:
+            result = await inference_engine.predict(
+                inputs=request.inputs,
+                priority=request.priority,
+                timeout=request.timeout
+            )
         
         processing_time = time.time() - start_time
         
@@ -371,7 +409,7 @@ async def predict(request: InferenceRequest) -> InferenceResponse:
             success=True,
             result=result,
             processing_time=processing_time,
-            model_info={"model": "example", "device": str(inference_engine.device)}
+            model_info={"model": "example", "device": str(inference_engine.device) if inference_engine else "autoscaler"}
         )
         
         logger.debug(f"[ENDPOINT] Prediction response generated - Success: {response.success}")
@@ -768,6 +806,187 @@ async def batch_example():
         
     except Exception as e:
         logger.error(f"[ENDPOINT] Batch example failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Autoscaler endpoints
+@app.get("/autoscaler/stats")
+async def get_autoscaler_stats():
+    """Get autoscaler statistics."""
+    logger.info("[ENDPOINT] Autoscaler stats requested")
+    
+    if not autoscaler:
+        logger.error("[ENDPOINT] Autoscaler stats failed - Autoscaler not available")
+        raise HTTPException(status_code=503, detail="Autoscaler not available")
+    
+    try:
+        stats = autoscaler.get_stats()
+        logger.info("[ENDPOINT] Autoscaler stats retrieved successfully")
+        return stats
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Autoscaler stats failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/autoscaler/health")
+async def get_autoscaler_health():
+    """Get autoscaler health status."""
+    logger.info("[ENDPOINT] Autoscaler health check requested")
+    
+    if not autoscaler:
+        return {
+            "healthy": False,
+            "error": "Autoscaler not available",
+            "timestamp": time.time()
+        }
+    
+    try:
+        health = autoscaler.get_health_status()
+        logger.info(f"[ENDPOINT] Autoscaler health check completed - Healthy: {health['healthy']}")
+        return health
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Autoscaler health check failed with error: {e}")
+        return {
+            "healthy": False,
+            "error": str(e),
+            "timestamp": time.time()
+        }
+
+
+@app.post("/autoscaler/scale")
+async def scale_model(model_name: str, target_instances: int):
+    """Scale a model to target number of instances."""
+    logger.info(f"[ENDPOINT] Model scaling requested - Model: {model_name}, Target: {target_instances}")
+    
+    if not autoscaler:
+        logger.error("[ENDPOINT] Model scaling failed - Autoscaler not available")
+        raise HTTPException(status_code=503, detail="Autoscaler not available")
+    
+    if target_instances < 0 or target_instances > 10:
+        raise HTTPException(status_code=400, detail="Target instances must be between 0 and 10")
+    
+    try:
+        success = await autoscaler.scale_model(model_name, target_instances)
+        
+        if success:
+            logger.info(f"[ENDPOINT] Model scaling completed successfully - {model_name} to {target_instances} instances")
+            return {
+                "success": True,
+                "message": f"Successfully scaled {model_name} to {target_instances} instances",
+                "model_name": model_name,
+                "target_instances": target_instances
+            }
+        else:
+            logger.error(f"[ENDPOINT] Model scaling failed - {model_name}")
+            return {
+                "success": False,
+                "message": f"Failed to scale {model_name}",
+                "model_name": model_name,
+                "target_instances": target_instances
+            }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Model scaling failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/autoscaler/load")
+async def load_model_autoscaler(model_name: str, version: str = "v1"):
+    """Load a model through the autoscaler."""
+    logger.info(f"[ENDPOINT] Model loading requested via autoscaler - Model: {model_name}, Version: {version}")
+    
+    if not autoscaler:
+        logger.error("[ENDPOINT] Model loading failed - Autoscaler not available")
+        raise HTTPException(status_code=503, detail="Autoscaler not available")
+    
+    try:
+        success = await autoscaler.load_model(model_name, version)
+        
+        if success:
+            logger.info(f"[ENDPOINT] Model loading completed successfully - {model_name}:{version}")
+            return {
+                "success": True,
+                "message": f"Successfully loaded {model_name}:{version}",
+                "model_name": model_name,
+                "version": version
+            }
+        else:
+            logger.error(f"[ENDPOINT] Model loading failed - {model_name}:{version}")
+            return {
+                "success": False,
+                "message": f"Failed to load {model_name}:{version}",
+                "model_name": model_name,
+                "version": version
+            }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Model loading failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/autoscaler/unload")
+async def unload_model_autoscaler(model_name: str, version: Optional[str] = None):
+    """Unload a model through the autoscaler."""
+    version_str = f":{version}" if version else ""
+    logger.info(f"[ENDPOINT] Model unloading requested via autoscaler - Model: {model_name}{version_str}")
+    
+    if not autoscaler:
+        logger.error("[ENDPOINT] Model unloading failed - Autoscaler not available")
+        raise HTTPException(status_code=503, detail="Autoscaler not available")
+    
+    try:
+        success = await autoscaler.unload_model(model_name, version)
+        
+        if success:
+            logger.info(f"[ENDPOINT] Model unloading completed successfully - {model_name}{version_str}")
+            return {
+                "success": True,
+                "message": f"Successfully unloaded {model_name}{version_str}",
+                "model_name": model_name,
+                "version": version
+            }
+        else:
+            logger.error(f"[ENDPOINT] Model unloading failed - {model_name}{version_str}")
+            return {
+                "success": False,
+                "message": f"Failed to unload {model_name}{version_str}",
+                "model_name": model_name,
+                "version": version
+            }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Model unloading failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/autoscaler/metrics")
+async def get_autoscaler_metrics(window_seconds: Optional[int] = None):
+    """Get detailed autoscaling metrics."""
+    logger.info(f"[ENDPOINT] Autoscaler metrics requested - Window: {window_seconds}s")
+    
+    if not autoscaler:
+        logger.error("[ENDPOINT] Autoscaler metrics failed - Autoscaler not available")
+        raise HTTPException(status_code=503, detail="Autoscaler not available")
+    
+    try:
+        stats = autoscaler.get_stats()
+        
+        # Add metrics from metrics collector if available
+        if hasattr(autoscaler, 'metrics_collector') and autoscaler.metrics_collector:
+            metrics_summary = autoscaler.metrics_collector.get_summary(window_seconds)
+            stats['detailed_metrics'] = metrics_summary
+        
+        logger.info("[ENDPOINT] Autoscaler metrics retrieved successfully")
+        return {
+            "metrics": stats,
+            "window_seconds": window_seconds,
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Autoscaler metrics failed with error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

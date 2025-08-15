@@ -433,6 +433,14 @@ class ModelManager:
         """List all registered models."""
         return list(self._models.keys())
     
+    def is_model_loaded(self, name: str) -> bool:
+        """Check if a model is loaded."""
+        return name in self._models and self._models[name].is_loaded
+    
+    def get_loaded_models(self) -> List[str]:
+        """Get list of loaded models."""
+        return [name for name, model in self._models.items() if model.is_loaded]
+    
     def load_model(self, name: str, model_path: Union[str, Path]) -> None:
         """Load a registered model."""
         model = self.get_model(name)
