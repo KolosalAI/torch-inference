@@ -67,6 +67,50 @@ except ImportError as e:
     enable_cuda_optimizations = None
     _unavailable_optimizers.extend(['CUDAOptimizer', 'enable_cuda_optimizations'])
 
+# INT8 Calibration optimizer
+try:
+    from .int8_calibration import INT8CalibrationToolkit, CalibrationConfig, get_calibration_toolkit
+    _available_optimizers.extend(['INT8CalibrationToolkit', 'CalibrationConfig', 'get_calibration_toolkit'])
+except ImportError as e:
+    logger.info(f"INT8 calibration toolkit not available: {e}")
+    INT8CalibrationToolkit = None
+    CalibrationConfig = None
+    get_calibration_toolkit = None
+    _unavailable_optimizers.extend(['INT8CalibrationToolkit', 'CalibrationConfig', 'get_calibration_toolkit'])
+
+# Kernel auto-tuner
+try:
+    from .kernel_autotuner import KernelAutoTuner, HardwareProfiler, get_kernel_auto_tuner, auto_tune_model
+    _available_optimizers.extend(['KernelAutoTuner', 'HardwareProfiler', 'get_kernel_auto_tuner', 'auto_tune_model'])
+except ImportError as e:
+    logger.info(f"Kernel auto-tuner not available: {e}")
+    KernelAutoTuner = None
+    HardwareProfiler = None
+    get_kernel_auto_tuner = None
+    auto_tune_model = None
+    _unavailable_optimizers.extend(['KernelAutoTuner', 'HardwareProfiler', 'get_kernel_auto_tuner', 'auto_tune_model'])
+
+# Advanced layer fusion
+try:
+    from .advanced_fusion import AdvancedLayerFusion, FusionPattern, get_advanced_layer_fusion, optimize_model_fusion
+    _available_optimizers.extend(['AdvancedLayerFusion', 'FusionPattern', 'get_advanced_layer_fusion', 'optimize_model_fusion'])
+except ImportError as e:
+    logger.info(f"Advanced layer fusion not available: {e}")
+    AdvancedLayerFusion = None
+    FusionPattern = None
+    get_advanced_layer_fusion = None
+    optimize_model_fusion = None
+    _unavailable_optimizers.extend(['AdvancedLayerFusion', 'FusionPattern', 'get_advanced_layer_fusion', 'optimize_model_fusion'])
+
+# Memory optimizer (enhanced)
+try:
+    from .memory_optimizer import MemoryPool, MemoryOptimizer, AdvancedMemoryPool
+    _available_optimizers.extend(['AdvancedMemoryPool'])
+except ImportError as e:
+    logger.info(f"Enhanced memory optimizer not available: {e}")
+    AdvancedMemoryPool = None
+    _unavailable_optimizers.extend(['AdvancedMemoryPool'])
+
 # JIT optimizer
 try:
     from .jit_optimizer import JITOptimizer, jit_compile_model
@@ -92,8 +136,20 @@ __all__ = [
     'quantize_model',
     'MemoryPool',
     'MemoryOptimizer',
+    'AdvancedMemoryPool',
     'CUDAOptimizer',
     'enable_cuda_optimizations',
     'JITOptimizer',
-    'jit_compile_model'
+    'jit_compile_model',
+    'INT8CalibrationToolkit',
+    'CalibrationConfig', 
+    'get_calibration_toolkit',
+    'KernelAutoTuner',
+    'HardwareProfiler',
+    'get_kernel_auto_tuner',
+    'auto_tune_model',
+    'AdvancedLayerFusion',
+    'FusionPattern',
+    'get_advanced_layer_fusion',
+    'optimize_model_fusion'
 ]
