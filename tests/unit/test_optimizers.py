@@ -434,15 +434,15 @@ class TestOptimizerFunctions:
     @pytest.mark.skipif(quantize_model is None, reason="Quantization function not available")
     def test_quantize_model_function(self, simple_model):
         """Test quantize_model convenience function."""
-        with patch('framework.optimizers.QuantizationOptimizer') as mock_optimizer_class:
+        with patch('framework.optimizers.quantization_optimizer.QuantizationOptimizer') as mock_optimizer_class:
             mock_optimizer = Mock()
-            mock_optimizer.optimize.return_value = simple_model
+            mock_optimizer.quantize_dynamic.return_value = simple_model
             mock_optimizer_class.return_value = mock_optimizer
             
-            result = quantize_model(simple_model, quantization_type="dynamic")
+            result = quantize_model(simple_model, method="dynamic")
             
             mock_optimizer_class.assert_called_once()
-            mock_optimizer.optimize.assert_called_once()
+            mock_optimizer.quantize_dynamic.assert_called_once()
             assert result is not None
     
     @pytest.mark.skipif(jit_compile_model is None, reason="JIT function not available")
