@@ -13,15 +13,28 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.quantization as quant
-from torch.quantization import QConfigMapping, get_default_qconfig_mapping
 
-# Optional quantization backends
+# Use modern torch.ao.quantization APIs
 try:
     import torch.ao.quantization as ao_quant
+    from torch.ao.quantization import QConfigMapping, get_default_qconfig_mapping
+    # Also import legacy quantization for backward compatibility
+    import torch.quantization as quant
     AO_QUANTIZATION_AVAILABLE = True
 except ImportError:
-    AO_QUANTIZATION_AVAILABLE = False
+    # Fallback to legacy APIs if ao.quantization is not available
+    try:
+        import torch.quantization as quant
+        from torch.quantization import get_default_qconfig_mapping
+        ao_quant = quant
+        # Create a dummy QConfigMapping if not available
+        try:
+            from torch.quantization import QConfigMapping
+        except ImportError:
+            QConfigMapping = None
+        AO_QUANTIZATION_AVAILABLE = True
+    except ImportError:
+        AO_QUANTIZATION_AVAILABLE = False
 
 from ..core.config import InferenceConfig
 
@@ -62,6 +75,46 @@ class QuantizationOptimizer:
             else:
                 torch.backends.quantized.engine = 'fbgemm'
                 return 'fbgemm'
+    
+    def optimize(self, 
+                model: nn.Module, 
+                quantization_type: str = "dynamic",
+                **kwargs) -> nn.Module:
+        """
+        Main optimization method that dispatches to specific quantization methods.
+        
+        Args:
+            model: Model to quantize
+            quantization_type: Type of quantization ("dynamic", "static", "qat", "fx")
+            **kwargs: Additional arguments for the specific quantization method
+            
+        Returns:
+            Quantized model
+        """
+        if quantization_type == "dynamic":
+            return self.quantize_dynamic(model, **kwargs)
+        elif quantization_type == "static":
+            # For static quantization, we need calibration_loader
+            calibration_loader = kwargs.pop('calibration_loader', None)
+            if calibration_loader is None:
+                raise ValueError("calibration_loader required for static quantization")
+            return self.quantize_static(model, calibration_loader, **kwargs)
+        elif quantization_type == "qat":
+            # For QAT, we need training parameters
+            train_loader = kwargs.pop('train_loader', None)
+            optimizer = kwargs.pop('optimizer', None) 
+            criterion = kwargs.pop('criterion', None)
+            if not all([train_loader, optimizer, criterion]):
+                raise ValueError("train_loader, optimizer, and criterion required for QAT")
+            return self.quantize_qat(model, train_loader, optimizer, criterion, **kwargs)
+        elif quantization_type == "fx":
+            # For FX quantization, we need example inputs
+            example_inputs = kwargs.pop('example_inputs', None)
+            if example_inputs is None:
+                raise ValueError("example_inputs required for FX quantization")
+            return self.quantize_fx(model, example_inputs, **kwargs)
+        else:
+            raise ValueError(f"Unknown quantization type: {quantization_type}")
     
     def quantize_dynamic(self, 
                         model: nn.Module,
@@ -114,7 +167,7 @@ class QuantizationOptimizer:
     def quantize_static(self, 
                        model: nn.Module,
                        calibration_loader: torch.utils.data.DataLoader,
-                       qconfig_mapping: Optional[QConfigMapping] = None) -> nn.Module:
+                       qconfig_mapping = None) -> nn.Module:
         """
         Apply static quantization to model.
         
@@ -167,7 +220,7 @@ class QuantizationOptimizer:
                     optimizer: torch.optim.Optimizer,
                     criterion: nn.Module,
                     epochs: int = 3,
-                    qconfig_mapping: Optional[QConfigMapping] = None) -> nn.Module:
+                    qconfig_mapping = None) -> nn.Module:
         """
         Apply Quantization Aware Training (QAT).
         
@@ -231,7 +284,7 @@ class QuantizationOptimizer:
     def quantize_fx(self,
                    model: nn.Module,
                    example_inputs: torch.Tensor,
-                   qconfig_mapping: Optional[QConfigMapping] = None,
+                   qconfig_mapping = None,
                    calibration_fn: Optional[Callable] = None) -> nn.Module:
         """
         Apply FX-based quantization (PyTorch 1.8+).
@@ -532,6 +585,9 @@ def quantize_model(model: nn.Module,
         Quantized model wrapper
     """
     optimizer = QuantizationOptimizer(config)
+    
+    # Remove 'quantization_type' from kwargs if present (for backwards compatibility)
+    kwargs.pop('quantization_type', None)
     
     if method == "dynamic":
         quantized = optimizer.quantize_dynamic(model, **kwargs)
