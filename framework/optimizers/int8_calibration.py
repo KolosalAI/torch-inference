@@ -345,10 +345,16 @@ class INT8CalibrationToolkit:
             # Fallback to percentile method
             return self._percentile_calibration(stats)
         
-        # Calculate scale and zero_point
-        qmin, qmax = -128, 127  # INT8 range
-        scale = best_threshold / 127.0
+        # Calculate scale and zero_point using absolute value to ensure positive scale
+        # For symmetric quantization, we need the maximum absolute value
+        abs_max = max(abs(stats.min_val), abs(stats.max_val), abs(best_threshold))
+        
+        # Ensure scale is always positive
+        scale = abs_max / 127.0
         zero_point = 0  # Symmetric quantization
+        
+        # Ensure minimum scale to avoid zero or very small values
+        scale = max(scale, 1e-6)
         
         return scale, zero_point
     
@@ -376,16 +382,22 @@ class INT8CalibrationToolkit:
         threshold = bin_edges[threshold_idx]
         
         # Handle symmetric vs asymmetric quantization
+        # Always use the maximum absolute value to ensure positive scale
+        abs_max = max(abs(stats.min_val), abs(stats.max_val), abs(threshold))
+        
         if abs(stats.min_val) > abs(stats.max_val):
             # Asymmetric quantization
             qmin, qmax = -128, 127
-            scale = max(abs(stats.min_val), abs(threshold)) / 127.0
+            scale = abs_max / 127.0
             zero_point = int(-stats.min_val / scale)
             zero_point = max(min(zero_point, 127), -128)
         else:
             # Symmetric quantization
-            scale = threshold / 127.0
+            scale = abs_max / 127.0
             zero_point = 0
+        
+        # Ensure minimum scale to avoid zero or very small values
+        scale = max(scale, 1e-6)
         
         return scale, zero_point
     
@@ -428,9 +440,13 @@ class INT8CalibrationToolkit:
         if best_threshold is None:
             return self._percentile_calibration(stats)
         
-        # Calculate scale and zero_point
-        scale = best_threshold / 127.0
+        # Calculate scale and zero_point using absolute values to ensure positive scale
+        abs_max = max(abs(stats.min_val), abs(stats.max_val), abs(best_threshold))
+        scale = abs_max / 127.0
         zero_point = 0
+        
+        # Ensure minimum scale to avoid zero or very small values
+        scale = max(scale, 1e-6)
         
         return scale, zero_point
     
@@ -444,10 +460,13 @@ class INT8CalibrationToolkit:
         Returns:
             (scale, zero_point) tuple
         """
-        # Use full range
+        # Use full range - ensure scale is always positive
         abs_max = max(abs(stats.min_val), abs(stats.max_val))
         scale = abs_max / 127.0
         zero_point = 0
+        
+        # Ensure minimum scale to avoid zero or very small values
+        scale = max(scale, 1e-6)
         
         return scale, zero_point
     
