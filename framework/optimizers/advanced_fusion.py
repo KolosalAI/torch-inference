@@ -97,13 +97,18 @@ class CustomFusionTracer(Tracer):
     
     def trace(self, root: nn.Module, concrete_args: Dict[str, Any] = None) -> Graph:
         """Trace module with additional metadata collection."""
-        # First do standard tracing
-        graph = super().trace(root, concrete_args)
-        
-        # Collect additional metadata
-        self._collect_node_metadata(graph, root)
-        
-        return graph
+        try:
+            # First do standard tracing
+            graph = super().trace(root, concrete_args)
+            
+            # Collect additional metadata
+            self._collect_node_metadata(graph, root)
+            
+            return graph
+        except Exception as e:
+            # If tracing fails, log warning and return None
+            logger.warning(f"FX tracing failed: {e}")
+            return None
     
     def _collect_node_metadata(self, graph: Graph, module: nn.Module) -> None:
         """Collect metadata for each node in the graph."""
