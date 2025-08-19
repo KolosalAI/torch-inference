@@ -141,3 +141,5 @@ cython_debug/
 .vscode
 
 tests/models/*/
+kernel_cache/*
+calibration_cache/*
