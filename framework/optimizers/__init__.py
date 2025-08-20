@@ -102,6 +102,41 @@ except ImportError as e:
     optimize_model_fusion = None
     _unavailable_optimizers.extend(['AdvancedLayerFusion', 'FusionPattern', 'get_advanced_layer_fusion', 'optimize_model_fusion'])
 
+# Model Compression Suite (comprehensive HLRTF-inspired optimization)
+try:
+    from .model_compression_suite import ModelCompressionSuite, ModelCompressionConfig, CompressionMethod, CompressionTarget, KnowledgeDistillationTrainer, MultiObjectiveOptimizer, compress_model_comprehensive
+    # Add aliases for convenience
+    CompressionConfig = ModelCompressionConfig
+    compress_model = compress_model_comprehensive
+    _available_optimizers.extend(['ModelCompressionSuite', 'ModelCompressionConfig', 'CompressionMethod', 'CompressionTarget', 'KnowledgeDistillationTrainer', 'MultiObjectiveOptimizer', 'compress_model_comprehensive', 'CompressionConfig', 'compress_model'])
+except ImportError as e:
+    logger.info(f"Model compression suite not available: {e}")
+    ModelCompressionSuite = None
+    ModelCompressionConfig = None
+    CompressionConfig = None
+    CompressionMethod = None
+    CompressionTarget = None
+    KnowledgeDistillationTrainer = None
+    MultiObjectiveOptimizer = None
+    compress_model_comprehensive = None
+    compress_model = None
+    _unavailable_optimizers.extend(['ModelCompressionSuite', 'ModelCompressionConfig', 'CompressionMethod', 'CompressionTarget', 'KnowledgeDistillationTrainer', 'MultiObjectiveOptimizer', 'compress_model_comprehensive'])
+
+# Tensor Factorization optimizer (HLRTF-inspired)
+try:
+    from .tensor_factorization_optimizer import TensorFactorizationOptimizer, TensorFactorizationConfig, HierarchicalTensorLayer, factorize_model
+    # Add alias for convenience
+    optimize_model_with_tensor_factorization = factorize_model
+    _available_optimizers.extend(['TensorFactorizationOptimizer', 'TensorFactorizationConfig', 'HierarchicalTensorLayer', 'factorize_model', 'optimize_model_with_tensor_factorization'])
+except ImportError as e:
+    logger.info(f"Tensor factorization optimizer not available: {e}")
+    TensorFactorizationOptimizer = None
+    TensorFactorizationConfig = None
+    HierarchicalTensorLayer = None
+    factorize_model = None
+    optimize_model_with_tensor_factorization = None
+    _unavailable_optimizers.extend(['TensorFactorizationOptimizer', 'TensorFactorizationConfig', 'HierarchicalTensorLayer', 'factorize_model'])
+
 # Memory optimizer (enhanced)
 try:
     from .memory_optimizer import MemoryPool, MemoryOptimizer, AdvancedMemoryPool
@@ -110,6 +145,28 @@ except ImportError as e:
     logger.info(f"Enhanced memory optimizer not available: {e}")
     AdvancedMemoryPool = None
     _unavailable_optimizers.extend(['AdvancedMemoryPool'])
+
+# Mask-based structured pruning
+try:
+    from .mask_based_pruning import (
+        MaskBasedStructuredPruning,
+        MaskPruningConfig, 
+        MaskedConv2d,
+        MaskedLinear,
+        prune_model_with_masks
+    )
+    _available_optimizers.extend([
+        "MaskBasedStructuredPruning", "MaskPruningConfig", 
+        "MaskedConv2d", "MaskedLinear", "prune_model_with_masks"
+    ])
+except ImportError as e:
+    logger.warning(f"Could not import mask-based pruning optimizers: {e}")
+    MaskBasedStructuredPruning = None
+    MaskPruningConfig = None
+    MaskedConv2d = None
+    MaskedLinear = None
+    prune_model_with_masks = None
+    _unavailable_optimizers.extend(['MaskBasedStructuredPruning', 'MaskPruningConfig', 'MaskedConv2d', 'MaskedLinear', 'prune_model_with_masks'])
 
 # JIT optimizer
 try:
@@ -151,5 +208,31 @@ __all__ = [
     'AdvancedLayerFusion',
     'FusionPattern',
     'get_advanced_layer_fusion',
-    'optimize_model_fusion'
+    'optimize_model_fusion',
+    # HLRTF-inspired optimizers
+    'TensorFactorizationOptimizer',
+    'TensorFactorizationConfig',
+    'HierarchicalTensorLayer',
+    'factorize_model',
+    'optimize_model_with_tensor_factorization',
+    'StructuredPruningOptimizer',
+    'StructuredPruningConfig',
+    'ChannelImportanceCalculator',
+    'LowRankRegularizer',
+    'prune_model',
+    'ModelCompressionSuite',
+    'ModelCompressionConfig',
+    'CompressionConfig',
+    'CompressionMethod',
+    'CompressionTarget',
+    'KnowledgeDistillationTrainer',
+    'MultiObjectiveOptimizer',
+    'compress_model_comprehensive',
+    'compress_model',
+    # Mask-based pruning
+    'MaskBasedStructuredPruning',
+    'MaskPruningConfig',
+    'MaskedConv2d',
+    'MaskedLinear',
+    'prune_model_with_masks'
 ]

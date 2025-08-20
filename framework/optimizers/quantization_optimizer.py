@@ -119,7 +119,8 @@ class QuantizationOptimizer:
     def quantize_dynamic(self, 
                         model: nn.Module,
                         dtype: torch.dtype = torch.qint8,
-                        qconfig_spec: Optional[Dict] = None) -> nn.Module:
+                        qconfig_spec: Optional[Dict] = None,
+                        **kwargs) -> nn.Module:
         """
         Apply dynamic quantization to model.
         
@@ -130,6 +131,7 @@ class QuantizationOptimizer:
             model: PyTorch model to quantize
             dtype: Quantization data type
             qconfig_spec: Quantization configuration specification
+            **kwargs: Additional arguments (ignored for compatibility)
             
         Returns:
             Dynamically quantized model
