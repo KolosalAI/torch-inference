@@ -17,8 +17,24 @@ from ..core.base_model import BaseModel, ModelMetadata, ModelLoadError
 from ..core.config import InferenceConfig
 from ..processors.preprocessor import PreprocessingResult
 
+# Import security mitigations
+try:
+    from ..core.security import PyTorchSecurityMitigation, ECDSASecurityMitigation
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# Initialize security for model adapters
+if SECURITY_AVAILABLE:
+    _pytorch_security = PyTorchSecurityMitigation()
+    _ecdsa_security = ECDSASecurityMitigation()
+    logger.info("Security mitigations initialized for model adapters")
+else:
+    _pytorch_security = None
+    _ecdsa_security = None
+    logger.warning("Security mitigations not available for model adapters")
 
 
 class PyTorchModelAdapter(BaseModel):
@@ -29,37 +45,64 @@ class PyTorchModelAdapter(BaseModel):
         self.model_path: Optional[Path] = None
     
     def load_model(self, model_path: Union[str, Path]) -> None:
-        """Load PyTorch model."""
+        """Load PyTorch model with security context."""
         try:
             model_path = Path(model_path)
             self.model_path = model_path
             
             self.logger.info(f"Loading PyTorch model from {model_path}")
             
-            # Load model
-            if model_path.suffix == '.pt' or model_path.suffix == '.pth':
-                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
-                
-                # Handle different save formats
-                if isinstance(checkpoint, nn.Module):
-                    self.model = checkpoint
-                elif isinstance(checkpoint, dict):
-                    if 'model' in checkpoint:
-                        self.model = checkpoint['model']
-                    elif 'state_dict' in checkpoint:
-                        # Need model architecture for state_dict
-                        raise ModelLoadError("State dict found but no model architecture provided")
+            # Use security context for model loading
+            if _pytorch_security:
+                with _pytorch_security.secure_context():
+                    # Load model
+                    if model_path.suffix == '.pt' or model_path.suffix == '.pth':
+                        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                        
+                        # Handle different save formats
+                        if isinstance(checkpoint, nn.Module):
+                            self.model = checkpoint
+                        elif isinstance(checkpoint, dict):
+                            if 'model' in checkpoint:
+                                self.model = checkpoint['model']
+                            elif 'state_dict' in checkpoint:
+                                # Need model architecture for state_dict
+                                raise ModelLoadError("State dict found but no model architecture provided")
+                            else:
+                                # Assume the dict is the state dict
+                                raise ModelLoadError("Model architecture required for state dict")
+                        else:
+                            raise ModelLoadError(f"Unsupported checkpoint format: {type(checkpoint)}")
+                    
+                    elif model_path.suffix == '.torchscript':
+                        self.model = torch.jit.load(model_path, map_location=self.device)
                     else:
-                        # Assume the dict is the state dict
-                        raise ModelLoadError("Model architecture required for state dict")
-                else:
-                    raise ModelLoadError(f"Unsupported checkpoint format: {type(checkpoint)}")
-            
-            elif model_path.suffix == '.torchscript':
-                self.model = torch.jit.load(model_path, map_location=self.device)
-            
+                        raise ModelLoadError(f"Unsupported file extension: {model_path.suffix}")
             else:
-                raise ModelLoadError(f"Unsupported file extension: {model_path.suffix}")
+                # Fallback without security context
+                if model_path.suffix == '.pt' or model_path.suffix == '.pth':
+                    checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                    
+                    # Handle different save formats
+                    if isinstance(checkpoint, nn.Module):
+                        self.model = checkpoint
+                    elif isinstance(checkpoint, dict):
+                        if 'model' in checkpoint:
+                            self.model = checkpoint['model']
+                        elif 'state_dict' in checkpoint:
+                            # Need model architecture for state_dict
+                            raise ModelLoadError("State dict found but no model architecture provided")
+                        else:
+                            # Assume the dict is the state dict
+                            raise ModelLoadError("Model architecture required for state dict")
+                    else:
+                        raise ModelLoadError(f"Unsupported checkpoint format: {type(checkpoint)}")
+                
+                elif model_path.suffix == '.torchscript':
+                    self.model = torch.jit.load(model_path, map_location=self.device)
+                
+                else:
+                    raise ModelLoadError(f"Unsupported file extension: {model_path.suffix}")
             
             # Set metadata
             self.metadata = ModelMetadata(
@@ -528,22 +571,36 @@ class ModelAdapterFactory:
     @staticmethod
     def create_adapter(model_path: Union[str, Path], config: InferenceConfig) -> BaseModel:
         """Create appropriate model adapter based on file extension or model type."""
-        model_path = Path(model_path) if isinstance(model_path, str) else model_path
+        # Handle string identifiers vs file paths
+        if isinstance(model_path, str):
+            path_obj = Path(model_path)
+            if path_obj.exists():
+                # It's a file path
+                model_path = path_obj
+            else:
+                # It's likely a model identifier
+                if ('/' in model_path) or ('-' in model_path and '.' not in model_path):
+                    # Likely a Hugging Face model name
+                    return HuggingFaceModelAdapter(config)
+                else:
+                    # Default to PyTorch for unknown strings
+                    return PyTorchModelAdapter(config)
         
-        # Determine adapter type based on file extension or model name
-        if model_path.suffix in ['.pt', '.pth', '.torchscript']:
-            return PyTorchModelAdapter(config)
-        elif model_path.suffix == '.onnx':
-            return ONNXModelAdapter(config)
-        elif model_path.suffix in ['.trt', '.engine']:
-            return TensorRTModelAdapter(config)
-        elif ('/' in str(model_path) and not model_path.exists()) or \
-             (not model_path.exists() and not model_path.suffix and '-' in str(model_path)):
-            # Likely a Hugging Face model name (contains '/' or has no extension with '-')
-            return HuggingFaceModelAdapter(config)
-        else:
-            # Default to PyTorch
-            return PyTorchModelAdapter(config)
+        # Handle Path objects
+        if isinstance(model_path, Path):
+            # Determine adapter type based on file extension
+            if model_path.suffix in ['.pt', '.pth', '.torchscript']:
+                return PyTorchModelAdapter(config)
+            elif model_path.suffix == '.onnx':
+                return ONNXModelAdapter(config)
+            elif model_path.suffix in ['.trt', '.engine']:
+                return TensorRTModelAdapter(config)
+            else:
+                # Default to PyTorch
+                return PyTorchModelAdapter(config)
+        
+        # Fallback to PyTorch
+        return PyTorchModelAdapter(config)
     
     @staticmethod
     def get_supported_formats() -> List[str]:
@@ -574,11 +631,26 @@ def load_model(model_path: Union[str, Path], config: Optional[InferenceConfig] =
         from ..core.config import get_global_config
         config = get_global_config()
     
-    model_path = Path(model_path) if isinstance(model_path, str) else model_path
-    
-    # Validate model format before proceeding
-    if model_path.exists() and model_path.suffix not in ['.pt', '.pth', '.torchscript', '.onnx', '.trt', '.engine']:
-        raise ValueError(f"Unsupported model format: {model_path.suffix}")
+    # Handle string model identifiers (like HuggingFace model names)
+    if isinstance(model_path, str):
+        # Check if it's a file path
+        path_obj = Path(model_path)
+        if path_obj.exists():
+            # It's an existing file
+            model_path = path_obj
+            # Validate model format
+            if model_path.suffix not in ['.pt', '.pth', '.torchscript', '.onnx', '.trt', '.engine']:
+                raise ValueError(f"Unsupported model format: {model_path.suffix}")
+        else:
+            # It's likely a model identifier (HuggingFace, etc.)
+            # Don't convert to Path object for factory method
+            pass
+    else:
+        # It's already a Path object
+        model_path = model_path
+        # Validate model format if file exists
+        if model_path.exists() and model_path.suffix not in ['.pt', '.pth', '.torchscript', '.onnx', '.trt', '.engine']:
+            raise ValueError(f"Unsupported model format: {model_path.suffix}")
     
     # Create adapter
     try:
