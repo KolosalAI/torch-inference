@@ -47,9 +47,9 @@ class TestTensorFactorizationConfig:
         
         assert config.decomposition_method == "svd"
         assert config.target_compression_ratio == 0.5
-        assert config.conv_rank_ratio == 0.3
-        assert config.linear_rank_ratio == 0.3
-        assert config.enable_fine_tuning == True
+        assert config.conv_rank_ratio == 0.4  # Updated to match new default
+        assert config.linear_rank_ratio == 0.25  # Updated to match new default
+        assert config.enable_fine_tuning == False  # Updated to match new default
         assert config.fine_tune_epochs == 5
         
     def test_custom_config(self):
@@ -196,10 +196,19 @@ class TestTensorFactorizationOptimizer:
         # Apply SVD decomposition
         decomposed_layers = optimizer._svd_decompose_conv(conv_layer, rank)
         
-        assert len(decomposed_layers) == 3  # SVD conv decomposition returns 3 layers
-        assert isinstance(decomposed_layers[0], nn.Conv2d)
-        assert isinstance(decomposed_layers[1], nn.Conv2d)
-        assert isinstance(decomposed_layers[2], nn.Conv2d)
+        # The new implementation uses depthwise separable convolution (2 layers)
+        # for 3x3 convolutions for better performance
+        assert len(decomposed_layers) == 2  # Depthwise separable has 2 layers
+        assert isinstance(decomposed_layers[0], nn.Conv2d)  # Depthwise conv
+        assert isinstance(decomposed_layers[1], nn.Conv2d)  # Pointwise conv
+        
+        # Check that the first layer is depthwise (groups = in_channels)
+        depthwise_conv = decomposed_layers[0]
+        assert depthwise_conv.groups == depthwise_conv.in_channels  # This is depthwise
+        
+        # Check that the second layer is pointwise (1x1 conv)
+        pointwise_conv = decomposed_layers[1]
+        assert pointwise_conv.kernel_size == (1, 1)  # Pointwise is 1x1
     
     def test_svd_decompose_linear(self):
         """Test SVD decomposition for linear layers."""

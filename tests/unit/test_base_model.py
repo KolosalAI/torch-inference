@@ -414,7 +414,7 @@ class TestModelManager:
         model = MockModel(test_config)
         
         manager.register_model("test_model", model)
-        manager.load_model("test_model", "test_path")
+        manager.load_registered_model("test_model", "test_path")
         
         assert model.is_loaded
         assert model.load_called
@@ -485,7 +485,7 @@ class TestModelIntegration:
         manager.register_model("lifecycle_test", model)
         
         # Load model
-        manager.load_model("lifecycle_test", "test_path")
+        manager.load_registered_model("lifecycle_test", "test_path")
         
         # Verify loaded
         loaded_model = manager.get_model("lifecycle_test")
