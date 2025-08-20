@@ -16,8 +16,22 @@ from enum import Enum
 
 from ..core.config import InferenceConfig
 
-
 logger = logging.getLogger(__name__)
+
+# Import security mitigations
+try:
+    from .security import PyTorchSecurityMitigation, ECDSASecurityMitigation
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
+    logger.warning("Security mitigations not available")
+
+# Initialize security if available
+if SECURITY_AVAILABLE:
+    _pytorch_security = PyTorchSecurityMitigation()
+    logger.info("Security mitigations initialized for base models")
+else:
+    _pytorch_security = None
 
 
 @dataclass
@@ -441,12 +455,47 @@ class ModelManager:
         """Get list of loaded models."""
         return [name for name, model in self._models.items() if model.is_loaded]
     
-    def load_model(self, name: str, model_path: Union[str, Path]) -> None:
-        """Load a registered model."""
+    def load_model(self, model_path: Union[str, Path], config: InferenceConfig) -> BaseModel:
+        """Load a model with security mitigations."""
+        # Create appropriate model adapter
+        from ..adapters.model_adapters import ModelAdapterFactory
+        
+        adapter = ModelAdapterFactory.create_adapter(model_path, config)
+        
+        # Register the model in the manager
+        self.register_model(str(model_path), adapter)
+        
+        # Use secure model loading if security is available
+        if SECURITY_AVAILABLE and _pytorch_security:
+            with _pytorch_security.secure_torch_context():
+                adapter.load_model(model_path)
+                adapter.optimize_for_inference()
+                adapter.warmup()
+            self.logger.info(f"Model '{model_path}' loaded with security mitigations")
+        else:
+            adapter.load_model(model_path)
+            adapter.optimize_for_inference()
+            adapter.warmup()
+            self.logger.warning(f"Model '{model_path}' loaded without security mitigations")
+        
+        return adapter
+    
+    def load_registered_model(self, name: str, model_path: Union[str, Path]) -> None:
+        """Load a registered model with security mitigations."""
         model = self.get_model(name)
-        model.load_model(model_path)
-        model.optimize_for_inference()
-        model.warmup()
+        
+        # Use secure model loading if security is available
+        if SECURITY_AVAILABLE and _pytorch_security:
+            with _pytorch_security.secure_torch_context():
+                model.load_model(model_path)
+                model.optimize_for_inference()
+                model.warmup()
+            self.logger.info(f"Model '{name}' loaded with security mitigations")
+        else:
+            model.load_model(model_path)
+            model.optimize_for_inference()
+            model.warmup()
+            self.logger.warning(f"Model '{name}' loaded without security mitigations")
     
     def unload_model(self, name: str) -> None:
         """Unload and cleanup a model."""
