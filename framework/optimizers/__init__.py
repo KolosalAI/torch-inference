@@ -168,6 +168,28 @@ except ImportError as e:
     prune_model_with_masks = None
     _unavailable_optimizers.extend(['MaskBasedStructuredPruning', 'MaskPruningConfig', 'MaskedConv2d', 'MaskedLinear', 'prune_model_with_masks'])
 
+# Structured pruning optimizer (HLRTF-inspired)
+try:
+    from .structured_pruning_optimizer import (
+        StructuredPruningOptimizer,
+        StructuredPruningConfig,
+        ChannelImportanceCalculator,
+        LowRankRegularizer,
+        prune_model
+    )
+    _available_optimizers.extend([
+        "StructuredPruningOptimizer", "StructuredPruningConfig",
+        "ChannelImportanceCalculator", "LowRankRegularizer", "prune_model"
+    ])
+except ImportError as e:
+    logger.warning(f"Could not import structured pruning optimizers: {e}")
+    StructuredPruningOptimizer = None
+    StructuredPruningConfig = None
+    ChannelImportanceCalculator = None
+    LowRankRegularizer = None
+    prune_model = None
+    _unavailable_optimizers.extend(['StructuredPruningOptimizer', 'StructuredPruningConfig', 'ChannelImportanceCalculator', 'LowRankRegularizer', 'prune_model'])
+
 # JIT optimizer
 try:
     from .jit_optimizer import JITOptimizer, jit_compile_model
