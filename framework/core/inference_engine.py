@@ -7,6 +7,7 @@ This module provides a production-ready inference engine with features like:
 - Performance monitoring
 - Memory management
 - Error handling and recovery
+- Security mitigations for safe model operations
 """
 
 import asyncio
@@ -24,8 +25,22 @@ from ..core.base_model import BaseModel
 from ..core.config import InferenceConfig
 from ..utils.monitoring import PerformanceMonitor, MetricsCollector
 
+# Import security mitigations
+try:
+    from .security import PyTorchSecurityMitigation
+    SECURITY_AVAILABLE = True
+except ImportError:
+    SECURITY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# Initialize security for inference engine
+if SECURITY_AVAILABLE:
+    _inference_security = PyTorchSecurityMitigation()
+    logger.info("Security mitigations initialized for inference engine")
+else:
+    _inference_security = None
+    logger.warning("Security mitigations not available for inference engine")
 
 
 @dataclass
@@ -168,6 +183,13 @@ class InferenceEngine:
         self.model = model
         self.config = config or model.config
         self.device = self.model.device
+        
+        # Initialize logger
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        
+        # Initialize security mitigations
+        if _inference_security:
+            self.logger.info("Security mitigations available for inference operations")
         
         # Initialize components
         self.request_queue = RequestQueue(max_size=self.config.batch.queue_size)
@@ -368,20 +390,36 @@ class InferenceEngine:
             self._stats["errors"] += 1
     
     async def _run_single_inference(self, inputs: Any) -> Any:
-        """Run inference on single input."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._executor, self.model.predict, inputs)
+        """Run inference on single input with security context."""
+        if _inference_security:
+            with _inference_security.secure_torch_context():
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(self._executor, self.model.predict, inputs)
+        else:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(self._executor, self.model.predict, inputs)
     
     async def _run_batch_inference(self, inputs: List[Any]) -> List[Any]:
-        """Run batch inference."""
-        # Check if model supports true batch processing
-        if hasattr(self.model, 'predict_batch_internal') and len(inputs) > 1:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(self._executor, self.model.predict_batch_internal, inputs)
+        """Run batch inference with security context."""
+        if _inference_security:
+            with _inference_security.secure_torch_context():
+                # Check if model supports true batch processing
+                if hasattr(self.model, 'predict_batch_internal') and len(inputs) > 1:
+                    loop = asyncio.get_running_loop()
+                    return await loop.run_in_executor(self._executor, self.model.predict_batch_internal, inputs)
+                else:
+                    # Fall back to individual processing
+                    tasks = [self._run_single_inference(inp) for inp in inputs]
+                    return await asyncio.gather(*tasks)
         else:
-            # Fall back to individual processing
-            tasks = [self._run_single_inference(inp) for inp in inputs]
-            return await asyncio.gather(*tasks)
+            # Check if model supports true batch processing
+            if hasattr(self.model, 'predict_batch_internal') and len(inputs) > 1:
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(self._executor, self.model.predict_batch_internal, inputs)
+            else:
+                # Fall back to individual processing
+                tasks = [self._run_single_inference(inp) for inp in inputs]
+                return await asyncio.gather(*tasks)
     
     def _update_metrics(self, batch_size: int, processing_time: float) -> None:
         """Update performance metrics."""

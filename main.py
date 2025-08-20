@@ -8,6 +8,7 @@ enabling remote inference requests with features like:
 - Performance monitoring
 - Health checks
 - Model management
+- Security mitigations for known vulnerabilities
 """
 
 import os
@@ -34,6 +35,46 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 # Insert the project root at the beginning of sys.path if it's not already there.
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
+# Import and initialize security mitigations from framework
+try:
+    from framework.core.security import (
+        initialize_security_mitigations,
+        PyTorchSecurityMitigation,
+        ECDSASecurityMitigation
+    )
+    
+    # Initialize security mitigations immediately
+    pytorch_security, ecdsa_security = initialize_security_mitigations()
+    
+    print("Security mitigations initialized successfully from framework")
+    
+except Exception as e:
+    print(f"Warning: Failed to initialize security mitigations: {e}")
+    # Create dummy security mitigation for fallback
+    class DummySecurityMitigation:
+        def secure_context(self):
+            import contextlib
+            return contextlib.nullcontext()
+        
+        def secure_timing_context(self):
+            import contextlib
+            return contextlib.nullcontext()
+        
+        def cleanup_resources(self):
+            pass
+        
+        @staticmethod
+        def secure_model_load(model_path, map_location=None):
+            import torch
+            return torch.load(model_path, map_location=map_location, weights_only=True)
+        
+        @staticmethod
+        def secure_tensor_operation(operation_func, *args, **kwargs):
+            return operation_func(*args, **kwargs)
+    
+    pytorch_security = DummySecurityMitigation()
+    ecdsa_security = DummySecurityMitigation()
 
 # Import framework components
 from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
