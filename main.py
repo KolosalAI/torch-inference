@@ -81,6 +81,7 @@ from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, Pe
 from framework.core.config_manager import get_config_manager, ConfigManager
 from framework.core.base_model import BaseModel, ModelManager, get_model_manager
 from framework.core.inference_engine import InferenceEngine, create_inference_engine
+from framework.core.gpu_manager import GPUManager, auto_configure_device
 from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
 
 # Initialize configuration manager
@@ -113,6 +114,11 @@ def print_api_endpoints():
         ("GET", "/models/cache/info", "Get model cache information"),
         ("POST", "/examples/simple", "Simple prediction example"),
         ("POST", "/examples/batch", "Batch prediction example"),
+        # GPU detection endpoints
+        ("GET", "/gpu/detect", "Detect available GPUs"),
+        ("GET", "/gpu/best", "Get best GPU for inference"),
+        ("GET", "/gpu/config", "Get GPU-optimized configuration"),
+        ("GET", "/gpu/report", "Get comprehensive GPU report"),
         # New autoscaling endpoints
         ("GET", "/autoscaler/stats", "Get autoscaler statistics"),
         ("GET", "/autoscaler/health", "Get autoscaler health status"),
@@ -847,6 +853,224 @@ async def batch_example():
         
     except Exception as e:
         logger.error(f"[ENDPOINT] Batch example failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# GPU Detection endpoints
+@app.get("/gpu/detect")
+async def detect_gpus_endpoint(include_benchmarks: bool = False):
+    """Detect available GPUs."""
+    logger.info(f"[ENDPOINT] GPU detection requested - Include benchmarks: {include_benchmarks}")
+    
+    try:
+        gpu_manager = GPUManager()
+        gpus, _ = gpu_manager.detect_and_configure(force_refresh=True)
+        
+        gpu_list = []
+        for gpu in gpus:
+            gpu_info = {
+                "id": gpu.id,
+                "name": gpu.name,
+                "vendor": gpu.vendor.value,
+                "architecture": gpu.architecture.value,
+                "device_id": gpu.device_id,
+                "memory_mb": gpu.memory.total_mb,
+                "available_memory_mb": gpu.memory.available_mb,
+                "pytorch_support": gpu.pytorch_support,
+                "suitable_for_inference": gpu.is_suitable_for_inference(),
+                "recommended_precisions": gpu.get_recommended_precision(),
+                "supported_accelerators": [acc.value for acc in gpu.supported_accelerators]
+            }
+            
+            if gpu.compute_capability:
+                gpu_info["compute_capability"] = {
+                    "major": gpu.compute_capability.major,
+                    "minor": gpu.compute_capability.minor,
+                    "version": gpu.compute_capability.version,
+                    "supports_fp16": gpu.compute_capability.supports_fp16,
+                    "supports_int8": gpu.compute_capability.supports_int8,
+                    "supports_tensor_cores": gpu.compute_capability.supports_tensor_cores,
+                    "supports_tf32": gpu.compute_capability.supports_tf32
+                }
+            
+            if include_benchmarks and gpu.benchmark_results:
+                gpu_info["benchmark_results"] = gpu.benchmark_results
+            
+            gpu_list.append(gpu_info)
+        
+        logger.info(f"[ENDPOINT] GPU detection completed - Found {len(gpus)} GPU(s)")
+        
+        return {
+            "gpus": gpu_list,
+            "total_gpus": len(gpus),
+            "suitable_gpus": sum(1 for gpu in gpus if gpu.is_suitable_for_inference()),
+            "include_benchmarks": include_benchmarks
+        }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] GPU detection failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/gpu/best")
+async def get_best_gpu_endpoint():
+    """Get the best GPU for inference."""
+    logger.info("[ENDPOINT] Best GPU request")
+    
+    try:
+        gpu_manager = GPUManager()
+        best_gpu = gpu_manager.get_best_gpu_info()
+        
+        if not best_gpu:
+            logger.info("[ENDPOINT] No suitable GPU found")
+            return {
+                "best_gpu": None,
+                "message": "No suitable GPU found for inference"
+            }
+        
+        gpu_info = {
+            "id": best_gpu.id,
+            "name": best_gpu.name,
+            "vendor": best_gpu.vendor.value,
+            "architecture": best_gpu.architecture.value,
+            "device_id": best_gpu.device_id,
+            "memory_mb": best_gpu.memory.total_mb,
+            "available_memory_mb": best_gpu.memory.available_mb,
+            "pytorch_support": best_gpu.pytorch_support,
+            "recommended_precisions": best_gpu.get_recommended_precision(),
+            "estimated_max_batch_size": best_gpu.estimate_max_batch_size()
+        }
+        
+        if best_gpu.compute_capability:
+            gpu_info["compute_capability"] = {
+                "version": best_gpu.compute_capability.version,
+                "supports_tensor_cores": best_gpu.compute_capability.supports_tensor_cores,
+                "supports_fp16": best_gpu.compute_capability.supports_fp16
+            }
+        
+        logger.info(f"[ENDPOINT] Best GPU: {best_gpu.name}")
+        
+        return {
+            "best_gpu": gpu_info,
+            "message": f"Best GPU for inference: {best_gpu.name}"
+        }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Best GPU detection failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/gpu/config")
+async def get_gpu_config_endpoint():
+    """Get GPU-optimized configuration."""
+    logger.info("[ENDPOINT] GPU configuration request")
+    
+    try:
+        gpu_manager = GPUManager()
+        gpus, device_config = gpu_manager.detect_and_configure()
+        
+        memory_rec = gpu_manager.get_memory_recommendations()
+        optimization_rec = gpu_manager.get_optimization_recommendations()
+        
+        config_info = {
+            "device_config": {
+                "device_type": device_config.device_type.value,
+                "device_id": device_config.device_id,
+                "use_fp16": device_config.use_fp16,
+                "use_int8": device_config.use_int8,
+                "use_tensorrt": device_config.use_tensorrt,
+                "use_torch_compile": device_config.use_torch_compile,
+                "compile_mode": device_config.compile_mode
+            },
+            "memory_recommendations": memory_rec,
+            "optimization_recommendations": optimization_rec,
+            "pytorch_device": str(device_config.get_torch_device())
+        }
+        
+        logger.info(f"[ENDPOINT] GPU configuration generated for: {device_config.device_type.value}")
+        
+        return config_info
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] GPU configuration failed with error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/gpu/report")
+async def get_gpu_report_endpoint(format: str = "json"):
+    """Get comprehensive GPU report."""
+    logger.info(f"[ENDPOINT] GPU report requested - Format: {format}")
+    
+    try:
+        gpu_manager = GPUManager()
+        
+        if format.lower() == "text":
+            report = gpu_manager.generate_full_report()
+            return Response(content=report, media_type="text/plain")
+        else:
+            # JSON format
+            gpus, device_config = gpu_manager.detect_and_configure()
+            memory_rec = gpu_manager.get_memory_recommendations()
+            optimization_rec = gpu_manager.get_optimization_recommendations()
+            
+            gpu_list = []
+            for gpu in gpus:
+                gpu_info = {
+                    "id": gpu.id,
+                    "name": gpu.name,
+                    "vendor": gpu.vendor.value,
+                    "architecture": gpu.architecture.value,
+                    "device_id": gpu.device_id,
+                    "memory_mb": gpu.memory.total_mb,
+                    "available_memory_mb": gpu.memory.available_mb,
+                    "pytorch_support": gpu.pytorch_support,
+                    "suitable_for_inference": gpu.is_suitable_for_inference(),
+                    "recommended_precisions": gpu.get_recommended_precision(),
+                    "estimated_max_batch_size": gpu.estimate_max_batch_size()
+                }
+                
+                if gpu.compute_capability:
+                    gpu_info["compute_capability"] = {
+                        "major": gpu.compute_capability.major,
+                        "minor": gpu.compute_capability.minor,
+                        "version": gpu.compute_capability.version,
+                        "supports_fp16": gpu.compute_capability.supports_fp16,
+                        "supports_int8": gpu.compute_capability.supports_int8,
+                        "supports_tensor_cores": gpu.compute_capability.supports_tensor_cores
+                    }
+                
+                if gpu.benchmark_results:
+                    gpu_info["benchmark_results"] = gpu.benchmark_results
+                
+                gpu_list.append(gpu_info)
+            
+            report = {
+                "summary": {
+                    "total_gpus": len(gpus),
+                    "suitable_gpus": sum(1 for gpu in gpus if gpu.is_suitable_for_inference()),
+                    "best_gpu": gpu_manager.get_best_gpu_info().name if gpu_manager.get_best_gpu_info() else None
+                },
+                "gpus": gpu_list,
+                "device_config": {
+                    "device_type": device_config.device_type.value,
+                    "device_id": device_config.device_id,
+                    "use_fp16": device_config.use_fp16,
+                    "use_int8": device_config.use_int8,
+                    "use_tensorrt": device_config.use_tensorrt,
+                    "use_torch_compile": device_config.use_torch_compile
+                },
+                "recommendations": {
+                    "memory": memory_rec,
+                    "optimization": optimization_rec
+                }
+            }
+            
+            logger.info(f"[ENDPOINT] GPU report generated - {len(gpus)} GPU(s)")
+            
+            return report
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] GPU report failed with error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
