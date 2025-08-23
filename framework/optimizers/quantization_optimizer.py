@@ -63,18 +63,28 @@ class QuantizationOptimizer:
     
     def _select_backend(self) -> str:
         """Select the best available quantization backend."""
-        if torch.backends.quantized.engine == 'qnnpack':
-            return 'qnnpack'
-        elif torch.backends.quantized.engine == 'fbgemm':
+        try:
+            current_engine = torch.backends.quantized.engine
+            # Check if current engine is already supported
+            if current_engine in ['fbgemm', 'qnnpack']:
+                return current_engine
+        except:
+            pass
+        
+        # Try to set a supported backend
+        try:
+            # On Windows/CPU, prefer fbgemm which is more widely supported
+            torch.backends.quantized.engine = 'fbgemm'
             return 'fbgemm'
-        else:
-            # Set a default backend
-            if torch.cuda.is_available():
+        except RuntimeError:
+            try:
+                # Fallback to qnnpack if available
                 torch.backends.quantized.engine = 'qnnpack'
                 return 'qnnpack'
-            else:
-                torch.backends.quantized.engine = 'fbgemm'
-                return 'fbgemm'
+            except RuntimeError:
+                # If no backend is available, log warning and use current
+                self.logger.warning("No quantization backend available, using default")
+                return 'none'
     
     def optimize(self, 
                 model: nn.Module, 
@@ -91,6 +101,11 @@ class QuantizationOptimizer:
         Returns:
             Quantized model
         """
+        # Skip quantization if no backend is available
+        if self.backend == 'none':
+            self.logger.warning("Quantization backend not available, returning original model")
+            return model
+            
         if quantization_type == "dynamic":
             return self.quantize_dynamic(model, **kwargs)
         elif quantization_type == "static":

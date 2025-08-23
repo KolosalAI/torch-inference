@@ -733,8 +733,13 @@ class TestErrorRecovery:
         
         # Final model should still work
         try:
-            original_output = integration_model(sample_input)
-            final_output = current_model(sample_input)
+            # Ensure inputs are on the same device as the final model
+            model_device = next(current_model.parameters()).device if len(list(current_model.parameters())) > 0 else device
+            test_input = sample_input.to(model_device)
+            original_input = sample_input.to(next(integration_model.parameters()).device)
+            
+            original_output = integration_model(original_input)
+            final_output = current_model(test_input)
             
             assert final_output.shape == original_output.shape
             print(f"✓ Partial optimization successful: {optimizations_applied}")

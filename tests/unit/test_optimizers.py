@@ -103,7 +103,8 @@ class TestTensorRTOptimizer:
         optimizer = TensorRTOptimizer()
         assert optimizer is not None
     
-    def test_tensorrt_optimizer_unavailable(self):
+    @patch('framework.optimizers.tensorrt_optimizer.torch.cuda.is_available', return_value=False)
+    def test_tensorrt_optimizer_unavailable(self, mock_cuda_available):
         """Test TensorRT optimizer when CUDA/TensorRT unavailable."""
         optimizer = TensorRTOptimizer()
         
@@ -133,7 +134,8 @@ class TestTensorRTOptimizer:
         # Test availability with mock
         assert optimizer.is_available()
 
-    def test_tensorrt_optimization_fallback(self):
+    @patch('framework.optimizers.tensorrt_optimizer.torch.cuda.is_available', return_value=False)
+    def test_tensorrt_optimization_fallback(self, mock_cuda_available):
         """Test TensorRT optimization fallback when not available."""
         optimizer = TensorRTOptimizer()
         

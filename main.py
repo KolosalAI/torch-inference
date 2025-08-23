@@ -29,6 +29,47 @@ import torch
 import numpy as np
 from pathlib import Path
 
+# Print GPU information at startup
+print("\n" + "="*60)
+print("  GPU DETECTION AND SYSTEM INFO")
+print("="*60)
+
+if torch.cuda.is_available():
+    current_device = torch.cuda.current_device()
+    gpu_name = torch.cuda.get_device_name(current_device)
+    gpu_count = torch.cuda.device_count()
+    memory_total = torch.cuda.get_device_properties(current_device).total_memory / (1024**3)  # GB
+    memory_allocated = torch.cuda.memory_allocated(current_device) / (1024**3)  # GB
+    memory_reserved = torch.cuda.memory_reserved(current_device) / (1024**3)  # GB
+    
+    print(f"✓ CUDA Available: Yes")
+    print(f"  Current GPU: {gpu_name} (Device {current_device})")
+    print(f"  Total GPUs: {gpu_count}")
+    print(f"  GPU Memory: {memory_allocated:.2f}GB / {memory_total:.2f}GB (Reserved: {memory_reserved:.2f}GB)")
+    print(f"  CUDA Version: {torch.version.cuda}")
+    print(f"  PyTorch Version: {torch.__version__}")
+    
+    # List all available GPUs
+    if gpu_count > 1:
+        print(f"  Available GPUs:")
+        for i in range(gpu_count):
+            gpu_name_i = torch.cuda.get_device_name(i)
+            memory_total_i = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+            print(f"    GPU {i}: {gpu_name_i} ({memory_total_i:.1f}GB)")
+else:
+    print(f"✗ CUDA Available: No")
+    # Check for other device types
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        print(f"✓ Apple MPS Available: Yes")
+        print(f"  Running on Apple Silicon GPU")
+    else:
+        print(f"✗ Apple MPS Available: No")
+    
+    print(f"  Running on CPU")
+    print(f"  PyTorch Version: {torch.__version__}")
+
+print("="*60 + "\n")
+
 # Get the absolute path of the current file (main.py)
 project_root = os.path.dirname(os.path.abspath(__file__))
 
@@ -101,8 +142,7 @@ def print_api_endpoints():
     """Print all available API endpoints at startup"""
     endpoints = [
         ("GET", "/", "Root endpoint - API information"),
-        ("POST", "/predict", "Single prediction endpoint"),
-        ("POST", "/predict/batch", "Batch prediction endpoint"),
+        ("POST", "/{model_name}/predict", "Model-specific prediction endpoint with inflight batching"),
         ("GET", "/health", "Health check endpoint"),
         ("GET", "/stats", "Engine statistics endpoint"),
         ("GET", "/config", "Configuration information endpoint"),
@@ -112,8 +152,6 @@ def print_api_endpoints():
         ("GET", "/models/download/{model_name}/info", "Get download info for a model"),
         ("DELETE", "/models/download/{model_name}", "Remove model from cache"),
         ("GET", "/models/cache/info", "Get model cache information"),
-        ("POST", "/examples/simple", "Simple prediction example"),
-        ("POST", "/examples/batch", "Batch prediction example"),
         # GPU detection endpoints
         ("GET", "/gpu/detect", "Detect available GPUs"),
         ("GET", "/gpu/best", "Get best GPU for inference"),
@@ -143,32 +181,20 @@ def print_api_endpoints():
 
 # Pydantic models for API
 class InferenceRequest(PydanticBaseModel):
-    """Request model for inference."""
-    inputs: Any = Field(..., description="Input data for inference")
+    """Request model for model-specific inference with inflight batching support."""
+    inputs: Union[Any, List[Any]] = Field(..., description="Input data for inference (single item or list for batch)")
     priority: int = Field(default=0, description="Request priority (higher = processed first)")
     timeout: Optional[float] = Field(default=None, description="Request timeout in seconds")
-
-class BatchInferenceRequest(PydanticBaseModel):
-    """Request model for batch inference."""
-    inputs: List[Any] = Field(..., description="List of input data for batch inference")
-    priority: int = Field(default=0, description="Request priority (higher = processed first)")
-    timeout: Optional[float] = Field(default=None, description="Request timeout in seconds")
+    enable_batching: bool = Field(default=True, description="Enable inflight batching optimization")
 
 class InferenceResponse(PydanticBaseModel):
     """Response model for inference."""
     success: bool
-    result: Any = None
+    result: Union[Any, List[Any]] = None
     error: Optional[str] = None
     processing_time: Optional[float] = None
     model_info: Optional[Dict[str, Any]] = None
-
-class BatchInferenceResponse(PydanticBaseModel):
-    """Response model for batch inference."""
-    success: bool
-    results: List[Any] = []
-    error: Optional[str] = None
-    processing_time: Optional[float] = None
-    batch_size: int = 0
+    batch_info: Optional[Dict[str, Any]] = None
 
 class HealthResponse(PydanticBaseModel):
     """Health check response."""
@@ -204,6 +230,17 @@ class ExampleModel(BaseModel):
         self.model.eval()
         self._is_loaded = True
         self.logger.info(f"Loaded example model on device: {self.device}")
+        
+        # Log device information for debugging
+        if self.device.type == 'cuda':
+            gpu_name = torch.cuda.get_device_name(self.device)
+            memory_allocated = torch.cuda.memory_allocated(self.device) / (1024**2)  # MB
+            memory_total = torch.cuda.get_device_properties(self.device).total_memory / (1024**2)  # MB
+            self.logger.info(f"GPU: {gpu_name}, Memory: {memory_allocated:.1f}/{memory_total:.1f} MB")
+        elif self.device.type == 'mps':
+            self.logger.info("Using Apple Metal Performance Shaders (MPS)")
+        else:
+            self.logger.info("Using CPU for inference")
     
     def preprocess(self, inputs: Any) -> torch.Tensor:
         """Preprocess inputs."""
@@ -331,14 +368,48 @@ async def initialize_inference_engine():
         # Get configuration from config manager
         config = config_manager.get_inference_config()
         
-        logger.info(f"Initializing inference engine with configuration:")
+        # Apply performance optimizations
+        from framework.optimizers.performance_optimizer import optimize_for_inference
+        
+        logger.info(f"Initializing optimized inference engine with configuration:")
         logger.info(f"  Device: {config.device.device_type.value}")
+        logger.info(f"  Device ID: {config.device.device_id}")
+        logger.info(f"  Torch device: {config.device.get_torch_device()}")
         logger.info(f"  Batch size: {config.batch.batch_size}")
         logger.info(f"  FP16: {config.device.use_fp16}")
+        logger.info(f"  TensorRT: {config.device.use_tensorrt}")
+        logger.info(f"  Torch compile: {config.device.use_torch_compile}")
+        
+        # Log CUDA availability and GPU info if available
+        if torch.cuda.is_available():
+            logger.info(f"CUDA available: True")
+            logger.info(f"CUDA devices: {torch.cuda.device_count()}")
+            if torch.cuda.device_count() > 0:
+                current_device = torch.cuda.current_device()
+                gpu_name = torch.cuda.get_device_name(current_device)
+                memory_total = torch.cuda.get_device_properties(current_device).total_memory / (1024**3)  # GB
+                logger.info(f"Current GPU: {gpu_name} ({memory_total:.1f} GB)")
+        else:
+            logger.info("CUDA available: False")
+        
+        # Check MPS availability
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logger.info("Apple MPS available: True")
         
         # Create and load example model
         example_model = ExampleModel(config)
         example_model.load_model("example")  # Dummy path
+        
+        # Apply performance optimizations to the model
+        try:
+            optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
+            example_model.model = optimized_model
+            example_model.device = optimized_device_config.get_torch_device()
+            config.device = optimized_device_config
+            logger.info("Performance optimizations applied successfully")
+        except Exception as e:
+            logger.warning(f"Performance optimization failed, using default: {e}")
+        
         example_model.optimize_for_inference()
         
         # Register model
@@ -365,12 +436,38 @@ async def initialize_inference_engine():
         autoscaler = Autoscaler(autoscaler_config, model_manager)
         await autoscaler.start()
         
-        # Create inference engine (fallback for direct requests)
-        inference_engine = create_inference_engine(example_model, config)
+        # Create ultra-fast inference engine for optimal performance
+        try:
+            from framework.core.ultra_fast_engine import create_ultra_fast_inference_engine
+            inference_engine = create_ultra_fast_inference_engine(example_model, config)
+            logger.info("Using UltraFastInferenceEngine for optimal performance")
+        except Exception as e:
+            logger.warning(f"Failed to create ultra-fast inference engine, trying fast engine: {e}")
+            try:
+                from framework.core.fast_inference_engine import create_fast_inference_engine
+                inference_engine = create_fast_inference_engine(example_model, config)
+                logger.info("Using FastInferenceEngine as fallback")
+            except Exception as e2:
+                logger.warning(f"Failed to create fast inference engine, using standard: {e2}")
+                inference_engine = create_inference_engine(example_model, config)
+        
         await inference_engine.start()
         
-        # Warmup
-        example_model.warmup(config.performance.warmup_iterations)
+        # Enhanced warmup with different batch sizes
+        logger.info("Performing enhanced warmup for stable performance...")
+        example_model.warmup(config.performance.warmup_iterations * 2)  # Double warmup iterations
+        
+        # Additional warmup for different batch sizes
+        with torch.no_grad():
+            for batch_size in [1, 2, 4, 8]:
+                if batch_size <= config.batch.max_batch_size:
+                    try:
+                        dummy_input = torch.randn(batch_size, 10, device=example_model.device)
+                        for _ in range(3):
+                            _ = example_model.model(dummy_input)
+                        logger.debug(f"Warmup completed for batch size: {batch_size}")
+                    except Exception as e:
+                        logger.debug(f"Warmup failed for batch size {batch_size}: {e}")
         
         logger.info("Inference engine and autoscaler initialized successfully")
         
@@ -426,90 +523,168 @@ async def root():
 
 @app.post("/predict")
 async def predict(request: InferenceRequest) -> InferenceResponse:
-    """Single prediction endpoint with autoscaling support."""
-    logger.info(f"[ENDPOINT] Single prediction requested - Priority: {request.priority}, Timeout: {request.timeout}")
+    """
+    General prediction endpoint using default model.
+    
+    Performs inference using the default 'example' model.
+    """
+    logger.info("[ENDPOINT] General predict endpoint accessed")
+    
+    # Use the existing predict_model function with default model
+    return await predict_model("example", request)
+
+@app.post("/predict/batch")
+async def predict_batch(request: InferenceRequest) -> InferenceResponse:
+    """
+    Batch prediction endpoint.
+    
+    Optimized for batch processing with multiple inputs.
+    """
+    logger.info("[ENDPOINT] Batch predict endpoint accessed")
+    
+    # Ensure inputs is a list for batch processing
+    if not isinstance(request.inputs, list):
+        request.inputs = [request.inputs]
+    
+    # Use the existing predict_model function with default model
+    return await predict_model("example", request)
+
+@app.post("/{model_name}/predict")
+async def predict_model(model_name: str, request: InferenceRequest) -> InferenceResponse:
+    """
+    Ultra-optimized model-specific prediction endpoint.
+    
+    Optimized for:
+    - Ultra-low latency (<600ms target)
+    - High concurrent request throughput
+    - Minimal processing overhead
+    - Robust error handling
+    """
+    # Determine if this is a batch request or single request
+    is_batch_input = isinstance(request.inputs, list) and len(request.inputs) > 1
+    input_count = len(request.inputs) if isinstance(request.inputs, list) else 1
+    
+    logger.debug(f"[ENDPOINT] Optimized prediction - Model: {model_name}, "
+                f"Type: {'batch' if is_batch_input else 'single'}, Count: {input_count}")
+    
+    # Check if model exists or use default
+    if model_name not in model_manager.list_models():
+        if model_name != "example":
+            logger.debug(f"[ENDPOINT] Model '{model_name}' not found, using 'example'")
+            model_name = "example"
     
     if not autoscaler and not inference_engine:
-        logger.error("[ENDPOINT] Prediction failed - Neither autoscaler nor inference engine available")
+        logger.error("[ENDPOINT] No inference services available")
         raise HTTPException(status_code=503, detail="Inference services not available")
     
     try:
-        start_time = time.time()
+        start_time = time.perf_counter()
         
-        logger.debug(f"[ENDPOINT] Processing prediction with inputs type: {type(request.inputs)}")
+        # Optimized request handling based on type
+        if is_batch_input and len(request.inputs) <= 8:  # Small batches - process as batch
+            logger.debug(f"[ENDPOINT] Processing small batch ({input_count} items)")
+            
+            if autoscaler:
+                # Process batch through autoscaler
+                tasks = [autoscaler.predict(model_name, input_item, priority=request.priority, timeout=request.timeout)
+                        for input_item in request.inputs]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Handle any exceptions in results
+                final_results = []
+                for result in results:
+                    if isinstance(result, Exception):
+                        final_results.append({"error": str(result)})
+                    else:
+                        final_results.append(result)
+                result = final_results
+            else:
+                # Use inference engine batch processing
+                result = await inference_engine.predict_batch(
+                    inputs_list=request.inputs,
+                    priority=request.priority,
+                    timeout=request.timeout or 1.0
+                )
         
-        # Try autoscaler first, fallback to direct engine
-        if autoscaler:
-            result = await autoscaler.predict("example", request.inputs, priority=request.priority, timeout=request.timeout)
-        else:
-            result = await inference_engine.predict(
-                inputs=request.inputs,
-                priority=request.priority,
-                timeout=request.timeout
-            )
+        elif is_batch_input:  # Large batches - process concurrently
+            logger.debug(f"[ENDPOINT] Processing large batch ({input_count} items) concurrently")
+            
+            # Split into smaller chunks for better performance
+            chunk_size = 4
+            chunks = [request.inputs[i:i + chunk_size] for i in range(0, len(request.inputs), chunk_size)]
+            
+            # Process chunks concurrently
+            chunk_tasks = []
+            for chunk in chunks:
+                if autoscaler:
+                    task_batch = [autoscaler.predict(model_name, item, priority=request.priority, timeout=request.timeout)
+                                 for item in chunk]
+                    chunk_tasks.append(asyncio.gather(*task_batch, return_exceptions=True))
+                else:
+                    chunk_tasks.append(inference_engine.predict_batch(chunk, request.priority, request.timeout or 1.0))
+            
+            # Gather all chunk results
+            chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
+            
+            # Flatten results
+            result = []
+            for chunk_result in chunk_results:
+                if isinstance(chunk_result, Exception):
+                    result.extend([{"error": str(chunk_result)}] * chunk_size)
+                else:
+                    result.extend(chunk_result)
         
-        processing_time = time.time() - start_time
+        else:  # Single input - fastest path
+            logger.debug(f"[ENDPOINT] Processing single input (fastest path)")
+            
+            if autoscaler:
+                result = await autoscaler.predict(model_name, request.inputs, priority=request.priority, timeout=request.timeout)
+            else:
+                result = await inference_engine.predict(
+                    inputs=request.inputs,
+                    priority=request.priority,
+                    timeout=request.timeout or 1.0
+                )
         
-        logger.info(f"[ENDPOINT] Prediction completed successfully - Processing time: {processing_time:.3f}s")
+        processing_time = time.perf_counter() - start_time
         
-        response = InferenceResponse(
+        logger.debug(f"[ENDPOINT] Prediction completed - Model: {model_name}, "
+                   f"Type: {'batch' if is_batch_input else 'single'}, "
+                   f"Time: {processing_time*1000:.1f}ms")
+        
+        return InferenceResponse(
             success=True,
             result=result,
             processing_time=processing_time,
-            model_info={"model": "example", "device": str(inference_engine.device) if inference_engine else "autoscaler"}
+            model_info={
+                "model": model_name, 
+                "device": str(inference_engine.device) if inference_engine else "autoscaler",
+                "input_type": "batch" if is_batch_input else "single",
+                "input_count": input_count,
+                "processing_path": "optimized"
+            },
+            batch_info={
+                "inflight_batching_enabled": request.enable_batching,
+                "processed_as_batch": is_batch_input,
+                "concurrent_optimization": is_batch_input and input_count > 8
+            }
         )
         
-        logger.debug(f"[ENDPOINT] Prediction response generated - Success: {response.success}")
-        return response
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Prediction failed with error: {e}")
+    except asyncio.TimeoutError:
+        logger.warning(f"[ENDPOINT] Prediction timeout for model {model_name}")
         return InferenceResponse(
             success=False,
-            error=str(e)
+            error="Request timed out",
+            model_info={"model": model_name},
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else 0
         )
-
-@app.post("/predict/batch")
-async def predict_batch(request: BatchInferenceRequest) -> BatchInferenceResponse:
-    """Batch prediction endpoint."""
-    batch_size = len(request.inputs)
-    logger.info(f"[ENDPOINT] Batch prediction requested - Batch size: {batch_size}, Priority: {request.priority}, Timeout: {request.timeout}")
-    
-    if not inference_engine:
-        logger.error("[ENDPOINT] Batch prediction failed - Inference engine not available")
-        raise HTTPException(status_code=503, detail="Inference engine not available")
-    
-    try:
-        start_time = time.time()
-        
-        logger.debug(f"[ENDPOINT] Processing batch prediction with {batch_size} inputs")
-        
-        results = await inference_engine.predict_batch(
-            inputs_list=request.inputs,
-            priority=request.priority,
-            timeout=request.timeout
-        )
-        
-        processing_time = time.time() - start_time
-        
-        logger.info(f"[ENDPOINT] Batch prediction completed successfully - Batch size: {batch_size}, Processing time: {processing_time:.3f}s")
-        
-        response = BatchInferenceResponse(
-            success=True,
-            results=results,
-            processing_time=processing_time,
-            batch_size=batch_size
-        )
-        
-        logger.debug(f"[ENDPOINT] Batch prediction response generated - Success: {response.success}, Results count: {len(results)}")
-        return response
-        
     except Exception as e:
-        logger.error(f"[ENDPOINT] Batch prediction failed with error: {e}")
-        return BatchInferenceResponse(
+        logger.error(f"[ENDPOINT] Prediction failed for model {model_name}: {e}")
+        return InferenceResponse(
             success=False,
             error=str(e),
-            batch_size=batch_size
+            model_info={"model": model_name},
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else 0
         )
 
 @app.get("/health")
@@ -801,60 +976,6 @@ async def get_cache_info():
     except Exception as e:
         logger.error(f"[ENDPOINT] Cache info retrieval failed with error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-# Example usage endpoints
-@app.post("/examples/simple")
-async def simple_example(data: Dict[str, Any]):
-    """Simple example endpoint for testing."""
-    input_value = data.get("input", 42)
-    logger.info(f"[ENDPOINT] Simple example requested with input: {input_value}")
-    
-    try:
-        logger.debug("[ENDPOINT] Processing simple example prediction")
-        
-        request = InferenceRequest(inputs=input_value)
-        response = await predict(request)
-        
-        logger.info(f"[ENDPOINT] Simple example completed - Success: {response.success}")
-        
-        result = {
-            "example": "simple_prediction",
-            "input": input_value,
-            "response": response
-        }
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Simple example failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/examples/batch")
-async def batch_example():
-    """Batch example endpoint for testing."""
-    example_inputs = [1, 2, 3, 4, 5]
-    logger.info(f"[ENDPOINT] Batch example requested with {len(example_inputs)} inputs")
-    
-    try:
-        logger.debug(f"[ENDPOINT] Processing batch example with inputs: {example_inputs}")
-        
-        request = BatchInferenceRequest(inputs=example_inputs)
-        response = await predict_batch(request)
-        
-        logger.info(f"[ENDPOINT] Batch example completed - Success: {response.success}")
-        
-        result = {
-            "example": "batch_prediction",
-            "input_count": len(example_inputs),
-            "response": response
-        }
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Batch example failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # GPU Detection endpoints
 @app.get("/gpu/detect")
