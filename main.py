@@ -245,10 +245,14 @@ class ExampleModel(BaseModel):
     def preprocess(self, inputs: Any) -> torch.Tensor:
         """Preprocess inputs."""
         if isinstance(inputs, list) and all(isinstance(x, (int, float)) for x in inputs):
-            # List of numbers
-            tensor_input = torch.tensor(inputs, dtype=torch.float32)
-            if tensor_input.dim() == 1:
-                tensor_input = tensor_input.unsqueeze(0)
+            # List of numbers - pad or truncate to size 10
+            input_list = list(inputs)
+            if len(input_list) > 10:
+                input_list = input_list[:10]
+            elif len(input_list) < 10:
+                input_list = input_list + [0.0] * (10 - len(input_list))
+            
+            tensor_input = torch.tensor(input_list, dtype=torch.float32).unsqueeze(0)
             return tensor_input.to(self.device)
         elif isinstance(inputs, (int, float)):
             # Single number, pad to size 10
