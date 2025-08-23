@@ -218,8 +218,8 @@ class AdvancedMemoryPool:
         with self.lock:
             self.allocated_blocks.append(memory_block)
             
-        # Use existing get_tensor method
-        tensor = self.get_tensor(shape, dtype)
+        # Use existing get_tensor method with device parameter
+        tensor = self.get_tensor(shape, dtype, device)
         
         self.allocated_count += 1
         return tensor
@@ -402,17 +402,21 @@ class AdvancedMemoryPool:
         else:
             return "xlarge"
     
-    def get_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    def get_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype = torch.float32, device: torch.device = None) -> torch.Tensor:
         """
         Get a tensor from the pool with fragmentation prevention.
         
         Args:
             shape: Tensor shape
             dtype: Tensor data type
+            device: Target device (optional)
             
         Returns:
             Tensor from pool or newly allocated
         """
+        if device is None:
+            device = self.device
+            
         pool_key = (shape, dtype)
         size_bucket = self._get_size_bucket(shape)
         
@@ -423,6 +427,9 @@ class AdvancedMemoryPool:
                 tensor = pool.popleft()
                 self.reuse_count += 1
                 tensor.zero_()
+                # Move to correct device if needed
+                if tensor.device != device:
+                    tensor = tensor.to(device)
                 return tensor
             
             # Try size bucket for similar tensors
@@ -440,12 +447,15 @@ class AdvancedMemoryPool:
                                 reshaped = candidate_tensor.view(shape)
                                 self.reuse_count += 1
                                 reshaped.zero_()
+                                # Move to correct device if needed
+                                if reshaped.device != device:
+                                    reshaped = reshaped.to(device)
                                 return reshaped
                             except RuntimeError:
                                 pass  # Incompatible reshape, continue search
             
             # Allocate new tensor with fragmentation prevention
-            tensor = self._allocate_new_tensor(shape, dtype)
+            tensor = self._allocate_new_tensor(shape, dtype, device)
             self.allocated_count += 1
             
             # Add timestamp for aging
@@ -466,18 +476,21 @@ class AdvancedMemoryPool:
         # Allow reuse if candidate is same size or larger (within 25%)
         return candidate_elements >= target_elements and candidate_elements <= target_elements * 1.25
     
-    def _allocate_new_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
+    def _allocate_new_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype, device: torch.device = None) -> torch.Tensor:
         """Allocate new tensor with optimal strategy."""
+        if device is None:
+            device = self.device
+            
         try:
             # Try normal allocation first
-            return torch.zeros(shape, dtype=dtype, device=self.device)
+            return torch.zeros(shape, dtype=dtype, device=device)
         except RuntimeError as e:
             if "out of memory" in str(e):
                 # Out of memory - try cleanup and retry
                 self.logger.warning("Out of memory during allocation, attempting cleanup")
                 
                 # Clear caches
-                if self.device.type == 'cuda':
+                if device.type == 'cuda':
                     torch.cuda.empty_cache()
                 
                 # Force cleanup of pools
@@ -486,7 +499,7 @@ class AdvancedMemoryPool:
                 
                 # Retry allocation
                 try:
-                    return torch.zeros(shape, dtype=dtype, device=self.device)
+                    return torch.zeros(shape, dtype=dtype, device=device)
                 except RuntimeError:
                     self.logger.error("Failed to allocate tensor even after cleanup")
                     raise
@@ -543,9 +556,9 @@ class MemoryPool:
         self.logger = logging.getLogger(f"{__name__}.MemoryPool")
         self.logger.info(f"Memory pool (legacy) initialized for device: {device}")
     
-    def get_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    def get_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype = torch.float32, device: torch.device = None) -> torch.Tensor:
         """Get tensor from advanced pool."""
-        tensor = self._advanced_pool.get_tensor(shape, dtype)
+        tensor = self._advanced_pool.get_tensor(shape, dtype, device)
         
         # Update legacy counters
         if self._advanced_pool.reuse_count > self.reuse_count:
@@ -955,7 +968,7 @@ class MemoryOptimizer:
             return torch.zeros(shape, dtype=dtype, device=device)
         
         pool = self.get_pool(device)
-        return pool.get_tensor(shape, dtype)
+        return pool.get_tensor(shape, dtype, device)
     
     def deallocate_tensor(self, tensor: torch.Tensor) -> None:
         """

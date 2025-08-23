@@ -28,6 +28,42 @@ from ..core.config import InferenceConfig
 logger = logging.getLogger(__name__)
 
 
+class MixedPrecisionWrapper(nn.Module):
+    """Wrapper that handles automatic dtype conversion for mixed precision models."""
+    
+    def __init__(self, model: nn.Module, target_dtype: torch.dtype = torch.float16):
+        super().__init__()
+        self.model = model
+        self.target_dtype = target_dtype
+    
+    def forward(self, x):
+        # Convert input to target dtype and device if needed
+        model_device = next(self.model.parameters()).device if len(list(self.model.parameters())) > 0 else x.device
+        
+        if x.device != model_device:
+            x = x.to(model_device)
+        
+        # Convert input to target dtype, but only if model supports it
+        try:
+            if x.dtype != self.target_dtype:
+                x = x.to(self.target_dtype)
+            return self.model(x)
+        except RuntimeError as e:
+            if "should be the same" in str(e):
+                # Fallback to original dtype if mixed precision fails
+                if x.dtype != torch.float32:
+                    x = x.to(torch.float32)
+                return self.model(x)
+            else:
+                raise
+    
+    def __getattr__(self, name):
+        # Delegate attribute access to the wrapped model
+        if name in ['model', 'target_dtype', 'forward']:
+            return super().__getattr__(name)
+        return getattr(self.model, name)
+
+
 @dataclass
 class HardwareProfile:
     """Hardware profile information."""
@@ -504,7 +540,8 @@ class KernelAutoTuner:
     def tune_model(self, 
                    model: nn.Module,
                    example_inputs: torch.Tensor,
-                   optimization_targets: Optional[List[str]] = None) -> nn.Module:
+                   optimization_targets: Optional[List[str]] = None,
+                   target_device: Optional[torch.device] = None) -> nn.Module:
         """
         Auto-tune model kernels for current hardware.
         
@@ -580,18 +617,55 @@ class KernelAutoTuner:
             Dictionary with tuning results
         """
         try:
-            # Move model and inputs to device if specified
-            if device is not None:
-                model = model.to(device)
-                example_inputs = example_inputs.to(device)
+            # Store original device information
+            original_device = next(model.parameters()).device if len(list(model.parameters())) > 0 else None
+            target_device = device if device is not None else original_device
             
-            # Use the existing tune_model method
-            optimized_model = self.tune_model(model, example_inputs)
+            # Store original hardware profile
+            original_hardware_profile = self.hardware_profile
+            
+            # Temporarily update hardware profile if targeting CPU
+            if target_device is not None and target_device.type == 'cpu':
+                # Create a CPU-only hardware profile
+                self.hardware_profile = HardwareProfile(
+                    device_type='cpu',
+                    device_name=original_hardware_profile.device_name,
+                    memory_gb=original_hardware_profile.memory_gb,
+                    core_count=original_hardware_profile.core_count,
+                    cache_sizes=original_hardware_profile.cache_sizes,
+                    tensor_core_support=False,
+                    mixed_precision_support=False
+                )
+                # Reinitialize optimization strategies for CPU
+                self._init_optimization_strategies()
+            
+            # Move model and inputs to target device if specified
+            if target_device is not None:
+                model = model.to(target_device)
+                example_inputs = example_inputs.to(target_device)
+            
+            # Use the existing tune_model method with device awareness
+            optimized_model = self.tune_model(model, example_inputs, target_device=target_device)
+            
+            # Set model to eval mode if optimizing for inference
+            if self.tuning_config.optimize_for_inference:
+                optimized_model.eval()
+            
+            # Restore original hardware profile
+            self.hardware_profile = original_hardware_profile
+            # Restore optimization strategies
+            self._init_optimization_strategies()
+            
+            # Ensure optimized model stays on target device
+            if target_device is not None:
+                optimized_model = optimized_model.to(target_device)
+                # Ensure inputs are also on the same device for consistency
+                example_inputs = example_inputs.to(target_device)
             
             # Populate optimization cache with results
             model_hash = self._create_model_hash(model, example_inputs)
             self.optimization_cache[model_hash] = {
-                "device": str(device) if device else "cpu",
+                "device": str(target_device) if target_device else "cpu",
                 "optimizations_applied": list(self.optimization_strategies.keys()),
                 "timestamp": time.time()
             }
@@ -875,7 +949,16 @@ class KernelAutoTuner:
         """Optimize mixed precision settings."""
         config_update = {}
         
-        if not self.hardware_profile.mixed_precision_support:
+        # Check if we should apply mixed precision based on device
+        model_device = next(model.parameters()).device if len(list(model.parameters())) > 0 else torch.device('cpu')
+        input_device = inputs.device
+        
+        # Only apply mixed precision for CUDA devices and if hardware supports it
+        # Also check if both model and inputs are on CUDA
+        if (model_device.type != 'cuda' or 
+            input_device.type != 'cuda' or 
+            not self.hardware_profile.mixed_precision_support):
+            config_update['mixed_precision_skipped'] = f"Model device: {model_device}, Input device: {input_device}"
             return model, config_update
         
         try:
@@ -884,9 +967,9 @@ class KernelAutoTuner:
             
             if fp16_beneficial:
                 model = model.half()
-                inputs = inputs.half()
                 config_update['mixed_precision'] = 'fp16'
                 config_update['mixed_precision_beneficial'] = True
+                config_update['input_dtype'] = 'fp16'  # Store expected input dtype
             else:
                 config_update['mixed_precision_beneficial'] = False
             

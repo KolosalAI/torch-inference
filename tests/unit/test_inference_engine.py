@@ -26,12 +26,34 @@ class MockInferenceModel(BaseModel):
     def load_model(self, model_path):
         pass
     
+    def to(self, device):
+        """Mock to method for device transfer."""
+        return self
+        
+    def eval(self):
+        """Mock eval method."""
+        return self
+    
     def preprocess(self, inputs):
         return torch.tensor(inputs) if not isinstance(inputs, torch.Tensor) else inputs
     
+    def predict(self, inputs):
+        """Override predict to include timing delay for timeout testing."""
+        if self.prediction_time > 0:
+            import time
+            time.sleep(self.prediction_time)
+        
+        # Call parent predict method
+        return super().predict(inputs)
+    
     def forward(self, inputs):
-        # Simulate processing time
-        time.sleep(self.prediction_time)
+        # For testing timeout functionality, simulate delay
+        if self.prediction_time > 0:
+            # Use a simple sleep - the timeout will work because the inference engine
+            # wraps this in asyncio.wait_for which can cancel the executor task
+            import time
+            time.sleep(self.prediction_time)
+                
         return torch.randn(inputs.shape[0], 10)
     
     def postprocess(self, outputs):
@@ -215,7 +237,8 @@ class TestInferenceEngine:
         # Start engine
         await engine.start()
         assert engine._running
-        assert engine._worker_task is not None
+        assert engine._worker_tasks is not None
+        assert len(engine._worker_tasks) > 0
         
         # Stop engine
         await engine.stop()
@@ -334,6 +357,9 @@ class TestInferenceEngine:
         """Test error handling in engine."""
         # Create failing model
         class FailingModel(MockInferenceModel):
+            def predict(self, inputs):
+                raise RuntimeError("Mock model failure")
+                
             def forward(self, inputs):
                 raise RuntimeError("Mock model failure")
         
@@ -540,8 +566,9 @@ class TestEngineErrorHandling:
         await engine.start()
         
         # Simulate worker task failure
-        if engine._worker_task:
-            engine._worker_task.cancel()
+        if engine._worker_tasks:
+            for task in engine._worker_tasks:
+                task.cancel()
         
         # Engine should still be able to handle requests
         # (Implementation dependent - may need to restart worker)

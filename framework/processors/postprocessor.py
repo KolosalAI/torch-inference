@@ -45,8 +45,14 @@ class PostprocessingResult:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary format for compatibility."""
+        # Convert predictions to dict if they have a to_dict method
+        if hasattr(self.predictions, 'to_dict'):
+            predictions_data = self.predictions.to_dict()
+        else:
+            predictions_data = self.predictions
+            
         result = {
-            "predictions": self.predictions,
+            "predictions": predictions_data,
             "processing_time": self.processing_time,
             "metadata": self.metadata.copy() if self.metadata else {}
         }
@@ -73,11 +79,11 @@ class ClassificationResult:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format."""
-        # For single predictions, create tensor with single element
-        predictions_tensor = torch.tensor([self.predicted_class])
+        # For single predictions, return the predicted class as a regular Python type
+        # instead of a tensor to ensure JSON serialization works correctly
         
         result = {
-            "predictions": predictions_tensor,  # Return as tensor for compatibility
+            "predictions": self.predicted_class,  # Return as int for compatibility
             "confidence": self.confidence,
             "predicted_class": self.predicted_class,
         }
@@ -289,10 +295,10 @@ class ClassificationPostprocessor(BasePostprocessor):
                     
                     # Return dict format for batch compatibility
                     result = {
-                        "predictions": predicted_classes,  # Tensor with batch_size predictions
+                        "predictions": predicted_classes.tolist(),  # Convert tensor to list
                         "confidence": confidences.mean().item(),  # Average confidence
-                        "confidences": confidences,  # Per-sample confidences
-                        "probabilities": probabilities,
+                        "confidences": confidences.tolist(),  # Convert tensor to list
+                        "probabilities": probabilities.tolist(),  # Convert tensor to list
                         "metadata": {
                             "output_type": "classification",
                             "batch_size": batch_size,

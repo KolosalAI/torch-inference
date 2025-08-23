@@ -210,12 +210,38 @@ class ConfigManager:
             elif 'type' in self._yaml_config['device']:
                 device_type = str(self._yaml_config['device']['type']).lower()
         
-        device_config = DeviceConfig(
-            device_type=DeviceType.from_string(device_type),
-            device_id=current_env.get('DEVICE_ID') and int(current_env.get('DEVICE_ID')),
-            use_fp16=current_env.get('USE_FP16', 'false').lower() == 'true' if 'USE_FP16' in current_env else self._yaml_config.get('device', {}).get('use_fp16', False),
-            use_torch_compile=current_env.get('USE_TORCH_COMPILE', 'false').lower() == 'true' if 'USE_TORCH_COMPILE' in current_env else self._yaml_config.get('device', {}).get('use_torch_compile', False)
-        )
+        # Auto-detect device if set to 'auto'
+        device_config = None
+        if device_type == 'auto':
+            logger.info("Device type set to 'auto', using GPU manager for optimal device detection")
+            try:
+                from .gpu_manager import auto_configure_device
+                device_config = auto_configure_device()
+                logger.info(f"Auto-configured device: {device_config.device_type.value}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-configure device: {e}, falling back to manual configuration")
+                device_config = None
+        
+        # Manual device configuration or fallback
+        if device_config is None:
+            device_config = DeviceConfig(
+                device_type=DeviceType.from_string(device_type),
+                device_id=current_env.get('DEVICE_ID') and int(current_env.get('DEVICE_ID')),
+                use_fp16=current_env.get('USE_FP16', 'false').lower() == 'true' if 'USE_FP16' in current_env else self._yaml_config.get('device', {}).get('use_fp16', False),
+                use_torch_compile=current_env.get('USE_TORCH_COMPILE', 'false').lower() == 'true' if 'USE_TORCH_COMPILE' in current_env else self._yaml_config.get('device', {}).get('use_torch_compile', False)
+            )
+        else:
+            # Override auto-detected config with manual settings if specified
+            if 'DEVICE_ID' in current_env:
+                device_config.device_id = int(current_env['DEVICE_ID'])
+            if 'USE_FP16' in current_env:
+                device_config.use_fp16 = current_env['USE_FP16'].lower() == 'true'
+            elif 'use_fp16' in self._yaml_config.get('device', {}):
+                device_config.use_fp16 = self._yaml_config['device']['use_fp16']
+            if 'USE_TORCH_COMPILE' in current_env:
+                device_config.use_torch_compile = current_env['USE_TORCH_COMPILE'].lower() == 'true'
+            elif 'use_torch_compile' in self._yaml_config.get('device', {}):
+                device_config.use_torch_compile = self._yaml_config['device']['use_torch_compile']
         
         # Batch configuration - handle environment variables properly
         batch_size = 2  # Default
