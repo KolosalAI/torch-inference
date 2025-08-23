@@ -13,6 +13,7 @@ import os
 import json
 import hashlib
 import requests
+import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, List, Tuple
 from urllib.parse import urlparse
@@ -42,6 +43,44 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _get_project_root() -> Path:
+    """Get the project root directory."""
+    current_path = Path(__file__).resolve()
+    # Go up from framework/core/model_downloader.py to project root
+    return current_path.parent.parent.parent
+
+
+def _load_config() -> Dict[str, Any]:
+    """Load configuration from config.yaml."""
+    config_path = _get_project_root() / "config.yaml"
+    if config_path.exists():
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            return config
+        except Exception as e:
+            logger.warning(f"Failed to load config.yaml: {e}")
+    return {}
+
+
+def _get_default_cache_dir() -> Path:
+    """Get the default cache directory from config or use project models/ directory."""
+    config = _load_config()
+    
+    # Try to get cache dir from config
+    cache_dir = config.get("models", {}).get("download", {}).get("cache_dir")
+    
+    if cache_dir:
+        # If relative path, make it relative to project root
+        cache_path = Path(cache_dir)
+        if not cache_path.is_absolute():
+            cache_path = _get_project_root() / cache_path
+        return cache_path
+    else:
+        # Default to project models/ directory
+        return _get_project_root() / "models"
+
+
 @dataclass
 class ModelInfo:
     """Information about a downloadable model."""
@@ -62,25 +101,64 @@ class ModelInfo:
 class ModelDownloader:
     """Downloads and manages PyTorch models from various sources."""
     
-    def __init__(self, cache_dir: Optional[Union[str, Path]] = None):
+    def __init__(self, cache_dir: Optional[Union[str, Path]] = None, config: Optional[Dict[str, Any]] = None):
         """
         Initialize the model downloader.
         
         Args:
-            cache_dir: Directory to cache downloaded models. If None, uses default cache.
+            cache_dir: Directory to cache downloaded models. If None, uses config or default cache.
+            config: Configuration dictionary. If None, loads from config.yaml.
         """
+        if config is None:
+            config = _load_config()
+        
+        self.config = config.get("models", {}).get("download", {})
+        
         if cache_dir is None:
-            # Default cache directory
-            cache_dir = Path.home() / ".torch_inference" / "models"
+            cache_dir = _get_default_cache_dir()
         
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # Registry file to track downloaded models
-        self.registry_file = self.cache_dir / "model_registry.json"
+        # Registry file location - check config first
+        registry_file = self.config.get("registry_file", "model_registry.json")
+        registry_path = Path(registry_file)
+        
+        if registry_path.is_absolute():
+            self.registry_file = registry_path
+        else:
+            # If relative, make it relative to cache_dir, but handle the case where
+            # registry_file might already include the cache directory path
+            if registry_file.startswith("models/"):
+                # Remove the models/ prefix since we're already in the cache_dir
+                registry_file = registry_file[7:]  # Remove "models/"
+            self.registry_file = self.cache_dir / registry_file
+        
         self.registry = self._load_registry()
         
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        
+        # Load source configurations
+        self.sources_config = self.config.get("sources", {})
+        
+        self.logger.info(f"Model downloader initialized with cache dir: {self.cache_dir}")
+        self.logger.info(f"Registry file: {self.registry_file}")
+        self.logger.info(f"Auto-download enabled: {self.config.get('auto_download', True)}")
+    
+    def _is_source_enabled(self, source: str) -> bool:
+        """Check if a source is enabled in configuration."""
+        return self.sources_config.get(source, {}).get("enabled", True)
+    
+    def _validate_source_config(self, source: str) -> None:
+        """Validate that a source is enabled and available."""
+        if not self._is_source_enabled(source):
+            raise ValueError(f"Source '{source}' is disabled in configuration")
+        
+        # Check for required dependencies
+        if source == "torchvision" and not TORCHVISION_AVAILABLE:
+            raise ImportError("torchvision not available. Install with: pip install torchvision")
+        elif source == "huggingface" and not TRANSFORMERS_AVAILABLE:
+            raise ImportError("transformers not available. Install with: pip install transformers")
     
     def _load_registry(self) -> Dict[str, Dict[str, Any]]:
         """Load the model registry from disk."""
@@ -142,6 +220,9 @@ class ModelDownloader:
         Returns:
             Tuple of (model_path, model_info)
         """
+        # Validate source configuration
+        self._validate_source_config("pytorch_hub")
+        
         if model_name is None:
             model_name = f"{repo_or_dir.replace('/', '_').replace(':', '_')}_{model}"
         
@@ -230,8 +311,8 @@ class ModelDownloader:
         Returns:
             Tuple of (model_path, model_info)
         """
-        if not TORCHVISION_AVAILABLE:
-            raise ImportError("torchvision not available. Install with: pip install torchvision")
+        # Validate source configuration
+        self._validate_source_config("torchvision")
         
         if custom_name is None:
             custom_name = f"torchvision_{model_name}"
@@ -249,20 +330,24 @@ class ModelDownloader:
             # Get model constructor
             model_fn = getattr(tv_models, model_name)
             
+            # Filter out parameters that torchvision models don't accept
+            # Torchvision models don't accept 'task' as a parameter
+            tv_kwargs = {k: v for k, v in kwargs.items() if k not in ['task']}
+            
             # Create model - use 'weights' instead of deprecated 'pretrained'
             if pretrained:
                 # For newer torchvision versions, use weights="DEFAULT" or weights="IMAGENET1K_V1"
                 try:
-                    model = model_fn(weights="DEFAULT", **kwargs)
+                    model = model_fn(weights="DEFAULT", **tv_kwargs)
                 except TypeError:
                     # Fallback for older versions or models that still use pretrained
-                    model = model_fn(pretrained=pretrained, **kwargs)
+                    model = model_fn(pretrained=pretrained, **tv_kwargs)
             else:
                 try:
-                    model = model_fn(weights=None, **kwargs)
+                    model = model_fn(weights=None, **tv_kwargs)
                 except TypeError:
                     # Fallback for older versions
-                    model = model_fn(pretrained=pretrained, **kwargs)
+                    model = model_fn(pretrained=pretrained, **tv_kwargs)
             
             # Create model cache directory
             model_dir = self._get_model_cache_dir(custom_name)
@@ -277,11 +362,12 @@ class ModelDownloader:
             torch.save(model.state_dict(), state_dict_path)
             
             # Create model info
+            task = kwargs.get('task', 'image-classification')  # Get task from kwargs, default to image-classification
             model_info = ModelInfo(
                 name=custom_name,
                 source="torchvision",
                 model_id=model_name,
-                task="image-classification",
+                task=task,
                 description=f"Torchvision model: {model_name}",
                 size_mb=model_path.stat().st_size / (1024 * 1024),
                 tags=["torchvision", "pretrained" if pretrained else "random", "vision"]
@@ -324,8 +410,8 @@ class ModelDownloader:
         Returns:
             Tuple of (model_path, model_info)
         """
-        if not TRANSFORMERS_AVAILABLE:
-            raise ImportError("transformers not available. Install with: pip install transformers")
+        # Validate source configuration
+        self._validate_source_config("huggingface")
         
         if custom_name is None:
             custom_name = model_id.replace('/', '_')
@@ -424,6 +510,9 @@ class ModelDownloader:
         Returns:
             Tuple of (model_path, model_info)
         """
+        # Validate source configuration
+        self._validate_source_config("url")
+        
         self.logger.info(f"Downloading model from URL: {url}")
         
         # Check if already cached
@@ -446,8 +535,13 @@ class ModelDownloader:
             
             model_path = model_dir / filename
             
+            # Get URL configuration
+            url_config = self.sources_config.get("url", {})
+            verify_ssl = url_config.get("verify_ssl", True)
+            timeout = url_config.get("timeout_seconds", 300)
+            
             # Download file
-            response = requests.get(url, stream=True)
+            response = requests.get(url, stream=True, verify=verify_ssl, timeout=timeout)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
@@ -586,6 +680,110 @@ class ModelDownloader:
             except:
                 pass
         return total_size / (1024 * 1024)
+    
+    def auto_download_model(self, model_identifier: str, **kwargs) -> Tuple[Path, ModelInfo]:
+        """
+        Automatically download a model based on identifier patterns.
+        
+        This method attempts to determine the source and download the model automatically.
+        
+        Args:
+            model_identifier: Model identifier that can be:
+                - 'torchvision:model_name' (e.g., 'torchvision:resnet18')
+                - 'huggingface:model_id' (e.g., 'huggingface:bert-base-uncased')
+                - 'pytorch_hub:repo/model' (e.g., 'pytorch_hub:pytorch/vision/resnet50')
+                - URL starting with 'http' or 'https'
+                - Model name to search in available sources
+            **kwargs: Additional arguments for download
+            
+        Returns:
+            Tuple of (model_path, model_info)
+        """
+        if not self.config.get("auto_download", True):
+            raise ValueError("Auto-download is disabled in configuration")
+        
+        self.logger.info(f"Auto-downloading model: {model_identifier}")
+        
+        # Parse identifier to determine source
+        if model_identifier.startswith(("http://", "https://")):
+            # URL download
+            model_name = kwargs.get("model_name") or os.path.basename(urlparse(model_identifier).path).split('.')[0]
+            return self.download_from_url(model_identifier, model_name, **kwargs)
+            
+        elif ":" in model_identifier:
+            # Explicit source specification
+            source, model_id = model_identifier.split(":", 1)
+            
+            if source == "torchvision":
+                return self.download_torchvision_model(model_id, **kwargs)
+            elif source == "huggingface":
+                return self.download_huggingface_model(model_id, **kwargs)
+            elif source == "pytorch_hub":
+                # Split repo/model
+                if "/" not in model_id:
+                    raise ValueError("PyTorch Hub models require repo/model format")
+                parts = model_id.rsplit("/", 1)
+                repo = parts[0]
+                model = parts[1]
+                return self.download_pytorch_hub_model(repo, model, **kwargs)
+            else:
+                raise ValueError(f"Unknown source: {source}")
+        else:
+            # Try to auto-detect source
+            return self._auto_detect_and_download(model_identifier, **kwargs)
+    
+    def _auto_detect_and_download(self, model_name: str, **kwargs) -> Tuple[Path, ModelInfo]:
+        """
+        Automatically detect source and download model.
+        
+        Tries sources in order: torchvision, pytorch_hub, huggingface
+        """
+        # First try torchvision
+        if self._is_source_enabled("torchvision") and TORCHVISION_AVAILABLE:
+            try:
+                # Check if it's a valid torchvision model
+                import torchvision.models as tv_models
+                if hasattr(tv_models, model_name):
+                    self.logger.info(f"Auto-detected torchvision model: {model_name}")
+                    return self.download_torchvision_model(model_name, **kwargs)
+            except Exception as e:
+                self.logger.debug(f"Failed to download as torchvision model: {e}")
+        
+        # Try pytorch hub common patterns
+        if self._is_source_enabled("pytorch_hub"):
+            common_repos = [
+                "pytorch/vision",
+                "pytorch/fairseq", 
+                "pytorch/audio",
+                "facebookresearch/detr"
+            ]
+            
+            for repo in common_repos:
+                try:
+                    self.logger.info(f"Trying PyTorch Hub: {repo}/{model_name}")
+                    return self.download_pytorch_hub_model(repo, model_name, **kwargs)
+                except Exception as e:
+                    self.logger.debug(f"Failed to download from {repo}: {e}")
+        
+        # Finally try huggingface if it looks like a model identifier
+        if self._is_source_enabled("huggingface") and TRANSFORMERS_AVAILABLE:
+            try:
+                self.logger.info(f"Trying Hugging Face model: {model_name}")
+                return self.download_huggingface_model(model_name, **kwargs)
+            except Exception as e:
+                self.logger.debug(f"Failed to download as Hugging Face model: {e}")
+        
+        raise ValueError(f"Could not auto-detect source for model: {model_name}. "
+                        f"Please specify source explicitly (e.g., 'torchvision:{model_name}')")
+    
+    def get_config(self) -> Dict[str, Any]:
+        """Get the current configuration."""
+        return self.config
+    
+    def update_config(self, config: Dict[str, Any]) -> None:
+        """Update the configuration."""
+        self.config.update(config)
+        self.sources_config = self.config.get("sources", {})
 
 
 # Global downloader instance
@@ -652,3 +850,80 @@ def list_available_models() -> Dict[str, ModelInfo]:
     """List all available (cached) models."""
     downloader = get_model_downloader()
     return downloader.list_available_models()
+
+
+def auto_download_model(model_identifier: str, **kwargs) -> Tuple[Path, ModelInfo]:
+    """
+    Automatically download a model to the project models/ directory.
+    
+    This is a convenience function that uses the global model downloader
+    with automatic source detection.
+    
+    Args:
+        model_identifier: Model identifier. Can be:
+            - 'torchvision:model_name' (e.g., 'torchvision:resnet18')
+            - 'huggingface:model_id' (e.g., 'huggingface:bert-base-uncased')  
+            - 'pytorch_hub:repo/model' (e.g., 'pytorch_hub:pytorch/vision/resnet50')
+            - URL starting with 'http' or 'https'
+            - Model name for auto-detection
+        **kwargs: Additional arguments for download
+        
+    Returns:
+        Tuple of (model_path, model_info)
+        
+    Examples:
+        >>> # Download a torchvision model
+        >>> path, info = auto_download_model("torchvision:resnet18")
+        
+        >>> # Download a Hugging Face model
+        >>> path, info = auto_download_model("huggingface:bert-base-uncased")
+        
+        >>> # Auto-detect source
+        >>> path, info = auto_download_model("resnet18")
+        
+        >>> # Download from URL
+        >>> path, info = auto_download_model("https://example.com/model.pt", model_name="custom_model")
+    """
+    downloader = get_model_downloader()
+    return downloader.auto_download_model(model_identifier, **kwargs)
+
+
+def ensure_model_available(model_identifier: str, **kwargs) -> Tuple[Path, ModelInfo]:
+    """
+    Ensure a model is available, downloading it if necessary.
+    
+    This function checks if the model is already cached and downloads it
+    if not available.
+    
+    Args:
+        model_identifier: Model identifier (see auto_download_model)
+        **kwargs: Additional arguments for download
+        
+    Returns:
+        Tuple of (model_path, model_info)
+    """
+    downloader = get_model_downloader()
+    
+    # Try to extract model name for checking cache
+    custom_name = kwargs.get('custom_name') or kwargs.get('model_name')
+    
+    # For simple cases, try to extract name from identifier
+    if not custom_name:
+        if ":" in model_identifier and not model_identifier.startswith(("http://", "https://")):
+            source, model_id = model_identifier.split(":", 1)
+            if source == "torchvision":
+                custom_name = f"torchvision_{model_id}"
+            elif source == "huggingface":
+                custom_name = model_id.replace('/', '_')
+            elif source == "pytorch_hub":
+                custom_name = f"{model_id.replace('/', '_').replace(':', '_')}"
+    
+    # Check if already cached
+    if custom_name and downloader.is_model_cached(custom_name):
+        model_path = downloader.get_model_path(custom_name)
+        model_info = downloader.get_model_info(custom_name)
+        if model_path and model_info:
+            return model_path, model_info
+    
+    # Download if not cached
+    return auto_download_model(model_identifier, **kwargs)

@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Optimized PyTorch inference framework with TensorRT, ONNX, and other acceleration techniques"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"  # Limited to avoid CUDA dependency issues on 3.12+
 authors = [
     {name = "Genta", email = "genta@example.com"},
 ]
@@ -44,7 +44,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     
     # PyTorch core (CPU version - CUDA version specified in extras)
-    "torch>=2.6.0",
+    "torch>=2.5.0,<2.6.0",  # Limited to 2.5.x since 2.6.0+cu121 not available yet
     "torchvision>=0.20.0",
     "torchaudio>=2.5.0",
     
@@ -60,7 +60,7 @@ dependencies = [
 [project.optional-dependencies]
 # CUDA GPU support
 cuda = [
-    "torch>=2.6.0",
+    "torch>=2.5.0,<2.6.0",  # Limited to 2.5.x since 2.6.0+cu121 not available yet
     "torchvision>=0.20.0", 
     "torchaudio>=2.5.0",
     "onnxruntime-gpu>=1.16.0",
@@ -68,8 +68,8 @@ cuda = [
 
 # TensorRT support (separate due to special requirements)
 tensorrt = [
-    "tensorrt>=10.7.0",
-    "torch-tensorrt>=2.6.0",
+    "tensorrt>=10.3.0",  # Updated to match available version
+    "torch-tensorrt>=2.5.0",  # Updated to match PyTorch 2.5.x
 ]
 
 # Development dependencies
@@ -135,13 +135,16 @@ dev-dependencies = [
     "safety>=2.0.0",
 ]
 
+# Use unsafe-best-match to allow versions from all indexes
+index-strategy = "unsafe-best-match"
+
 # PyTorch CUDA index for uv
 [[tool.uv.index]]
 name = "pytorch"
-url = "https://download.pytorch.org/whl/cu124"
+url = "https://download.pytorch.org/whl/cu121"  # Changed to cu121 since it has the versions we need
 explicit = true
 
-# NVIDIA PyPI index for TensorRT
+# NVIDIA PyPI index for TensorRT and CUDA packages
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com/"

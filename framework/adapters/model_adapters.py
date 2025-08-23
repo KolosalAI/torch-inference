@@ -51,6 +51,7 @@ class PyTorchModelAdapter(BaseModel):
             self.model_path = model_path
             
             self.logger.info(f"Loading PyTorch model from {model_path}")
+            self.logger.info(f"Target device: {self.device}")
             
             # Use security context for model loading
             if _pytorch_security:
@@ -103,6 +104,10 @@ class PyTorchModelAdapter(BaseModel):
                 
                 else:
                     raise ModelLoadError(f"Unsupported file extension: {model_path.suffix}")
+            
+            # Ensure model is on the correct device
+            self.model = self.model.to(self.device)
+            self.logger.info(f"Model moved to device: {self.device}")
             
             # Set metadata
             self.metadata = ModelMetadata(
@@ -267,11 +272,16 @@ class ONNXModelAdapter(BaseModel):
             self.model_path = model_path
             
             self.logger.info(f"Loading ONNX model from {model_path}")
+            self.logger.info(f"Target device: {self.device}")
             
-            # Configure ONNX Runtime providers
+            # Configure ONNX Runtime providers based on detected device
             providers = ['CPUExecutionProvider']
             if self.device.type == 'cuda':
                 providers.insert(0, 'CUDAExecutionProvider')
+                self.logger.info("Using CUDA execution provider for ONNX")
+            elif self.device.type == 'mps':
+                # Note: ONNX Runtime doesn't support MPS directly, fallback to CPU
+                self.logger.warning("MPS device detected but ONNX Runtime doesn't support MPS, using CPU")
             
             # Create inference session
             self.session = ort.InferenceSession(str(model_path), providers=providers)
@@ -479,6 +489,7 @@ class HuggingFaceModelAdapter(BaseModel):
             self.model_name = model_name
             
             self.logger.info(f"Loading Hugging Face model: {model_name}")
+            self.logger.info(f"Target device: {self.device}")
             
             # Load config to get model info
             config = AutoConfig.from_pretrained(model_name)
@@ -488,7 +499,8 @@ class HuggingFaceModelAdapter(BaseModel):
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             
             # Move to device
-            self.model.to(self.device)
+            self.model = self.model.to(self.device)
+            self.logger.info(f"Hugging Face model moved to device: {self.device}")
             
             # Set metadata
             self.metadata = ModelMetadata(

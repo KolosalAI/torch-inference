@@ -79,14 +79,21 @@ class DeviceConfig:
     def get_torch_device(self) -> torch.device:
         """Get the actual torch device."""
         if self.device_type == DeviceType.AUTO:
-            if torch.cuda.is_available():
-                device_str = "cuda"
-                if self.device_id is not None:
-                    device_str = f"cuda:{self.device_id}"
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                device_str = "mps"
-            else:
-                device_str = "cpu"
+            # Use GPU manager for auto-detection
+            try:
+                from .gpu_manager import auto_configure_device
+                auto_config = auto_configure_device()
+                return auto_config.get_torch_device()
+            except Exception:
+                # Fallback to manual detection
+                if torch.cuda.is_available():
+                    device_str = "cuda"
+                    if self.device_id is not None:
+                        device_str = f"cuda:{self.device_id}"
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                    device_str = "mps"
+                else:
+                    device_str = "cpu"
         else:
             # Handle both DeviceType enum and string values
             if isinstance(self.device_type, str):

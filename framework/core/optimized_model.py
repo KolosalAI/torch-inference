@@ -94,8 +94,19 @@ class OptimizedModel(BaseModel):
         if not self._is_loaded or self.model is None:
             return
         
+        # Enable optimizations on the base model
+        self.model.eval()
+        
+        # Enable inference mode optimizations
+        if hasattr(torch.inference, 'mode'):
+            torch.inference.mode(True)
+        
         # Create example input for optimization
         example_input = self._create_dummy_input()
+        
+        # Optimize memory layout first
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         # Apply optimizations in priority order
         optimization_order = self._get_optimization_order()
@@ -108,6 +119,9 @@ class OptimizedModel(BaseModel):
         
         # Select best performing optimization
         self._select_best_optimization()
+        
+        # Final warmup with selected optimization
+        self._warmup_optimized_model()
     
     def _get_optimization_order(self) -> List[str]:
         """Get the order in which optimizations should be applied."""
@@ -363,9 +377,65 @@ class OptimizedModel(BaseModel):
         active_model = self.get_active_model()
         return active_model(inputs)
     
+    def predict_batch_internal(self, inputs: List[Any]) -> List[Any]:
+        """
+        Optimized internal batch processing for better performance.
+        
+        Args:
+            inputs: List of raw inputs (batch)
+            
+        Returns:
+            List of predictions
+        """
+        if not inputs:
+            return []
+        
+        try:
+            # Get the best performing model
+            active_model = self.get_active_model()
+            
+            # Preprocess all inputs
+            preprocessed_inputs = []
+            for inp in inputs:
+                preprocessed_inputs.append(self.preprocess(inp))
+            
+            # Check if we can stack inputs for true batch processing
+            if (len(preprocessed_inputs) > 1 and 
+                all(isinstance(p, torch.Tensor) for p in preprocessed_inputs) and
+                all(p.shape == preprocessed_inputs[0].shape for p in preprocessed_inputs)):
+                
+                # True batch processing
+                batch_tensor = torch.stack(preprocessed_inputs, dim=0)
+                
+                with torch.no_grad():
+                    batch_output = active_model(batch_tensor)
+                
+                # Split batch output back to individual results
+                individual_outputs = torch.unbind(batch_output, dim=0)
+                results = []
+                for output in individual_outputs:
+                    # Add batch dimension back for postprocessing
+                    output_with_batch = output.unsqueeze(0)
+                    result = self.postprocess(output_with_batch)
+                    results.append(result)
+                
+                return results
+            else:
+                # Fallback to individual processing
+                results = []
+                for inp in inputs:
+                    result = self.predict(inp)
+                    results.append(result)
+                return results
+                
+        except Exception as e:
+            self.logger.warning(f"Batch processing failed: {e}, falling back to individual processing")
+            # Final fallback
+            return [self.predict(inp) for inp in inputs]
+    
     def preprocess(self, inputs: Any) -> torch.Tensor:
         """
-        Preprocess inputs for inference.
+        Ultra-fast preprocess inputs for inference.
         
         Args:
             inputs: Raw inputs
@@ -375,16 +445,25 @@ class OptimizedModel(BaseModel):
         """
         # Basic preprocessing - convert to tensor and move to device
         if isinstance(inputs, torch.Tensor):
-            return inputs.to(self.device)
+            if inputs.device != self.device:
+                return inputs.to(self.device, non_blocking=True)
+            return inputs
         elif isinstance(inputs, (list, tuple)):
-            return torch.tensor(inputs, dtype=torch.float32, device=self.device)
+            # Use faster tensor creation
+            tensor = torch.tensor(inputs, dtype=torch.float32, device=self.device)
+            if tensor.dim() == 1:
+                tensor = tensor.unsqueeze(0)  # Add batch dimension
+            return tensor
         else:
             # For other types, try to convert to tensor
-            return torch.tensor(inputs, dtype=torch.float32, device=self.device)
+            tensor = torch.tensor(inputs, dtype=torch.float32, device=self.device)
+            if tensor.dim() == 1:
+                tensor = tensor.unsqueeze(0)  # Add batch dimension
+            return tensor
     
     def postprocess(self, outputs: torch.Tensor) -> Any:
         """
-        Postprocess model outputs.
+        Ultra-fast postprocess model outputs.
         
         Args:
             outputs: Raw model outputs
@@ -392,36 +471,33 @@ class OptimizedModel(BaseModel):
         Returns:
             Processed outputs
         """
-        # Basic postprocessing - return as list or dict based on config
-        outputs_cpu = outputs.detach().cpu()
-        
+        # Minimal postprocessing for maximum speed
         if self.config.model_type.value == "classification":
-            # Apply softmax for classification
+            # Apply softmax for classification if needed
             if self.config.postprocessing.apply_softmax:
-                outputs_cpu = torch.softmax(outputs_cpu, dim=-1)
+                outputs = torch.softmax(outputs, dim=-1)
+            
+            # Fast conversion to list
+            predictions = outputs.detach().cpu().tolist()
             
             return {
-                "predictions": outputs_cpu.tolist(),
-                "raw_output": outputs.detach().cpu().tolist(),
-                "shape": outputs.shape,
+                "predictions": predictions,
                 "prediction": "optimized_result",
                 "metadata": {
                     "output_type": "classification",
-                    "shape": list(outputs.shape),
-                    "dtype": str(outputs.dtype)
+                    "shape": list(outputs.shape)
                 }
             }
         else:
-            # Generic output format
+            # Generic output format - minimal overhead
+            predictions = outputs.detach().cpu().tolist()
+            
             return {
-                "predictions": outputs_cpu.tolist(),
-                "raw_output": outputs.detach().cpu().tolist(),
-                "shape": outputs.shape,
+                "predictions": predictions,
                 "prediction": "optimized_result",
                 "metadata": {
                     "output_type": "optimized",
-                    "shape": list(outputs.shape),
-                    "dtype": str(outputs.dtype)
+                    "shape": list(outputs.shape)
                 }
             }
     
@@ -489,6 +565,29 @@ class OptimizedModel(BaseModel):
         self.optimized_models.clear()
         
         self.logger.info("Optimization cleanup completed")
+    
+    def _warmup_optimized_model(self) -> None:
+        """Warmup the selected optimized model for better initial performance."""
+        try:
+            active_model = self.get_active_model()
+            example_input = self._create_dummy_input()
+            
+            self.logger.info(f"Warming up {self.active_optimization} model")
+            
+            # Extended warmup for optimized models
+            warmup_iterations = 10
+            for i in range(warmup_iterations):
+                with torch.no_grad():
+                    _ = active_model(example_input)
+            
+            # Synchronize if using CUDA
+            if example_input.device.type == 'cuda':
+                torch.cuda.synchronize()
+            
+            self.logger.info(f"Warmup completed for {self.active_optimization} model")
+            
+        except Exception as e:
+            self.logger.warning(f"Warmup failed for {self.active_optimization}: {e}")
 
 
 def create_optimized_model(config: InferenceConfig) -> OptimizedModel:

@@ -143,3 +143,4 @@ cython_debug/
 tests/models/*/
 kernel_cache/*
 calibration_cache/*
+models/*
