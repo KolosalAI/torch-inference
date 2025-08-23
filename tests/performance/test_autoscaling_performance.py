@@ -4,6 +4,8 @@ import pytest
 import asyncio
 import time
 import statistics
+import sys
+import signal
 from unittest.mock import Mock, AsyncMock
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +15,19 @@ from framework.autoscaling.autoscaler import Autoscaler, AutoscalerConfig
 from framework.autoscaling.zero_scaler import ZeroScaler, ZeroScalingConfig
 from framework.autoscaling.model_loader import DynamicModelLoader, ModelLoaderConfig
 from framework.autoscaling.metrics import MetricsCollector, MetricsConfig
+
+
+# Handle broken pipe errors gracefully
+def handle_broken_pipe():
+    """Handle broken pipe errors by ignoring SIGPIPE."""
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    except AttributeError:
+        # SIGPIPE not available on Windows
+        pass
+
+# Initialize broken pipe handling
+handle_broken_pipe()
 
 
 @pytest.fixture
@@ -80,6 +95,12 @@ def fast_mock_model_manager():
         mock_config.model = Mock()
         mock_config.model.name = model_id
         mock_config.model.device = "cpu"
+        
+        # Device config - IMPORTANT: Disable torch.compile for testing
+        mock_config.device = Mock()
+        mock_config.device.use_torch_compile = False
+        mock_config.device.device_type = "cpu"
+        mock_config.device.device_id = 0
         
         mock_model.config = mock_config
         
