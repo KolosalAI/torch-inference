@@ -227,15 +227,25 @@ class TestHuggingFaceModelAdapter:
         """Test HuggingFace adapter initialization."""
         assert not hf_adapter.is_loaded
     
+    @patch('transformers.AutoConfig')
     @patch('transformers.AutoModel')
     @patch('transformers.AutoTokenizer')
-    def test_load_hf_model(self, mock_tokenizer, mock_model, hf_adapter):
+    def test_load_hf_model(self, mock_tokenizer, mock_model, mock_config, hf_adapter):
         """Test loading HuggingFace model."""
-        # Mock HuggingFace model and tokenizer
+        # Mock HuggingFace model, tokenizer, and config
         mock_model_instance = Mock()
         mock_tokenizer_instance = Mock()
+        mock_config_instance = Mock()
+        
+        # Configure the mock model to return itself when .to() is called
+        mock_model_instance.to.return_value = mock_model_instance
+        
+        # Configure the mock config to have a hidden_size attribute
+        mock_config_instance.hidden_size = 768
+        
         mock_model.from_pretrained.return_value = mock_model_instance
         mock_tokenizer.from_pretrained.return_value = mock_tokenizer_instance
+        mock_config.from_pretrained.return_value = mock_config_instance
         
         hf_adapter.load_model("bert-base-uncased")
         
@@ -243,6 +253,7 @@ class TestHuggingFaceModelAdapter:
         assert hf_adapter.model == mock_model_instance
         mock_model.from_pretrained.assert_called_once_with("bert-base-uncased")
         mock_tokenizer.from_pretrained.assert_called_once_with("bert-base-uncased")
+        mock_config.from_pretrained.assert_called_once_with("bert-base-uncased")
 
 
 class TestModelAdapterFactory:

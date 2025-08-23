@@ -7,13 +7,13 @@ app:
   version: "1.0.0"
   description: "High-performance PyTorch model inference with optimization and monitoring"
 
-# Server Configuration
+# Server Configuration - OPTIMIZED FOR HIGH CONCURRENCY
 server:
   host: "0.0.0.0"
   port: 8000
   reload: false
   log_level: "INFO"
-  workers: 1
+  workers: 1  # Keep single worker but optimize async handling
 
 # Model Configuration
 models:
@@ -24,23 +24,40 @@ models:
     - ".pth"
     - ".onnx"
     - ".torchscript"
+  
+  # Model Download Configuration
+  download:
+    cache_dir: "models/"
+    auto_download: true
+    sources:
+      pytorch_hub:
+        enabled: true
+      torchvision:
+        enabled: true
+      huggingface:
+        enabled: true
+      url:
+        enabled: true
+        verify_ssl: true
+        timeout_seconds: 300
+    registry_file: "model_registry.json"
 
-# Device Configuration
+# Device Configuration - OPTIMIZED FOR PERFORMANCE
 device:
   type: "auto"  # auto, cpu, cuda, mps
   id: 0  # GPU ID if using CUDA
-  use_fp16: false
-  use_torch_compile: false
-  memory_fraction: 0.8
+  use_fp16: true  # Enable FP16 for speed
+  use_torch_compile: true  # Enable torch.compile for acceleration
+  memory_fraction: 0.9  # Use more GPU memory for better performance
 
-# Batch Processing Configuration
+# Batch Processing Configuration - OPTIMIZED FOR ULTRA-LOW LATENCY
 batch:
-  batch_size: 4
+  batch_size: 2  # Optimal batch size based on benchmark
   min_batch_size: 1
-  max_batch_size: 16
+  max_batch_size: 8  # Reduced max for better latency
   adaptive_batching: true
-  timeout_seconds: 5.0
-  queue_size: 100
+  timeout_seconds: 0.05  # Very aggressive timeout (50ms)
+  queue_size: 500  # Larger queue for better concurrency
 
 # Preprocessing Configuration
 preprocessing:
@@ -63,14 +80,14 @@ postprocessing:
   apply_sigmoid: false
   apply_softmax: false
 
-# Performance Configuration
+# Performance Configuration - ULTRA-HIGH PERFORMANCE
 performance:
-  enable_profiling: false
+  enable_profiling: false  # Disable profiling for production
   enable_metrics: true
-  warmup_iterations: 3
-  benchmark_iterations: 10
+  warmup_iterations: 20  # More warmup for stable performance
+  benchmark_iterations: 100  # Better benchmarking
   enable_async: true
-  max_workers: 4
+  max_workers: 12  # Increased workers for better concurrency
 
 # Caching Configuration
 cache:
@@ -92,15 +109,16 @@ security:
   validate_inputs: true
   sanitize_outputs: true
 
-# Optimization Configuration
+# Optimization Configuration - ENHANCED FOR SPEED
 optimization:
   enable_jit: true
-  enable_quantization: false
+  enable_quantization: true  # Enable quantization for speed
   quantization_mode: "dynamic"  # dynamic, static, qat
-  enable_tensorrt: false
-  tensorrt_precision: "fp32"  # fp32, fp16, int8
+  enable_tensorrt: true  # Enable TensorRT if available
+  tensorrt_precision: "fp16"  # Use FP16 for TensorRT
   enable_onnx: false
   onnx_providers:
+    - "CUDAExecutionProvider"  # Prioritize CUDA
     - "CPUExecutionProvider"
 
 # Monitoring Configuration

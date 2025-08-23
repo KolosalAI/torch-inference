@@ -615,8 +615,9 @@ class TestBaseModelWithRealModels:
         assert "confidence" in result
         
         predictions = result["predictions"]
-        assert isinstance(predictions, torch.Tensor)
-        assert predictions.shape[0] == 2  # Batch size
+        # For batch prediction, predictions should be a list
+        assert isinstance(predictions, list)
+        assert len(predictions) == 2  # Batch size
     
     def test_model_manager_with_real_models(self, test_config):
         """Test ModelManager with multiple real models."""

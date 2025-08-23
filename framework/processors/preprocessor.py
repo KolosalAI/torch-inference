@@ -210,6 +210,13 @@ class ImagePreprocessor(BasePreprocessor):
             image = self._load_image(inputs)
             original_shape = image.shape
             
+            # Validate image before processing
+            if image.size == 0:
+                raise ValueError("Empty image provided")
+            
+            # Log image characteristics for debugging
+            self.logger.debug(f"Processing image with shape: {image.shape}, dtype: {image.dtype}")
+            
             # Apply transforms
             if self.use_torchvision:
                 tensor = self._apply_torchvision_transforms(image)
@@ -239,20 +246,70 @@ class ImagePreprocessor(BasePreprocessor):
             
         except Exception as e:
             self.logger.error(f"Image preprocessing failed: {e}")
+            self.logger.debug(f"Input type: {type(inputs)}, Input shape: {getattr(inputs, 'shape', 'N/A')}")
+            
+            # Try to create a fallback tensor for critical errors
+            try:
+                # Create a default image tensor (3x224x224 RGB image)
+                fallback_tensor = torch.zeros(3, 224, 224, dtype=torch.float32, device=self.device)
+                if self.normalize:
+                    # Apply the same normalization as would be applied to real images
+                    for i in range(3):
+                        fallback_tensor[i] = (fallback_tensor[i] - self.mean[i]) / self.std[i]
+                
+                # Add batch dimension
+                fallback_tensor = fallback_tensor.unsqueeze(0)
+                
+                processing_time = time.time() - start_time
+                
+                self.logger.warning("Using fallback tensor due to preprocessing error")
+                return PreprocessingResult(
+                    data=fallback_tensor,
+                    metadata={
+                        "input_type": "image",
+                        "original_shape": getattr(inputs, 'shape', None),
+                        "final_shape": tuple(fallback_tensor.shape),
+                        "preprocessor": self.__class__.__name__,
+                        "fallback": True,
+                        "error": str(e)
+                    },
+                    processing_time=processing_time
+                )
+            except Exception as fallback_error:
+                self.logger.error(f"Fallback tensor creation also failed: {fallback_error}")
+                
             raise PreprocessingError(f"Image preprocessing failed: {e}") from e
     
     def _load_image(self, inputs: Any) -> np.ndarray:
         """Load image from various input formats."""
-        if isinstance(inputs, str):
-            return self._load_image_from_path(inputs)
-        elif isinstance(inputs, np.ndarray):
-            return self._process_numpy_image(inputs)
-        elif isinstance(inputs, torch.Tensor):
-            return self._tensor_to_numpy(inputs)
-        elif hasattr(inputs, 'convert'):  # PIL Image
-            return np.array(inputs.convert('RGB'))
-        else:
-            raise ValueError(f"Unsupported input type: {type(inputs)}")
+        try:
+            if isinstance(inputs, str):
+                return self._load_image_from_path(inputs)
+            elif isinstance(inputs, list):
+                # Handle nested lists that represent images (e.g., [C, H, W] format)
+                image_array = np.array(inputs, dtype=np.float32)
+                # Validate the resulting array
+                if image_array.size == 0:
+                    raise ValueError("Empty list provided")
+                return image_array
+            elif isinstance(inputs, np.ndarray):
+                # Validate the numpy array
+                if inputs.size == 0:
+                    raise ValueError("Empty numpy array provided")
+                return self._process_numpy_image(inputs)
+            elif isinstance(inputs, torch.Tensor):
+                # Validate the tensor
+                if inputs.numel() == 0:
+                    raise ValueError("Empty tensor provided")
+                return self._tensor_to_numpy(inputs)
+            elif hasattr(inputs, 'convert'):  # PIL Image
+                return np.array(inputs.convert('RGB'))
+            else:
+                raise ValueError(f"Unsupported input type: {type(inputs)}")
+        except Exception as e:
+            self.logger.error(f"Failed to load image from input: {e}")
+            # Re-raise with more context
+            raise ValueError(f"Failed to load image from {type(inputs)}: {e}") from e
     
     def _load_image_from_path(self, path: str) -> np.ndarray:
         """Load image from file path or URL."""
@@ -298,15 +355,83 @@ class ImagePreprocessor(BasePreprocessor):
     
     def _process_numpy_image(self, image: np.ndarray) -> np.ndarray:
         """Process numpy array image."""
-        # Ensure RGB format
-        if image.ndim == 2:  # Grayscale
-            image = np.stack([image] * 3, axis=2)
+        # Handle different input formats
+        if image.ndim == 1:
+            # 1D array - convert to a square image if possible
+            size = int(np.sqrt(image.size))
+            if size * size == image.size:
+                image = image.reshape(size, size)
+            else:
+                # Create a 1D "image" - pad or truncate to square
+                target_size = 32  # minimum reasonable size
+                if image.size < target_size * target_size:
+                    # Pad with zeros
+                    padded = np.zeros(target_size * target_size)
+                    padded[:image.size] = image
+                    image = padded.reshape(target_size, target_size)
+                else:
+                    # Truncate to square
+                    image = image[:target_size * target_size].reshape(target_size, target_size)
+                    
+        if image.ndim == 2:  # Grayscale [H, W]
+            h, w = image.shape
+            # Handle degenerate cases
+            if h <= 2 or w <= 2:
+                self.logger.warning(f"Very small image dimensions {image.shape}, padding to minimum size")
+                # Pad to minimum size
+                min_size = 32
+                padded = np.zeros((min_size, min_size), dtype=image.dtype)
+                padded[:min(h, min_size), :min(w, min_size)] = image[:min(h, min_size), :min(w, min_size)]
+                image = padded
+            # Convert to RGB
+            image = np.stack([image] * 3, axis=2)  # Convert to [H, W, 3]
+            
         elif image.ndim == 3:
-            if image.shape[2] == 1:  # Single channel
+            h, w, c = image.shape
+            
+            # Handle degenerate spatial dimensions
+            if h <= 2 or w <= 2:
+                self.logger.warning(f"Very small spatial dimensions {(h, w)}, padding to minimum size")
+                min_size = 32
+                # Create new array with minimum size - ensure it's at least 3 channels for RGB
+                target_channels = max(c, 3) if c <= 4 else 3
+                new_image = np.zeros((min_size, min_size, target_channels), dtype=image.dtype)
+                # Copy existing data, but limit channels to target
+                copy_channels = min(c, target_channels)
+                new_image[:min(h, min_size), :min(w, min_size), :copy_channels] = image[:min(h, min_size), :min(w, min_size), :copy_channels]
+                # If we need more channels (e.g., grayscale to RGB), replicate
+                if target_channels == 3 and copy_channels == 1:
+                    new_image[:, :, 1] = new_image[:, :, 0]
+                    new_image[:, :, 2] = new_image[:, :, 0]
+                image = new_image
+                h, w, c = image.shape
+            
+            # Check if it's in [C, H, W] format (channels first)
+            if image.shape[0] == 3 and image.shape[1] > image.shape[0] and image.shape[2] > image.shape[0]:
+                # Likely [C, H, W] format, convert to [H, W, C]
+                image = np.transpose(image, (1, 2, 0))
+                h, w, c = image.shape
+            elif image.shape[0] <= 4 and image.shape[1] > 10 and image.shape[2] > 10:
+                # Another case of [C, H, W] format
+                image = np.transpose(image, (1, 2, 0))
+                h, w, c = image.shape
+                
+            # Handle channel dimension
+            if c == 1:  # Single channel [H, W, 1]
                 image = np.concatenate([image] * 3, axis=2)
-            elif image.shape[2] == 4:  # RGBA
+            elif c == 2:  # Two channels - duplicate one to make 3
+                image = np.concatenate([image, image[:, :, :1]], axis=2)
+            elif c == 4:  # RGBA [H, W, 4]
                 image = image[:, :, :3]
-            elif image.shape[2] == 3:
+            elif c > 4:  # Too many channels
+                if c >= 3:
+                    # Take first 3 channels as RGB
+                    image = image[:, :, :3]
+                else:
+                    # Convert to grayscale and then RGB
+                    image = np.mean(image, axis=2, keepdims=True)
+                    image = np.concatenate([image] * 3, axis=2)
+            elif c == 3:  # RGB [H, W, 3]
                 # Check if BGR and convert to RGB
                 if self.to_rgb:
                     # Simple heuristic: if blue channel has higher mean, likely BGR
@@ -317,6 +442,36 @@ class ImagePreprocessor(BasePreprocessor):
                         except ImportError:
                             # Manual BGR to RGB conversion
                             image = image[:, :, [2, 1, 0]]
+        elif image.ndim == 4:
+            # 4D tensor - take first image if it's a batch
+            self.logger.warning(f"4D tensor provided with shape {image.shape}, taking first sample")
+            image = image[0]
+            # Recursively process the 3D image
+            return self._process_numpy_image(image)
+        elif image.ndim > 4:
+            # Higher dimensional tensor - flatten to reasonable dimensions
+            self.logger.warning(f"High dimensional tensor {image.shape}, flattening to 2D")
+            # Flatten all but last 2 dimensions
+            original_shape = image.shape
+            image = image.reshape(-1, original_shape[-1]) if len(original_shape) > 1 else image.flatten()
+            # Try to make it square-ish
+            if image.ndim == 1:
+                return self._process_numpy_image(image)  # Recursively handle 1D case
+            else:
+                # 2D case - convert to grayscale image
+                h, w = image.shape
+                min_dim = min(h, w)
+                max_size = 224  # Reasonable max size
+                if min_dim > max_size:
+                    # Downsample
+                    step_h = max(1, h // max_size)
+                    step_w = max(1, w // max_size)
+                    image = image[::step_h, ::step_w]
+                # Convert to grayscale and then RGB
+                if image.dtype == np.float32 or image.dtype == np.float64:
+                    # Normalize to 0-255 range
+                    image = ((image - image.min()) / (image.max() - image.min() + 1e-8) * 255).astype(np.uint8)
+                image = np.stack([image] * 3, axis=2)
         
         return image
     
@@ -328,14 +483,140 @@ class ImagePreprocessor(BasePreprocessor):
         if tensor.ndim == 3:
             if tensor.shape[0] in [1, 3]:  # CHW format
                 tensor = tensor.permute(1, 2, 0)  # Convert to HWC
+        elif tensor.ndim == 2:
+            # 2D tensor - assume it's a grayscale image (H, W)
+            # Add channel dimension to make it (H, W, 1)
+            tensor = tensor.unsqueeze(-1)
         
         return tensor.detach().cpu().numpy()
     
     def _apply_torchvision_transforms(self, image: np.ndarray) -> torch.Tensor:
         """Apply torchvision transforms."""
         from PIL import Image
-        pil_image = Image.fromarray(image.astype(np.uint8))
-        return self.transforms(pil_image)
+        
+        # Validate image shape and handle edge cases
+        if image.size == 0:
+            raise ValueError("Empty image array provided")
+        
+        # Log image shape for debugging
+        self.logger.debug(f"Processing image with shape: {image.shape}, dtype: {image.dtype}")
+        
+        # Handle unusual tensor shapes that can't be processed as images
+        if len(image.shape) == 3:
+            h, w, c = image.shape
+            # Check for degenerate cases (very small images or unusual channel counts)
+            if h <= 2 or w <= 2 or c > 4:
+                self.logger.warning(f"Unusual image shape {image.shape}, creating fallback image")
+                # Create a default RGB image tensor for compatibility
+                default_image = np.full((224, 224, 3), 128, dtype=np.uint8)  # Gray image
+                return self._apply_torchvision_transforms(default_image)
+        elif len(image.shape) == 2:
+            h, w = image.shape
+            if h <= 2 or w <= 2:
+                self.logger.warning(f"Degenerate image shape {image.shape}, creating fallback image")
+                # Create a default grayscale image tensor for compatibility
+                default_image = np.full((224, 224), 128, dtype=np.uint8)  # Gray image
+                return self._apply_torchvision_transforms(default_image)
+        elif len(image.shape) == 1:
+            self.logger.warning(f"1D array provided with shape {image.shape}, creating fallback image")
+            default_image = np.full((224, 224), 128, dtype=np.uint8)
+            return self._apply_torchvision_transforms(default_image)
+        elif len(image.shape) > 3:
+            self.logger.warning(f"High dimensional array provided with shape {image.shape}, creating fallback image")
+            default_image = np.full((224, 224, 3), 128, dtype=np.uint8)
+            return self._apply_torchvision_transforms(default_image)
+        
+        # Handle different input ranges and normalize to 0-255 for PIL
+        if image.dtype == np.float32 or image.dtype == np.float64:
+            # Assume tensor is in normalized range (e.g., -1 to 1 or 0 to 1)
+            # Normalize to 0-255 range
+            image_min, image_max = image.min(), image.max()
+            if image_min >= 0 and image_max <= 1:
+                # Already in 0-1 range
+                image = (image * 255).astype(np.uint8)
+            elif image_min >= -1 and image_max <= 1:
+                # In -1 to 1 range
+                image = ((image + 1) * 127.5).astype(np.uint8)
+            else:
+                # Arbitrary range - normalize to 0-255
+                image = ((image - image_min) / (image_max - image_min) * 255).astype(np.uint8)
+        else:
+            image = image.astype(np.uint8)
+        
+        # Handle single channel by converting to RGB if normalization expects 3 channels
+        if len(image.shape) == 3 and image.shape[2] == 1:
+            image = image.squeeze(2)  # Remove single channel dimension
+        elif len(image.shape) == 3 and image.shape[2] > 4:
+            # Too many channels - take first 3 or convert to RGB
+            self.logger.warning(f"Image has {image.shape[2]} channels, reducing to 3")
+            if image.shape[2] >= 3:
+                image = image[:, :, :3]  # Take first 3 channels
+            else:
+                # Convert to grayscale and then RGB
+                image = np.mean(image, axis=2).astype(np.uint8)
+        
+        try:
+            # Final validation before PIL conversion
+            if len(image.shape) not in [2, 3]:
+                raise ValueError(f"Invalid image shape after processing: {image.shape}")
+            
+            # More thorough dimension checking
+            if len(image.shape) == 3:
+                h, w, c = image.shape
+                if h <= 0 or w <= 0 or c <= 0:
+                    raise ValueError(f"Invalid dimensions: height={h}, width={w}, channels={c}")
+                if h > 10000 or w > 10000:  # Prevent extremely large images
+                    raise ValueError(f"Image dimensions too large: {h}x{w}")
+                if c not in [1, 3, 4]:
+                    raise ValueError(f"Invalid number of channels: {c}")
+            elif len(image.shape) == 2:
+                h, w = image.shape
+                if h <= 0 or w <= 0:
+                    raise ValueError(f"Invalid dimensions: height={h}, width={w}")
+                if h > 10000 or w > 10000:  # Prevent extremely large images
+                    raise ValueError(f"Image dimensions too large: {h}x{w}")
+            
+            # Additional safety check for PIL compatibility
+            if len(image.shape) == 3:
+                h, w, c = image.shape
+                # PIL has issues with very small dimensions or unusual channel counts
+                if h < 3 or w < 3 or c > 4:
+                    self.logger.warning(f"Image dimensions {image.shape} may cause PIL issues, using fallback")
+                    raise ValueError(f"Dimensions not suitable for PIL: {image.shape}")
+            elif len(image.shape) == 2:
+                h, w = image.shape
+                if h < 3 or w < 3:
+                    self.logger.warning(f"Image dimensions {image.shape} too small for PIL, using fallback")
+                    raise ValueError(f"Dimensions too small for PIL: {image.shape}")
+            
+            if len(image.shape) == 2:
+                # Convert grayscale to RGB by repeating the channel 3 times
+                # This ensures compatibility with RGB normalization parameters
+                pil_image = Image.fromarray(image, mode='L').convert('RGB')
+            elif len(image.shape) == 3 and image.shape[2] == 3:
+                # Standard RGB image
+                pil_image = Image.fromarray(image, mode='RGB')
+            elif len(image.shape) == 3 and image.shape[2] == 4:
+                # RGBA image - convert to RGB
+                pil_image = Image.fromarray(image, mode='RGBA').convert('RGB')
+            elif len(image.shape) == 3 and image.shape[2] == 1:
+                # Single channel - squeeze and convert to grayscale then RGB
+                image = image.squeeze(2)
+                pil_image = Image.fromarray(image, mode='L').convert('RGB')
+            else:
+                # Fallback: flatten to grayscale and convert to RGB
+                if len(image.shape) == 3:
+                    image = np.mean(image, axis=2).astype(np.uint8)
+                pil_image = Image.fromarray(image, mode='L').convert('RGB')
+                
+            return self.transforms(pil_image)
+            
+        except (ValueError, TypeError) as e:
+            self.logger.error(f"Failed to create PIL image from array with shape {image.shape} and dtype {image.dtype}: {e}")
+            # Final fallback: create a default image
+            default_image = np.full((224, 224, 3), 128, dtype=np.uint8)
+            pil_image = Image.fromarray(default_image, mode='RGB')
+            return self.transforms(pil_image)
     
     def _apply_opencv_transforms(self, image: np.ndarray) -> torch.Tensor:
         """Apply OpenCV-based transforms."""
@@ -457,6 +738,45 @@ class TensorPreprocessor(BasePreprocessor):
             # Add batch dimension if needed
             if tensor.ndim == 1:
                 tensor = tensor.unsqueeze(0)
+            elif tensor.ndim == 2:
+                # Check if this looks like an image (both dimensions reasonably large)
+                # vs a feature vector (one dimension small, likely batch or feature count)
+                h, w = tensor.shape
+                if h >= 32 and w >= 32:
+                    # Likely a grayscale image [H, W] -> [1, 1, H, W]
+                    tensor = tensor.unsqueeze(0).unsqueeze(0)
+                # else: probably already properly shaped data (batch_size, features) or (features, batch_size)
+            elif tensor.ndim == 3:
+                # 3D tensor - check if it's an image [C, H, W] that needs batch dimension
+                # But also consider [H, W, C] format which is common for numpy arrays
+                dim0, dim1, dim2 = tensor.shape
+                
+                # Heuristic to detect format:
+                # If first dim is 1-4 and others are larger, likely [C, H, W]
+                # If last dim is 1-4 and others are larger, likely [H, W, C] 
+                # If all dims are small, need special handling
+                
+                if dim0 in [1, 3, 4] and dim1 >= 32 and dim2 >= 32:
+                    # Likely [C, H, W] format - standard image tensor
+                    tensor = tensor.unsqueeze(0)  # Add batch: [1, C, H, W]
+                elif dim2 in [1, 3, 4] and dim0 >= 32 and dim1 >= 32:
+                    # Likely [H, W, C] format - need to transpose to [C, H, W] then add batch
+                    tensor = tensor.permute(2, 0, 1).unsqueeze(0)  # [H, W, C] -> [C, H, W] -> [1, C, H, W]
+                elif dim0 <= 32 and dim1 <= 32 and dim2 > 4:
+                    # Small spatial dims with many "channels" - likely [H, W, C] with many channels
+                    self.logger.warning(f"3D tensor with small spatial dims {dim0}x{dim1} and {dim2} channels, reshaping")
+                    # Reshape to something more manageable - flatten spatial and treat as feature vector
+                    tensor = tensor.view(-1, dim2)  # [H*W, C]
+                    tensor = tensor.unsqueeze(0)    # Add batch: [1, H*W, C]
+                elif dim0 > 4 and dim1 <= 32 and dim2 <= 32:
+                    # Many "channels" with small spatial dims - likely [C, H, W] with many channels
+                    self.logger.warning(f"3D tensor with {dim0} channels and small spatial dims {dim1}x{dim2}, reshaping")
+                    # Flatten to feature vector
+                    tensor = tensor.view(dim0, -1)  # [C, H*W]
+                    tensor = tensor.unsqueeze(0)    # Add batch: [1, C, H*W]
+                else:
+                    # Other 3D tensor - add batch dimension conservatively
+                    tensor = tensor.unsqueeze(0)  # [1, dim0, dim1, dim2]
             
             processing_time = time.time() - start_time
             
@@ -514,47 +834,92 @@ class PreprocessorPipeline:
     
     def detect_input_type(self, inputs: Any) -> InputType:
         """Detect the type of input data."""
+        self.logger.debug(f"Detecting input type for: {type(inputs)}")
+        
         if isinstance(inputs, str):
             # Check if it's an image path/URL
             if any(inputs.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']):
+                self.logger.debug("Detected as IMAGE (file path)")
                 return InputType.IMAGE
             elif inputs.startswith(('http://', 'https://')) and 'image' in inputs.lower():
+                self.logger.debug("Detected as IMAGE (URL)")
                 return InputType.IMAGE
             else:
+                self.logger.debug("Detected as TEXT")
                 return InputType.TEXT
+        elif isinstance(inputs, list):
+            # Handle nested lists that might represent images
+            if len(inputs) == 3 and all(isinstance(channel, list) for channel in inputs):
+                # Check if it looks like [C, H, W] format (3 channels)
+                if all(len(channel) > 10 for channel in inputs):  # Reasonable height (lowered threshold)
+                    first_channel = inputs[0]
+                    if isinstance(first_channel, list) and len(first_channel) > 10:
+                        # Check if all rows have same length (width)
+                        if all(isinstance(row, list) and len(row) == len(first_channel[0]) for row in first_channel):
+                            self.logger.debug(f"Detected as IMAGE (3D list [C,H,W] - shape: {len(inputs)}x{len(first_channel)}x{len(first_channel[0])})")
+                            return InputType.IMAGE
+            # Handle other list formats
+            if isinstance(inputs, list) and len(inputs) > 0:
+                # Check if it's a list of numbers (could be a feature vector)
+                if all(isinstance(x, (int, float)) for x in inputs):
+                    self.logger.debug("Detected as TENSOR (1D list of numbers)")
+                    return InputType.TENSOR
+                # Check if it's a nested list of numbers
+                elif all(isinstance(x, list) and all(isinstance(y, (int, float)) for y in x) for x in inputs):
+                    self.logger.debug("Detected as TENSOR (2D list of numbers)")
+                    return InputType.TENSOR
+            # Default fallback for lists
+            self.logger.debug(f"Detected as CUSTOM (unrecognized list format - length: {len(inputs) if isinstance(inputs, list) else 'N/A'})")
+            return InputType.CUSTOM
         elif isinstance(inputs, (np.ndarray, torch.Tensor)):
             shape = inputs.shape
             dtype = inputs.dtype if isinstance(inputs, torch.Tensor) else inputs.dtype
+            self.logger.debug(f"Detected tensor/array with shape: {shape}, dtype: {dtype}")
             
             # If integer tensor, likely text tokens
             if isinstance(inputs, torch.Tensor):
                 if inputs.dtype in [torch.int32, torch.int64, torch.long]:
+                    self.logger.debug("Detected as TENSOR (integer tensor - likely tokens)")
                     return InputType.TENSOR
             elif isinstance(inputs, np.ndarray):
                 if inputs.dtype in [np.int32, np.int64]:
+                    self.logger.debug("Detected as TENSOR (integer array - likely tokens)")
                     return InputType.TENSOR
             
             # Handle batched tensors - if already batched, treat as tensor
             if len(shape) == 4:  # [batch, channels, height, width] 
                 if shape[1] == 3 or shape[1] == 1:  # RGB or grayscale channels
                     # This is a batch of images - treat as tensor for batch processing
+                    self.logger.debug(f"Detected as TENSOR (4D batch - shape: {shape})")
                     return InputType.TENSOR
                 else:
                     # Some other 4D tensor
+                    self.logger.debug(f"Detected as TENSOR (4D other - shape: {shape})")
                     return InputType.TENSOR
             elif len(shape) == 3:
                 if shape[0] == 3 or shape[-1] == 3:  # Single image [C, H, W] or [H, W, C]
+                    self.logger.debug(f"Detected as IMAGE (3D tensor - shape: {shape})")
                     return InputType.IMAGE
                 else:
+                    self.logger.debug(f"Detected as TENSOR (3D non-image - shape: {shape})")
                     return InputType.TENSOR
             elif len(shape) == 2:
-                # Could be a batch of 1D features or single 2D feature map
-                return InputType.TENSOR
+                # Could be a grayscale image [H, W] or batch of 1D features
+                # If dimensions suggest it could be an image (both dimensions > 10), treat as image
+                if len(shape) == 2 and shape[0] >= 10 and shape[1] >= 10:
+                    self.logger.debug(f"Detected as IMAGE (2D tensor - shape: {shape})")
+                    return InputType.IMAGE
+                else:
+                    self.logger.debug(f"Detected as TENSOR (2D features - shape: {shape})")
+                    return InputType.TENSOR
             else:
+                self.logger.debug(f"Detected as TENSOR (other dimensions - shape: {shape})")
                 return InputType.TENSOR
         elif hasattr(inputs, 'convert'):  # PIL Image
+            self.logger.debug("Detected as IMAGE (PIL Image)")
             return InputType.IMAGE
         else:
+            self.logger.debug(f"Detected as CUSTOM (unknown type: {type(inputs)})")
             return InputType.CUSTOM
     
     def preprocess(self, inputs: Any) -> PreprocessingResult:

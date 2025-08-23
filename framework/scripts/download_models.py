@@ -18,6 +18,7 @@ from framework.core.model_downloader import (
     get_model_downloader, 
     download_model,
     list_available_models,
+    auto_download_model,
     ModelInfo
 )
 
@@ -54,6 +55,36 @@ def download_command(args):
         
     except Exception as e:
         print(f"❌ Failed to download model: {e}")
+        return 1
+    
+    return 0
+
+
+def auto_download_command(args):
+    """Handle auto model download command."""
+    try:
+        print(f"📥 Auto-downloading model: {args.model_identifier}")
+        
+        # Prepare kwargs
+        kwargs = {}
+        if hasattr(args, 'task') and args.task:
+            kwargs['task'] = args.task
+        if hasattr(args, 'name') and args.name:
+            kwargs['custom_name'] = args.name
+        
+        # Download model
+        model_path, model_info = auto_download_model(args.model_identifier, **kwargs)
+        
+        print(f"✅ Successfully downloaded model:")
+        print(f"   Name: {model_info.name}")
+        print(f"   Path: {model_path}")
+        print(f"   Size: {model_info.size_mb:.1f} MB")
+        print(f"   Source: {model_info.source}")
+        print(f"   Task: {model_info.task}")
+        print(f"   Description: {model_info.description}")
+        
+    except Exception as e:
+        print(f"❌ Failed to auto-download model: {e}")
         return 1
     
     return 0
@@ -195,6 +226,11 @@ Examples:
   # Download from URL
   python -m framework.scripts.download_models download url "https://example.com/model.pt" --name my_model
   
+  # Auto-download with source detection
+  python -m framework.scripts.download_models auto torchvision:resnet18
+  python -m framework.scripts.download_models auto huggingface:bert-base-uncased
+  python -m framework.scripts.download_models auto resnet18  # Auto-detects torchvision
+  
   # List all models
   python -m framework.scripts.download_models list
   
@@ -219,6 +255,14 @@ Examples:
     download_parser.add_argument('--task', default='classification',
                                 help='Task type (default: classification)')
     download_parser.set_defaults(func=download_command)
+    
+    # Auto-download command
+    auto_parser = subparsers.add_parser('auto', help='Auto-download a model with source detection')
+    auto_parser.add_argument('model_identifier', 
+                            help='Model identifier (torchvision:resnet18, huggingface:bert-base-uncased, etc.)')
+    auto_parser.add_argument('--name', help='Custom name for the model')
+    auto_parser.add_argument('--task', help='Task type')
+    auto_parser.set_defaults(func=auto_download_command)
     
     # List command
     list_parser = subparsers.add_parser('list', help='List available models')
