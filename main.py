@@ -438,15 +438,15 @@ async def initialize_inference_engine():
         
         # Create ultra-fast inference engine for optimal performance
         try:
-            from framework.core.ultra_fast_engine import create_ultra_fast_inference_engine
+            from framework.core.inference_engine import create_ultra_fast_inference_engine
             inference_engine = create_ultra_fast_inference_engine(example_model, config)
-            logger.info("Using UltraFastInferenceEngine for optimal performance")
+            logger.info("Using enhanced InferenceEngine with ultra-fast optimizations")
         except Exception as e:
-            logger.warning(f"Failed to create ultra-fast inference engine, trying fast engine: {e}")
+            logger.warning(f"Failed to create ultra-fast inference engine, trying hybrid engine: {e}")
             try:
-                from framework.core.fast_inference_engine import create_fast_inference_engine
-                inference_engine = create_fast_inference_engine(example_model, config)
-                logger.info("Using FastInferenceEngine as fallback")
+                from framework.core.inference_engine import create_hybrid_inference_engine
+                inference_engine = create_hybrid_inference_engine(example_model, config)
+                logger.info("Using enhanced InferenceEngine with hybrid optimizations")
             except Exception as e2:
                 logger.warning(f"Failed to create fast inference engine, using standard: {e2}")
                 inference_engine = create_inference_engine(example_model, config)

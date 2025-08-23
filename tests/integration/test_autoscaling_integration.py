@@ -94,6 +94,12 @@ def mock_model_manager():
         mock_config.model.name = model_id
         mock_config.model.device = "cpu"
         
+        # Device config - IMPORTANT: Disable torch.compile for testing
+        mock_config.device = Mock()
+        mock_config.device.use_torch_compile = False
+        mock_config.device.device_type = "cpu"
+        mock_config.device.device_id = 0
+        
         mock_model.config = mock_config
         
         # Mock model methods that return proper values
@@ -168,6 +174,12 @@ def mock_model_manager():
             mock_config.model = Mock()
             mock_config.model.name = model_id
             mock_config.model.device = "cpu"
+            
+            # Device config - IMPORTANT: Disable torch.compile for testing
+            mock_config.device = Mock()
+            mock_config.device.use_torch_compile = False
+            mock_config.device.device_type = "cpu"
+            mock_config.device.device_id = 0
             
             mock_model.config = mock_config
             
@@ -245,6 +257,12 @@ def mock_model_manager():
     mock_config.model = Mock()
     mock_config.model.name = "test_model"
     mock_config.model.device = "cpu"
+    
+    # Device config - IMPORTANT: Disable torch.compile for testing
+    mock_config.device = Mock()
+    mock_config.device.use_torch_compile = False
+    mock_config.device.device_type = "cpu"
+    mock_config.device.device_id = 0
     
     test_model.config = mock_config
     
