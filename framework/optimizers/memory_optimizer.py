@@ -19,6 +19,24 @@ import psutil
 from pathlib import Path
 import json
 
+
+def safe_cuda_empty_cache():
+    """Safely empty CUDA cache, handling CUDA graph capture errors."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except RuntimeError as e:
+        if "captures_underway" in str(e):
+            # Skip cache clearing if CUDA graph capture is active
+            pass
+        else:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to clear CUDA cache: {e}")
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Unexpected error clearing CUDA cache: {e}")
+
 import torch
 import torch.nn as nn
 
@@ -334,7 +352,7 @@ class AdvancedMemoryPool:
             
             # Force CUDA cache clearing if needed
             if self.device.type == 'cuda':
-                torch.cuda.empty_cache()
+                safe_cuda_empty_cache()
                 # Trigger garbage collection
                 gc.collect()
             
@@ -491,7 +509,7 @@ class AdvancedMemoryPool:
                 
                 # Clear caches
                 if device.type == 'cuda':
-                    torch.cuda.empty_cache()
+                    safe_cuda_empty_cache()
                 
                 # Force cleanup of pools
                 self.clear()
@@ -610,7 +628,7 @@ class AdvancedMemoryPool(AdvancedMemoryPool):
             
         # Force garbage collection
         if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
+            safe_cuda_empty_cache()
         gc.collect()
         
         self.logger.info("Advanced memory pools cleared")
@@ -855,12 +873,12 @@ class MemoryOptimizer:
                 if current_memory.get('available_memory', 0) < (current_memory['total_memory'] * (1 - gc_threshold)):
                     gc.collect()
                     if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
+                        safe_cuda_empty_cache()
                     self.logger.info("Automatic garbage collection triggered")
             elif isinstance(current_memory, (int, float)) and current_memory > gc_threshold * 1000:  # Simple MB threshold
                 gc.collect()
                 if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                    safe_cuda_empty_cache()
                 self.logger.info("Automatic garbage collection triggered")
         except Exception as e:
             self.logger.warning(f"Garbage collection check failed: {e}")
@@ -916,7 +934,7 @@ class MemoryOptimizer:
         """Configure CUDA memory allocation settings."""
         try:
             # Enable memory pooling
-            torch.cuda.empty_cache()
+            safe_cuda_empty_cache()
             
             # Set memory fraction if configured
             if hasattr(self.config, 'device') and hasattr(self.config.device, 'memory_fraction'):
@@ -1210,7 +1228,7 @@ class MemoryOptimizer:
         # Clear CUDA cache
         if torch.cuda.is_available():
             if device is None or device.type == 'cuda':
-                torch.cuda.empty_cache()
+                safe_cuda_empty_cache()
                 torch.cuda.synchronize()
         
         self.logger.info("Memory cleanup completed")

@@ -302,9 +302,15 @@ class BaseModel(ABC):
         # Move to target device
         self.model.to(self.device)
         
-        # Apply FP16 if requested
+        # Apply FP16 if requested and model supports it
+        # Skip FP16 for transformer models with embeddings to avoid dtype issues
         if self.config.device.use_fp16:
-            self.model.half()
+            # Check if model has embedding layers that would cause dtype issues
+            has_embeddings = any('embedding' in name.lower() for name, _ in self.model.named_modules())
+            if not has_embeddings:
+                self.model.half()
+            else:
+                self.logger.warning("Skipping FP16 conversion for model with embeddings to avoid dtype mismatch")
         
         # Compile model if requested
         self.compile_model()
@@ -316,13 +322,39 @@ class BaseModel(ABC):
     
     def _create_dummy_input(self) -> torch.Tensor:
         """Create dummy input for warmup. Override in subclasses."""
-        # Default implementation for image models
+        # Try to infer from model structure if possible
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Look at first layer to infer input shape
+                first_layer = None
+                for module in self.model.modules():
+                    if isinstance(module, (torch.nn.Conv2d, torch.nn.Conv1d, torch.nn.Linear)):
+                        first_layer = module
+                        break
+                
+                if isinstance(first_layer, torch.nn.Conv2d):
+                    # CNN model - create image-like input
+                    in_channels = first_layer.in_channels
+                    # Use reasonable default image size
+                    return torch.randn(1, in_channels, 64, 64, device=self.device)
+                elif isinstance(first_layer, torch.nn.Conv1d):
+                    # 1D CNN - create sequence-like input
+                    in_channels = first_layer.in_channels
+                    return torch.randn(1, in_channels, 64, device=self.device)
+                elif isinstance(first_layer, torch.nn.Linear):
+                    # Linear model - create flat input
+                    in_features = first_layer.in_features
+                    return torch.randn(1, in_features, device=self.device)
+            except Exception as e:
+                logger.debug(f"Failed to infer input shape from model: {e}")
+        
+        # Default implementation for image models using config
         if hasattr(self.config, 'preprocessing') and hasattr(self.config.preprocessing, 'input_size'):
             height, width = self.config.preprocessing.input_size
             return torch.randn(1, 3, height, width, device=self.device)
         else:
-            # Generic dummy input
-            return torch.randn(1, 10, device=self.device)
+            # Generic dummy input - use a safe shape that works for most models
+            return torch.randn(1, 3, 64, 64, device=self.device)
     
     def get_memory_usage(self) -> Dict[str, float]:
         """Get current memory usage information."""
@@ -363,7 +395,14 @@ class BaseModel(ABC):
     def cleanup(self) -> None:
         """Cleanup resources."""
         if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError as e:
+                if "captures_underway" in str(e):
+                    # Skip cache clearing if CUDA graph capture is active
+                    logger.debug("Skipping CUDA cache clear due to active graph capture")
+                else:
+                    logger.warning(f"Failed to clear CUDA cache during cleanup: {e}")
     
     @property
     def is_loaded(self) -> bool:
