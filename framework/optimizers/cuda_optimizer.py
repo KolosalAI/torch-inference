@@ -94,7 +94,11 @@ class CUDAOptimizer:
             torch.backends.cudnn.deterministic = False
             
             # Set memory management
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError as e:
+                if "captures_underway" not in str(e):
+                    logger.warning(f"Failed to clear CUDA cache: {e}")
             
             # Enable tensor cores if available (for RTX/V100+ GPUs)
             if torch.cuda.get_device_capability(self.device)[0] >= 7:
@@ -461,7 +465,11 @@ class CUDAOptimizer:
         self.events.clear()
         
         # Clear CUDA cache
-        torch.cuda.empty_cache()
+        try:
+            torch.cuda.empty_cache()
+        except RuntimeError as e:
+            if "captures_underway" not in str(e):
+                logger.warning(f"Failed to clear CUDA cache during cleanup: {e}")
         torch.cuda.synchronize()
         
         self.logger.info("CUDA cleanup completed")

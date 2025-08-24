@@ -225,7 +225,15 @@ class PyTorchSecurityMitigation:
                 
                 # Clear CUDA cache if available
                 if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                    try:
+                        torch.cuda.empty_cache()
+                    except RuntimeError as e:
+                        if "captures_underway" in str(e):
+                            # Skip cache clearing if CUDA graph capture is active
+                            security_logger.debug("Skipping CUDA cache clear due to active graph capture")
+                        else:
+                            security_logger.warning(f"Failed to clear CUDA cache: {e}")
+                    
                     final_cuda_memory = torch.cuda.memory_allocated()
                     memory_diff = final_cuda_memory - initial_cuda_memory
                     if memory_diff > 0:
@@ -247,8 +255,15 @@ class PyTorchSecurityMitigation:
         # Register CUDA cleanup if available
         if torch.cuda.is_available():
             def cuda_cleanup():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+                try:
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                except RuntimeError as e:
+                    if "captures_underway" in str(e):
+                        # Skip cleanup if CUDA graph capture is active
+                        pass
+                    else:
+                        security_logger.warning(f"Failed CUDA cleanup: {e}")
             
             atexit.register(cuda_cleanup)
     
@@ -349,7 +364,11 @@ class PyTorchSecurityMitigation:
             security_logger.error(f"Tensor operation failed: {e}")
             # Cleanup on error
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.empty_cache()
+                except RuntimeError as e:
+                    if "captures_underway" not in str(e):
+                        security_logger.warning(f"Failed to clear CUDA cache during cleanup: {e}")
             gc.collect()
             raise
     

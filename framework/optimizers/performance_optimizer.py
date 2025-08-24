@@ -130,7 +130,11 @@ class PerformanceOptimizer:
         """Optimize memory usage for performance."""
         if device.type == 'cuda':
             # Clear cache
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError as e:
+                if "captures_underway" not in str(e):
+                    self.logger.warning(f"Failed to clear CUDA cache: {e}")
             
             # Set memory fraction
             if hasattr(torch.cuda, 'set_memory_fraction'):

@@ -147,6 +147,17 @@ class PyTorchModelAdapter(BaseModel):
         # Ensure inputs are on the correct device
         inputs = inputs.to(self.device)
         
+        # Only convert dtype for floating point tensors to avoid breaking embeddings
+        # Embedding layers expect integer (long) tensors, not float
+        if inputs.dtype in (torch.float32, torch.float16, torch.float64):
+            # Check if model uses half precision by looking at model parameters
+            # For transformers, we need to check all parameters, not just the first
+            model_dtype = self._detect_model_dtype(model)
+            if model_dtype == torch.float16:
+                inputs = inputs.half()
+            elif model_dtype == torch.float32:
+                inputs = inputs.float()
+        
         # Handle different model types
         if hasattr(model, 'predict') and callable(model.predict):
             # YOLO-style model
@@ -159,6 +170,29 @@ class PyTorchModelAdapter(BaseModel):
             outputs = model(inputs)
         
         return outputs
+    
+    def _detect_model_dtype(self, model):
+        """Detect the primary dtype used by the model."""
+        dtypes = set()
+        param_count = 0
+        
+        # Sample parameters to determine the most common dtype
+        for param in model.parameters():
+            if param.dtype in (torch.float16, torch.float32, torch.float64):
+                dtypes.add(param.dtype)
+                param_count += 1
+                # Sample first 10 parameters to avoid performance issues
+                if param_count >= 10:
+                    break
+        
+        # If any parameters are float16, assume the model uses mixed precision
+        if torch.float16 in dtypes:
+            return torch.float16
+        elif torch.float32 in dtypes:
+            return torch.float32
+        else:
+            # Default to float32 if we can't determine
+            return torch.float32
     
     def postprocess(self, outputs: torch.Tensor) -> Any:
         """Postprocess PyTorch model outputs."""
