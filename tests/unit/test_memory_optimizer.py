@@ -620,8 +620,15 @@ class TestCUDAMemoryOptimization:
             if i < len(tensors):
                 del tensors[i]
 
-        # Force garbage collection
-        torch.cuda.empty_cache()
+        # Force garbage collection with safe CUDA cache clearing
+        try:
+            torch.cuda.empty_cache()
+        except RuntimeError as e:
+            if "captures_underway" in str(e):
+                # Skip cache clearing if CUDA graph capture is active
+                pass
+            else:
+                raise
 
         # Mock the memory usage to include cuda_memory field
         with patch.object(optimizer, 'get_memory_usage') as mock_memory_usage:

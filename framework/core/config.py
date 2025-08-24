@@ -63,6 +63,7 @@ class DeviceConfig:
     use_tensorrt: bool = False
     use_torch_compile: bool = False  # Disabled by default to avoid C++ compilation issues
     compile_mode: str = "reduce-overhead"
+    memory_fraction: float = 0.9  # Fraction of CUDA memory to allocate
     
     def __post_init__(self):
         """Validate device configuration after initialization."""
