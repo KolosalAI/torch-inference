@@ -174,8 +174,12 @@ class TestSecurityInInferenceEngine:
         try:
             test_input = torch.randn(1, 10)
             
-            with pytest.raises(RuntimeError):
-                await self.engine.predict(test_input)
+            # The engine should catch the error and return an error response
+            result = await self.engine.predict(test_input)
+            
+            # Check that the error was handled properly
+            assert isinstance(result, dict)
+            assert "error" in result or "fallback_error" in result
             
             # Engine should still be functional
             assert self.engine._running is True

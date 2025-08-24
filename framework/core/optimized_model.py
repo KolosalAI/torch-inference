@@ -106,7 +106,11 @@ class OptimizedModel(BaseModel):
         
         # Optimize memory layout first
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError as e:
+                if "captures_underway" not in str(e):
+                    logger.warning(f"Failed to clear CUDA cache during optimization: {e}")
         
         # Apply optimizations in priority order
         optimization_order = self._get_optimization_order()
