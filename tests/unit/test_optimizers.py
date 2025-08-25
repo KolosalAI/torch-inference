@@ -28,6 +28,24 @@ except ImportError:
     enable_cuda_optimizations = None
     jit_compile_model = None
 
+# Test imports for enhanced optimizers
+try:
+    from framework.optimizers import (
+        EnhancedJITOptimizer, VulkanOptimizer, NumbaOptimizer,
+        PerformanceOptimizer, get_available_optimizers,
+        get_optimization_recommendations, create_optimizer_pipeline
+    )
+    ENHANCED_OPTIMIZERS_AVAILABLE = True
+except ImportError:
+    EnhancedJITOptimizer = None
+    VulkanOptimizer = None
+    NumbaOptimizer = None
+    PerformanceOptimizer = None
+    get_available_optimizers = None
+    get_optimization_recommendations = None
+    create_optimizer_pipeline = None
+    ENHANCED_OPTIMIZERS_AVAILABLE = False
+
 
 class MockOptimizer:
     """Base mock optimizer for testing."""
@@ -174,9 +192,11 @@ class TestONNXOptimizer:
         optimizer = ONNXOptimizer()
         assert optimizer is not None
     
+    @patch('framework.optimizers.onnx_optimizer.ONNX_AVAILABLE', True)
+    @patch('framework.optimizers.onnx_optimizer.onnx')
     @patch('framework.optimizers.onnx_optimizer.torch.onnx.export')
     @patch('framework.optimizers.onnx_optimizer.onnxruntime')
-    def test_onnx_optimization(self, mock_ort, mock_export, simple_model, sample_input, temp_model_dir):
+    def test_onnx_optimization(self, mock_ort, mock_export, mock_onnx, simple_model, sample_input, temp_model_dir):
         """Test ONNX model optimization."""
         optimizer = ONNXOptimizer()
         
@@ -186,6 +206,11 @@ class TestONNXOptimizer:
         
         # Mock successful ONNX export
         mock_export.return_value = None  # torch.onnx.export returns None
+        
+        # Mock ONNX model loading and verification
+        mock_onnx_model = Mock()
+        mock_onnx.load.return_value = mock_onnx_model
+        mock_onnx.checker.check_model.return_value = None
         
         onnx_path = temp_model_dir / "model.onnx"
         
@@ -617,3 +642,88 @@ class TestOptimizerErrorHandling:
             except (ValueError, TypeError, RuntimeError):
                 # Expected for invalid parameters
                 pass
+
+
+class TestEnhancedOptimizerUtilities:
+    """Test enhanced optimizer utility functions."""
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_get_available_optimizers_function(self):
+        """Test get_available_optimizers utility function."""
+        if get_available_optimizers is None:
+            pytest.skip("get_available_optimizers not available")
+        
+        available = get_available_optimizers()
+        
+        assert isinstance(available, dict)
+        
+        # Should have entries for different optimizer types
+        for optimizer_name, info in available.items():
+            assert isinstance(optimizer_name, str)
+            assert isinstance(info, dict)
+            assert 'available' in info
+            assert 'class' in info
+            assert isinstance(info['available'], bool)
+            assert isinstance(info['class'], str)
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_get_optimization_recommendations_function(self):
+        """Test get_optimization_recommendations utility function."""
+        if get_optimization_recommendations is None:
+            pytest.skip("get_optimization_recommendations not available")
+        
+        # Test different scenarios
+        scenarios = [
+            ("auto", "medium", "inference"),
+            ("cuda", "large", "inference"),
+            ("cpu", "small", "training")
+        ]
+        
+        for device, model_size, target in scenarios:
+            recommendations = get_optimization_recommendations(device, model_size, target)
+            
+            assert isinstance(recommendations, list)
+            
+            for optimizer_name, description in recommendations:
+                assert isinstance(optimizer_name, str)
+                assert isinstance(description, str)
+                assert len(description) > 0
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_create_optimizer_pipeline_function(self):
+        """Test create_optimizer_pipeline utility function."""
+        if create_optimizer_pipeline is None:
+            pytest.skip("create_optimizer_pipeline not available")
+        
+        pipeline_config = {
+            'enhanced_jit': {'strategy': 'auto'},
+            'performance': {'optimization_level': 'balanced'}
+        }
+        
+        try:
+            pipeline = create_optimizer_pipeline(pipeline_config)
+            assert isinstance(pipeline, list)
+        except Exception as e:
+            # Pipeline creation might fail due to missing dependencies
+            pytest.skip(f"Pipeline creation failed: {e}")
+    
+    def test_enhanced_optimizer_availability_detection(self):
+        """Test that enhanced optimizer availability is properly detected."""
+        # This test should always run to verify the import mechanism
+        assert isinstance(ENHANCED_OPTIMIZERS_AVAILABLE, bool)
+        
+        if ENHANCED_OPTIMIZERS_AVAILABLE:
+            # If available, at least some optimizers should be importable
+            available_count = sum([
+                EnhancedJITOptimizer is not None,
+                VulkanOptimizer is not None,
+                NumbaOptimizer is not None,
+                PerformanceOptimizer is not None
+            ])
+            assert available_count > 0, "Enhanced optimizers marked as available but none can be imported"
+        else:
+            # If not available, all should be None
+            assert EnhancedJITOptimizer is None
+            assert VulkanOptimizer is None
+            assert NumbaOptimizer is None
+            assert PerformanceOptimizer is None

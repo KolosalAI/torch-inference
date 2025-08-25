@@ -36,6 +36,7 @@ dependencies = [
     
     # Core ML dependencies
     "numpy>=2.1.0",
+    "scipy>=1.10.0",
     "pillow>=11.0.0",
     "opencv-python>=4.11.0",
     "psutil>=7.0.0",
@@ -55,6 +56,9 @@ dependencies = [
     
     # Hugging Face integration
     "huggingface-hub>=0.29.0",
+    
+    # Numba JIT compilation
+    "numba>=0.60.0",
 ]
 
 [project.optional-dependencies]

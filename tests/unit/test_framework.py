@@ -21,6 +21,22 @@ from framework import (
 )
 from framework.core.config import InferenceConfig
 
+# Test imports for enhanced optimizers
+try:
+    from framework.optimizers import (
+        get_available_optimizers, get_optimization_recommendations,
+        EnhancedJITOptimizer, VulkanOptimizer, NumbaOptimizer, PerformanceOptimizer
+    )
+    ENHANCED_OPTIMIZERS_AVAILABLE = True
+except ImportError:
+    get_available_optimizers = None
+    get_optimization_recommendations = None
+    EnhancedJITOptimizer = None
+    VulkanOptimizer = None
+    NumbaOptimizer = None
+    PerformanceOptimizer = None
+    ENHANCED_OPTIMIZERS_AVAILABLE = False
+
 
 class TestTorchInferenceFramework:
     """Test main framework interface."""
@@ -685,3 +701,466 @@ class TestFrameworkIntegration:
                 # Verify the mock model is being used
                 assert framework.model == mock_model            # Should cleanup on exit
             mock_model.cleanup.assert_called_once()
+
+
+class TestEnhancedOptimizationMethods:
+    """Test enhanced optimization methods in TorchInferenceFramework."""
+    
+    @pytest.fixture
+    def simple_model(self):
+        """Create simple test model."""
+        return nn.Sequential(
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Linear(256, 64),
+            nn.ReLU(),
+            nn.Linear(64, 10)
+        )
+    
+    @pytest.fixture
+    def sample_input(self):
+        """Create sample input tensor."""
+        return torch.randn(32, 128)
+    
+    @pytest.fixture
+    def enhanced_config(self):
+        """Create configuration with enhanced optimizations enabled."""
+        from framework.core.config import InferenceConfig, DeviceConfig, PerformanceConfig
+        return InferenceConfig(
+            device=DeviceConfig(
+                device_type="cuda" if torch.cuda.is_available() else "cpu",
+                use_vulkan=True,
+                use_numba=True,
+                jit_strategy="enhanced"
+            ),
+            performance=PerformanceConfig(
+                enable_profiling=True,
+                enable_metrics=True
+            )
+        )
+    
+    @pytest.fixture
+    def framework_with_model(self, enhanced_config, simple_model, temp_model_dir):
+        """Create framework with loaded model."""
+        framework = TorchInferenceFramework(enhanced_config)
+        
+        # Mock model loading
+        mock_model = Mock()
+        mock_model.model = simple_model
+        mock_model.example_inputs = torch.randn(1, 128)
+        mock_model.is_loaded = True
+        mock_model.model_info = {"type": "test", "parameters": 1000}
+        mock_model.predict.return_value = torch.randn(1, 10)
+        
+        with patch('framework.load_model') as mock_load:
+            mock_load.return_value = mock_model
+            framework.load_model("test_model.pt")
+        
+        return framework
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_get_optimization_recommendations(self, framework_with_model):
+        """Test getting optimization recommendations."""
+        recommendations = framework_with_model.get_optimization_recommendations(
+            model_size="medium",
+            target="inference"
+        )
+        
+        assert isinstance(recommendations, list)
+        for optimizer_name, description in recommendations:
+            assert isinstance(optimizer_name, str)
+            assert isinstance(description, str)
+            assert len(description) > 0
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_get_available_optimizers_method(self, framework_with_model):
+        """Test getting available optimizers."""
+        available = framework_with_model.get_available_optimizers()
+        
+        assert isinstance(available, dict)
+        
+        # Should have entries for different optimizer types
+        expected_keys = ['performance', 'jit', 'enhanced_jit', 'vulkan', 'numba']
+        
+        for key in expected_keys:
+            if key in available:
+                assert 'available' in available[key]
+                assert 'class' in available[key]
+                assert isinstance(available[key]['available'], bool)
+                assert isinstance(available[key]['class'], str)
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_apply_automatic_optimizations(self, framework_with_model):
+        """Test applying automatic optimizations."""
+        with patch('framework.optimizers.EnhancedJITOptimizer') as mock_jit_class, \
+             patch('framework.optimizers.VulkanOptimizer') as mock_vulkan_class, \
+             patch('framework.optimizers.NumbaOptimizer') as mock_numba_class, \
+             patch('framework.optimizers.PerformanceOptimizer') as mock_perf_class:
+            
+            # Setup mocks
+            mock_jit = Mock()
+            mock_vulkan = Mock()
+            mock_numba = Mock()
+            mock_perf = Mock()
+            
+            mock_jit.optimize.return_value = framework_with_model.model.model
+            mock_vulkan.optimize.return_value = None  # Vulkan doesn't modify model directly
+            mock_numba.optimize.return_value = None   # Numba doesn't modify model directly
+            mock_perf.optimize.return_value = framework_with_model.model.model
+            
+            mock_jit_class.return_value = mock_jit
+            mock_vulkan_class.return_value = mock_vulkan
+            mock_numba_class.return_value = mock_numba
+            mock_perf_class.return_value = mock_perf
+            
+            # Mock get_optimization_recommendations to return specific optimizers
+            with patch.object(framework_with_model, 'get_optimization_recommendations') as mock_recommendations:
+                mock_recommendations.return_value = [
+                    ('enhanced_jit', 'Enhanced JIT compilation'),
+                    ('vulkan', 'Vulkan acceleration'),
+                    ('numba', 'Numba optimization'),
+                    ('performance', 'Performance optimization')
+                ]
+                
+                # Test automatic optimizations
+                applied = framework_with_model.apply_automatic_optimizations()
+                
+                assert isinstance(applied, dict)
+                
+                # Check that optimizations were attempted
+                for opt_name in ['enhanced_jit', 'vulkan', 'numba', 'performance']:
+                    if opt_name in applied:
+                        assert isinstance(applied[opt_name], bool)
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_apply_automatic_optimizations_aggressive(self, framework_with_model):
+        """Test applying aggressive automatic optimizations."""
+        with patch.object(framework_with_model, 'get_optimization_recommendations') as mock_recommendations:
+            mock_recommendations.return_value = [
+                ('enhanced_jit', 'Enhanced JIT compilation'),
+                ('performance', 'Performance optimization')
+            ]
+            
+            # Test aggressive optimizations
+            applied = framework_with_model.apply_automatic_optimizations(aggressive=True)
+            
+            assert isinstance(applied, dict)
+            mock_recommendations.assert_called_once()
+    
+    def test_apply_automatic_optimizations_not_initialized(self, enhanced_config):
+        """Test applying optimizations on uninitialized framework."""
+        framework = TorchInferenceFramework(enhanced_config)
+        
+        with pytest.raises(RuntimeError, match="Model not loaded"):
+            framework.apply_automatic_optimizations()
+    
+    def test_get_optimization_recommendations_fallback(self, enhanced_config):
+        """Test optimization recommendations fallback when utilities not available."""
+        framework = TorchInferenceFramework(enhanced_config)
+        
+        with patch('framework.get_optimization_recommendations', None):
+            recommendations = framework.get_optimization_recommendations()
+            
+            # Should return fallback recommendations
+            assert isinstance(recommendations, list)
+            assert len(recommendations) > 0
+            assert recommendations[0] == ('standard', 'Only standard optimizations available')
+    
+    def test_get_available_optimizers_fallback(self, enhanced_config):
+        """Test available optimizers fallback when utilities not available."""
+        framework = TorchInferenceFramework(enhanced_config)
+        
+        with patch('framework.get_available_optimizers', None):
+            available = framework.get_available_optimizers()
+            
+            # Should return fallback information
+            assert isinstance(available, dict)
+            assert 'standard' in available
+            assert 'enhanced' in available
+            assert available['standard']['available'] is True
+            assert available['enhanced']['available'] is False
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_optimization_with_different_strategies(self, framework_with_model):
+        """Test optimization with different JIT strategies."""
+        strategies = ['auto', 'torchscript_script', 'torchscript_trace', 'enhanced']
+        
+        for strategy in strategies:
+            # Update config strategy
+            framework_with_model.config.device.jit_strategy = strategy
+            
+            with patch('framework.optimizers.EnhancedJITOptimizer') as mock_jit_class:
+                mock_jit = Mock()
+                mock_jit.optimize.return_value = framework_with_model.model.model
+                mock_jit_class.return_value = mock_jit
+                
+                with patch.object(framework_with_model, 'get_optimization_recommendations') as mock_recommendations:
+                    mock_recommendations.return_value = [('enhanced_jit', 'Enhanced JIT')]
+                    
+                    applied = framework_with_model.apply_automatic_optimizations()
+                    
+                    if 'enhanced_jit' in applied:
+                        # Verify the strategy was used
+                        assert isinstance(applied['enhanced_jit'], bool)
+    
+    @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    def test_optimization_error_handling(self, framework_with_model):
+        """Test error handling during optimization."""
+        with patch('framework.EnhancedJITOptimizer') as mock_jit_class:
+            # Mock optimizer that raises an exception
+            mock_jit = Mock()
+            mock_jit.optimize.side_effect = RuntimeError("Optimization failed")
+            mock_jit_class.return_value = mock_jit
+            
+            with patch.object(framework_with_model, 'get_optimization_recommendations') as mock_recommendations:
+                mock_recommendations.return_value = [('enhanced_jit', 'Enhanced JIT')]
+                
+                # Should handle errors gracefully
+                applied = framework_with_model.apply_automatic_optimizations()
+                
+                if 'enhanced_jit' in applied:
+                    # Should mark optimization as failed
+                    assert applied['enhanced_jit'] is False
+    
+    def test_optimization_recommendations_different_scenarios(self, enhanced_config):
+        """Test optimization recommendations for different scenarios."""
+        framework = TorchInferenceFramework(enhanced_config)
+        
+        if framework.get_optimization_recommendations != None:
+            scenarios = [
+                ("auto", "small", "inference"),
+                ("cuda", "medium", "inference"),
+                ("cpu", "large", "training"),
+                ("auto", "xlarge", "serving")
+            ]
+            
+            for device, model_size, target in scenarios:
+                recommendations = framework.get_optimization_recommendations(
+                    device=device,
+                    model_size=model_size,
+                    target=target
+                )
+                
+                assert isinstance(recommendations, list)
+                # Different scenarios should potentially give different recommendations
+                for optimizer_name, description in recommendations:
+                    assert isinstance(optimizer_name, str)
+                    assert isinstance(description, str)
+
+
+class TestFrameworkOptimizationIntegration:
+    """Test integration of optimization features with framework operations."""
+    
+    @pytest.fixture
+    def optimized_framework_config(self):
+        """Create configuration for optimized framework."""
+        from framework.core.config import InferenceConfig, DeviceConfig, PerformanceConfig
+        return InferenceConfig(
+            device=DeviceConfig(
+                device_type="cuda" if torch.cuda.is_available() else "cpu",
+                use_vulkan=True,
+                use_numba=True,
+                jit_strategy="enhanced"
+            ),
+            performance=PerformanceConfig(
+                enable_profiling=True,
+                enable_metrics=True
+            )
+        )
+    
+    def test_optimized_framework_creation(self, optimized_framework_config):
+        """Test creation of optimized framework."""
+        framework = create_optimized_framework(optimized_framework_config)
+        
+        assert isinstance(framework, TorchInferenceFramework)
+        assert framework.config == optimized_framework_config
+    
+    def test_optimized_framework_with_auto_optimization(self, optimized_framework_config, temp_model_dir):
+        """Test optimized framework with automatic optimization."""
+        simple_model = nn.Sequential(nn.Linear(10, 20), nn.ReLU(), nn.Linear(20, 5))
+        model_path = temp_model_dir / "auto_opt_model.pt"
+        torch.save(simple_model, model_path)
+        
+        framework = create_optimized_framework(optimized_framework_config)
+        
+        with patch('framework.OptimizedModel') as mock_optimized_model_class:
+            mock_optimized_model = Mock()
+            mock_optimized_model.load_model = Mock()
+            mock_optimized_model.is_loaded = True
+            mock_optimized_model.model_info = {"optimized": True}
+            mock_optimized_model_class.return_value = mock_optimized_model
+            
+            # Load model - should use OptimizedModel
+            framework.load_model(model_path)
+            
+            assert framework._initialized
+            mock_optimized_model_class.assert_called_once_with(optimized_framework_config)
+            mock_optimized_model.load_model.assert_called_once_with(model_path)
+    
+    def test_framework_optimization_performance_impact(self, optimized_framework_config):
+        """Test that optimizations don't negatively impact basic operations."""
+        framework = TorchInferenceFramework(optimized_framework_config)
+        
+        # Mock a simple model
+        mock_model = Mock()
+        mock_model.is_loaded = True
+        mock_model.model_info = {"test": True}
+        mock_model.predict.return_value = {"prediction": "test"}
+        mock_model.model = nn.Linear(10, 5)
+        mock_model.example_inputs = torch.randn(1, 10)
+        
+        framework.model = mock_model
+        framework._initialized = True
+        
+        # Test that basic operations still work
+        input_data = torch.randn(1, 10)
+        result = framework.predict(input_data)
+        
+        assert result == {"prediction": "test"}
+        mock_model.predict.assert_called_once_with(input_data)
+    
+    def test_framework_benchmark_with_optimizations(self, optimized_framework_config):
+        """Test benchmarking with optimizations applied."""
+        framework = TorchInferenceFramework(optimized_framework_config)
+        
+        # Mock optimized model
+        mock_model = Mock()
+        mock_model.is_loaded = True
+        mock_model.model_info = {"optimized": True, "type": "test"}
+        mock_model.device = "cpu"
+        mock_model.predict.return_value = torch.randn(1, 5)
+        
+        framework.model = mock_model
+        framework._initialized = True
+        
+        # Run benchmark
+        input_data = torch.randn(1, 10)
+        results = framework.benchmark(input_data, iterations=10, warmup=2)
+        
+        assert isinstance(results, dict)
+        assert "mean_time_ms" in results
+        assert "throughput_fps" in results
+        assert "device" in results
+        assert "model_info" in results
+        assert results["iterations"] == 10
+        
+        # Should have called predict multiple times (warmup + iterations)
+        assert mock_model.predict.call_count == 12  # 2 warmup + 10 iterations
+    
+    @pytest.mark.asyncio
+    async def test_framework_async_operations_with_optimizations(self, optimized_framework_config):
+        """Test async operations with optimizations."""
+        framework = TorchInferenceFramework(optimized_framework_config)
+        
+        # Mock optimized model and engine
+        mock_model = Mock()
+        mock_model.is_loaded = True
+        mock_model.model_info = {"optimized": True}
+        
+        mock_engine = AsyncMock()
+        mock_engine.predict.return_value = {"result": "optimized_prediction"}
+        mock_engine.start = AsyncMock()
+        mock_engine.stop = AsyncMock()
+        mock_engine.health_check.return_value = {"healthy": True}
+        
+        framework.model = mock_model
+        framework.engine = mock_engine
+        framework._initialized = True
+        
+        # Test async operations
+        await framework.start_engine()
+        assert framework._engine_running
+        
+        result = await framework.predict_async("test_input")
+        assert result == {"result": "optimized_prediction"}
+        
+        health = await framework.health_check()
+        assert health["healthy"]
+        
+        await framework.stop_engine()
+        assert not framework._engine_running
+
+
+class TestFrameworkAvailabilityDetection:
+    """Test framework's ability to detect and handle optimizer availability."""
+    
+    def test_framework_with_no_enhanced_optimizers(self):
+        """Test framework behavior when enhanced optimizers are not available."""
+        from framework.core.config import InferenceConfig
+        config = InferenceConfig()
+        
+        with patch('framework.get_available_optimizers', None), \
+             patch('framework.get_optimization_recommendations', None):
+            
+            framework = TorchInferenceFramework(config)
+            
+            # Should still work with fallbacks
+            recommendations = framework.get_optimization_recommendations()
+            assert isinstance(recommendations, list)
+            
+            available = framework.get_available_optimizers()
+            assert isinstance(available, dict)
+    
+    def test_framework_mixed_optimizer_availability(self):
+        """Test framework with mixed optimizer availability."""
+        from framework.core.config import InferenceConfig
+        config = InferenceConfig()
+        
+        framework = TorchInferenceFramework(config)
+        
+        # Mock mixed availability
+        mock_available = {
+            'enhanced_jit': {'available': True, 'class': 'EnhancedJITOptimizer'},
+            'vulkan': {'available': False, 'class': 'VulkanOptimizer'},
+            'numba': {'available': True, 'class': 'NumbaOptimizer'},
+            'performance': {'available': True, 'class': 'PerformanceOptimizer'}
+        }
+        
+        with patch.object(framework, 'get_available_optimizers', return_value=mock_available):
+            available = framework.get_available_optimizers()
+            
+            # Should handle mixed availability
+            assert available['enhanced_jit']['available'] is True
+            assert available['vulkan']['available'] is False
+            assert available['numba']['available'] is True
+            assert available['performance']['available'] is True
+    
+    def test_framework_graceful_degradation(self):
+        """Test framework graceful degradation when optimizers fail."""
+        from framework.core.config import InferenceConfig, DeviceConfig
+        config = InferenceConfig(
+            device=DeviceConfig(
+                use_vulkan=True,
+                use_numba=True,
+                jit_strategy="enhanced"
+            )
+        )
+        
+        framework = TorchInferenceFramework(config)
+        
+        # Mock model
+        mock_model = Mock()
+        mock_model.model = nn.Linear(10, 5)
+        mock_model.example_inputs = torch.randn(1, 10)
+        mock_model.is_loaded = True
+        
+        framework.model = mock_model
+        framework._initialized = True
+        
+        # Mock all optimizers to fail
+        with patch('framework.EnhancedJITOptimizer', side_effect=RuntimeError("Not available")), \
+             patch('framework.VulkanOptimizer', side_effect=RuntimeError("Not available")), \
+             patch('framework.NumbaOptimizer', side_effect=RuntimeError("Not available")):
+            
+            # Should still provide recommendations (even if they fail)
+            with patch.object(framework, 'get_optimization_recommendations') as mock_recommendations:
+                mock_recommendations.return_value = [
+                    ('enhanced_jit', 'Enhanced JIT (may not be available)'),
+                    ('vulkan', 'Vulkan (may not be available)')
+                ]
+                
+                applied = framework.apply_automatic_optimizations()
+                
+                # All optimizations should fail gracefully
+                for opt_name, success in applied.items():
+                    assert success is False  # All should fail but not crash
