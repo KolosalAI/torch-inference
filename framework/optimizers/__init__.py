@@ -190,6 +190,49 @@ except ImportError as e:
     prune_model = None
     _unavailable_optimizers.extend(['StructuredPruningOptimizer', 'StructuredPruningConfig', 'ChannelImportanceCalculator', 'LowRankRegularizer', 'prune_model'])
 
+# Enhanced optimizers (Vulkan, Numba, Enhanced JIT)
+try:
+    from .vulkan_optimizer import VulkanOptimizer, VulkanDeviceInfo, VULKAN_AVAILABLE
+    _available_optimizers.extend(['VulkanOptimizer', 'VulkanDeviceInfo'])
+    __vulkan_available__ = True
+except ImportError as e:
+    logger.info(f"Vulkan optimizer not available: {e}")
+    VulkanOptimizer = None
+    VulkanDeviceInfo = None
+    VULKAN_AVAILABLE = False
+    __vulkan_available__ = False
+    _unavailable_optimizers.extend(['VulkanOptimizer', 'VulkanDeviceInfo'])
+
+try:
+    from .numba_optimizer import NumbaOptimizer, NUMBA_AVAILABLE, NUMBA_CUDA_AVAILABLE
+    _available_optimizers.extend(['NumbaOptimizer'])
+    __numba_available__ = True
+except ImportError as e:
+    logger.info(f"Numba optimizer not available: {e}")
+    NumbaOptimizer = None
+    NUMBA_AVAILABLE = False
+    NUMBA_CUDA_AVAILABLE = False
+    __numba_available__ = False
+    _unavailable_optimizers.extend(['NumbaOptimizer'])
+
+try:
+    from .jit_optimizer import EnhancedJITOptimizer
+    _available_optimizers.extend(['EnhancedJITOptimizer'])
+    __enhanced_jit_available__ = True
+except ImportError as e:
+    logger.info(f"Enhanced JIT optimizer not available: {e}")
+    EnhancedJITOptimizer = None
+    __enhanced_jit_available__ = False
+    _unavailable_optimizers.extend(['EnhancedJITOptimizer'])
+
+try:
+    from .performance_optimizer import PerformanceOptimizer
+    _available_optimizers.extend(['PerformanceOptimizer'])
+except ImportError as e:
+    logger.info(f"Performance optimizer not available: {e}")
+    PerformanceOptimizer = None
+    _unavailable_optimizers.extend(['PerformanceOptimizer'])
+
 # JIT optimizer
 try:
     from .jit_optimizer import JITOptimizer, jit_compile_model
@@ -206,7 +249,92 @@ if _available_optimizers:
 if _unavailable_optimizers:
     logger.info(f"Unavailable optimizers: {', '.join(_unavailable_optimizers)}")
 
+def get_available_optimizers():
+    """Get a dictionary of available optimizers and their status."""
+    optimizers = {
+        'performance': {'available': PerformanceOptimizer is not None, 'class': 'PerformanceOptimizer'},
+        'tensorrt': {'available': TensorRTOptimizer is not None, 'class': 'TensorRTOptimizer'},
+        'onnx': {'available': ONNXOptimizer is not None, 'class': 'ONNXOptimizer'},
+        'quantization': {'available': QuantizationOptimizer is not None, 'class': 'QuantizationOptimizer'},
+        'memory': {'available': MemoryOptimizer is not None, 'class': 'MemoryOptimizer'},
+        'cuda': {'available': CUDAOptimizer is not None, 'class': 'CUDAOptimizer'},
+        'jit': {'available': JITOptimizer is not None, 'class': 'JITOptimizer'},
+        'enhanced_jit': {'available': __enhanced_jit_available__, 'class': 'EnhancedJITOptimizer'},
+        'vulkan': {'available': __vulkan_available__, 'class': 'VulkanOptimizer'},
+        'numba': {'available': __numba_available__, 'class': 'NumbaOptimizer'},
+        'calibration': {'available': INT8CalibrationToolkit is not None, 'class': 'INT8CalibrationToolkit'},
+        'auto_tuning': {'available': KernelAutoTuner is not None, 'class': 'KernelAutoTuner'},
+        'layer_fusion': {'available': AdvancedLayerFusion is not None, 'class': 'AdvancedLayerFusion'},
+        'tensor_factorization': {'available': TensorFactorizationOptimizer is not None, 'class': 'TensorFactorizationOptimizer'},
+        'structured_pruning': {'available': StructuredPruningOptimizer is not None, 'class': 'StructuredPruningOptimizer'},
+        'model_compression': {'available': ModelCompressionSuite is not None, 'class': 'ModelCompressionSuite'},
+        'mask_pruning': {'available': MaskBasedStructuredPruning is not None, 'class': 'MaskBasedStructuredPruning'}
+    }
+    return optimizers
+
+def get_optimization_recommendations(device='auto', model_size='medium', target='inference'):
+    """Get recommended optimizers based on device, model size, and target use case."""
+    available = get_available_optimizers()
+    recommendations = []
+    
+    # Always recommend basic optimizations
+    if available['memory']['available']:
+        recommendations.append(('memory', 'Essential for memory management'))
+    
+    # Device-specific recommendations
+    if device == 'auto' or 'cuda' in str(device).lower():
+        if available['cuda']['available']:
+            recommendations.append(('cuda', 'CUDA optimizations for GPU acceleration'))
+        if available['tensorrt']['available']:
+            recommendations.append(('tensorrt', 'TensorRT for NVIDIA GPU optimization'))
+    
+    # Enhanced JIT for all scenarios
+    if available['enhanced_jit']['available']:
+        recommendations.append(('enhanced_jit', 'Enhanced JIT compilation with multi-backend support'))
+    elif available['jit']['available']:
+        recommendations.append(('jit', 'Standard JIT compilation'))
+    
+    # Vulkan for cross-platform GPU acceleration
+    if available['vulkan']['available']:
+        recommendations.append(('vulkan', 'Cross-platform GPU compute acceleration'))
+    
+    # Numba for CPU-intensive workloads
+    if available['numba']['available']:
+        recommendations.append(('numba', 'JIT compilation for numerical operations'))
+    
+    # Model size specific
+    if model_size in ['large', 'xlarge']:
+        if available['quantization']['available']:
+            recommendations.append(('quantization', 'Quantization for large models'))
+        if available['model_compression']['available']:
+            recommendations.append(('model_compression', 'Comprehensive model compression'))
+    
+    # Target specific
+    if target == 'inference':
+        if available['layer_fusion']['available']:
+            recommendations.append(('layer_fusion', 'Layer fusion for inference optimization'))
+    
+    return recommendations
+
+def create_optimizer_pipeline(optimizers_config):
+    """Create a pipeline of optimizers based on configuration."""
+    pipeline = []
+    available = get_available_optimizers()
+    
+    for optimizer_name, config in optimizers_config.items():
+        if optimizer_name in available and available[optimizer_name]['available']:
+            optimizer_class = globals().get(available[optimizer_name]['class'])
+            if optimizer_class:
+                if isinstance(config, dict):
+                    pipeline.append(optimizer_class(**config))
+                else:
+                    pipeline.append(optimizer_class())
+    
+    return pipeline
+
 __all__ = [
+    # Core optimizers
+    'PerformanceOptimizer',
     'TensorRTOptimizer',
     'convert_to_tensorrt',
     'ONNXOptimizer', 
@@ -220,6 +348,14 @@ __all__ = [
     'enable_cuda_optimizations',
     'JITOptimizer',
     'jit_compile_model',
+    
+    # Enhanced optimizers
+    'EnhancedJITOptimizer',
+    'VulkanOptimizer',
+    'VulkanDeviceInfo',
+    'NumbaOptimizer',
+    
+    # Calibration and profiling
     'INT8CalibrationToolkit',
     'CalibrationConfig', 
     'get_calibration_toolkit',
@@ -231,6 +367,7 @@ __all__ = [
     'FusionPattern',
     'get_advanced_layer_fusion',
     'optimize_model_fusion',
+    
     # HLRTF-inspired optimizers
     'TensorFactorizationOptimizer',
     'TensorFactorizationConfig',
@@ -251,10 +388,21 @@ __all__ = [
     'MultiObjectiveOptimizer',
     'compress_model_comprehensive',
     'compress_model',
+    
     # Mask-based pruning
     'MaskBasedStructuredPruning',
     'MaskPruningConfig',
     'MaskedConv2d',
     'MaskedLinear',
-    'prune_model_with_masks'
+    'prune_model_with_masks',
+    
+    # Availability flags
+    'VULKAN_AVAILABLE',
+    'NUMBA_AVAILABLE', 
+    'NUMBA_CUDA_AVAILABLE',
+    
+    # Utility functions
+    'get_available_optimizers',
+    'get_optimization_recommendations',
+    'create_optimizer_pipeline'
 ]

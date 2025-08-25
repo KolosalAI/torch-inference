@@ -1,12 +1,13 @@
 """
-Performance Optimization Module for Hardware Acceleration
+Enhanced Performance Optimization Module for Hardware Acceleration
 
-This module provides automatic hardware optimization with:
+This module provides comprehensive hardware optimization with:
 - GPU detection and optimization
 - Memory management
-- Hardware-specific acceleration
+- Hardware-specific acceleration (CUDA, Vulkan, Numba)
 - Performance tuning
-- Model optimization techniques
+- Multi-backend JIT optimization
+- Advanced model optimization techniques
 """
 
 import logging
@@ -16,19 +17,40 @@ from typing import Optional, Dict, Any, Tuple, List
 from ..core.config import InferenceConfig, DeviceConfig, DeviceType
 from ..core.gpu_manager import GPUManager
 
+# Import enhanced optimizers
+try:
+    from .jit_optimizer import EnhancedJITOptimizer
+    JIT_ENHANCED_AVAILABLE = True
+except ImportError:
+    from .jit_optimizer import JITOptimizer
+    JIT_ENHANCED_AVAILABLE = False
+
+try:
+    from .vulkan_optimizer import VulkanOptimizer, VULKAN_AVAILABLE
+except ImportError:
+    VULKAN_AVAILABLE = False
+    VulkanOptimizer = None
+
+try:
+    from .numba_optimizer import NumbaOptimizer, NUMBA_AVAILABLE
+except ImportError:
+    NUMBA_AVAILABLE = False
+    NumbaOptimizer = None
+
 logger = logging.getLogger(__name__)
 
 
 class PerformanceOptimizer:
     """
-    Automatic performance optimizer for inference workloads.
+    Enhanced automatic performance optimizer for inference workloads.
     
     Features:
     - Hardware detection and optimization
     - Memory optimization
-    - Model compilation and fusion
+    - Multi-backend JIT compilation (TorchScript, Vulkan, Numba)
     - Precision optimization
     - Batch size optimization
+    - Advanced acceleration techniques
     """
     
     def __init__(self, config: InferenceConfig):
@@ -36,8 +58,24 @@ class PerformanceOptimizer:
         self.gpu_manager = GPUManager()
         self.optimizations_applied = []
         
+        # Initialize optimizers
+        if JIT_ENHANCED_AVAILABLE:
+            self.jit_optimizer = EnhancedJITOptimizer(config)
+        else:
+            from .jit_optimizer import JITOptimizer
+            self.jit_optimizer = JITOptimizer(config)
+        
+        self.vulkan_optimizer = VulkanOptimizer(config) if VULKAN_AVAILABLE else None
+        self.numba_optimizer = NumbaOptimizer(config) if NUMBA_AVAILABLE else None
+        
+        self.logger = logging.getLogger(f"{__name__}.PerformanceOptimizer")
+        self.logger.info(f"Performance optimizer initialized - "
+                        f"Enhanced JIT: {JIT_ENHANCED_AVAILABLE}, "
+                        f"Vulkan: {VULKAN_AVAILABLE}, "
+                        f"Numba: {NUMBA_AVAILABLE}")
+    
     def optimize_device_config(self) -> DeviceConfig:
-        """Optimize device configuration for best performance."""
+        """Optimize device configuration for best performance with enhanced backends."""
         # Detect best GPU
         gpus, device_config = self.gpu_manager.detect_and_configure()
         
@@ -46,59 +84,114 @@ class PerformanceOptimizer:
             device_config.use_fp16 = True  # Enable FP16 for speed
             device_config.use_torch_compile = True  # Enable compilation
             device_config.memory_fraction = 0.9  # Use more memory for performance
+            
+            # Enable Numba CUDA if available
+            if self.numba_optimizer and self.numba_optimizer.is_cuda_available():
+                device_config.use_numba = True
+                device_config.numba_target = "cuda"
+                self.optimizations_applied.append("Numba CUDA JIT enabled")
+            
             self.optimizations_applied.append("CUDA FP16 enabled")
             self.optimizations_applied.append("torch.compile enabled")
         
         elif device_config.device_type == DeviceType.MPS:
             device_config.use_fp16 = True  # MPS supports FP16
             device_config.use_torch_compile = False  # May not be stable on MPS
+            
+            # Enable Numba CPU for MPS systems
+            if self.numba_optimizer:
+                device_config.use_numba = True
+                device_config.numba_target = "parallel"
+                self.optimizations_applied.append("Numba parallel JIT enabled")
+            
             self.optimizations_applied.append("MPS FP16 enabled")
         
         # CPU optimizations
         elif device_config.device_type == DeviceType.CPU:
             device_config.use_torch_compile = True  # CPU can benefit from compilation
+            
+            # Enable Vulkan if available for CPU systems
+            if self.vulkan_optimizer and self.vulkan_optimizer.is_available():
+                device_config.use_vulkan = True
+                self.optimizations_applied.append("Vulkan compute enabled")
+            
+            # Enable Numba parallel processing
+            if self.numba_optimizer:
+                device_config.use_numba = True
+                device_config.numba_target = "parallel"
+                self.optimizations_applied.append("Numba parallel JIT enabled")
+            
             self.optimizations_applied.append("CPU torch.compile enabled")
+        
+        # Set JIT optimization strategy
+        if JIT_ENHANCED_AVAILABLE:
+            if device_config.use_vulkan and device_config.use_numba:
+                device_config.jit_strategy = "multi"
+            elif device_config.use_vulkan:
+                device_config.jit_strategy = "vulkan"
+            elif device_config.use_numba:
+                device_config.jit_strategy = "numba"
+            else:
+                device_config.jit_strategy = "torch_jit"
         
         logger.info(f"Device optimized: {device_config.device_type.value} - {', '.join(self.optimizations_applied)}")
         return device_config
     
-    def optimize_model(self, model: nn.Module, device: torch.device) -> nn.Module:
-        """Optimize model for inference performance."""
+    def optimize_model(self, model: nn.Module, device: torch.device, example_inputs: Optional[torch.Tensor] = None) -> nn.Module:
+        """Optimize model for inference performance with enhanced backends."""
         # Move to device first
         model = model.to(device)
         model.eval()
         
-        # Apply optimizations
-        optimized_model = self._apply_model_optimizations(model, device)
+        # Apply comprehensive optimizations
+        optimized_model = self._apply_enhanced_model_optimizations(model, device, example_inputs)
         
         return optimized_model
     
-    def _apply_model_optimizations(self, model: nn.Module, device: torch.device) -> nn.Module:
-        """Apply various model optimizations."""
+    def _apply_enhanced_model_optimizations(self, model: nn.Module, device: torch.device, example_inputs: Optional[torch.Tensor]) -> nn.Module:
+        """Apply enhanced model optimizations using multiple backends."""
+        optimized_model = model
+        
         # Set model to evaluation mode
-        model.eval()
+        optimized_model.eval()
         
         # Disable gradients for inference
-        for param in model.parameters():
+        for param in optimized_model.parameters():
             param.requires_grad = False
         
-        # Apply torch.jit.script if possible
-        try:
-            if hasattr(torch.jit, 'script'):
-                # Only script if model is scriptable
-                model = torch.jit.script(model)
+        # Apply JIT optimization strategy based on configuration
+        if JIT_ENHANCED_AVAILABLE:
+            jit_strategy = getattr(self.config.device, 'jit_strategy', 'auto')
+            try:
+                optimized_model = self.jit_optimizer.optimize_model(
+                    optimized_model, 
+                    example_inputs, 
+                    optimization_strategy=jit_strategy
+                )
+                self.optimizations_applied.append(f"Enhanced JIT ({jit_strategy})")
+                self.logger.info(f"Enhanced JIT optimization applied: {jit_strategy}")
+            except Exception as e:
+                self.logger.warning(f"Enhanced JIT optimization failed: {e}")
+        
+        else:
+            # Fallback to standard TorchScript optimization
+            try:
+                if example_inputs is not None:
+                    optimized_model = self.jit_optimizer.optimize(optimized_model, example_inputs)
+                else:
+                    optimized_model = self.jit_optimizer.script_model(optimized_model)
                 self.optimizations_applied.append("TorchScript")
-                logger.info("Model converted to TorchScript")
-        except Exception as e:
-            logger.debug(f"TorchScript conversion failed: {e}")
+                self.logger.info("TorchScript optimization applied")
+            except Exception as e:
+                self.logger.debug(f"TorchScript optimization failed: {e}")
         
         # Apply torch.compile if available and enabled
         if (hasattr(torch, 'compile') and 
             self.config.device.use_torch_compile and 
             device.type in ['cuda', 'cpu']):
             try:
-                model = torch.compile(
-                    model,
+                optimized_model = torch.compile(
+                    optimized_model,
                     mode='max-autotune',  # Aggressive optimization
                     fullgraph=False,      # Allow graph breaks
                     dynamic=True          # Handle dynamic shapes
