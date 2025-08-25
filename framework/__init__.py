@@ -28,11 +28,35 @@ logger = logging.getLogger(__name__)
 # Import optimizers with error handling
 try:
     from .optimizers import (
+        # Core optimizers
         TensorRTOptimizer, ONNXOptimizer, QuantizationOptimizer,
         MemoryOptimizer, CUDAOptimizer, JITOptimizer,
         convert_to_tensorrt, convert_to_onnx, quantize_model,
-        enable_cuda_optimizations, jit_compile_model
+        enable_cuda_optimizations, jit_compile_model,
+        
+        # Enhanced optimizers
+        EnhancedJITOptimizer, VulkanOptimizer, NumbaOptimizer,
+        PerformanceOptimizer,
+        
+        # Utility functions
+        get_available_optimizers, get_optimization_recommendations,
+        create_optimizer_pipeline,
+        
+        # Availability flags
+        VULKAN_AVAILABLE, NUMBA_AVAILABLE, NUMBA_CUDA_AVAILABLE
     )
+    
+    # Track which optimizers are available
+    _optimizer_availability = {
+        'enhanced_jit': EnhancedJITOptimizer is not None,
+        'vulkan': VulkanOptimizer is not None and VULKAN_AVAILABLE,
+        'numba': NumbaOptimizer is not None and NUMBA_AVAILABLE,
+        'numba_cuda': NUMBA_CUDA_AVAILABLE,
+        'performance': PerformanceOptimizer is not None
+    }
+    
+    logger.info(f"Enhanced optimizers available: {_optimizer_availability}")
+    
 except ImportError as e:
     logger.warning(f"Some optimizers not available: {e}")
     # Define dummy functions/classes for missing optimizers
@@ -47,6 +71,30 @@ except ImportError as e:
     quantize_model = None
     enable_cuda_optimizations = None
     jit_compile_model = None
+    
+    # Enhanced optimizers
+    EnhancedJITOptimizer = None
+    VulkanOptimizer = None
+    NumbaOptimizer = None
+    PerformanceOptimizer = None
+    
+    # Utility functions
+    get_available_optimizers = None
+    get_optimization_recommendations = None
+    create_optimizer_pipeline = None
+    
+    # Availability flags
+    VULKAN_AVAILABLE = False
+    NUMBA_AVAILABLE = False
+    NUMBA_CUDA_AVAILABLE = False
+    
+    _optimizer_availability = {
+        'enhanced_jit': False,
+        'vulkan': False,
+        'numba': False,
+        'numba_cuda': False,
+        'performance': False
+    }
 
 
 class TorchInferenceFramework:
@@ -370,6 +418,110 @@ class TorchInferenceFramework:
             return {"engine": "not_initialized"}
         
         return self.engine.get_stats()
+    
+    def get_optimization_recommendations(self, model_size: str = 'medium', target: str = 'inference', device: Optional[str] = None) -> List[Tuple[str, str]]:
+        """
+        Get optimization recommendations for the current setup.
+        
+        Args:
+            model_size: Size of the model ('small', 'medium', 'large', 'xlarge')
+            target: Target use case ('inference', 'training', 'serving')
+            device: Device type to get recommendations for (if None, uses current config)
+            
+        Returns:
+            List of (optimizer_name, description) tuples
+        """
+        if get_optimization_recommendations is None:
+            return [('standard', 'Only standard optimizations available')]
+        
+        device_str = device if device is not None else str(self.config.device.device_type) if self.config else 'auto'
+        return get_optimization_recommendations(device_str, model_size, target)
+    
+    def apply_automatic_optimizations(self, aggressive: bool = False) -> Dict[str, bool]:
+        """
+        Apply automatic optimizations based on system capabilities and model characteristics.
+        
+        Args:
+            aggressive: Whether to apply aggressive optimizations that may reduce compatibility
+            
+        Returns:
+            Dictionary showing which optimizations were applied
+        """
+        if not self._initialized:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+        
+        applied = {}
+        
+        # Get recommendations
+        recommendations = self.get_optimization_recommendations()
+        
+        for optimizer_name, description in recommendations:
+            try:
+                if optimizer_name == 'enhanced_jit' and EnhancedJITOptimizer is not None:
+                    optimizer = EnhancedJITOptimizer(self.config)
+                    optimized_model = optimizer.optimize(self.model.model, self.model.example_inputs)
+                    if optimized_model is not None:
+                        self.model.model = optimized_model
+                        applied['enhanced_jit'] = True
+                        self.logger.info("Applied Enhanced JIT optimization")
+                    else:
+                        applied['enhanced_jit'] = False
+                
+                elif optimizer_name == 'vulkan' and VulkanOptimizer is not None and VULKAN_AVAILABLE:
+                    optimizer = VulkanOptimizer(self.config)
+                    # Note: Vulkan optimizer creates compute contexts for tensor operations
+                    # Model stays the same, but operations are accelerated
+                    result = optimizer.optimize(self.model.model, self.model.example_inputs)
+                    if result is not None:
+                        applied['vulkan'] = True
+                        self.logger.info("Applied Vulkan optimization")
+                    else:
+                        applied['vulkan'] = False
+                
+                elif optimizer_name == 'numba' and NumbaOptimizer is not None and NUMBA_AVAILABLE:
+                    optimizer = NumbaOptimizer(self.config)
+                    # Numba optimizer wraps operations for JIT compilation
+                    result = optimizer.optimize(self.model.model, self.model.example_inputs)
+                    if result is not None:
+                        applied['numba'] = True
+                        self.logger.info("Applied Numba optimization")
+                    else:
+                        applied['numba'] = False
+                
+                elif optimizer_name == 'performance' and PerformanceOptimizer is not None:
+                    optimizer = PerformanceOptimizer(self.config)
+                    optimized_model = optimizer.optimize(self.model.model, self.model.example_inputs)
+                    if optimized_model is not None:
+                        self.model.model = optimized_model
+                        applied['performance'] = True
+                        self.logger.info("Applied Performance optimization")
+                    else:
+                        applied['performance'] = False
+                
+                else:
+                    applied[optimizer_name] = False
+                    
+            except Exception as e:
+                self.logger.warning(f"Failed to apply {optimizer_name} optimization: {e}")
+                applied[optimizer_name] = False
+        
+        self.logger.info(f"Automatic optimizations applied: {applied}")
+        return applied
+    
+    def get_available_optimizers(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get information about available optimizers.
+        
+        Returns:
+            Dictionary with optimizer information
+        """
+        if get_available_optimizers is None:
+            return {
+                'standard': {'available': True, 'class': 'StandardOptimizer'},
+                'enhanced': {'available': False, 'class': None}
+            }
+        
+        return get_available_optimizers()
     
     def get_performance_report(self) -> Dict[str, Any]:
         """Get comprehensive performance report."""

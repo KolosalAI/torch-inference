@@ -7,6 +7,12 @@ import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
+try:
+    import onnxruntime
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNX_AVAILABLE = False
+
 from framework.adapters.model_adapters import (
     PyTorchModelAdapter, ONNXModelAdapter, TensorRTModelAdapter,
     HuggingFaceModelAdapter, load_model
@@ -146,7 +152,7 @@ class TestPyTorchModelAdapter:
         assert isinstance(result, dict)
 
 
-@pytest.mark.skipif(ONNXModelAdapter is None, reason="ONNX adapter not available")
+@pytest.mark.skipif(not ONNX_AVAILABLE, reason="onnxruntime not available")
 class TestONNXModelAdapter:
     """Test ONNX model adapter."""
     
@@ -160,6 +166,7 @@ class TestONNXModelAdapter:
         assert not onnx_adapter.is_loaded
         assert onnx_adapter.session is None
     
+    @pytest.mark.skipif(not ONNX_AVAILABLE, reason="onnxruntime not available")
     @patch('onnxruntime.InferenceSession')
     def test_load_onnx_model(self, mock_inference_session, onnx_adapter, temp_model_dir):
         """Test loading ONNX model."""
@@ -178,6 +185,7 @@ class TestONNXModelAdapter:
         assert onnx_adapter.session == mock_session
         mock_inference_session.assert_called_once()
     
+    @pytest.mark.skipif(not ONNX_AVAILABLE, reason="onnxruntime not available")
     @patch('onnxruntime.InferenceSession')
     def test_onnx_inference(self, mock_inference_session, onnx_adapter, temp_model_dir):
         """Test ONNX model inference."""

@@ -578,3 +578,299 @@ def test_autoscaler(autoscaler_config, mock_model_manager_with_config):
         config=autoscaler_config,
         model_manager=mock_model_manager_with_config
     )
+
+
+# Enhanced Optimizer Test Fixtures
+
+@pytest.fixture
+def enhanced_config():
+    """Create configuration with enhanced optimizations enabled."""
+    return InferenceConfig(
+        device=DeviceConfig(
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            use_vulkan=True,
+            use_numba=True,
+            jit_strategy="enhanced",
+            numba_target="auto"
+        ),
+        performance=PerformanceConfig(
+            enable_optimizations=True,
+            auto_optimize=True,
+            optimization_level="balanced"
+        )
+    )
+
+
+@pytest.fixture
+def mock_vulkan_optimizer():
+    """Mock Vulkan optimizer for testing."""
+    optimizer = Mock()
+    optimizer.is_available.return_value = True
+    optimizer.optimize.return_value = None  # Vulkan doesn't modify model directly
+    optimizer.device_manager = Mock()
+    optimizer.compute_contexts = {}
+    return optimizer
+
+
+@pytest.fixture
+def mock_numba_optimizer():
+    """Mock Numba optimizer for testing."""
+    optimizer = Mock()
+    optimizer.is_available.return_value = True
+    optimizer.optimize.return_value = None  # Numba wraps operations
+    optimizer.target = "auto"
+    optimizer.fastmath = True
+    return optimizer
+
+
+@pytest.fixture
+def mock_enhanced_jit_optimizer():
+    """Mock Enhanced JIT optimizer for testing."""
+    optimizer = Mock()
+    optimizer.is_available.return_value = True
+    optimizer.strategy = "auto"
+    optimizer.available_backends = {
+        'torchscript': True,
+        'vulkan': False,
+        'numba': True
+    }
+    
+    def mock_optimize(model, *args, **kwargs):
+        # Return optimized model (could be same or different)
+        return model
+    
+    optimizer.optimize.side_effect = mock_optimize
+    return optimizer
+
+
+@pytest.fixture
+def mock_performance_optimizer():
+    """Mock Performance optimizer for testing."""
+    optimizer = Mock()
+    optimizer.is_available.return_value = True
+    
+    def mock_optimize(model, *args, **kwargs):
+        return model
+    
+    optimizer.optimize.side_effect = mock_optimize
+    return optimizer
+
+
+@pytest.fixture
+def optimization_test_model():
+    """Create a model suitable for optimization testing."""
+    return torch.nn.Sequential(
+        torch.nn.Linear(128, 256),
+        torch.nn.ReLU(),
+        torch.nn.Linear(256, 128),
+        torch.nn.ReLU(),
+        torch.nn.Linear(128, 10)
+    )
+
+
+@pytest.fixture
+def optimization_test_input():
+    """Create input tensor for optimization testing."""
+    return torch.randn(32, 128)
+
+
+@pytest.fixture
+def mock_optimization_utilities():
+    """Mock optimization utility functions."""
+    utilities = Mock()
+    
+    utilities.get_available_optimizers.return_value = {
+        'performance': {'available': True, 'class': 'PerformanceOptimizer'},
+        'enhanced_jit': {'available': True, 'class': 'EnhancedJITOptimizer'},
+        'vulkan': {'available': False, 'class': 'VulkanOptimizer'},
+        'numba': {'available': True, 'class': 'NumbaOptimizer'},
+        'jit': {'available': True, 'class': 'JITOptimizer'}
+    }
+    
+    utilities.get_optimization_recommendations.return_value = [
+        ('enhanced_jit', 'Enhanced JIT compilation with multi-backend support'),
+        ('numba', 'JIT compilation for numerical operations'),
+        ('performance', 'Comprehensive performance optimization')
+    ]
+    
+    utilities.create_optimizer_pipeline.return_value = []
+    
+    return utilities
+
+
+@pytest.fixture
+def framework_with_enhanced_model(enhanced_config, optimization_test_model, temp_model_dir):
+    """Create framework with loaded model for enhanced optimization testing."""
+    from framework import TorchInferenceFramework
+    
+    # Save test model
+    model_path = temp_model_dir / "enhanced_test_model.pt"
+    torch.save(optimization_test_model, model_path)
+    
+    framework = TorchInferenceFramework(enhanced_config)
+    
+    # Mock model loading
+    mock_model = Mock()
+    mock_model.model = optimization_test_model
+    mock_model.example_inputs = torch.randn(1, 128)
+    mock_model.is_loaded = True
+    mock_model.model_info = {"type": "test", "parameters": 100000}
+    mock_model.predict.return_value = torch.randn(1, 10)
+    mock_model.device = "cpu"
+    
+    # Mock the loading process
+    from unittest.mock import patch
+    with patch('framework.load_model') as mock_load:
+        mock_load.return_value = mock_model
+        framework.load_model(model_path)
+    
+    return framework
+
+
+@pytest.fixture
+def vulkan_availability():
+    """Mock Vulkan availability detection."""
+    return {
+        'available': False,  # Default to False for testing
+        'devices': [],
+        'version': None
+    }
+
+
+@pytest.fixture
+def numba_availability():
+    """Mock Numba availability detection."""
+    return {
+        'available': True,   # Default to True for testing
+        'cuda_available': False,
+        'version': '0.60.0'
+    }
+
+
+@pytest.fixture
+def mock_device_detection():
+    """Mock device detection for optimization testing."""
+    detection = Mock()
+    
+    detection.detect_vulkan_devices.return_value = []
+    detection.detect_cuda_devices.return_value = []
+    detection.get_cpu_info.return_value = {
+        'name': 'Mock CPU',
+        'cores': 8,
+        'threads': 16
+    }
+    detection.get_memory_info.return_value = {
+        'total': 16 * 1024 * 1024 * 1024,  # 16GB
+        'available': 8 * 1024 * 1024 * 1024   # 8GB
+    }
+    
+    return detection
+
+
+@pytest.fixture
+def optimization_benchmark_results():
+    """Mock optimization benchmark results."""
+    return {
+        'torchscript_script': 0.015,
+        'torchscript_trace': 0.012,
+        'enhanced_jit': 0.010,
+        'vulkan': 0.008,
+        'numba': 0.009,
+        'baseline': 0.020
+    }
+
+
+@pytest.fixture(params=["conservative", "balanced", "aggressive"])
+def optimization_level(request):
+    """Parametrized optimization levels for testing."""
+    return request.param
+
+
+@pytest.fixture(params=["cpu", "cuda"])
+def test_device(request):
+    """Parametrized devices for testing."""
+    if request.param == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    return request.param
+
+
+@pytest.fixture(params=["small", "medium", "large"])
+def model_size_category(request):
+    """Parametrized model sizes for testing."""
+    return request.param
+
+
+@pytest.fixture(params=["inference", "training", "serving"])
+def optimization_target(request):
+    """Parametrized optimization targets for testing."""
+    return request.param
+
+
+# Performance testing fixtures
+
+@pytest.fixture
+def performance_test_config():
+    """Configuration for performance testing."""
+    return {
+        'warmup_iterations': 5,
+        'benchmark_iterations': 20,
+        'timeout_seconds': 30,
+        'memory_limit_mb': 2048
+    }
+
+
+@pytest.fixture
+def benchmark_model():
+    """Create a model suitable for benchmarking."""
+    return torch.nn.Sequential(
+        torch.nn.Linear(1024, 2048),
+        torch.nn.ReLU(),
+        torch.nn.Linear(2048, 1024),
+        torch.nn.ReLU(),
+        torch.nn.Linear(1024, 512),
+        torch.nn.ReLU(),
+        torch.nn.Linear(512, 10)
+    )
+
+
+@pytest.fixture
+def benchmark_input():
+    """Create input for benchmarking."""
+    return torch.randn(100, 1024)
+
+
+# Marker for performance tests
+def pytest_configure(config):
+    """Configure pytest markers."""
+    config.addinivalue_line(
+        "markers", "performance: mark test as performance test (run with --performance flag)"
+    )
+    config.addinivalue_line(
+        "markers", "slow: mark test as slow running"
+    )
+    config.addinivalue_line(
+        "markers", "gpu: mark test as requiring GPU"
+    )
+    config.addinivalue_line(
+        "markers", "integration: mark test as integration test"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Modify test collection based on markers."""
+    if not config.getoption("--performance"):
+        # Skip performance tests unless explicitly requested
+        skip_performance = pytest.mark.skip(reason="need --performance option to run")
+        for item in items:
+            if "performance" in item.keywords:
+                item.add_marker(skip_performance)
+
+
+def pytest_addoption(parser):
+    """Add custom command line options."""
+    parser.addoption(
+        "--performance",
+        action="store_true",
+        default=False,
+        help="run performance tests"
+    )

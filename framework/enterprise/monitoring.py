@@ -24,14 +24,18 @@ import secrets
 from abc import ABC, abstractmethod
 import statistics
 
-from opentelemetry import trace, metrics
 try:
+    from opentelemetry import trace, metrics
     from opentelemetry.exporter.jaeger.thrift import JaegerExporter
     JAEGER_AVAILABLE = True
+    OPENTELEMETRY_BASE_AVAILABLE = True
 except ImportError:
     # Handle missing dependencies gracefully
+    trace = None
+    metrics = None
     JaegerExporter = None
     JAEGER_AVAILABLE = False
+    OPENTELEMETRY_BASE_AVAILABLE = False
     
 try:
     from deprecated import deprecated
@@ -51,7 +55,7 @@ try:
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.instrumentation.requests import RequestsInstrumentor
     from prometheus_client import Counter, Histogram, Gauge, Summary, CollectorRegistry
-    OPENTELEMETRY_AVAILABLE = True
+    OPENTELEMETRY_AVAILABLE = OPENTELEMETRY_BASE_AVAILABLE
 except ImportError:
     # Handle missing opentelemetry dependencies
     PrometheusMetricReader = None
@@ -158,15 +162,22 @@ class DistributedTracing:
         self.sampling_rate = config.monitoring.tracing_sampling_rate
         
         self._setup_tracing()
-        self.tracer = trace.get_tracer(self.service_name)
+        if OPENTELEMETRY_AVAILABLE:
+            self.tracer = trace.get_tracer(self.service_name)
+        else:
+            self.tracer = None
     
     def _setup_tracing(self) -> None:
         """Setup OpenTelemetry tracing."""
+        if not OPENTELEMETRY_AVAILABLE or TracerProvider is None:
+            logger.warning("OpenTelemetry not available, skipping tracing setup")
+            return
+            
         # Configure tracer provider
         trace.set_tracer_provider(TracerProvider())
         
         # Setup Jaeger exporter if configured
-        if self.config.monitoring.jaeger_endpoint:
+        if self.config.monitoring.jaeger_endpoint and JAEGER_AVAILABLE and JaegerExporter is not None:
             jaeger_exporter = JaegerExporter(
                 agent_host_name="localhost",
                 agent_port=6831,
@@ -177,10 +188,15 @@ class DistributedTracing:
             trace.get_tracer_provider().add_span_processor(span_processor)
         
         # Instrument requests
-        RequestsInstrumentor().instrument()
+        if RequestsInstrumentor is not None:
+            RequestsInstrumentor().instrument()
     
-    def create_span(self, name: str, parent_context: Optional[TraceContext] = None) -> trace.Span:
+    def create_span(self, name: str, parent_context: Optional[TraceContext] = None) -> Optional[Any]:
         """Create new trace span."""
+        if self.tracer is None:
+            logger.debug("Tracer not available, skipping span creation")
+            return None
+            
         if parent_context:
             # Set parent context
             context = trace.set_span_in_context(
@@ -198,6 +214,9 @@ class DistributedTracing:
     
     def get_current_trace_context(self) -> Optional[TraceContext]:
         """Get current trace context."""
+        if trace is None:
+            return None
+            
         current_span = trace.get_current_span()
         if current_span and current_span.get_span_context().is_valid:
             context = current_span.get_span_context()
@@ -209,12 +228,18 @@ class DistributedTracing:
     
     def add_span_attribute(self, key: str, value: Any) -> None:
         """Add attribute to current span."""
+        if trace is None:
+            return
+            
         current_span = trace.get_current_span()
         if current_span:
             current_span.set_attribute(key, str(value))
     
     def add_span_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
         """Add event to current span."""
+        if trace is None:
+            return
+            
         current_span = trace.get_current_span()
         if current_span:
             current_span.add_event(name, attributes or {})
@@ -225,6 +250,13 @@ class PrometheusMetrics:
     
     def __init__(self, config: EnterpriseConfig):
         self.config = config
+        
+        # Check if prometheus dependencies are available
+        if not OPENTELEMETRY_AVAILABLE or CollectorRegistry is None:
+            logger.warning("Prometheus metrics not available, metrics collection disabled")
+            self.registry = None
+            return
+            
         self.registry = CollectorRegistry()
         
         # Initialize common metrics
@@ -233,6 +265,9 @@ class PrometheusMetrics:
         
     def _init_system_metrics(self) -> None:
         """Initialize system-level metrics."""
+        if self.registry is None:
+            return
+            
         self.request_count = Counter(
             'http_requests_total',
             'Total HTTP requests',
@@ -269,6 +304,9 @@ class PrometheusMetrics:
     
     def _init_application_metrics(self) -> None:
         """Initialize application-specific metrics."""
+        if self.registry is None:
+            return
+            
         self.inference_count = Counter(
             'inference_requests_total',
             'Total inference requests',
@@ -313,18 +351,24 @@ class PrometheusMetrics:
     
     def record_request(self, method: str, endpoint: str, status: str, duration: float) -> None:
         """Record HTTP request metrics."""
+        if self.registry is None:
+            return
         self.request_count.labels(method=method, endpoint=endpoint, status=status).inc()
         self.request_duration.labels(method=method, endpoint=endpoint).observe(duration)
     
     def record_inference(self, model: str, duration: float, status: str = "success", 
                         tenant: str = "default") -> None:
         """Record inference metrics."""
+        if self.registry is None:
+            return
         self.inference_count.labels(model=model, status=status, tenant=tenant).inc()
         self.inference_duration.labels(model=model).observe(duration)
     
     def update_system_metrics(self, cpu_percent: float, memory_bytes: Dict[str, float], 
                              active_conns: int) -> None:
         """Update system metrics."""
+        if self.registry is None:
+            return
         self.cpu_usage.set(cpu_percent)
         self.active_connections.set(active_conns)
         
@@ -333,11 +377,15 @@ class PrometheusMetrics:
     
     def update_gpu_metrics(self, gpu_utilization: Dict[str, float]) -> None:
         """Update GPU metrics."""
+        if self.registry is None:
+            return
         for gpu_id, utilization in gpu_utilization.items():
             self.gpu_utilization.labels(gpu_id=gpu_id).set(utilization)
     
     def get_metric_families(self):
         """Get all metric families for Prometheus scraping."""
+        if self.registry is None:
+            return []
         return self.registry.collect()
 
 

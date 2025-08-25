@@ -28,6 +28,7 @@ class DeviceType(Enum):
     CPU = "cpu"
     CUDA = "cuda"
     MPS = "mps"  # Apple Silicon
+    VULKAN = "vulkan"  # Vulkan compute
     AUTO = "auto"
     
     @classmethod
@@ -65,6 +66,13 @@ class DeviceConfig:
     compile_mode: str = "reduce-overhead"
     memory_fraction: float = 0.9  # Fraction of CUDA memory to allocate
     
+    # Enhanced JIT optimization options
+    use_vulkan: bool = False  # Enable Vulkan compute acceleration
+    use_numba: bool = False   # Enable Numba JIT compilation
+    jit_strategy: str = "auto"  # JIT optimization strategy
+    numba_target: str = "cpu"   # Numba target: cpu, cuda, parallel
+    vulkan_device_id: Optional[int] = None  # Specific Vulkan device
+    
     def __post_init__(self):
         """Validate device configuration after initialization."""
         if isinstance(self.device_type, str):
@@ -95,6 +103,9 @@ class DeviceConfig:
                     device_str = "mps"
                 else:
                     device_str = "cpu"
+        elif self.device_type == DeviceType.VULKAN:
+            # Vulkan devices map to CPU for PyTorch, but with Vulkan acceleration
+            device_str = "cpu"
         else:
             # Handle both DeviceType enum and string values
             if isinstance(self.device_type, str):
