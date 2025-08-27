@@ -129,6 +129,7 @@ benchmark-inference = "benchmark:main"
 optimize-model = "optimization_demo:main"
 
 [tool.uv]
+# UV configuration for torch-inference project
 dev-dependencies = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -146,10 +147,20 @@ dev-dependencies = [
     "tox>=4.0.0",
     "bandit[toml]>=1.7.0",
     "safety>=2.0.0",
+    # Development tools
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+    "matplotlib>=3.0.0",
+    "tensorboard>=2.0.0",
+    "mlflow>=2.0.0",
 ]
 
 # Use unsafe-best-match to allow versions from all indexes
 index-strategy = "unsafe-best-match"
+
+# Prefer binary wheels for faster installation
+compile-bytecode = true
+no-cache = false
 
 # PyTorch CUDA index for uv
 [[tool.uv.index]]
