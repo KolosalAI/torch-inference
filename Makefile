@@ -11,14 +11,34 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 # Installation and setup
-install: ## Install dependencies
+install: ## Install dependencies with uv
 	uv sync
 
 install-dev: ## Install development dependencies
-	uv sync --extra dev
+	uv sync --group dev
 
 install-all: ## Install all dependencies including optional ones
-	uv sync --extra all
+	uv sync --all-extras
+
+setup: ## Setup development environment (run this first)
+	@echo "Setting up torch-inference development environment..."
+	@if command -v bash >/dev/null 2>&1; then \
+		bash setup.sh; \
+	elif command -v pwsh >/dev/null 2>&1; then \
+		pwsh -ExecutionPolicy Bypass -File setup.ps1; \
+	else \
+		echo "Neither bash nor PowerShell found. Please run setup manually:"; \
+		echo "1. Run 'uv sync' to install dependencies"; \
+		echo "2. Run 'uv run pre-commit install' to setup hooks"; \
+		echo "3. Copy .env.template to .env and customize"; \
+	fi
+
+check-uv: ## Check if uv is installed and working
+	@uv --version || (echo "uv not found. Install it from https://github.com/astral-sh/uv" && exit 1)
+	@echo "uv is properly installed"
+
+lock-update: ## Update and regenerate lock file
+	uv lock --upgrade
 
 # Testing commands
 test: ## Run all tests
@@ -159,11 +179,51 @@ ci-security: ## Run security checks for CI
 	uv run safety check --json --output safety-report.json
 
 # Docker helpers
-docker-build: ## Build Docker image for testing
-	docker build -t torch-inference-test .
+docker-build: ## Build Docker image for production
+	docker build --target production -t torch-inference:latest .
+
+docker-build-dev: ## Build Docker image for development
+	docker build --target development -t torch-inference:dev .
 
 docker-test: ## Run tests in Docker
-	docker run --rm torch-inference-test make test
+	docker build --target development -t torch-inference-test .
+	docker run --rm torch-inference-test uv run pytest
+
+docker-run: ## Run production container
+	docker run --rm -p 8000:8000 torch-inference:latest
+
+docker-run-dev: ## Run development container with hot reload
+	docker run --rm -p 8001:8000 -v $(PWD):/app torch-inference:dev
+
+# Docker Compose helpers
+compose-up: ## Start services with docker-compose (production)
+	docker compose up --build
+
+compose-dev: ## Start development environment with all dev tools
+	docker compose -f compose.yaml -f compose.dev.yaml up --build
+
+compose-prod: ## Start production environment
+	docker compose -f compose.prod.yaml up --build -d
+
+compose-down: ## Stop all docker-compose services
+	docker compose down
+	docker compose -f compose.dev.yaml down
+	docker compose -f compose.prod.yaml down
+
+compose-logs: ## View docker-compose logs
+	docker compose logs -f
+
+compose-logs-dev: ## View development environment logs
+	docker compose -f compose.dev.yaml logs -f
+
+# Legacy aliases (deprecated)
+docker-compose-up: compose-up ## [DEPRECATED] Use compose-up instead
+docker-compose-dev: compose-dev ## [DEPRECATED] Use compose-dev instead  
+docker-compose-down: compose-down ## [DEPRECATED] Use compose-down instead
+
+docker-clean: ## Clean up Docker images and containers
+	docker system prune -f
+	docker image prune -f
 
 # Tox integration
 tox: ## Run tox for multi-environment testing

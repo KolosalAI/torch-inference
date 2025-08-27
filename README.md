@@ -445,17 +445,296 @@ config.optimization.select_best = True      # Auto-select best performer
 
 ## 🐳 Docker Deployment
 
-### Quick Setup
-```bash
-# Build and run with GPU support
-docker build -t torch-inference .
-docker run --gpus all -p 8000:8000 torch-inference
+The torch-inference framework provides comprehensive Docker support with multi-stage builds, production optimizations, and development tools.
 
-# Or use docker compose
-docker compose up --build
+### 🚀 Quick Start with Docker
+
+#### Option 1: Build and Run Directly
+```bash
+# Build development image
+docker build --target development -t torch-inference:dev .
+
+# Build production image  
+docker build --target production -t torch-inference:latest .
+
+# Run development container (with hot reload)
+docker run --rm -p 8001:8000 -v ${PWD}:/app torch-inference:dev
+
+# Run production container
+docker run --rm -p 8000:8000 torch-inference:latest
 ```
 
-See [Deployment Guide](docs/deployment.md) for production deployment.
+#### Option 2: Use Makefile Commands (Recommended)
+```bash
+# Build images
+make docker-build-dev    # Development image
+make docker-build        # Production image
+
+# Run containers
+make docker-run-dev      # Development with hot reload
+make docker-run          # Production
+
+# Run tests in Docker
+make docker-test         # Run tests in containerized environment
+```
+
+### 🔧 Docker Compose Configurations
+
+#### Development Environment (Full Stack)
+```bash
+# Start complete development environment
+make compose-dev
+# or: docker compose -f compose.yaml -f compose.dev.yaml up --build
+
+# Includes all development tools:
+# - Main app: http://localhost:8000
+# - Jupyter Lab: http://localhost:8888
+# - MLflow: http://localhost:5000  
+# - TensorBoard: http://localhost:6006
+# - PostgreSQL: localhost:5432
+# - Redis: localhost:6379
+```
+
+#### Production Environment (Production-Ready)
+```bash
+# Deploy production environment
+make compose-prod
+# or: docker compose -f compose.prod.yaml up --build -d
+
+# Includes production features:
+# - Nginx load balancer (ports 80/443)
+# - Multi-replica app deployment (2 replicas)
+# - Production PostgreSQL with secrets
+# - Redis with authentication
+# - Resource limits and health checks
+# - Optional: Prometheus (port 9090) and Grafana (port 3000)
+```
+
+#### Simple Production Setup
+```bash
+# Basic production setup
+make compose-up
+# or: docker compose up --build
+
+# Single replica with basic monitoring
+# - Main app: http://localhost:8000
+# - Health checks enabled
+# - Basic resource management
+```
+
+### 📋 Docker Configuration Details
+
+#### Multi-Stage Dockerfile
+- **Base Stage**: Common dependencies (Python 3.10, uv, system packages)
+- **Development Stage**: Full dev dependencies, development tools, hot reload
+- **Production Stage**: Production-only dependencies, optimized for deployment
+
+#### Key Features
+- **Fast Package Management**: Uses `uv` for 10-100x faster dependency resolution
+- **Security**: Non-root user execution, proper permissions
+- **Optimization**: Layer caching, minimal image size, GPU support ready
+- **Development Tools**: Jupyter, MLflow, TensorBoard, debugging support
+
+#### Environment Variables
+```bash
+# Production environment variables
+PYTHONPATH=/app
+UV_CACHE_DIR=/tmp/uv-cache
+ENVIRONMENT=production
+
+# Development environment variables  
+ENVIRONMENT=development
+DEBUG=1
+JUPYTER_ENABLE_LAB=yes
+```
+
+### 🎯 Available Services by Environment
+
+#### Development Environment Services
+
+| Service | Port | Description | URL |
+|---------|------|-------------|-----|
+| **Main App** | 8000 | FastAPI inference server | http://localhost:8000 |
+| **Jupyter Lab** | 8888 | Interactive development | http://localhost:8888 |
+| **MLflow** | 5000 | Experiment tracking | http://localhost:5000 |
+| **TensorBoard** | 6006 | Model visualization | http://localhost:6006 |
+| **PostgreSQL** | 5432 | Development database | localhost:5432 |
+| **Redis** | 6379 | Development cache | localhost:6379 |
+
+#### Production Environment Services
+
+| Service | Port | Description | Features |
+|---------|------|-------------|----------|
+| **Nginx** | 80/443 | Load balancer | SSL, health checks |
+| **App** | Internal | FastAPI server | 2 replicas, resource limits |
+| **PostgreSQL** | Internal | Production DB | Secrets, health checks |
+| **Redis** | Internal | Production cache | Authentication, persistence |
+| **Prometheus** | 9090 | Metrics (optional) | Performance monitoring |
+| **Grafana** | 3000 | Dashboards (optional) | Visualization |
+
+### ⚙️ Advanced Docker Usage
+
+#### GPU Support
+```bash
+# Run with GPU support
+docker run --gpus all -p 8000:8000 torch-inference:latest
+
+# Docker Compose with GPU
+# Add to compose.yaml:
+services:
+  app:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+```
+
+#### Custom Configuration
+```bash
+# Mount custom configuration
+docker run --rm -p 8000:8000 \
+  -v ${PWD}/custom-config.yaml:/app/config.yaml \
+  torch-inference:latest
+
+# Mount models directory
+docker run --rm -p 8000:8000 \
+  -v ${PWD}/models:/app/models \
+  torch-inference:latest
+```
+
+#### Development with Volume Mounting
+```bash
+# Development with live code reloading
+docker run --rm -p 8001:8000 \
+  -v ${PWD}:/app \
+  -e UV_CACHE_DIR=/tmp/uv-cache \
+  torch-inference:dev
+
+# Or use docker-compose for easier management
+docker compose -f compose.dev.yaml up
+```
+
+### 🔍 Monitoring and Debugging
+
+#### Container Health Checks
+```bash
+# Check container health
+docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# View health check logs
+docker inspect --format='{{json .State.Health}}' container_name
+```
+
+#### Log Management
+```bash
+# View live logs
+make compose-logs        # All services
+make compose-logs-dev    # Development environment
+
+# Or directly with docker compose
+docker compose logs -f
+
+# Individual service logs
+docker compose logs -f app
+docker compose logs -f jupyter
+```
+
+#### Resource Monitoring
+```bash
+# Monitor resource usage
+docker stats
+
+# Production environment monitoring
+# Access Grafana: http://localhost:3000 (admin/admin)
+# Access Prometheus: http://localhost:9090
+```
+
+### 🛠️ Troubleshooting
+
+#### Common Issues and Solutions
+
+1. **Permission Denied Errors**
+   ```bash
+   # Fix: Ensure proper permissions in Dockerfile
+   RUN mkdir -p /tmp/uv-cache && chown appuser:appuser /tmp/uv-cache
+   ```
+
+2. **Out of Memory During Build**
+   ```bash
+   # Increase Docker memory allocation or use multi-stage builds
+   docker system prune -f  # Clean up space
+   ```
+
+3. **Network Timeout for Large Packages**
+   ```bash
+   # Use build args for timeouts
+   docker build --build-arg UV_HTTP_TIMEOUT=300 -t torch-inference:dev .
+   ```
+
+4. **Container Fails to Start**
+   ```bash
+   # Check logs
+   docker logs container_name
+   
+   # Debug with interactive shell
+   docker run --rm -it torch-inference:dev /bin/bash
+   ```
+
+#### Docker Cleanup
+```bash
+# Clean up Docker resources
+make docker-clean
+# or manually:
+docker system prune -f
+docker image prune -f
+docker volume prune -f
+```
+
+### 📊 Performance Optimization
+
+#### Image Size Optimization
+- **Production image**: ~16.4GB (includes PyTorch + CUDA dependencies)
+- **Development image**: ~17.6GB (includes additional dev tools)
+- **Optimization techniques**: Multi-stage builds, layer caching, minimal dependencies
+
+#### Build Time Optimization
+- **Layer caching**: Dependencies cached separately from source code
+- **Parallel builds**: Use `docker buildx` for multi-platform builds
+- **Registry caching**: Push base images to private registry for faster builds
+
+#### Runtime Performance
+- **Resource limits**: Configured in production compose
+- **Health checks**: Automatic container restart on failures
+- **Load balancing**: Nginx for production traffic distribution
+
+### 🔄 CI/CD Integration
+
+```yaml
+# Example GitHub Actions workflow
+- name: Build Docker Images
+  run: |
+    docker build --target production -t torch-inference:latest .
+    docker build --target development -t torch-inference:dev .
+
+- name: Run Tests in Docker
+  run: make docker-test
+
+- name: Deploy with Docker Compose
+  run: make compose-prod
+```
+
+### 📚 Additional Resources
+
+- **[Docker Compose Reference](compose.yaml)** - Main compose configuration
+- **[Development Compose](compose.dev.yaml)** - Development environment
+- **[Production Compose](compose.prod.yaml)** - Production environment
+- **[Dockerfile](Dockerfile)** - Multi-stage build configuration
+- **[.dockerignore](.dockerignore)** - Build context optimization
+
+For more detailed deployment instructions, see the [Deployment Guide](docs/deployment.md).
 
 ## 🧪 Testing
 
