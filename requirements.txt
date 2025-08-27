@@ -32,7 +32,7 @@ bleach==6.2.0
 blinker==1.9.0
 boto3==1.40.6
 botocore==1.40.6
-cachetools==5.5.2
+cachetools==6.1.0
 celery==5.5.3
 certifi==2025.8.3
 cffi==1.17.1
@@ -49,7 +49,7 @@ coloredlogs==15.0.1
 colorlog==6.9.0
 comm==0.2.3
 contourpy==1.3.2
-coverage==7.10.3
+coverage==7.10.4
 cryptography==45.0.6
 cryptography-vectors==45.0.6
 cupy-cuda11x==13.5.1
@@ -144,7 +144,7 @@ llvmlite==0.44.0
 lxml==6.0.0
 mako==1.3.10
 markdown==3.8.2
-markdown-it-py==3.0.0
+markdown-it-py==4.0.0
 markupsafe==3.0.2
 marshmallow==4.0.0
 matplotlib==3.10.5
@@ -164,7 +164,7 @@ mlflow-skinny==3.2.0
 mlflow-tracing==3.2.0
 mpmath==1.3.0
 msgpack==1.1.1
-multidict==6.6.3
+multidict==6.6.4
 mypy==1.17.1
 mypy-extensions==1.1.0
 nbclient==0.10.2
@@ -204,7 +204,7 @@ pandocfilters==1.5.1
 parso==0.8.4
 passlib==1.7.4
 pathspec==0.12.1
-pbr==6.1.1
+pbr==7.0.1
 pefile==2023.2.7
 pillow==11.3.0
 pip==25.2
@@ -215,7 +215,7 @@ prometheus-client==0.22.1
 prompt-toolkit==3.0.51
 propcache==0.3.2
 proto-plus==1.26.1
-protobuf==6.31.1
+protobuf==6.32.0
 psutil==7.0.0
 psycopg2-binary==2.9.10
 pure-eval==0.2.3
@@ -264,7 +264,7 @@ qrcode==8.2
 redis==6.4.0
 referencing==0.36.2
 regex==2025.7.34
-requests==2.32.4
+requests==2.32.5
 requests-oauthlib==2.0.0
 rfc3339-validator==0.1.4
 rfc3986-validator==0.1.1
@@ -272,9 +272,9 @@ rfc3987-syntax==1.1.0
 rich==14.1.0
 rpds-py==0.27.0
 rsa==4.9.1
-ruamel-yaml==0.18.14
+ruamel-yaml==0.18.15
 ruamel-yaml-clib==0.2.12
-ruff==0.12.8
+ruff==0.12.9
 s3transfer==0.13.1
 safetensors==0.6.2
 safety==3.2.4
@@ -317,7 +317,7 @@ tox==4.11.4
 tqdm==4.67.1
 traitlets==5.14.3
 transformers==4.55.0
-typer==0.16.0
+typer==0.16.1
 types-python-dateutil==2.9.0.20250809
 typing-extensions==4.14.1
 typing-inspection==0.4.1
@@ -328,7 +328,7 @@ urllib3==2.5.0
 uv==0.8.8
 uvicorn==0.35.0
 vine==5.1.0
-virtualenv==20.33.1
+virtualenv==20.34.0
 vulkan==1.3.275.1
 waitress==3.0.2
 wandb==0.21.1
