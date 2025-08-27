@@ -96,6 +96,41 @@ cache:
   cache_ttl_seconds: 3600
   disk_cache_path: null
 
+# Audio Configuration
+audio:
+  sample_rate: 16000
+  chunk_duration: 30  # seconds
+  overlap: 5          # seconds  
+  enable_vad: true    # Voice Activity Detection
+  supported_formats: ["wav", "mp3", "flac", "m4a", "ogg"]
+  max_audio_length: 300  # seconds
+  preprocessing:
+    normalize: true
+    normalization_method: "peak"  # peak, rms, lufs
+    remove_silence: true
+    
+# TTS Configuration
+tts:
+  voice: "default"
+  speed: 1.0
+  pitch: 1.0
+  volume: 1.0
+  language: "en"
+  emotion: null
+  output_format: "wav"
+  quality: "high"  # low, medium, high
+  
+# STT Configuration  
+stt:
+  language: "auto"  # auto, en, es, fr, de, etc.
+  enable_timestamps: true
+  beam_size: 5
+  temperature: 0.0
+  suppress_blank: true
+  suppress_tokens: [-1]
+  initial_prompt: null
+  condition_on_previous_text: true
+
 # Security Configuration
 security:
   max_file_size_mb: 100
@@ -106,6 +141,11 @@ security:
     - ".bmp"
     - ".tiff"
     - ".webp"
+    - ".wav"
+    - ".mp3"
+    - ".flac"
+    - ".m4a"
+    - ".ogg"
   validate_inputs: true
   sanitize_outputs: true
 

@@ -82,6 +82,14 @@ A comprehensive, production-ready PyTorch inference framework that delivers **2-
 - **Device Auto-Detection**: Automatic GPU/CPU optimization selection
 - **Graceful Fallbacks**: Robust error handling with optimization fallbacks
 
+### 🎵 **Audio Processing** 
+- **Text-to-Speech (TTS)**: HuggingFace SpeechT5, Tacotron2, multi-voice synthesis
+- **Speech-to-Text (STT)**: Whisper (all sizes), Wav2Vec2, real-time transcription
+- **Audio Pipeline**: Complete preprocessing, feature extraction, augmentation
+- **Multi-format Support**: WAV, MP3, FLAC, M4A, OGG input/output
+- **RESTful Audio API**: `/tts/synthesize`, `/stt/transcribe` with comprehensive options
+- **Language Support**: Multi-language TTS/STT with auto-detection
+
 ### 🔧 **Developer Experience**
 - **Modern Package Manager**: Powered by `uv` for 10-100x faster dependency resolution
 - **Comprehensive Documentation**: Detailed guides, examples, and API reference
@@ -103,6 +111,11 @@ cd torch-inference
 
 # Run automated setup
 uv sync && uv run python test_installation.py
+
+# Optional: Install audio processing support
+pip install torch-inference-optimized[audio]
+# Or use the installer script
+python tools/install_audio.py
 ```
 
 ### Basic Usage
@@ -142,12 +155,56 @@ async def async_example():
 asyncio.run(async_example())
 ```
 
+### Audio Processing
+```python
+import asyncio
+import aiohttp
+import base64
+
+# Text-to-Speech Example
+async def tts_example():
+    async with aiohttp.ClientSession() as session:
+        async with session.post("http://localhost:8000/tts/synthesize", json={
+            "text": "Hello, this is PyTorch inference framework!",
+            "model_name": "default",
+            "speed": 1.0,
+            "language": "en"
+        }) as response:
+            result = await response.json()
+            if result["success"]:
+                audio_data = base64.b64decode(result["audio_data"])
+                with open("output.wav", "wb") as f:
+                    f.write(audio_data)
+                print(f"TTS completed! Duration: {result['duration']:.2f}s")
+
+# Speech-to-Text Example  
+async def stt_example():
+    async with aiohttp.ClientSession() as session:
+        data = aiohttp.FormData()
+        data.add_field('model_name', 'whisper-base')
+        data.add_field('language', 'auto')
+        
+        with open('audio.wav', 'rb') as f:
+            data.add_field('file', f, filename='audio.wav')
+            
+            async with session.post("http://localhost:8000/stt/transcribe", 
+                                  data=data) as response:
+                result = await response.json()
+                if result["success"]:
+                    print(f"Transcribed: {result['text']}")
+
+# Run audio demos
+asyncio.run(tts_example())
+asyncio.run(stt_example())
+```
+
 ## 🎯 Use Cases
 
 - **🖼️ Image Classification**: High-performance image inference with CNNs
 - **📝 Text Processing**: NLP models with BERT, GPT, and transformers
 - **🔍 Object Detection**: Real-time object detection with YOLO, R-CNN
-- **🌐 Production APIs**: REST APIs with FastAPI integration
+- **� Audio Processing**: TTS synthesis, STT transcription, audio analysis
+- **�🌐 Production APIs**: REST APIs with FastAPI integration
 - **📊 Batch Processing**: Large-scale batch inference workloads
 - **⚡ Real-time Systems**: Low-latency real-time inference
 

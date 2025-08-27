@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Optimized PyTorch inference framework with TensorRT, ONNX, and other acceleration techniques"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10,<3.12"  # Limited to avoid CUDA dependency issues on 3.12+
+requires-python = ">=3.10,<3.11"  # Restricted to Python 3.10 to avoid numpy/accelerate conflicts
 authors = [
     {name = "Genta", email = "genta@example.com"},
 ]
@@ -19,8 +19,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -35,7 +33,7 @@ dependencies = [
     "pydantic>=2.10.0",
     
     # Core ML dependencies
-    "numpy>=2.1.0",
+    "numpy>=1.21.0,<1.24.0",  # Compatible with ESPnet requirements
     "scipy>=1.10.0",
     "pillow>=11.0.0",
     "opencv-python>=4.11.0",
@@ -76,6 +74,17 @@ tensorrt = [
     "torch-tensorrt>=2.5.0",  # Updated to match PyTorch 2.5.x
 ]
 
+# Audio processing support (TTS and STT)
+audio = [
+    "librosa>=0.9.2",  # Compatible with ESPnet requirements
+    "soundfile>=0.12.0",
+    "transformers>=4.30.0",
+    "datasets>=2.10.0",
+    "accelerate>=0.34.0",  # Updated to newer version that might support numpy 2.x
+    "speechbrain>=0.5.0",
+    "espnet>=202310",  # Updated to 202310+ for protobuf compatibility with ONNX
+]
+
 # Development dependencies
 dev = [
     "pytest>=7.0.0",
@@ -105,7 +114,7 @@ docs = [
 
 # All extras combined
 all = [
-    "torch-inference-optimized[cuda,tensorrt,dev,docs]"
+    "torch-inference-optimized[cuda,tensorrt,audio,dev,docs]"
 ]
 
 [project.urls]

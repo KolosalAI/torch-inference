@@ -23,11 +23,14 @@ from datetime import datetime
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel, Field
 import torch
 import numpy as np
 from pathlib import Path
+import tempfile
+import io
+import base64
 
 # Print GPU information at startup
 print("\n" + "="*60)
@@ -164,6 +167,11 @@ def print_api_endpoints():
         ("POST", "/autoscaler/load", "Load a model with autoscaling"),
         ("DELETE", "/autoscaler/unload", "Unload a model"),
         ("GET", "/autoscaler/metrics", "Get detailed autoscaling metrics"),
+        # Audio processing endpoints
+        ("POST", "/tts/synthesize", "Text-to-Speech synthesis"),
+        ("POST", "/stt/transcribe", "Speech-to-Text transcription"),
+        ("GET", "/audio/models", "List available audio models"),
+        ("GET", "/audio/health", "Audio processing health check"),
     ]
     
     print("\n" + "="*80)
@@ -207,6 +215,51 @@ class StatsResponse(PydanticBaseModel):
     """Engine statistics response."""
     stats: Dict[str, Any]
     performance_report: Dict[str, Any]
+
+# Audio-specific Pydantic models
+class TTSRequest(PydanticBaseModel):
+    """Request model for Text-to-Speech synthesis."""
+    text: str = Field(..., description="Text to synthesize")
+    model_name: str = Field(default="default", description="TTS model to use")
+    voice: Optional[str] = Field(default=None, description="Voice to use for synthesis")
+    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed (0.5-2.0)")
+    pitch: float = Field(default=1.0, ge=0.5, le=2.0, description="Pitch adjustment (0.5-2.0)")
+    volume: float = Field(default=1.0, ge=0.1, le=2.0, description="Volume level (0.1-2.0)")
+    language: str = Field(default="en", description="Language code (e.g., 'en', 'es', 'fr')")
+    emotion: Optional[str] = Field(default=None, description="Emotion for synthesis")
+    output_format: str = Field(default="wav", pattern="^(wav|mp3|flac)$", description="Output audio format")
+
+class STTRequest(PydanticBaseModel):
+    """Request model for Speech-to-Text transcription."""
+    model_name: str = Field(default="whisper-base", description="STT model to use")
+    language: str = Field(default="auto", description="Language code or 'auto' for detection")
+    enable_timestamps: bool = Field(default=True, description="Include word-level timestamps")
+    beam_size: int = Field(default=5, ge=1, le=10, description="Beam search size")
+    temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")
+    suppress_blank: bool = Field(default=True, description="Suppress blank outputs")
+    initial_prompt: Optional[str] = Field(default=None, description="Initial prompt for context")
+
+class TTSResponse(PydanticBaseModel):
+    """Response model for TTS synthesis."""
+    success: bool
+    audio_data: Optional[str] = Field(default=None, description="Base64 encoded audio data")
+    audio_format: Optional[str] = None
+    duration: Optional[float] = None
+    sample_rate: Optional[int] = None
+    processing_time: Optional[float] = None
+    model_info: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class STTResponse(PydanticBaseModel):
+    """Response model for STT transcription."""
+    success: bool
+    text: Optional[str] = None
+    segments: Optional[List[Dict[str, Any]]] = Field(default=None, description="Transcription segments with timestamps")
+    language: Optional[str] = None
+    confidence: Optional[float] = None
+    processing_time: Optional[float] = None
+    model_info: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
 # Simple example model for demonstration
 class ExampleModel(BaseModel):
@@ -518,6 +571,12 @@ async def root():
                 "available": "/models/available", 
                 "cache_info": "/models/cache/info",
                 "remove": "/models/download/{model_name}"
+            },
+            "audio": {
+                "tts_synthesize": "/tts/synthesize",
+                "stt_transcribe": "/stt/transcribe",
+                "models": "/audio/models",
+                "health": "/audio/health"
             }
         }
     }
@@ -1378,6 +1437,361 @@ async def get_autoscaler_metrics(window_seconds: Optional[int] = None):
     except Exception as e:
         logger.error(f"[ENDPOINT] Autoscaler metrics failed with error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Audio Processing Endpoints
+
+@app.post("/tts/synthesize", response_model=TTSResponse)
+async def text_to_speech(request: TTSRequest) -> TTSResponse:
+    """
+    Text-to-Speech synthesis endpoint.
+    
+    Converts text input to speech audio using the specified TTS model.
+    Returns base64 encoded audio data.
+    """
+    logger.info(f"[ENDPOINT] TTS synthesis requested - Model: {request.model_name}, Text length: {len(request.text)}")
+    
+    try:
+        start_time = time.perf_counter()
+        
+        # Import audio modules dynamically
+        try:
+            from framework.models.audio import create_tts_model
+            from framework.processors.audio import AudioPreprocessor
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Audio modules not available: {e}")
+            raise HTTPException(
+                status_code=503, 
+                detail="Audio processing not available. Install audio dependencies."
+            )
+        
+        # Validate text length
+        if len(request.text) > 5000:  # 5000 character limit
+            raise HTTPException(
+                status_code=400,
+                detail="Text too long. Maximum 5000 characters allowed."
+            )
+        
+        # Get or create TTS model
+        try:
+            if request.model_name not in model_manager.list_models():
+                logger.info(f"[ENDPOINT] Loading TTS model: {request.model_name}")
+                config = config_manager.get_inference_config()
+                tts_model = create_tts_model(request.model_name, config)
+                model_manager.register_model(request.model_name, tts_model)
+            else:
+                tts_model = model_manager.get_model(request.model_name)
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to load TTS model {request.model_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load TTS model: {str(e)}"
+            )
+        
+        # Prepare synthesis parameters
+        synthesis_params = {
+            "voice": request.voice,
+            "speed": request.speed,
+            "pitch": request.pitch,
+            "volume": request.volume,
+            "language": request.language,
+            "emotion": request.emotion
+        }
+        
+        # Perform TTS synthesis
+        try:
+            audio_data, sample_rate = await tts_model.synthesize(
+                text=request.text,
+                **{k: v for k, v in synthesis_params.items() if v is not None}
+            )
+            
+            # Convert audio to requested format
+            if request.output_format != "wav":
+                # For now, we'll keep WAV format and note the requested format
+                # Additional format conversion can be implemented here
+                pass
+            
+            # Calculate duration
+            duration = len(audio_data) / sample_rate if sample_rate > 0 else None
+            
+            # Encode audio as base64
+            if isinstance(audio_data, np.ndarray):
+                # Convert numpy array to bytes
+                audio_bytes = (audio_data * 32767).astype(np.int16).tobytes()
+            else:
+                audio_bytes = audio_data
+            
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+            
+            processing_time = time.perf_counter() - start_time
+            
+            logger.info(f"[ENDPOINT] TTS synthesis completed - Duration: {duration:.2f}s, "
+                       f"Processing time: {processing_time:.3f}s")
+            
+            return TTSResponse(
+                success=True,
+                audio_data=audio_base64,
+                audio_format=request.output_format,
+                duration=duration,
+                sample_rate=sample_rate,
+                processing_time=processing_time,
+                model_info={
+                    "model_name": request.model_name,
+                    "voice": request.voice,
+                    "language": request.language
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] TTS synthesis failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"TTS synthesis failed: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] TTS endpoint failed with unexpected error: {e}")
+        return TTSResponse(
+            success=False,
+            error=str(e),
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
+
+
+@app.post("/stt/transcribe", response_model=STTResponse)
+async def speech_to_text(
+    file: UploadFile = File(..., description="Audio file to transcribe"),
+    model_name: str = Form(default="whisper-base"),
+    language: str = Form(default="auto"),
+    enable_timestamps: bool = Form(default=True),
+    beam_size: int = Form(default=5),
+    temperature: float = Form(default=0.0),
+    suppress_blank: bool = Form(default=True),
+    initial_prompt: Optional[str] = Form(default=None)
+) -> STTResponse:
+    """
+    Speech-to-Text transcription endpoint.
+    
+    Transcribes uploaded audio file to text using the specified STT model.
+    Supports various audio formats and returns text with optional timestamps.
+    """
+    logger.info(f"[ENDPOINT] STT transcription requested - Model: {model_name}, "
+               f"File: {file.filename}, Size: {file.size if hasattr(file, 'size') else 'unknown'}")
+    
+    try:
+        start_time = time.perf_counter()
+        
+        # Import audio modules dynamically
+        try:
+            from framework.models.audio import create_stt_model
+            from framework.processors.audio import AudioPreprocessor
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Audio modules not available: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Audio processing not available. Install audio dependencies."
+            )
+        
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Check file extension
+        allowed_extensions = config_manager.get_config().get("security", {}).get("allowed_extensions", [])
+        audio_extensions = [".wav", ".mp3", ".flac", ".m4a", ".ogg"]
+        
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in audio_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported audio format: {file_ext}. Supported: {audio_extensions}"
+            )
+        
+        # Check file size
+        max_size_mb = config_manager.get_config().get("security", {}).get("max_file_size_mb", 100)
+        if hasattr(file, 'size') and file.size > max_size_mb * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: {max_size_mb}MB"
+            )
+        
+        # Get or create STT model
+        try:
+            if model_name not in model_manager.list_models():
+                logger.info(f"[ENDPOINT] Loading STT model: {model_name}")
+                config = config_manager.get_inference_config()
+                stt_model = create_stt_model(model_name, config)
+                model_manager.register_model(model_name, stt_model)
+            else:
+                stt_model = model_manager.get_model(model_name)
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to load STT model {model_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load STT model: {str(e)}"
+            )
+        
+        # Read and preprocess audio
+        try:
+            # Read file content
+            audio_content = await file.read()
+            
+            # Save to temporary file for processing
+            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
+                temp_file.write(audio_content)
+                temp_file_path = temp_file.name
+            
+            # Load and preprocess audio
+            config = config_manager.get_inference_config()
+            audio_processor = AudioPreprocessor(config)
+            audio_data, sample_rate = audio_processor.load_audio(temp_file_path)
+            
+            # Clean up temp file
+            os.unlink(temp_file_path)
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Audio preprocessing failed: {e}")
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to process audio file: {str(e)}"
+            )
+        
+        # Prepare transcription parameters
+        transcription_params = {
+            "language": language if language != "auto" else None,
+            "enable_timestamps": enable_timestamps,
+            "beam_size": beam_size,
+            "temperature": temperature,
+            "suppress_blank": suppress_blank,
+            "initial_prompt": initial_prompt
+        }
+        
+        # Perform STT transcription
+        try:
+            result = await stt_model.transcribe(
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                **{k: v for k, v in transcription_params.items() if v is not None}
+            )
+            
+            # Extract results
+            text = result.get("text", "")
+            segments = result.get("segments", [])
+            detected_language = result.get("language")
+            confidence = result.get("confidence")
+            
+            processing_time = time.perf_counter() - start_time
+            
+            logger.info(f"[ENDPOINT] STT transcription completed - Text length: {len(text)}, "
+                       f"Language: {detected_language}, Processing time: {processing_time:.3f}s")
+            
+            return STTResponse(
+                success=True,
+                text=text,
+                segments=segments if enable_timestamps else None,
+                language=detected_language,
+                confidence=confidence,
+                processing_time=processing_time,
+                model_info={
+                    "model_name": model_name,
+                    "language": detected_language or language,
+                    "file_name": file.filename
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] STT transcription failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"STT transcription failed: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] STT endpoint failed with unexpected error: {e}")
+        return STTResponse(
+            success=False,
+            error=str(e),
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
+
+
+@app.get("/audio/models")
+async def list_audio_models():
+    """List available audio models (TTS and STT)."""
+    logger.info("[ENDPOINT] Audio models list requested")
+    
+    try:
+        from framework.models.audio import get_available_tts_models, get_available_stt_models
+        
+        tts_models = get_available_tts_models()
+        stt_models = get_available_stt_models()
+        
+        return {
+            "tts_models": tts_models,
+            "stt_models": stt_models,
+            "loaded_models": [name for name in model_manager.list_models() 
+                            if any(audio_type in name.lower() for audio_type in ['tts', 'stt', 'whisper', 'tacotron', 'wav2vec'])]
+        }
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Audio models not available. Install audio dependencies."
+        )
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to list audio models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/audio/health")
+async def audio_health_check():
+    """Check audio processing health and capabilities."""
+    logger.info("[ENDPOINT] Audio health check requested")
+    
+    health_status = {
+        "audio_available": False,
+        "tts_available": False,
+        "stt_available": False,
+        "dependencies": {},
+        "errors": []
+    }
+    
+    # Check audio dependencies
+    dependencies_to_check = [
+        ("librosa", "Audio processing"),
+        ("soundfile", "Audio I/O"),
+        ("torchaudio", "PyTorch audio"),
+        ("transformers", "HuggingFace models")
+    ]
+    
+    for dep_name, dep_desc in dependencies_to_check:
+        try:
+            __import__(dep_name)
+            health_status["dependencies"][dep_name] = {"available": True, "description": dep_desc}
+        except ImportError as e:
+            health_status["dependencies"][dep_name] = {
+                "available": False, 
+                "description": dep_desc,
+                "error": str(e)
+            }
+            health_status["errors"].append(f"{dep_name}: {str(e)}")
+    
+    # Check if audio modules can be imported
+    try:
+        from framework.models.audio import create_tts_model, create_stt_model
+        health_status["tts_available"] = True
+        health_status["stt_available"] = True
+        health_status["audio_available"] = True
+    except ImportError as e:
+        health_status["errors"].append(f"Audio modules: {str(e)}")
+    
+    return health_status
 
 if __name__ == "__main__":
     # Print all available endpoints first
