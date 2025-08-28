@@ -7,15 +7,15 @@ from datetime import datetime, timezone
 
 # Test with mock classes if enterprise modules not available
 try:
-    from framework.enterprise.config import (
+    from framework.security.config import (
         EnterpriseConfig, AuthConfig, SecurityConfig, AuthProvider
     )
-    from framework.enterprise.auth import EnterpriseAuth, JWTManager
-    from framework.enterprise.security import SecurityManager, EncryptionManager
-    from framework.enterprise.governance import (
+    from framework.security.auth import EnterpriseAuth, JWTManager
+    from framework.security.security import SecurityManager, EncryptionManager
+    from framework.security.governance import (
         ModelGovernance, ModelValidator, ABTestManager, ABTestConfig
     )
-    from framework.enterprise.monitoring import EnterpriseMonitor
+    from framework.security.monitoring import EnterpriseMonitor
 except ImportError:
     # Mock classes for testing when enterprise features not available
     EnterpriseConfig = None
@@ -225,7 +225,7 @@ class TestModelGovernance:
     async def test_model_registration(self, model_governance):
         """Test model registration."""
         # Create mock model metadata
-        from framework.enterprise.governance import ModelMetadata
+        from framework.security.governance import ModelMetadata
         
         model_metadata = ModelMetadata(
             id="test_model_id",
@@ -257,7 +257,7 @@ class TestModelGovernance:
     async def test_model_validation(self, model_governance):
         """Test model validation."""
         # Create mock model version
-        from framework.enterprise.governance import ModelMetadata, ModelVersion, ModelStatus
+        from framework.security.governance import ModelMetadata, ModelVersion, ModelStatus
         
         model_metadata = ModelMetadata(
             id="test_model_id", 
@@ -541,7 +541,7 @@ class TestEnterpriseErrorHandling:
         governance = ModelGovernance(config)
         
         # Test with invalid model metadata
-        from framework.enterprise.governance import ModelMetadata
+        from framework.security.governance import ModelMetadata
         
         with pytest.raises((Exception, ValueError, TypeError)):
             # Try to register with invalid metadata - missing required fields

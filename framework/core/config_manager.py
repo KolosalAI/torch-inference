@@ -27,10 +27,10 @@ from .config import (
 )
 
 if TYPE_CHECKING:
-    from ..enterprise.config import EnterpriseConfig
+    from ..security.config import EnterpriseConfig
 
 try:
-    from ..enterprise.config import EnterpriseConfig
+    from ..security.config import EnterpriseConfig
     ENTERPRISE_AVAILABLE = True
 except ImportError:
     ENTERPRISE_AVAILABLE = False
