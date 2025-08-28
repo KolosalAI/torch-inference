@@ -245,9 +245,12 @@ class BaseModel(ABC):
                     with torch.no_grad():
                         _ = self.forward(dummy_input)
                 except Exception as e:
+                    error_msg = str(e)
                     self.logger.warning(f"Warmup iteration {i+1} failed: {e}")
-                    # If first iteration fails due to compilation, disable compilation and retry
-                    if i == 0 and "CppCompileError" in str(e):
+                    
+                    # If iteration fails due to compilation issues, disable compilation and retry
+                    if ("triton" in error_msg.lower() or "inductor" in error_msg.lower() or 
+                        "CppCompileError" in error_msg):
                         self.logger.warning("Disabling torch.compile due to compilation error")
                         self.config.device.use_torch_compile = False
                         self._compiled_model = None
@@ -284,7 +287,13 @@ class BaseModel(ABC):
             )
             self.logger.info("Model compilation completed")
         except Exception as e:
-            self.logger.warning(f"Model compilation failed: {e}. Continuing without compilation.")
+            error_msg = str(e)
+            if "triton" in error_msg.lower() or "inductor" in error_msg.lower():
+                self.logger.warning(f"Model compilation failed due to triton/inductor issue: {e}. Disabling torch.compile globally.")
+                # Disable torch.compile for this configuration
+                self.config.device.use_torch_compile = False
+            else:
+                self.logger.warning(f"Model compilation failed: {e}. Continuing without compilation.")
             # Don't raise the exception, just continue without compilation
     
     def get_model_for_inference(self) -> nn.Module:

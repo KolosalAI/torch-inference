@@ -291,8 +291,8 @@ def mock_performance_metrics():
 @pytest.fixture
 def enterprise_config():
     """Create a test enterprise configuration."""
-    from framework.enterprise.config import EnterpriseConfig, AuthConfig, SecurityConfig
-    from framework.enterprise.config import AuthProvider, EncryptionAlgorithm
+    from framework.security.config import EnterpriseConfig, AuthConfig, SecurityConfig
+    from framework.security.config import AuthProvider, EncryptionAlgorithm
     
     return EnterpriseConfig(
         environment="test",

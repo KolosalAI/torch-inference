@@ -95,7 +95,7 @@ class VulkanComputeContext:
                 applicationVersion=vk.VK_MAKE_VERSION(1, 0, 0),
                 pEngineName="TorchInference",
                 engineVersion=vk.VK_MAKE_VERSION(1, 0, 0),
-                apiVersion=vk.VK_API_VERSION_1_3
+                apiVersion=getattr(vk, 'VK_API_VERSION_1_3', getattr(vk, 'VK_API_VERSION_1_2', vk.VK_API_VERSION_1_1))
             )
             
             instance_create_info = vk.VkInstanceCreateInfo(
@@ -300,7 +300,7 @@ class VulkanOptimizer:
                 sType=vk.VK_STRUCTURE_TYPE_APPLICATION_INFO,
                 pApplicationName="VulkanDetector",
                 applicationVersion=vk.VK_MAKE_VERSION(1, 0, 0),
-                apiVersion=vk.VK_API_VERSION_1_3
+                apiVersion=getattr(vk, 'VK_API_VERSION_1_3', getattr(vk, 'VK_API_VERSION_1_2', vk.VK_API_VERSION_1_1))
             )
             
             instance_create_info = vk.VkInstanceCreateInfo(

@@ -1,0 +1,119 @@
+# Development Docker Compose configuration
+# Extends the main compose.yaml with development-specific services
+
+services:
+  # Override the main server service for development
+  server:
+    build:
+      context: .
+      target: development
+    volumes:
+      # Mount source code for hot reload
+      - ./:/app
+      - uv-cache:/tmp/uv-cache
+    environment:
+      - PYTHONPATH=/app
+      - UV_CACHE_DIR=/tmp/uv-cache
+      - ENVIRONMENT=development
+      - DEBUG=1
+    command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
+    depends_on:
+      - redis
+      - postgres
+
+  # Development database
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=torch_inference_dev
+      - POSTGRES_USER=dev
+      - POSTGRES_PASSWORD=dev123
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dev", "-d", "torch_inference_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Development Redis cache
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-dev-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Jupyter notebook for development and experimentation
+  jupyter:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8888:8888"
+    environment:
+      - PYTHONPATH=/app
+      - UV_CACHE_DIR=/tmp/uv-cache
+      - JUPYTER_ENABLE_LAB=yes
+    volumes:
+      - ./:/app
+      - uv-cache:/tmp/uv-cache
+      - jupyter-data:/home/appuser/.jupyter
+    command: >
+      sh -c "uv run jupyter lab --ip=0.0.0.0 --port=8888 --no-browser 
+             --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+    depends_on:
+      - redis
+      - postgres
+
+  # MLflow tracking server for experiment tracking
+  mlflow:
+    build:
+      context: .
+      target: development
+    ports:
+      - "5000:5000"
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://dev:dev123@postgres:5432/torch_inference_dev
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/app/mlruns
+    volumes:
+      - ./mlruns:/app/mlruns
+      - uv-cache:/tmp/uv-cache
+    command: >
+      sh -c "uv run mlflow server --host 0.0.0.0 --port 5000 
+             --backend-store-uri postgresql://dev:dev123@postgres:5432/torch_inference_dev 
+             --default-artifact-root /app/mlruns"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # TensorBoard for model visualization
+  tensorboard:
+    build:
+      context: .
+      target: development
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./logs:/app/logs
+      - uv-cache:/tmp/uv-cache
+    command: ["uv", "run", "tensorboard", "--logdir=/app/logs", "--host=0.0.0.0", "--port=6006"]
+
+volumes:
+  uv-cache:
+    driver: local
+  postgres-dev-data:
+    driver: local
+  redis-dev-data:
+    driver: local
+  jupyter-data:
+    driver: local

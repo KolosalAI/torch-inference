@@ -1,34 +1,153 @@
-# Include any files or directories that you don't want to be copied to your
-# container here (e.g., local build artifacts, temporary files, etc.).
-#
-# For more help, visit the .dockerignore file reference guide at
-# https://docs.docker.com/go/build-context-dockerignore/
+# Docker ignore file for torch-inference framework
+# Optimizes build context by excluding unnecessary files
 
-**/.DS_Store
-**/__pycache__
-**/.venv
-**/.classpath
-**/.dockerignore
-**/.env
-**/.git
-**/.gitignore
-**/.project
-**/.settings
-**/.toolstarget
-**/.vs
-**/.vscode
-**/*.*proj.user
-**/*.dbmdl
-**/*.jfm
-**/bin
-**/charts
-**/docker-compose*
-**/compose.y*ml
-**/Dockerfile*
-**/node_modules
-**/npm-debug.log
-**/obj
-**/secrets.dev.yaml
-**/values.dev.yaml
+# Python cache and artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+test_cache/
+calibration_cache/
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Git and VCS
+.git
+.gitignore
+
+# Docker related
+.dockerignore
+Dockerfile*
+docker-compose*
+compose*.y*ml
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Security and keys
+*.key
+*.pem
+*.crt
+*.csr
+*.p12
+*.pfx
+security_events.log
+encryption.key
+
+# Local development
+.env.local
+.env.development
+.env.production
+local_settings.py
+
+# Model cache and data (these are large and should not be in Docker context)
+models/
+kernel_cache/
+*.pkl
+*.pth
+*.pt
+*.onnx
+*.engine
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Optional files
+secrets.dev.yaml
+values.dev.yaml
 LICENSE
-README.md

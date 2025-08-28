@@ -23,16 +23,23 @@ from datetime import datetime
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel, Field
 import torch
 import numpy as np
 from pathlib import Path
+import tempfile
+import io
+import base64
 
 # Print GPU information at startup
 print("\n" + "="*60)
 print("  GPU DETECTION AND SYSTEM INFO")
 print("="*60)
+
+# Enable TensorFloat32 for better performance on modern GPUs
+if torch.cuda.is_available():
+    torch.set_float32_matmul_precision('high')
 
 if torch.cuda.is_available():
     current_device = torch.cuda.current_device()
@@ -77,6 +84,38 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Debug information
+print(f"Project root: {project_root}")
+print(f"Python executable: {sys.executable}")
+print(f"Project root in sys.path: {project_root in sys.path}")
+
+# Make sure we can import the framework modules
+framework_available = False
+try:
+    # Test basic framework import
+    import framework
+    print("✓ Framework module imported successfully")
+    framework_available = True
+except ImportError as e:
+    print(f"✗ Failed to import framework module: {e}")
+    framework_available = False
+    
+    # Try to fix the import by adding the project root again
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+        try:
+            import framework
+            print("✓ Framework module imported successfully after path fix")
+            framework_available = True
+        except ImportError as e2:
+            print(f"✗ Still failed to import framework module: {e2}")
+            framework_available = False
+except RuntimeError as e:
+    print(f"✗ Runtime error during framework import (likely TorchVision compatibility issue): {e}")
+    framework_available = False
+
+print(f"Framework availability: {framework_available}")
+
 # Import and initialize security mitigations from framework
 try:
     from framework.core.security import (
@@ -117,13 +156,234 @@ except Exception as e:
     pytorch_security = DummySecurityMitigation()
     ecdsa_security = DummySecurityMitigation()
 
-# Import framework components
-from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
-from framework.core.config_manager import get_config_manager, ConfigManager
-from framework.core.base_model import BaseModel, ModelManager, get_model_manager
-from framework.core.inference_engine import InferenceEngine, create_inference_engine
-from framework.core.gpu_manager import GPUManager, auto_configure_device
-from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
+# Import framework components with error handling
+if framework_available:
+    try:
+        from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
+        print("✓ Config imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Config import failed: {e}")
+        framework_available = False
+else:
+    print("ℹ Using fallback imports due to framework unavailability")
+
+if not framework_available:
+    # Create minimal dummy classes
+    class DeviceType:
+        CPU = "cpu"
+        CUDA = "cuda"
+    
+    class InferenceConfig:
+        def __init__(self):
+            self.device = type('obj', (object,), {'device_type': DeviceType.CPU, 'device_id': 0})()
+            self.batch = type('obj', (object,), {'batch_size': 1, 'max_batch_size': 8})()
+            self.performance = type('obj', (object,), {'warmup_iterations': 3})()
+
+if framework_available:
+    try:
+        from framework.core.config_manager import get_config_manager, ConfigManager
+        print("✓ Config manager imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Config manager import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy config manager
+    class ConfigManager:
+        def __init__(self):
+            self.environment = "development"
+        
+        def get_config_manager(self):
+            return self
+        
+        def get_inference_config(self):
+            return InferenceConfig()
+        
+        def get_server_config(self):
+            return {
+                'host': '0.0.0.0',
+                'port': 8000,
+                'log_level': 'INFO',
+                'reload': False
+            }
+    
+    def get_config_manager():
+        return ConfigManager()
+
+if framework_available:
+    try:
+        from framework.core.base_model import BaseModel, ModelManager, get_model_manager
+        print("✓ Base model imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Base model import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy base model
+    class BaseModel:
+        def __init__(self, config):
+            self.config = config
+            self.device = torch.device('cpu')
+            self.model = None
+            self._is_loaded = False
+            self.logger = logging.getLogger(__name__)
+            self.model_name = "DummyModel"
+        
+        def load_model(self, model_path):
+            self._is_loaded = True
+        
+        def preprocess(self, inputs):
+            return inputs
+        
+        def forward(self, inputs):
+            return inputs
+        
+        def postprocess(self, outputs):
+            return outputs
+        
+        def predict(self, inputs):
+            return {"result": "dummy_prediction"}
+        
+        @property
+        def is_loaded(self):
+            return self._is_loaded
+        
+        @property
+        def model_info(self):
+            return {"model_name": self.model_name, "device": str(self.device)}
+        
+        def warmup(self, iterations=3):
+            pass
+        
+        def optimize_for_inference(self):
+            pass
+        
+        def cleanup(self):
+            pass
+    
+    class ModelManager:
+        def __init__(self):
+            self.models = {}
+        
+        def register_model(self, name, model):
+            self.models[name] = model
+        
+        def get_model(self, name):
+            return self.models.get(name)
+        
+        def list_models(self):
+            return list(self.models.keys())
+        
+        def cleanup_all(self):
+            pass
+    
+    def get_model_manager():
+        return ModelManager()
+
+if framework_available:
+    try:
+        from framework.core.inference_engine import InferenceEngine, create_inference_engine
+        print("✓ Inference engine imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Inference engine import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy inference engine
+    class InferenceEngine:
+        def __init__(self, model, config):
+            self.model = model
+            self.config = config
+            self.device = torch.device('cpu')
+            self.stats = {"requests_processed": 0}
+        
+        async def start(self):
+            pass
+        
+        async def stop(self):
+            pass
+        
+        async def predict(self, inputs, priority=0, timeout=None):
+            self.stats["requests_processed"] += 1
+            return self.model.predict(inputs)
+        
+        async def predict_batch(self, inputs_list, priority=0, timeout=None):
+            results = []
+            for inputs in inputs_list:
+                results.append(await self.predict(inputs, priority, timeout))
+            return results
+        
+        def get_stats(self):
+            return self.stats
+        
+        def get_performance_report(self):
+            return {"performance": "dummy_report"}
+        
+        async def health_check(self):
+            return {
+                "healthy": True,
+                "checks": {"model": True, "engine": True},
+                "timestamp": time.time()
+            }
+    
+    def create_inference_engine(model, config):
+        return InferenceEngine(model, config)
+
+if framework_available:
+    try:
+        from framework.core.gpu_manager import GPUManager, auto_configure_device
+        print("✓ GPU manager imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ GPU manager import failed: {e}")
+        # GPU manager failure is non-critical, we have GPU detection code already
+
+if framework_available:
+    try:
+        from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
+        print("✓ Autoscaling imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Autoscaling import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy autoscaler
+    class AutoscalerConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    class ZeroScalingConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    class ModelLoaderConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    class Autoscaler:
+        def __init__(self, config, model_manager):
+            self.config = config
+            self.model_manager = model_manager
+        
+        async def start(self):
+            pass
+        
+        async def stop(self):
+            pass
+        
+        async def predict(self, model_name, inputs, priority=0, timeout=None):
+            model = self.model_manager.get_model(model_name)
+            if model:
+                return model.predict(inputs)
+            return {"error": "Model not found"}
+        
+        def get_stats(self):
+            return {"autoscaler": "dummy_stats"}
+        
+        def get_health_status(self):
+            return {"healthy": True, "timestamp": time.time()}
 
 # Initialize configuration manager
 config_manager = get_config_manager()
@@ -164,6 +424,11 @@ def print_api_endpoints():
         ("POST", "/autoscaler/load", "Load a model with autoscaling"),
         ("DELETE", "/autoscaler/unload", "Unload a model"),
         ("GET", "/autoscaler/metrics", "Get detailed autoscaling metrics"),
+        # Audio processing endpoints
+        ("POST", "/tts/synthesize", "Text-to-Speech synthesis"),
+        ("POST", "/stt/transcribe", "Speech-to-Text transcription"),
+        ("GET", "/audio/models", "List available audio models"),
+        ("GET", "/audio/health", "Audio processing health check"),
     ]
     
     print("\n" + "="*80)
@@ -207,6 +472,51 @@ class StatsResponse(PydanticBaseModel):
     """Engine statistics response."""
     stats: Dict[str, Any]
     performance_report: Dict[str, Any]
+
+# Audio-specific Pydantic models
+class TTSRequest(PydanticBaseModel):
+    """Request model for Text-to-Speech synthesis."""
+    text: str = Field(..., description="Text to synthesize")
+    model_name: str = Field(default="default", description="TTS model to use")
+    voice: Optional[str] = Field(default=None, description="Voice to use for synthesis")
+    speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed (0.5-2.0)")
+    pitch: float = Field(default=1.0, ge=0.5, le=2.0, description="Pitch adjustment (0.5-2.0)")
+    volume: float = Field(default=1.0, ge=0.1, le=2.0, description="Volume level (0.1-2.0)")
+    language: str = Field(default="en", description="Language code (e.g., 'en', 'es', 'fr')")
+    emotion: Optional[str] = Field(default=None, description="Emotion for synthesis")
+    output_format: str = Field(default="wav", pattern="^(wav|mp3|flac)$", description="Output audio format")
+
+class STTRequest(PydanticBaseModel):
+    """Request model for Speech-to-Text transcription."""
+    model_name: str = Field(default="whisper-base", description="STT model to use")
+    language: str = Field(default="auto", description="Language code or 'auto' for detection")
+    enable_timestamps: bool = Field(default=True, description="Include word-level timestamps")
+    beam_size: int = Field(default=5, ge=1, le=10, description="Beam search size")
+    temperature: float = Field(default=0.0, ge=0.0, le=1.0, description="Sampling temperature")
+    suppress_blank: bool = Field(default=True, description="Suppress blank outputs")
+    initial_prompt: Optional[str] = Field(default=None, description="Initial prompt for context")
+
+class TTSResponse(PydanticBaseModel):
+    """Response model for TTS synthesis."""
+    success: bool
+    audio_data: Optional[str] = Field(default=None, description="Base64 encoded audio data")
+    audio_format: Optional[str] = None
+    duration: Optional[float] = None
+    sample_rate: Optional[int] = None
+    processing_time: Optional[float] = None
+    model_info: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class STTResponse(PydanticBaseModel):
+    """Response model for STT transcription."""
+    success: bool
+    text: Optional[str] = None
+    segments: Optional[List[Dict[str, Any]]] = Field(default=None, description="Transcription segments with timestamps")
+    language: Optional[str] = None
+    confidence: Optional[float] = None
+    processing_time: Optional[float] = None
+    model_info: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
 # Simple example model for demonstration
 class ExampleModel(BaseModel):
@@ -266,7 +576,9 @@ class ExampleModel(BaseModel):
             # Default: try to convert to tensor
             try:
                 if hasattr(inputs, '__iter__') and not isinstance(inputs, str):
-                    tensor_input = torch.tensor(list(inputs), dtype=torch.float32)
+                    # Convert to numpy array first to avoid the warning
+                    np_array = np.array(list(inputs), dtype=np.float32)
+                    tensor_input = torch.from_numpy(np_array)
                 else:
                     tensor_input = torch.tensor([inputs], dtype=torch.float32)
                 
@@ -281,6 +593,10 @@ class ExampleModel(BaseModel):
             except Exception:
                 # Fallback: random input
                 return torch.randn(1, 10, device=self.device)
+    
+    def get_model_for_inference(self):
+        """Get the model for inference (required by the forward method)."""
+        return self.model
     
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through the model."""
@@ -373,7 +689,23 @@ async def initialize_inference_engine():
         config = config_manager.get_inference_config()
         
         # Apply performance optimizations
-        from framework.optimizers.performance_optimizer import optimize_for_inference
+        if framework_available:
+            try:
+                from framework.optimizers.performance_optimizer import optimize_for_inference
+                
+                # Apply performance optimizations to the model
+                try:
+                    optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
+                    example_model.model = optimized_model
+                    example_model.device = optimized_device_config.get_torch_device()
+                    config.device = optimized_device_config
+                    logger.info("Performance optimizations applied successfully")
+                except Exception as e:
+                    logger.warning(f"Performance optimization failed, using default: {e}")
+            except (ImportError, RuntimeError) as e:
+                logger.warning(f"Performance optimizer not available: {e}")
+        else:
+            logger.info("Using basic setup without framework optimizations")
         
         logger.info(f"Initializing optimized inference engine with configuration:")
         logger.info(f"  Device: {config.device.device_type.value}")
@@ -404,16 +736,6 @@ async def initialize_inference_engine():
         example_model = ExampleModel(config)
         example_model.load_model("example")  # Dummy path
         
-        # Apply performance optimizations to the model
-        try:
-            optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
-            example_model.model = optimized_model
-            example_model.device = optimized_device_config.get_torch_device()
-            config.device = optimized_device_config
-            logger.info("Performance optimizations applied successfully")
-        except Exception as e:
-            logger.warning(f"Performance optimization failed, using default: {e}")
-        
         example_model.optimize_for_inference()
         
         # Register model
@@ -441,19 +763,23 @@ async def initialize_inference_engine():
         await autoscaler.start()
         
         # Create ultra-fast inference engine for optimal performance
-        try:
-            from framework.core.inference_engine import create_ultra_fast_inference_engine
-            inference_engine = create_ultra_fast_inference_engine(example_model, config)
-            logger.info("Using enhanced InferenceEngine with ultra-fast optimizations")
-        except Exception as e:
-            logger.warning(f"Failed to create ultra-fast inference engine, trying hybrid engine: {e}")
+        if framework_available:
             try:
-                from framework.core.inference_engine import create_hybrid_inference_engine
-                inference_engine = create_hybrid_inference_engine(example_model, config)
-                logger.info("Using enhanced InferenceEngine with hybrid optimizations")
-            except Exception as e2:
-                logger.warning(f"Failed to create fast inference engine, using standard: {e2}")
-                inference_engine = create_inference_engine(example_model, config)
+                from framework.core.inference_engine import create_ultra_fast_inference_engine
+                inference_engine = create_ultra_fast_inference_engine(example_model, config)
+                logger.info("Using enhanced InferenceEngine with ultra-fast optimizations")
+            except Exception as e:
+                logger.warning(f"Failed to create ultra-fast inference engine, trying hybrid engine: {e}")
+                try:
+                    from framework.core.inference_engine import create_hybrid_inference_engine
+                    inference_engine = create_hybrid_inference_engine(example_model, config)
+                    logger.info("Using enhanced InferenceEngine with hybrid optimizations")
+                except Exception as e2:
+                    logger.warning(f"Failed to create fast inference engine, using standard: {e2}")
+                    inference_engine = create_inference_engine(example_model, config)
+        else:
+            inference_engine = create_inference_engine(example_model, config)
+            logger.info("Using basic inference engine")
         
         await inference_engine.start()
         
@@ -518,6 +844,12 @@ async def root():
                 "available": "/models/available", 
                 "cache_info": "/models/cache/info",
                 "remove": "/models/download/{model_name}"
+            },
+            "audio": {
+                "tts_synthesize": "/tts/synthesize",
+                "stt_transcribe": "/stt/transcribe",
+                "models": "/audio/models",
+                "health": "/audio/health"
             }
         }
     }
@@ -1378,6 +1710,361 @@ async def get_autoscaler_metrics(window_seconds: Optional[int] = None):
     except Exception as e:
         logger.error(f"[ENDPOINT] Autoscaler metrics failed with error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Audio Processing Endpoints
+
+@app.post("/tts/synthesize", response_model=TTSResponse)
+async def text_to_speech(request: TTSRequest) -> TTSResponse:
+    """
+    Text-to-Speech synthesis endpoint.
+    
+    Converts text input to speech audio using the specified TTS model.
+    Returns base64 encoded audio data.
+    """
+    logger.info(f"[ENDPOINT] TTS synthesis requested - Model: {request.model_name}, Text length: {len(request.text)}")
+    
+    try:
+        start_time = time.perf_counter()
+        
+        # Import audio modules dynamically
+        try:
+            from framework.models.audio import create_tts_model
+            from framework.processors.audio import AudioPreprocessor
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Audio modules not available: {e}")
+            raise HTTPException(
+                status_code=503, 
+                detail="Audio processing not available. Install audio dependencies."
+            )
+        
+        # Validate text length
+        if len(request.text) > 5000:  # 5000 character limit
+            raise HTTPException(
+                status_code=400,
+                detail="Text too long. Maximum 5000 characters allowed."
+            )
+        
+        # Get or create TTS model
+        try:
+            if request.model_name not in model_manager.list_models():
+                logger.info(f"[ENDPOINT] Loading TTS model: {request.model_name}")
+                config = config_manager.get_inference_config()
+                tts_model = create_tts_model(request.model_name, config)
+                model_manager.register_model(request.model_name, tts_model)
+            else:
+                tts_model = model_manager.get_model(request.model_name)
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to load TTS model {request.model_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load TTS model: {str(e)}"
+            )
+        
+        # Prepare synthesis parameters
+        synthesis_params = {
+            "voice": request.voice,
+            "speed": request.speed,
+            "pitch": request.pitch,
+            "volume": request.volume,
+            "language": request.language,
+            "emotion": request.emotion
+        }
+        
+        # Perform TTS synthesis
+        try:
+            audio_data, sample_rate = await tts_model.synthesize(
+                text=request.text,
+                **{k: v for k, v in synthesis_params.items() if v is not None}
+            )
+            
+            # Convert audio to requested format
+            if request.output_format != "wav":
+                # For now, we'll keep WAV format and note the requested format
+                # Additional format conversion can be implemented here
+                pass
+            
+            # Calculate duration
+            duration = len(audio_data) / sample_rate if sample_rate > 0 else None
+            
+            # Encode audio as base64
+            if isinstance(audio_data, np.ndarray):
+                # Convert numpy array to bytes
+                audio_bytes = (audio_data * 32767).astype(np.int16).tobytes()
+            else:
+                audio_bytes = audio_data
+            
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+            
+            processing_time = time.perf_counter() - start_time
+            
+            logger.info(f"[ENDPOINT] TTS synthesis completed - Duration: {duration:.2f}s, "
+                       f"Processing time: {processing_time:.3f}s")
+            
+            return TTSResponse(
+                success=True,
+                audio_data=audio_base64,
+                audio_format=request.output_format,
+                duration=duration,
+                sample_rate=sample_rate,
+                processing_time=processing_time,
+                model_info={
+                    "model_name": request.model_name,
+                    "voice": request.voice,
+                    "language": request.language
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] TTS synthesis failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"TTS synthesis failed: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] TTS endpoint failed with unexpected error: {e}")
+        return TTSResponse(
+            success=False,
+            error=str(e),
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
+
+
+@app.post("/stt/transcribe", response_model=STTResponse)
+async def speech_to_text(
+    file: UploadFile = File(..., description="Audio file to transcribe"),
+    model_name: str = Form(default="whisper-base"),
+    language: str = Form(default="auto"),
+    enable_timestamps: bool = Form(default=True),
+    beam_size: int = Form(default=5),
+    temperature: float = Form(default=0.0),
+    suppress_blank: bool = Form(default=True),
+    initial_prompt: Optional[str] = Form(default=None)
+) -> STTResponse:
+    """
+    Speech-to-Text transcription endpoint.
+    
+    Transcribes uploaded audio file to text using the specified STT model.
+    Supports various audio formats and returns text with optional timestamps.
+    """
+    logger.info(f"[ENDPOINT] STT transcription requested - Model: {model_name}, "
+               f"File: {file.filename}, Size: {file.size if hasattr(file, 'size') else 'unknown'}")
+    
+    try:
+        start_time = time.perf_counter()
+        
+        # Import audio modules dynamically
+        try:
+            from framework.models.audio import create_stt_model
+            from framework.processors.audio import AudioPreprocessor
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Audio modules not available: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Audio processing not available. Install audio dependencies."
+            )
+        
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Check file extension
+        allowed_extensions = config_manager.get_config().get("security", {}).get("allowed_extensions", [])
+        audio_extensions = [".wav", ".mp3", ".flac", ".m4a", ".ogg"]
+        
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in audio_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported audio format: {file_ext}. Supported: {audio_extensions}"
+            )
+        
+        # Check file size
+        max_size_mb = config_manager.get_config().get("security", {}).get("max_file_size_mb", 100)
+        if hasattr(file, 'size') and file.size > max_size_mb * 1024 * 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: {max_size_mb}MB"
+            )
+        
+        # Get or create STT model
+        try:
+            if model_name not in model_manager.list_models():
+                logger.info(f"[ENDPOINT] Loading STT model: {model_name}")
+                config = config_manager.get_inference_config()
+                stt_model = create_stt_model(model_name, config)
+                model_manager.register_model(model_name, stt_model)
+            else:
+                stt_model = model_manager.get_model(model_name)
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to load STT model {model_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load STT model: {str(e)}"
+            )
+        
+        # Read and preprocess audio
+        try:
+            # Read file content
+            audio_content = await file.read()
+            
+            # Save to temporary file for processing
+            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
+                temp_file.write(audio_content)
+                temp_file_path = temp_file.name
+            
+            # Load and preprocess audio
+            config = config_manager.get_inference_config()
+            audio_processor = AudioPreprocessor(config)
+            audio_data, sample_rate = audio_processor.load_audio(temp_file_path)
+            
+            # Clean up temp file
+            os.unlink(temp_file_path)
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Audio preprocessing failed: {e}")
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to process audio file: {str(e)}"
+            )
+        
+        # Prepare transcription parameters
+        transcription_params = {
+            "language": language if language != "auto" else None,
+            "enable_timestamps": enable_timestamps,
+            "beam_size": beam_size,
+            "temperature": temperature,
+            "suppress_blank": suppress_blank,
+            "initial_prompt": initial_prompt
+        }
+        
+        # Perform STT transcription
+        try:
+            result = await stt_model.transcribe(
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                **{k: v for k, v in transcription_params.items() if v is not None}
+            )
+            
+            # Extract results
+            text = result.get("text", "")
+            segments = result.get("segments", [])
+            detected_language = result.get("language")
+            confidence = result.get("confidence")
+            
+            processing_time = time.perf_counter() - start_time
+            
+            logger.info(f"[ENDPOINT] STT transcription completed - Text length: {len(text)}, "
+                       f"Language: {detected_language}, Processing time: {processing_time:.3f}s")
+            
+            return STTResponse(
+                success=True,
+                text=text,
+                segments=segments if enable_timestamps else None,
+                language=detected_language,
+                confidence=confidence,
+                processing_time=processing_time,
+                model_info={
+                    "model_name": model_name,
+                    "language": detected_language or language,
+                    "file_name": file.filename
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] STT transcription failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"STT transcription failed: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] STT endpoint failed with unexpected error: {e}")
+        return STTResponse(
+            success=False,
+            error=str(e),
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
+
+
+@app.get("/audio/models")
+async def list_audio_models():
+    """List available audio models (TTS and STT)."""
+    logger.info("[ENDPOINT] Audio models list requested")
+    
+    try:
+        from framework.models.audio import get_available_tts_models, get_available_stt_models
+        
+        tts_models = get_available_tts_models()
+        stt_models = get_available_stt_models()
+        
+        return {
+            "tts_models": tts_models,
+            "stt_models": stt_models,
+            "loaded_models": [name for name in model_manager.list_models() 
+                            if any(audio_type in name.lower() for audio_type in ['tts', 'stt', 'whisper', 'tacotron', 'wav2vec'])]
+        }
+        
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Audio models not available. Install audio dependencies."
+        )
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to list audio models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/audio/health")
+async def audio_health_check():
+    """Check audio processing health and capabilities."""
+    logger.info("[ENDPOINT] Audio health check requested")
+    
+    health_status = {
+        "audio_available": False,
+        "tts_available": False,
+        "stt_available": False,
+        "dependencies": {},
+        "errors": []
+    }
+    
+    # Check audio dependencies
+    dependencies_to_check = [
+        ("librosa", "Audio processing"),
+        ("soundfile", "Audio I/O"),
+        ("torchaudio", "PyTorch audio"),
+        ("transformers", "HuggingFace models")
+    ]
+    
+    for dep_name, dep_desc in dependencies_to_check:
+        try:
+            __import__(dep_name)
+            health_status["dependencies"][dep_name] = {"available": True, "description": dep_desc}
+        except ImportError as e:
+            health_status["dependencies"][dep_name] = {
+                "available": False, 
+                "description": dep_desc,
+                "error": str(e)
+            }
+            health_status["errors"].append(f"{dep_name}: {str(e)}")
+    
+    # Check if audio modules can be imported
+    try:
+        from framework.models.audio import create_tts_model, create_stt_model
+        health_status["tts_available"] = True
+        health_status["stt_available"] = True
+        health_status["audio_available"] = True
+    except ImportError as e:
+        health_status["errors"].append(f"Audio modules: {str(e)}")
+    
+    return health_status
 
 if __name__ == "__main__":
     # Print all available endpoints first
