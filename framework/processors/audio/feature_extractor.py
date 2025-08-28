@@ -527,3 +527,7 @@ def create_feature_extractor(extractor_type: str, **kwargs) -> BaseFeatureExtrac
         return FrameBasedFeatureExtractor(**kwargs)
     else:
         raise FeatureExtractorError(f"Unsupported extractor type: {extractor_type}")
+
+
+# Alias for backward compatibility
+FeatureExtractor = TraditionalFeatureExtractor

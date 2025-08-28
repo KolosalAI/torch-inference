@@ -284,3 +284,124 @@ Examples:
 
 if __name__ == "__main__":
     exit(main())
+
+
+class AutoDownloader:
+    """
+    Automatic model downloader with intelligent source detection.
+    """
+    
+    def __init__(self):
+        self.downloader = get_model_downloader()
+    
+    def auto_download(self, model_identifier: str, 
+                     model_name: Optional[str] = None,
+                     **kwargs) -> tuple[Path, ModelInfo]:
+        """
+        Automatically download a model with source detection.
+        
+        Args:
+            model_identifier: Model identifier
+            model_name: Custom name for the model
+            **kwargs: Additional arguments for downloading
+            
+        Returns:
+            Tuple of (model_path, model_info)
+        """
+        return download_model_auto(model_identifier, **kwargs)
+    
+    def suggest_alternatives(self, model_identifier: str) -> List[str]:
+        """
+        Suggest alternative model identifiers if download fails.
+        
+        Args:
+            model_identifier: Original model identifier
+            
+        Returns:
+            List of suggested alternatives
+        """
+        suggestions = []
+        
+        # Generate suggestions for different sources
+        suggestions.extend([
+            f"torchvision:{model_identifier}",
+            f"huggingface:{model_identifier}",
+            f"pytorch:{model_identifier}",
+        ])
+        
+        # Common model name variations
+        if '_' in model_identifier:
+            suggestions.append(model_identifier.replace('_', '-'))
+        if '-' in model_identifier:
+            suggestions.append(model_identifier.replace('-', '_'))
+        
+        # Remove duplicates and original
+        suggestions = list(set(suggestions))
+        if model_identifier in suggestions:
+            suggestions.remove(model_identifier)
+        
+        return suggestions[:5]  # Limit to top 5 suggestions
+    
+    def validate_identifier(self, model_identifier: str) -> bool:
+        """
+        Validate if a model identifier is potentially valid.
+        
+        Args:
+            model_identifier: Model identifier to validate
+            
+        Returns:
+            True if identifier appears valid
+        """
+        if not model_identifier or not isinstance(model_identifier, str):
+            return False
+        
+        # Basic validation
+        if len(model_identifier.strip()) < 3:
+            return False
+        
+        return True
+
+
+class SourceDetector:
+    """Detect the source of a model identifier."""
+    
+    def __init__(self):
+        self.source_patterns = {
+            'huggingface': [
+                r'^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$',  # org/model-name
+                r'^huggingface:',
+                r'^hf:',
+            ],
+            'torchvision': [
+                r'^(resnet|alexnet|vgg|squeezenet|densenet|inception|googlenet|shufflenet|mobilenet|resnext|wide_resnet|mnasnet|efficientnet|regnet|convnext)',
+                r'^torchvision:',
+                r'^tv:',
+            ],
+            'pytorch_hub': [
+                r'^[a-zA-Z0-9_.-]+:[a-zA-Z0-9_.-]+:[a-zA-Z0-9_.-]+$',  # repo:model:version
+                r'^pytorch:',
+                r'^hub:',
+            ],
+            'url': [
+                r'^https?://',
+                r'^ftp://',
+                r'\.pth$',
+                r'\.pt$',
+                r'\.onnx$',
+            ]
+        }
+    
+    def detect_source(self, model_identifier: str) -> str:
+        """Detect the source of a model identifier."""
+        import re
+        
+        model_id = model_identifier.lower().strip()
+        
+        # Check each source pattern
+        for source, patterns in self.source_patterns.items():
+            for pattern in patterns:
+                if re.match(pattern, model_id):
+                    return source
+        
+        # Default fallback
+        return 'pytorch_hub'

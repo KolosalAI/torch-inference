@@ -121,7 +121,7 @@ class RBACConfig:
 
 
 @dataclass
-class SecurityConfig:
+class SecuritySettings:
     """Security configuration."""
     # Encryption settings
     enable_encryption_at_rest: bool = True
@@ -294,15 +294,15 @@ class IntegrationConfig:
 
 
 @dataclass
-class EnterpriseConfig:
-    """Main enterprise configuration."""
+class SecurityConfig:
+    """Main security configuration."""
     # Basic inference config
     inference: InferenceConfig = field(default_factory=InferenceConfig)
     
-    # Enterprise features
+    # Security features
     auth: AuthConfig = field(default_factory=AuthConfig)
     rbac: RBACConfig = field(default_factory=RBACConfig)
-    security: SecurityConfig = field(default_factory=SecurityConfig)
+    security: SecuritySettings = field(default_factory=SecuritySettings)
     monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
     compliance: ComplianceConfig = field(default_factory=ComplianceConfig)
     scaling: ScalingConfig = field(default_factory=ScalingConfig)
@@ -315,7 +315,7 @@ class EnterpriseConfig:
     version: str = "1.0.0"
     
     @classmethod
-    def from_env(cls) -> "EnterpriseConfig":
+    def from_env(cls) -> "SecurityConfig":
         """Create configuration from environment variables."""
         config = cls()
         
@@ -419,9 +419,9 @@ class EnterpriseConfig:
 
 
 # Factory functions for common configurations
-def create_development_config() -> EnterpriseConfig:
+def create_development_config() -> SecurityConfig:
     """Create configuration for development environment."""
-    config = EnterpriseConfig()
+    config = SecurityConfig()
     config.environment = "development"
     config.auth.access_token_expire_minutes = 480  # 8 hours
     config.security.enable_rate_limiting = False
@@ -431,9 +431,9 @@ def create_development_config() -> EnterpriseConfig:
     return config
 
 
-def create_staging_config() -> EnterpriseConfig:
+def create_staging_config() -> SecurityConfig:
     """Create configuration for staging environment."""
-    config = EnterpriseConfig()
+    config = SecurityConfig()
     config.environment = "staging"
     config.security.rate_limit_requests_per_minute = 500
     config.monitoring.tracing_sampling_rate = 0.5
@@ -441,9 +441,9 @@ def create_staging_config() -> EnterpriseConfig:
     return config
 
 
-def create_production_config() -> EnterpriseConfig:
+def create_production_config() -> SecurityConfig:
     """Create configuration for production environment."""
-    config = EnterpriseConfig()
+    config = SecurityConfig()
     config.environment = "production"
     config.auth.enable_mfa = True
     config.security.enable_encryption_at_rest = True

@@ -25,7 +25,7 @@ from abc import ABC, abstractmethod
 import threading
 from collections import defaultdict, deque
 
-from .config import EnterpriseConfig
+from .config import SecurityConfig
 
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ class ModelPerformanceMetrics:
 class ModelRegistry:
     """Model registry for version management."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.models: Dict[str, Dict[str, ModelVersion]] = {}  # model_id -> version -> ModelVersion
         self.metadata_cache: Dict[str, ModelMetadata] = {}
@@ -349,7 +349,7 @@ class ModelRegistry:
 class ModelValidator:
     """Model validation and testing."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.validation_callbacks: List[Callable] = []
     
@@ -521,7 +521,7 @@ class ModelValidator:
 class ABTestManager:
     """A/B testing management."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.active_tests: Dict[str, ABTestConfig] = {}
         self.test_results: Dict[str, Dict] = defaultdict(dict)
@@ -744,7 +744,7 @@ class TrafficRouter:
 class ExperimentTracker:
     """Experiment tracking and management."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.experiments: Dict[str, Experiment] = {}
         self.active_experiments: Dict[str, threading.Thread] = {}
@@ -874,7 +874,7 @@ class ExperimentTracker:
 class ModelGovernance:
     """Main model governance system."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.model_registry = ModelRegistry(config)
         self.model_validator = ModelValidator(config)
@@ -1090,7 +1090,7 @@ class ModelGovernance:
 class MLOpsManager:
     """MLOps workflow management."""
     
-    def __init__(self, config: EnterpriseConfig, governance: ModelGovernance):
+    def __init__(self, config: SecurityConfig, governance: ModelGovernance):
         self.config = config
         self.governance = governance
         self.workflows: Dict[str, Dict[str, Any]] = {}

@@ -78,7 +78,7 @@ class TestAudioIntegration:
         """Test that audio modules can be imported."""
         try:
             from framework.models.audio import create_tts_model, create_stt_model
-            from framework.processors.audio import AudioPreprocessor
+            from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
             assert True, "Audio modules imported successfully"
         except ImportError as e:
             pytest.skip(f"Audio dependencies not available: {e}")
@@ -88,7 +88,7 @@ class TestAudioIntegration:
     def test_audio_preprocessor_creation(self, inference_config):
         """Test creating an audio preprocessor."""
         try:
-            from framework.processors.audio import AudioPreprocessor
+            from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
             
             preprocessor = AudioPreprocessor(inference_config)
             assert preprocessor is not None
@@ -103,7 +103,7 @@ class TestAudioIntegration:
     def test_audio_preprocessor_load_mock_file(self, inference_config, mock_wav_file):
         """Test loading audio file with preprocessor."""
         try:
-            from framework.processors.audio import AudioPreprocessor
+            from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
             
             preprocessor = AudioPreprocessor(inference_config)
             audio_data, sample_rate = preprocessor.load_audio(mock_wav_file)

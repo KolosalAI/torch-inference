@@ -188,7 +188,7 @@ class AudioInstaller:
         try:
             print("\n🧪 Testing framework audio imports...")
             from framework.models.audio import create_tts_model, create_stt_model
-            from framework.processors.audio import AudioPreprocessor
+            from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
             print("✅ Framework audio modules imported successfully")
             
             # Test basic functionality

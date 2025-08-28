@@ -32,6 +32,65 @@ import tempfile
 import io
 import base64
 
+def _create_wav_bytes(audio_data: np.ndarray, sample_rate: int, channels: int = 1, sample_width: int = 2) -> bytes:
+    """
+    Create a proper WAV file from numpy audio data.
+    
+    Args:
+        audio_data: Audio data as numpy array (float values between -1 and 1)
+        sample_rate: Sample rate in Hz
+        channels: Number of audio channels (default: 1 for mono)
+        sample_width: Sample width in bytes (default: 2 for 16-bit)
+        
+    Returns:
+        Complete WAV file as bytes including header
+    """
+    import struct
+    
+    # Ensure audio data is in the right format
+    if audio_data.dtype != np.float32:
+        audio_data = audio_data.astype(np.float32)
+    
+    # Clip to valid range
+    audio_data = np.clip(audio_data, -1.0, 1.0)
+    
+    # Convert to 16-bit PCM
+    if sample_width == 2:
+        audio_pcm = (audio_data * 32767).astype(np.int16)
+    elif sample_width == 4:
+        audio_pcm = (audio_data * 2147483647).astype(np.int32)
+    else:
+        raise ValueError(f"Unsupported sample width: {sample_width}")
+    
+    # Convert to bytes
+    audio_bytes = audio_pcm.tobytes()
+    
+    # Create WAV header
+    chunk_size = 36 + len(audio_bytes)
+    subchunk2_size = len(audio_bytes)
+    byte_rate = sample_rate * channels * sample_width
+    block_align = channels * sample_width
+    bits_per_sample = sample_width * 8
+    
+    wav_header = struct.pack('<4sI4s4sIHHIIHH4sI',
+        b'RIFF',           # ChunkID
+        chunk_size,        # ChunkSize
+        b'WAVE',           # Format
+        b'fmt ',           # Subchunk1ID
+        16,                # Subchunk1Size (16 for PCM)
+        1,                 # AudioFormat (1 for PCM)
+        channels,          # NumChannels
+        sample_rate,       # SampleRate
+        byte_rate,         # ByteRate
+        block_align,       # BlockAlign
+        bits_per_sample,   # BitsPerSample
+        b'data',           # Subchunk2ID
+        subchunk2_size     # Subchunk2Size
+    )
+    
+    # Combine header and audio data
+    return wav_header + audio_bytes
+
 # Print GPU information at startup
 print("\n" + "="*60)
 print("  GPU DETECTION AND SYSTEM INFO")
@@ -390,8 +449,50 @@ config_manager = get_config_manager()
 
 # Setup logging with configuration
 server_config = config_manager.get_server_config()
-logging.basicConfig(level=getattr(logging, server_config['log_level']))
+
+# Configure logging to both console and file
+log_level = getattr(logging, server_config['log_level'])
+
+# Create logs directory if it doesn't exist
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+
+# Create separate handlers
+console_handler = logging.StreamHandler()
+console_handler.setLevel(log_level)
+
+file_handler = logging.FileHandler(log_dir / "server.log", mode='a', encoding='utf-8')
+file_handler.setLevel(log_level)
+
+error_handler = logging.FileHandler(log_dir / "server_errors.log", mode='a', encoding='utf-8')
+error_handler.setLevel(logging.ERROR)
+
+# Configure root logger
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[console_handler, file_handler, error_handler]
+)
+
 logger = logging.getLogger(__name__)
+
+# Log startup message to file
+logger.info("="*80)
+logger.info("PYTORCH INFERENCE FRAMEWORK SERVER STARTUP")
+logger.info("="*80)
+logger.info(f"Startup time: {datetime.now().isoformat()}")
+logger.info(f"Python executable: {sys.executable}")
+logger.info(f"Working directory: {os.getcwd()}")
+logger.info(f"Log level: {server_config['log_level']}")
+logger.info(f"Log files directory: {log_dir.absolute()}")
+
+# Create separate logger for API requests
+api_logger = logging.getLogger("api_requests")
+api_logger.setLevel(logging.INFO)
+api_handler = logging.FileHandler(log_dir / "api_requests.log", mode='a', encoding='utf-8')
+api_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+api_logger.addHandler(api_handler)
+api_logger.propagate = False  # Prevent double logging
 
 # Global variables
 inference_engine: Optional[InferenceEngine] = None
@@ -429,6 +530,10 @@ def print_api_endpoints():
         ("POST", "/stt/transcribe", "Speech-to-Text transcription"),
         ("GET", "/audio/models", "List available audio models"),
         ("GET", "/audio/health", "Audio processing health check"),
+        # Logging endpoints
+        ("GET", "/logs", "Get logging information and statistics"),
+        ("GET", "/logs/{log_file}", "Download or view specific log file"),
+        ("DELETE", "/logs/{log_file}", "Clear specific log file"),
     ]
     
     print("\n" + "="*80)
@@ -618,20 +723,48 @@ class ExampleModel(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
+    startup_time = datetime.now()
+    
     logger.info("[SERVER] Starting PyTorch Inference API Server...")
+    logger.info(f"[SERVER] Startup initiated at: {startup_time.isoformat()}")
     logger.info("[SERVER] Initializing inference engine...")
     
     # Initialize model and engine
-    await initialize_inference_engine()
+    try:
+        await initialize_inference_engine()
+        logger.info("[SERVER] Inference engine initialized successfully")
+    except Exception as e:
+        logger.error(f"[SERVER] Failed to initialize inference engine: {e}")
+        raise
     
-    logger.info("[SERVER] Server startup complete - Ready to accept requests")
+    ready_time = datetime.now()
+    startup_duration = (ready_time - startup_time).total_seconds()
+    
+    logger.info(f"[SERVER] Server startup complete at: {ready_time.isoformat()}")
+    logger.info(f"[SERVER] Startup duration: {startup_duration:.2f} seconds")
+    logger.info("[SERVER] Ready to accept requests")
+    logger.info("="*60)
     
     yield
     
     # Cleanup
+    shutdown_time = datetime.now()
+    logger.info("="*60)
     logger.info("[SERVER] Shutting down PyTorch Inference API Server...")
-    await cleanup_inference_engine()
-    logger.info("[SERVER] Server shutdown complete")
+    logger.info(f"[SERVER] Shutdown initiated at: {shutdown_time.isoformat()}")
+    
+    try:
+        await cleanup_inference_engine()
+        logger.info("[SERVER] Inference engine cleanup completed")
+    except Exception as e:
+        logger.error(f"[SERVER] Error during cleanup: {e}")
+    
+    shutdown_complete_time = datetime.now()
+    shutdown_duration = (shutdown_complete_time - shutdown_time).total_seconds()
+    
+    logger.info(f"[SERVER] Server shutdown complete at: {shutdown_complete_time.isoformat()}")
+    logger.info(f"[SERVER] Shutdown duration: {shutdown_duration:.2f} seconds")
+    logger.info("="*60)
 
 # Create FastAPI app
 app = FastAPI(
@@ -663,8 +796,10 @@ async def log_requests(request: Request, call_next):
     user_agent = request.headers.get("user-agent", "unknown")
     content_type = request.headers.get("content-type", "")
     
-    # Log request
-    logger.info(f"[API REQUEST] {method} {url} - Client: {client_ip} - User-Agent: {user_agent[:100]}")
+    # Log request to both main logger and API logger
+    request_log = f"[API REQUEST] {method} {url} - Client: {client_ip} - User-Agent: {user_agent[:100]}"
+    logger.info(request_log)
+    api_logger.info(f"REQUEST: {method} {url} | Client: {client_ip} | UA: {user_agent[:50]}")
     
     # Call the endpoint
     response = await call_next(request)
@@ -672,8 +807,10 @@ async def log_requests(request: Request, call_next):
     # Calculate processing time
     process_time = time.time() - start_time
     
-    # Log response
-    logger.info(f"[API RESPONSE] {method} {url} - Status: {response.status_code} - Time: {process_time:.3f}s - Client: {client_ip}")
+    # Log response to both loggers
+    response_log = f"[API RESPONSE] {method} {url} - Status: {response.status_code} - Time: {process_time:.3f}s - Client: {client_ip}"
+    logger.info(response_log)
+    api_logger.info(f"RESPONSE: {method} {url} | Status: {response.status_code} | Time: {process_time:.3f}s | Client: {client_ip}")
     
     # Add processing time header
     response.headers["X-Process-Time"] = str(process_time)
@@ -1095,6 +1232,22 @@ async def get_config():
     logger.info("[ENDPOINT] Configuration information requested")
     
     try:
+        # Get log file paths and sizes
+        log_files_info = {}
+        log_dir = Path("logs")
+        if log_dir.exists():
+            for log_file in log_dir.glob("*.log"):
+                try:
+                    file_size = log_file.stat().st_size
+                    log_files_info[log_file.name] = {
+                        "path": str(log_file.absolute()),
+                        "size_bytes": file_size,
+                        "size_mb": round(file_size / (1024 * 1024), 2),
+                        "last_modified": datetime.fromtimestamp(log_file.stat().st_mtime).isoformat()
+                    }
+                except Exception as e:
+                    log_files_info[log_file.name] = {"error": str(e)}
+        
         config_data = {
             "configuration": config_manager.export_config(),
             "inference_config": {
@@ -1103,7 +1256,18 @@ async def get_config():
                 "use_fp16": config_manager.get('USE_FP16', False, 'device.use_fp16'),
                 "enable_profiling": config_manager.get('ENABLE_PROFILING', False, 'performance.enable_profiling')
             },
-            "server_config": server_config
+            "server_config": server_config,
+            "logging_config": {
+                "log_level": server_config['log_level'],
+                "log_directory": str(log_dir.absolute()) if log_dir.exists() else "logs",
+                "log_files": log_files_info,
+                "logging_handlers": [
+                    "Console output",
+                    "Main log file (server.log)",
+                    "Error log file (server_errors.log)",
+                    "API requests log file (api_requests.log)"
+                ]
+            }
         }
         
         logger.info("[ENDPOINT] Configuration information retrieved successfully")
@@ -1729,8 +1893,8 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
         
         # Import audio modules dynamically
         try:
-            from framework.models.audio import create_tts_model
-            from framework.processors.audio import AudioPreprocessor
+            from framework.models.audio import create_tts_model, AudioModelError
+            from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
         except ImportError as e:
             logger.error(f"[ENDPOINT] Audio modules not available: {e}")
             raise HTTPException(
@@ -1745,17 +1909,67 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
                 detail="Text too long. Maximum 5000 characters allowed."
             )
         
+        # Map model names to their types and configurations
+        tts_model_mapping = {
+            "speecht5_tts": {
+                "type": "huggingface",
+                "model_name": "microsoft/speecht5_tts"
+            },
+            "speecht5": {
+                "type": "huggingface", 
+                "model_name": "microsoft/speecht5_tts"
+            },
+            "bark": {
+                "type": "huggingface",
+                "model_name": "suno/bark"
+            },
+            "tacotron2": {
+                "type": "torchaudio",
+                "model_name": "tacotron2"
+            },
+            "default": {
+                "type": "huggingface",
+                "model_name": "microsoft/speecht5_tts"
+            }
+        }
+        
         # Get or create TTS model
         try:
             if request.model_name not in model_manager.list_models():
                 logger.info(f"[ENDPOINT] Loading TTS model: {request.model_name}")
                 config = config_manager.get_inference_config()
-                tts_model = create_tts_model(request.model_name, config)
+                
+                # Get model configuration
+                model_config = tts_model_mapping.get(request.model_name, tts_model_mapping["default"])
+                model_type = model_config["type"]
+                actual_model_name = model_config["model_name"]
+                
+                logger.debug(f"[ENDPOINT] Creating TTS model - Type: {model_type}, Model: {actual_model_name}")
+                
+                tts_model = create_tts_model(
+                    model_type, 
+                    config, 
+                    model_name=actual_model_name
+                )
+                
+                # Load the model with a dummy path (not used for HuggingFace models)
+                logger.debug(f"[ENDPOINT] Loading TTS model...")
+                tts_model.load_model("dummy_path")
+                
+                # Verify model is loaded
+                if not tts_model.is_loaded:
+                    raise AudioModelError(f"Failed to load TTS model: model.is_loaded is False")
+                
+                logger.info(f"[ENDPOINT] TTS model loaded successfully: {request.model_name}")
                 model_manager.register_model(request.model_name, tts_model)
             else:
                 tts_model = model_manager.get_model(request.model_name)
+                logger.debug(f"[ENDPOINT] Using existing TTS model: {request.model_name}")
         except Exception as e:
             logger.error(f"[ENDPOINT] Failed to load TTS model {request.model_name}: {e}")
+            logger.error(f"[ENDPOINT] Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"[ENDPOINT] Traceback: {traceback.format_exc()}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to load TTS model: {str(e)}"
@@ -1773,10 +1987,20 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
         
         # Perform TTS synthesis
         try:
-            audio_data, sample_rate = await tts_model.synthesize(
-                text=request.text,
-                **{k: v for k, v in synthesis_params.items() if v is not None}
-            )
+            # Use the predict method which returns a proper dictionary
+            result = tts_model.predict(request.text)
+            
+            # Extract audio data and metadata
+            audio_data = result["audio"]
+            sample_rate = result["sample_rate"]
+            duration = result.get("duration", None)
+            
+            # Apply additional parameters from request if not handled by model
+            if request.speed != 1.0 and hasattr(tts_model, '_adjust_speed'):
+                audio_data = tts_model._adjust_speed(audio_data, request.speed)
+            
+            if request.volume != 1.0:
+                audio_data = audio_data * request.volume
             
             # Convert audio to requested format
             if request.output_format != "wav":
@@ -1784,15 +2008,22 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
                 # Additional format conversion can be implemented here
                 pass
             
-            # Calculate duration
-            duration = len(audio_data) / sample_rate if sample_rate > 0 else None
+            # Recalculate duration after processing
+            if duration is None and sample_rate > 0:
+                duration = len(audio_data) / sample_rate
             
             # Encode audio as base64
             if isinstance(audio_data, np.ndarray):
-                # Convert numpy array to bytes
-                audio_bytes = (audio_data * 32767).astype(np.int16).tobytes()
+                # Convert numpy array to proper WAV format with header
+                audio_bytes = _create_wav_bytes(audio_data, sample_rate)
             else:
-                audio_bytes = audio_data
+                # If already bytes, assume it's raw PCM and wrap in WAV
+                if isinstance(audio_data, bytes):
+                    # Convert bytes back to numpy array and then to WAV
+                    audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
+                    audio_bytes = _create_wav_bytes(audio_array, sample_rate)
+                else:
+                    audio_bytes = audio_data
             
             audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
             
@@ -1811,7 +2042,8 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
                 model_info={
                     "model_name": request.model_name,
                     "voice": request.voice,
-                    "language": request.language
+                    "language": request.language,
+                    "actual_model": result.get("model_name", request.model_name)
                 }
             )
             
@@ -1859,7 +2091,7 @@ async def speech_to_text(
         # Import audio modules dynamically
         try:
             from framework.models.audio import create_stt_model
-            from framework.processors.audio import AudioPreprocessor
+            from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
         except ImportError as e:
             logger.error(f"[ENDPOINT] Audio modules not available: {e}")
             raise HTTPException(
@@ -2000,23 +2232,70 @@ async def list_audio_models():
     logger.info("[ENDPOINT] Audio models list requested")
     
     try:
-        from framework.models.audio import get_available_tts_models, get_available_stt_models
+        from framework.models.audio import TTS_MODEL_REGISTRY, STT_MODEL_REGISTRY, list_available_models
         
-        tts_models = get_available_tts_models()
-        stt_models = get_available_stt_models()
+        # Get all available models from registries
+        tts_models = TTS_MODEL_REGISTRY
+        stt_models = STT_MODEL_REGISTRY
         
-        return {
-            "tts_models": tts_models,
-            "stt_models": stt_models,
-            "loaded_models": [name for name in model_manager.list_models() 
-                            if any(audio_type in name.lower() for audio_type in ['tts', 'stt', 'whisper', 'tacotron', 'wav2vec'])]
+        # Add the manual mapping for common model names
+        tts_model_aliases = {
+            "speecht5_tts": {
+                "type": "huggingface",
+                "model_name": "microsoft/speecht5_tts",
+                "description": "Microsoft SpeechT5 TTS model (alias)"
+            },
+            "default": {
+                "type": "huggingface",
+                "model_name": "microsoft/speecht5_tts", 
+                "description": "Default TTS model"
+            }
         }
         
-    except ImportError:
-        raise HTTPException(
-            status_code=503,
-            detail="Audio models not available. Install audio dependencies."
-        )
+        # Merge with existing registry
+        all_tts_models = {**tts_models, **tts_model_aliases}
+        
+        # Get currently loaded audio models
+        loaded_models = [name for name in model_manager.list_models() 
+                        if any(audio_type in name.lower() for audio_type in ['tts', 'stt', 'whisper', 'tacotron', 'wav2vec', 'speecht5', 'bark'])]
+        
+        logger.info(f"[ENDPOINT] Audio models listed - TTS: {len(all_tts_models)}, STT: {len(stt_models)}, Loaded: {len(loaded_models)}")
+        
+        return {
+            "tts_models": all_tts_models,
+            "stt_models": stt_models,
+            "loaded_models": loaded_models,
+            "supported_tts_types": ["huggingface", "torchaudio", "custom"],
+            "supported_stt_types": ["whisper", "wav2vec2", "custom"],
+            "examples": {
+                "tts_request": {
+                    "model_name": "speecht5_tts",
+                    "alternatives": ["speecht5", "bark", "tacotron2", "default"]
+                },
+                "stt_request": {
+                    "model_name": "whisper-base",
+                    "alternatives": ["whisper-small", "whisper-medium", "wav2vec2"]
+                }
+            }
+        }
+        
+    except ImportError as e:
+        logger.error(f"[ENDPOINT] Audio models import error: {e}")
+        return {
+            "tts_models": {
+                "speecht5_tts": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Microsoft SpeechT5 TTS model"},
+                "speecht5": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Microsoft SpeechT5 TTS model"},
+                "bark": {"type": "huggingface", "model_name": "suno/bark", "description": "Suno Bark TTS model"},
+                "tacotron2": {"type": "torchaudio", "model_name": "tacotron2", "description": "TorchAudio Tacotron2"},
+                "default": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Default TTS model"}
+            },
+            "stt_models": {
+                "whisper-base": {"type": "whisper", "model_size": "base", "description": "OpenAI Whisper Base model"},
+                "whisper-small": {"type": "whisper", "model_size": "small", "description": "OpenAI Whisper Small model"}
+            },
+            "loaded_models": [],
+            "error": "Audio framework not fully available, showing fallback models"
+        }
     except Exception as e:
         logger.error(f"[ENDPOINT] Failed to list audio models: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2066,6 +2345,146 @@ async def audio_health_check():
     
     return health_status
 
+# Logging endpoints
+
+@app.get("/logs")
+async def get_logging_info():
+    """Get logging information and statistics."""
+    logger.info("[ENDPOINT] Logging information requested")
+    
+    try:
+        log_dir = Path("logs")
+        log_info = {
+            "log_directory": str(log_dir.absolute()),
+            "log_level": server_config['log_level'],
+            "available_log_files": [],
+            "total_log_size_mb": 0
+        }
+        
+        if log_dir.exists():
+            total_size = 0
+            for log_file in log_dir.glob("*.log"):
+                try:
+                    file_stat = log_file.stat()
+                    file_size = file_stat.st_size
+                    total_size += file_size
+                    
+                    # Count lines in log file
+                    try:
+                        with open(log_file, 'r', encoding='utf-8') as f:
+                            line_count = sum(1 for _ in f)
+                    except:
+                        line_count = 0
+                    
+                    log_info["available_log_files"].append({
+                        "name": log_file.name,
+                        "path": str(log_file.absolute()),
+                        "size_bytes": file_size,
+                        "size_mb": round(file_size / (1024 * 1024), 2),
+                        "line_count": line_count,
+                        "last_modified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                        "created": datetime.fromtimestamp(file_stat.st_ctime).isoformat()
+                    })
+                except Exception as e:
+                    log_info["available_log_files"].append({
+                        "name": log_file.name,
+                        "error": str(e)
+                    })
+            
+            log_info["total_log_size_mb"] = round(total_size / (1024 * 1024), 2)
+        
+        logger.info(f"[ENDPOINT] Logging info retrieved - {len(log_info['available_log_files'])} log files, "
+                   f"Total size: {log_info['total_log_size_mb']} MB")
+        
+        return log_info
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to get logging info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/logs/{log_file}")
+async def get_log_file(log_file: str, lines: int = 100, from_end: bool = True):
+    """Download or view specific log file."""
+    logger.info(f"[ENDPOINT] Log file requested: {log_file}, lines: {lines}, from_end: {from_end}")
+    
+    # Validate log file name to prevent directory traversal
+    if not log_file.endswith('.log') or '/' in log_file or '\\' in log_file or '..' in log_file:
+        raise HTTPException(status_code=400, detail="Invalid log file name")
+    
+    log_path = Path("logs") / log_file
+    
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file}")
+    
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            if lines <= 0:
+                # Return entire file
+                content = f.read()
+            else:
+                # Return specified number of lines
+                all_lines = f.readlines()
+                if from_end:
+                    # Get last N lines
+                    content_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                else:
+                    # Get first N lines
+                    content_lines = all_lines[:lines] if len(all_lines) > lines else all_lines
+                content = ''.join(content_lines)
+        
+        logger.info(f"[ENDPOINT] Log file {log_file} retrieved successfully")
+        
+        return Response(
+            content=content,
+            media_type="text/plain",
+            headers={
+                "Content-Disposition": f"inline; filename={log_file}",
+                "X-Total-Lines": str(len(content.split('\n'))),
+                "X-File-Size": str(log_path.stat().st_size)
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to read log file {log_file}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/logs/{log_file}")
+async def clear_log_file(log_file: str):
+    """Clear specific log file."""
+    logger.info(f"[ENDPOINT] Log file clear requested: {log_file}")
+    
+    # Validate log file name to prevent directory traversal
+    if not log_file.endswith('.log') or '/' in log_file or '\\' in log_file or '..' in log_file:
+        raise HTTPException(status_code=400, detail="Invalid log file name")
+    
+    log_path = Path("logs") / log_file
+    
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail=f"Log file not found: {log_file}")
+    
+    try:
+        # Get file size before clearing
+        original_size = log_path.stat().st_size
+        
+        # Clear the file by opening in write mode
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"# Log file cleared at {datetime.now().isoformat()}\n")
+        
+        logger.info(f"[ENDPOINT] Log file {log_file} cleared successfully (was {original_size} bytes)")
+        
+        return {
+            "success": True,
+            "message": f"Log file {log_file} cleared successfully",
+            "original_size_bytes": original_size,
+            "original_size_mb": round(original_size / (1024 * 1024), 2)
+        }
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to clear log file {log_file}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     # Print all available endpoints first
     print_api_endpoints()
@@ -2079,6 +2498,23 @@ if __name__ == "__main__":
     logger.info(f"Environment: {config_manager.environment}")
     logger.info(f"Log level: {server_config['log_level']}")
     logger.info(f"Reload mode: {server_config['reload']}")
+    
+    # Log file information
+    log_dir = Path("logs")
+    logger.info(f"Log files will be written to: {log_dir.absolute()}")
+    logger.info("Available log files:")
+    logger.info("  - server.log (all server logs)")
+    logger.info("  - server_errors.log (error logs only)")
+    logger.info("  - api_requests.log (API request/response logs)")
+    
+    # Print to console for immediate feedback
+    print(f"\n🚀 Starting PyTorch Inference Framework Server")
+    print(f"📁 Log files directory: {log_dir.absolute()}")
+    print(f"📄 Server logs: {log_dir / 'server.log'}")
+    print(f"🚨 Error logs: {log_dir / 'server_errors.log'}")
+    print(f"🌐 API logs: {log_dir / 'api_requests.log'}")
+    print(f"📊 Monitor logs at: http://localhost:{server_config['port']}/logs")
+    print(f"⚙️  Server config: http://localhost:{server_config['port']}/config")
     
     # Start the FastAPI server with configuration
     logger.info("Starting server...")

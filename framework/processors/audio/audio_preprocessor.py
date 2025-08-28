@@ -9,14 +9,82 @@ This module provides comprehensive audio preprocessing capabilities including:
 - Audio chunking and segmentation
 """
 
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, Callable
 import numpy as np
 import torch
 import logging
 from pathlib import Path
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AudioPreprocessorConfig:
+    """Configuration for audio preprocessing."""
+    
+    sample_rate: int = 16000
+    n_mels: int = 80
+    hop_length: int = 512
+    win_length: Optional[int] = None
+    n_fft: int = 1024
+    normalize: bool = True
+    normalization_method: str = "peak"  # "peak", "rms", "lufs"
+    enable_vad: bool = True
+    vad_aggressiveness: int = 1
+    chunk_duration: Optional[float] = None
+    overlap_duration: float = 5.0
+    frame_duration: float = 0.03
+    target_level: float = 0.95
+    mono: bool = True
+    
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        if self.sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        if self.n_mels <= 0:
+            raise ValueError("n_mels must be positive")
+        if self.hop_length <= 0:
+            raise ValueError("hop_length must be positive")
+        if self.n_fft <= 0:
+            raise ValueError("n_fft must be positive")
+        if self.win_length is None:
+            self.win_length = self.n_fft
+        if self.normalization_method not in ["peak", "rms", "lufs"]:
+            raise ValueError("normalization_method must be one of: peak, rms, lufs")
+        if not 0 <= self.vad_aggressiveness <= 3:
+            raise ValueError("vad_aggressiveness must be between 0 and 3")
+        if self.target_level <= 0 or self.target_level > 1:
+            raise ValueError("target_level must be between 0 and 1")
+        if self.frame_duration <= 0:
+            raise ValueError("frame_duration must be positive")
+        if self.overlap_duration < 0:
+            raise ValueError("overlap_duration must be non-negative")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary."""
+        return {
+            'sample_rate': self.sample_rate,
+            'n_mels': self.n_mels,
+            'hop_length': self.hop_length,
+            'win_length': self.win_length,
+            'n_fft': self.n_fft,
+            'normalize': self.normalize,
+            'normalization_method': self.normalization_method,
+            'enable_vad': self.enable_vad,
+            'vad_aggressiveness': self.vad_aggressiveness,
+            'chunk_duration': self.chunk_duration,
+            'overlap_duration': self.overlap_duration,
+            'frame_duration': self.frame_duration,
+            'target_level': self.target_level,
+            'mono': self.mono
+        }
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'AudioPreprocessorConfig':
+        """Create configuration from dictionary."""
+        return cls(**config_dict)
 
 
 class AudioPreprocessorError(Exception):
@@ -475,6 +543,32 @@ class ComprehensiveAudioPreprocessor(BaseAudioPreprocessor):
         self.vad = VoiceActivityDetector() if enable_vad else None
         self.chunker = AudioChunker(chunk_duration) if chunk_duration else None
     
+    def load_audio(self, file_path: Union[str, Path], 
+                   sample_rate: Optional[int] = None) -> Tuple[np.ndarray, int]:
+        """
+        Load audio file using the internal audio loader.
+        
+        Args:
+            file_path: Path to audio file
+            sample_rate: Target sample rate (None to use preprocessor's sample rate)
+            
+        Returns:
+            Tuple of (audio_array, sample_rate)
+        """
+        return self.loader.load_audio(file_path, sample_rate)
+    
+    def normalize_audio(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Normalize audio using the internal normalizer.
+        
+        Args:
+            audio: Input audio array
+            
+        Returns:
+            Normalized audio array
+        """
+        return self.normalizer.normalize(audio)
+    
     def process(self, audio: Union[str, np.ndarray, torch.Tensor]) -> Union[np.ndarray, List[np.ndarray]]:
         """
         Process audio input with full pipeline.
@@ -513,3 +607,79 @@ class ComprehensiveAudioPreprocessor(BaseAudioPreprocessor):
             return [chunk[0] for chunk in chunks]  # Return just the audio arrays
         
         return audio_array
+
+
+# Simple AudioPreprocessor alias for backward compatibility
+class AudioPreprocessor(ComprehensiveAudioPreprocessor):
+    """Simple audio preprocessor for backward compatibility."""
+    pass
+
+
+def create_audio_preprocessor(config: Optional[AudioPreprocessorConfig] = None) -> AudioPreprocessor:
+    """
+    Factory function to create an audio preprocessor.
+    
+    Args:
+        config: Audio preprocessor configuration
+        
+    Returns:
+        AudioPreprocessor instance
+    """
+    if config is None:
+        config = AudioPreprocessorConfig()
+    
+    return AudioPreprocessor(
+        sample_rate=config.sample_rate,
+        normalize=config.normalize,
+        enable_vad=config.enable_vad,
+        chunk_duration=config.chunk_duration,
+        normalization_method=config.normalization_method
+    )
+
+
+def get_audio_transforms(config: Optional[AudioPreprocessorConfig] = None) -> List[Callable]:
+    """
+    Get a list of audio transform functions based on configuration.
+    
+    Args:
+        config: Audio preprocessor configuration
+        
+    Returns:
+        List of transform functions
+    """
+    if config is None:
+        config = AudioPreprocessorConfig()
+    
+    transforms = []
+    
+    # Add normalization transform
+    if config.normalize:
+        normalizer = AudioNormalizer(method=config.normalization_method, target_level=config.target_level)
+        transforms.append(normalizer.normalize)
+    
+    # Add resampling transform if needed
+    def resample_transform(audio: np.ndarray, original_sr: int = None) -> np.ndarray:
+        if original_sr and original_sr != config.sample_rate:
+            loader = AudioLoader(config.sample_rate)
+            return loader._resample_scipy(audio, original_sr, config.sample_rate)
+        return audio
+    
+    transforms.append(resample_transform)
+    
+    # Add VAD transform if enabled
+    if config.enable_vad:
+        vad = VoiceActivityDetector(
+            frame_duration=config.frame_duration,
+            aggressiveness=config.vad_aggressiveness
+        )
+        transforms.append(lambda audio: vad.remove_silence(audio, config.sample_rate))
+    
+    # Add chunking transform if enabled
+    if config.chunk_duration:
+        chunker = AudioChunker(
+            chunk_duration=config.chunk_duration,
+            overlap=config.overlap_duration
+        )
+        transforms.append(lambda audio: chunker.chunk_audio(audio, config.sample_rate))
+    
+    return transforms

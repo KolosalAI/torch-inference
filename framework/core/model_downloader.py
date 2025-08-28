@@ -19,6 +19,7 @@ from typing import Dict, Any, Optional, Union, List, Tuple
 from urllib.parse import urlparse
 from dataclasses import dataclass, asdict
 import logging
+from enum import Enum
 import torch
 import torch.nn as nn
 
@@ -41,6 +42,23 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+class DownloadError(Exception):
+    """Exception raised for model download errors."""
+    
+    def __init__(self, message: str, url: Optional[str] = None, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.url = url
+        self.status_code = status_code
+        
+    def __str__(self):
+        base_msg = super().__str__()
+        if self.url:
+            base_msg = f"{base_msg} (URL: {self.url})"
+        if self.status_code:
+            base_msg = f"{base_msg} (Status: {self.status_code})"
+        return base_msg
 
 
 def _get_project_root() -> Path:
@@ -79,6 +97,16 @@ def _get_default_cache_dir() -> Path:
     else:
         # Default to project models/ directory
         return _get_project_root() / "models"
+
+
+class ModelSource(Enum):
+    """Enumeration of supported model sources."""
+    PYTORCH_HUB = "pytorch_hub"
+    HUGGINGFACE = "huggingface"
+    TORCHVISION = "torchvision"
+    URL = "url"
+    LOCAL = "local"
+    CUSTOM = "custom"
 
 
 @dataclass

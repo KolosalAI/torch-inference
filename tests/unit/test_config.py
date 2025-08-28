@@ -360,19 +360,19 @@ environments:
     
     @pytest.mark.skipif(
         not importlib.util.find_spec("opentelemetry"), 
-        reason="OpenTelemetry not available - enterprise features require it"
+        reason="OpenTelemetry not available - security and monitoring features require it"
     )
-    @patch('framework.enterprise.config.EnterpriseConfig')
-    def test_enterprise_config(self, mock_enterprise, config_manager):
-        """Test enterprise configuration loading."""
-        mock_enterprise_instance = Mock()
-        mock_enterprise.from_dict.return_value = mock_enterprise_instance
+    @patch('framework.security.config.SecurityConfig')
+    def test_security_config(self, mock_security, config_manager):
+        """Test security configuration loading."""
+        mock_security_instance = Mock()
+        mock_security.from_dict.return_value = mock_security_instance
         
-        enterprise_config = config_manager.get_enterprise_config()
+        security_config = config_manager.get_security_config()
         
-        # Should return None if enterprise config not available
-        # or the enterprise config if it is available
-        assert enterprise_config is None or enterprise_config is not None
+        # Should return None if security config not available
+        # or the security config if it is available
+        assert security_config is None or security_config is not None
     
     def test_type_conversion(self, config_manager):
         """Test automatic type conversion of configuration values."""
