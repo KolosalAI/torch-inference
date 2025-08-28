@@ -105,18 +105,20 @@ class TorchInferenceFramework:
     running inference, and managing the entire inference pipeline.
     """
     
-    def __init__(self, config: Optional[InferenceConfig] = None):
+    def __init__(self, config: Optional[InferenceConfig] = None, cache_dir: Optional[Union[str, Path]] = None):
         """
         Initialize the framework.
         
         Args:
             config: Inference configuration. If None, will use global config.
+            cache_dir: Optional cache directory path.
         """
         if config is None:
             from .core.config import get_global_config
             config = get_global_config()
         
         self.config = config
+        self.cache_dir = Path(cache_dir) if cache_dir else None
         self.model: Optional[BaseModel] = None
         self.engine: Optional[InferenceEngine] = None
         self._model_manager = get_model_manager()  # Store the manager instance

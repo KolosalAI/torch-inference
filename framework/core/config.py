@@ -20,6 +20,8 @@ class ModelType(Enum):
     SEGMENTATION = "segmentation"
     DETECTION = "detection"
     REGRESSION = "regression"
+    TTS = "text_to_speech"
+    STT = "speech_to_text"
     CUSTOM = "custom"
 
 
