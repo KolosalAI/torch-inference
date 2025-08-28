@@ -128,7 +128,22 @@ class PyTorchModelAdapter(BaseModel):
     
     def preprocess(self, inputs: Any) -> torch.Tensor:
         """Preprocess inputs for PyTorch model."""
-        # Use the preprocessing pipeline
+        # Handle tensors directly to avoid complex preprocessing pipeline issues
+        if isinstance(inputs, torch.Tensor):
+            # For tensors, use them directly if they already have proper shape
+            tensor = inputs.clone()
+            
+            # Move to device
+            tensor = tensor.to(self.device)
+            
+            # Add batch dimension only if needed
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            # For 2D tensors that already have batch dimension, use as-is
+            
+            return tensor
+        
+        # For non-tensor inputs, use the preprocessing pipeline
         from ..processors.preprocessor import create_default_preprocessing_pipeline
         
         if not hasattr(self, '_preprocessing_pipeline'):

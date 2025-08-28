@@ -926,3 +926,7 @@ class Autoscaler:
         except Exception as e:
             self.logger.error(f"Error predicting future load for {model_name}: {e}")
             return None
+
+
+# Alias for backward compatibility
+AutoScaler = Autoscaler

@@ -1,28 +1,28 @@
-"""Tests for enterprise features."""
+"""Tests for security and monitoring features."""
 
 import pytest
 import asyncio
 from unittest.mock import Mock, patch, AsyncMock, mock_open
 from datetime import datetime, timezone
 
-# Test with mock classes if enterprise modules not available
+# Test with mock classes if security modules not available
 try:
     from framework.security.config import (
-        EnterpriseConfig, AuthConfig, SecurityConfig, AuthProvider
+        SecurityConfig, AuthConfig, AuthProvider, SecuritySettings
     )
-    from framework.security.auth import EnterpriseAuth, JWTManager
+    from framework.security.auth import SecurityAuth, JWTManager
     from framework.security.security import SecurityManager, EncryptionManager
     from framework.security.governance import (
         ModelGovernance, ModelValidator, ABTestManager, ABTestConfig
     )
-    from framework.security.monitoring import EnterpriseMonitor
+    from framework.security.monitoring import SecurityMonitor
 except ImportError:
-    # Mock classes for testing when enterprise features not available
-    EnterpriseConfig = None
-    AuthConfig = None
+    # Mock classes for testing when security features not available
     SecurityConfig = None
+    SecuritySettings = None
+    AuthConfig = None
     AuthProvider = None
-    EnterpriseAuth = None
+    SecurityAuth = None
     JWTManager = None
     SecurityManager = None
     EncryptionManager = None
@@ -30,22 +30,22 @@ except ImportError:
     ModelValidator = None
     ABTestManager = None
     ABTestConfig = None
-    EnterpriseMonitor = None
+    SecurityMonitor = None
 
 
-@pytest.mark.skipif(EnterpriseConfig is None, reason="Enterprise features not available")
-class TestEnterpriseConfig:
-    """Test enterprise configuration."""
+@pytest.mark.skipif(SecurityConfig is None, reason="Security features not available")
+class TestSecurityConfig:
+    """Test security configuration."""
     
-    def test_enterprise_config_creation(self):
-        """Test creating enterprise configuration."""
-        config = EnterpriseConfig(
+    def test_security_config_creation(self):
+        """Test creating security configuration."""
+        config = SecurityConfig(
             environment="production",
             auth=AuthConfig(
                 provider=AuthProvider.OAUTH2,
                 secret_key="test-secret"
             ),
-            security=SecurityConfig(
+            security=SecuritySettings(
                 enable_encryption_at_rest=True,
                 enable_rate_limiting=True
             )
@@ -56,16 +56,14 @@ class TestEnterpriseConfig:
         assert config.security.enable_encryption_at_rest
         assert config.security.enable_rate_limiting
     
-    def test_enterprise_config_defaults(self):
-        """Test enterprise configuration defaults."""
-        config = EnterpriseConfig()
-        
+    def test_security_config_defaults(self):
+        """Test security configuration defaults."""
+        config = SecurityConfig()
+    
         assert config.environment == "production"  # Default is production, not development
         assert isinstance(config.auth, AuthConfig)
-        assert isinstance(config.security, SecurityConfig)
-
-
-@pytest.mark.skipif(EnterpriseAuth is None, reason="Auth manager not available")
+        assert isinstance(config.security, SecuritySettings)
+@pytest.mark.skipif(SecurityAuth is None, reason="Auth manager not available")
 class TestAuthManager:
     """Test authentication manager."""
     
@@ -81,8 +79,8 @@ class TestAuthManager:
     @pytest.fixture
     def auth_manager(self, auth_config):
         """Create auth manager."""
-        config = EnterpriseConfig(auth=auth_config)
-        return EnterpriseAuth(config)
+        config = SecurityConfig(auth=auth_config)
+        return SecurityAuth(config)
     
     def test_auth_manager_initialization(self, auth_manager, auth_config):
         """Test auth manager initialization."""
@@ -149,7 +147,7 @@ class TestSecurityManager:
     @pytest.fixture
     def security_config(self):
         """Create security configuration."""
-        return SecurityConfig(
+        return SecuritySettings(
             enable_encryption_at_rest=True,
             enable_rate_limiting=True,
             rate_limit_requests_per_minute=100
@@ -158,7 +156,7 @@ class TestSecurityManager:
     @pytest.fixture
     def security_manager(self, security_config):
         """Create security manager."""
-        config = EnterpriseConfig(security=security_config)
+        config = SecurityConfig(security=security_config)
         return SecurityManager(config)
     
     def test_security_manager_initialization(self, security_manager, security_config):
@@ -206,8 +204,8 @@ class TestModelGovernance:
     
     @pytest.fixture
     def enterprise_config(self):
-        """Create enterprise configuration."""
-        return EnterpriseConfig(
+        """Create security configuration."""
+        return SecurityConfig(
             environment="production"
         )
     
@@ -297,8 +295,8 @@ class TestABTestManager:
     
     @pytest.fixture
     def enterprise_config(self):
-        """Create enterprise configuration."""
-        return EnterpriseConfig()
+        """Create security configuration."""
+        return SecurityConfig()
     
     @pytest.fixture
     def ab_test_manager(self, enterprise_config):
@@ -397,19 +395,19 @@ class TestABTestManager:
         assert test_config.status == "completed"
 
 
-@pytest.mark.skipif(EnterpriseMonitor is None, reason="Enterprise monitoring not available")
-class TestEnterpriseMonitoring:
-    """Test enterprise monitoring."""
+@pytest.mark.skipif(SecurityMonitor is None, reason="Security monitoring not available")
+class TestSecurityMonitoring:
+    """Test security monitoring."""
     
     @pytest.fixture
     def enterprise_config(self):
-        """Create enterprise configuration."""
-        return EnterpriseConfig()
+        """Create security configuration."""
+        return SecurityConfig()
     
     @pytest.fixture
     def enterprise_monitoring(self, enterprise_config):
-        """Create enterprise monitoring."""
-        return EnterpriseMonitor(enterprise_config)
+        """Create security monitoring."""
+        return SecurityMonitor(enterprise_config)
     
     def test_monitoring_initialization(self, enterprise_monitoring):
         """Test monitoring initialization."""
@@ -451,23 +449,23 @@ class TestEnterpriseMonitoring:
 
 
 class TestEnterpriseIntegration:
-    """Integration tests for enterprise features."""
+    """Integration tests for security features."""
     
     @pytest.mark.skipif(any(cls is None for cls in [
-        EnterpriseConfig, EnterpriseAuth, SecurityManager, ModelGovernance
-    ]), reason="Enterprise features not available")
+        SecurityConfig, SecurityAuth, SecurityManager, ModelGovernance
+    ]), reason="Security features not available")
     def test_complete_enterprise_workflow(self):
-        """Test complete enterprise workflow."""
-        # Create enterprise config
-        config = EnterpriseConfig(
+        """Test complete security workflow."""
+        # Create security config
+        config = SecurityConfig(
             environment="production",
             auth=AuthConfig(provider=AuthProvider.OAUTH2),
-            security=SecurityConfig(enable_encryption_at_rest=True)
+            security=SecuritySettings(enable_encryption_at_rest=True)
         )
         
         # Initialize managers
-        auth_manager = EnterpriseAuth(config)
-        security_manager = SecurityManager(config)  # Pass EnterpriseConfig, not SecurityConfig
+        auth_manager = SecurityAuth(config)
+        security_manager = SecurityManager(config)  # Pass SecurityConfig, not SecurityConfig
         model_governance = ModelGovernance(config)
         
         # Test workflow would involve:
@@ -486,7 +484,7 @@ class TestEnterpriseIntegration:
     @pytest.mark.skipif(ABTestManager is None, reason="A/B testing not available")
     def test_ab_testing_workflow(self):
         """Test A/B testing workflow."""
-        config = EnterpriseConfig()
+        config = SecurityConfig()
         ab_manager = ABTestManager(config)
         
         # Complete A/B testing workflow
@@ -506,13 +504,13 @@ class TestEnterpriseIntegration:
 
 
 class TestEnterpriseErrorHandling:
-    """Test error handling in enterprise features."""
+    """Test error handling in security features."""
     
-    @pytest.mark.skipif(EnterpriseAuth is None, reason="Auth manager not available")
+    @pytest.mark.skipif(SecurityAuth is None, reason="Auth manager not available")
     def test_authentication_error_handling(self):
         """Test authentication error handling."""
-        config = EnterpriseConfig(auth=AuthConfig(provider=AuthProvider.OAUTH2))
-        auth_manager = EnterpriseAuth(config)
+        config = SecurityConfig(auth=AuthConfig(provider=AuthProvider.OAUTH2))
+        auth_manager = SecurityAuth(config)
         
         # Test with invalid configuration
         config.auth.secret_key = None
@@ -524,7 +522,7 @@ class TestEnterpriseErrorHandling:
     @pytest.mark.skipif(SecurityManager is None, reason="Security manager not available")
     def test_security_error_handling(self):
         """Test security error handling."""
-        config = EnterpriseConfig(security=SecurityConfig())
+        config = SecurityConfig(security=SecuritySettings())
         security_manager = SecurityManager(config)
         
         # Test encryption with invalid data
@@ -537,7 +535,7 @@ class TestEnterpriseErrorHandling:
     @pytest.mark.asyncio
     async def test_governance_error_handling(self):
         """Test model governance error handling."""
-        config = EnterpriseConfig()
+        config = SecurityConfig()
         governance = ModelGovernance(config)
         
         # Test with invalid model metadata
