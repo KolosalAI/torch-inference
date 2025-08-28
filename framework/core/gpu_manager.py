@@ -6,6 +6,7 @@ providing device configuration and optimization recommendations.
 """
 
 import logging
+import sys
 from typing import Dict, List, Optional, Any, Tuple
 import torch
 
@@ -80,11 +81,12 @@ class GPUManager:
         # TensorRT support
         use_tensorrt = gpu.tensorrt_support and gpu.vendor == GPUVendor.NVIDIA
         
-        # Torch compile (be conservative)
+        # Torch compile (be conservative, disable on Windows due to triton dependency)
         use_torch_compile = (
             gpu.vendor == GPUVendor.NVIDIA and 
             gpu.compute_capability and 
-            gpu.compute_capability.major >= 7
+            gpu.compute_capability.major >= 7 and
+            not sys.platform.startswith('win')  # Disable on Windows due to triton unavailability
         )
         
         device_config = DeviceConfig(
