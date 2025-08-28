@@ -36,7 +36,8 @@ try:
     tl.set_backend('pytorch')
 except ImportError:
     TENSORLY_AVAILABLE = False
-    warnings.warn("TensorLY not available. Some advanced tensor operations may not work.")
+    # Only warn when optimizer is actually used, not on import
+    pass
 
 from ..core.config import InferenceConfig
 

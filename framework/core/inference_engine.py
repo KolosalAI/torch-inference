@@ -912,7 +912,7 @@ class InferenceEngine:
         
         # Mixed precision support
         self._mixed_precision_enabled = self.engine_config.use_mixed_precision
-        self._scaler = torch.cuda.amp.GradScaler() if self._mixed_precision_enabled and self.device.type == 'cuda' else None
+        self._scaler = torch.amp.GradScaler('cuda') if self._mixed_precision_enabled and self.device.type == 'cuda' else None
         
         # Create enhanced model pool with ultra-fast optimizations
         self._model_pool = []

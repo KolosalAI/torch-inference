@@ -28,7 +28,8 @@ except ImportError:
     ort = None
     onnxruntime = None
     ONNX_AVAILABLE = False
-    warnings.warn("ONNX/ONNXRuntime not available. Install onnx and onnxruntime for optimization.")
+    # Only warn when optimizer is actually used, not on import
+    pass
 
 from ..core.config import InferenceConfig
 

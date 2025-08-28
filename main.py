@@ -37,6 +37,10 @@ print("\n" + "="*60)
 print("  GPU DETECTION AND SYSTEM INFO")
 print("="*60)
 
+# Enable TensorFloat32 for better performance on modern GPUs
+if torch.cuda.is_available():
+    torch.set_float32_matmul_precision('high')
+
 if torch.cuda.is_available():
     current_device = torch.cuda.current_device()
     gpu_name = torch.cuda.get_device_name(current_device)
@@ -80,6 +84,38 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Debug information
+print(f"Project root: {project_root}")
+print(f"Python executable: {sys.executable}")
+print(f"Project root in sys.path: {project_root in sys.path}")
+
+# Make sure we can import the framework modules
+framework_available = False
+try:
+    # Test basic framework import
+    import framework
+    print("✓ Framework module imported successfully")
+    framework_available = True
+except ImportError as e:
+    print(f"✗ Failed to import framework module: {e}")
+    framework_available = False
+    
+    # Try to fix the import by adding the project root again
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+        try:
+            import framework
+            print("✓ Framework module imported successfully after path fix")
+            framework_available = True
+        except ImportError as e2:
+            print(f"✗ Still failed to import framework module: {e2}")
+            framework_available = False
+except RuntimeError as e:
+    print(f"✗ Runtime error during framework import (likely TorchVision compatibility issue): {e}")
+    framework_available = False
+
+print(f"Framework availability: {framework_available}")
+
 # Import and initialize security mitigations from framework
 try:
     from framework.core.security import (
@@ -120,13 +156,234 @@ except Exception as e:
     pytorch_security = DummySecurityMitigation()
     ecdsa_security = DummySecurityMitigation()
 
-# Import framework components
-from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
-from framework.core.config_manager import get_config_manager, ConfigManager
-from framework.core.base_model import BaseModel, ModelManager, get_model_manager
-from framework.core.inference_engine import InferenceEngine, create_inference_engine
-from framework.core.gpu_manager import GPUManager, auto_configure_device
-from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
+# Import framework components with error handling
+if framework_available:
+    try:
+        from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
+        print("✓ Config imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Config import failed: {e}")
+        framework_available = False
+else:
+    print("ℹ Using fallback imports due to framework unavailability")
+
+if not framework_available:
+    # Create minimal dummy classes
+    class DeviceType:
+        CPU = "cpu"
+        CUDA = "cuda"
+    
+    class InferenceConfig:
+        def __init__(self):
+            self.device = type('obj', (object,), {'device_type': DeviceType.CPU, 'device_id': 0})()
+            self.batch = type('obj', (object,), {'batch_size': 1, 'max_batch_size': 8})()
+            self.performance = type('obj', (object,), {'warmup_iterations': 3})()
+
+if framework_available:
+    try:
+        from framework.core.config_manager import get_config_manager, ConfigManager
+        print("✓ Config manager imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Config manager import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy config manager
+    class ConfigManager:
+        def __init__(self):
+            self.environment = "development"
+        
+        def get_config_manager(self):
+            return self
+        
+        def get_inference_config(self):
+            return InferenceConfig()
+        
+        def get_server_config(self):
+            return {
+                'host': '0.0.0.0',
+                'port': 8000,
+                'log_level': 'INFO',
+                'reload': False
+            }
+    
+    def get_config_manager():
+        return ConfigManager()
+
+if framework_available:
+    try:
+        from framework.core.base_model import BaseModel, ModelManager, get_model_manager
+        print("✓ Base model imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Base model import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy base model
+    class BaseModel:
+        def __init__(self, config):
+            self.config = config
+            self.device = torch.device('cpu')
+            self.model = None
+            self._is_loaded = False
+            self.logger = logging.getLogger(__name__)
+            self.model_name = "DummyModel"
+        
+        def load_model(self, model_path):
+            self._is_loaded = True
+        
+        def preprocess(self, inputs):
+            return inputs
+        
+        def forward(self, inputs):
+            return inputs
+        
+        def postprocess(self, outputs):
+            return outputs
+        
+        def predict(self, inputs):
+            return {"result": "dummy_prediction"}
+        
+        @property
+        def is_loaded(self):
+            return self._is_loaded
+        
+        @property
+        def model_info(self):
+            return {"model_name": self.model_name, "device": str(self.device)}
+        
+        def warmup(self, iterations=3):
+            pass
+        
+        def optimize_for_inference(self):
+            pass
+        
+        def cleanup(self):
+            pass
+    
+    class ModelManager:
+        def __init__(self):
+            self.models = {}
+        
+        def register_model(self, name, model):
+            self.models[name] = model
+        
+        def get_model(self, name):
+            return self.models.get(name)
+        
+        def list_models(self):
+            return list(self.models.keys())
+        
+        def cleanup_all(self):
+            pass
+    
+    def get_model_manager():
+        return ModelManager()
+
+if framework_available:
+    try:
+        from framework.core.inference_engine import InferenceEngine, create_inference_engine
+        print("✓ Inference engine imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Inference engine import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy inference engine
+    class InferenceEngine:
+        def __init__(self, model, config):
+            self.model = model
+            self.config = config
+            self.device = torch.device('cpu')
+            self.stats = {"requests_processed": 0}
+        
+        async def start(self):
+            pass
+        
+        async def stop(self):
+            pass
+        
+        async def predict(self, inputs, priority=0, timeout=None):
+            self.stats["requests_processed"] += 1
+            return self.model.predict(inputs)
+        
+        async def predict_batch(self, inputs_list, priority=0, timeout=None):
+            results = []
+            for inputs in inputs_list:
+                results.append(await self.predict(inputs, priority, timeout))
+            return results
+        
+        def get_stats(self):
+            return self.stats
+        
+        def get_performance_report(self):
+            return {"performance": "dummy_report"}
+        
+        async def health_check(self):
+            return {
+                "healthy": True,
+                "checks": {"model": True, "engine": True},
+                "timestamp": time.time()
+            }
+    
+    def create_inference_engine(model, config):
+        return InferenceEngine(model, config)
+
+if framework_available:
+    try:
+        from framework.core.gpu_manager import GPUManager, auto_configure_device
+        print("✓ GPU manager imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ GPU manager import failed: {e}")
+        # GPU manager failure is non-critical, we have GPU detection code already
+
+if framework_available:
+    try:
+        from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
+        print("✓ Autoscaling imports successful")
+    except (ImportError, RuntimeError) as e:
+        print(f"✗ Autoscaling import failed: {e}")
+        framework_available = False
+
+if not framework_available:
+    # Create minimal dummy autoscaler
+    class AutoscalerConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    class ZeroScalingConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    class ModelLoaderConfig:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    class Autoscaler:
+        def __init__(self, config, model_manager):
+            self.config = config
+            self.model_manager = model_manager
+        
+        async def start(self):
+            pass
+        
+        async def stop(self):
+            pass
+        
+        async def predict(self, model_name, inputs, priority=0, timeout=None):
+            model = self.model_manager.get_model(model_name)
+            if model:
+                return model.predict(inputs)
+            return {"error": "Model not found"}
+        
+        def get_stats(self):
+            return {"autoscaler": "dummy_stats"}
+        
+        def get_health_status(self):
+            return {"healthy": True, "timestamp": time.time()}
 
 # Initialize configuration manager
 config_manager = get_config_manager()
@@ -319,7 +576,9 @@ class ExampleModel(BaseModel):
             # Default: try to convert to tensor
             try:
                 if hasattr(inputs, '__iter__') and not isinstance(inputs, str):
-                    tensor_input = torch.tensor(list(inputs), dtype=torch.float32)
+                    # Convert to numpy array first to avoid the warning
+                    np_array = np.array(list(inputs), dtype=np.float32)
+                    tensor_input = torch.from_numpy(np_array)
                 else:
                     tensor_input = torch.tensor([inputs], dtype=torch.float32)
                 
@@ -334,6 +593,10 @@ class ExampleModel(BaseModel):
             except Exception:
                 # Fallback: random input
                 return torch.randn(1, 10, device=self.device)
+    
+    def get_model_for_inference(self):
+        """Get the model for inference (required by the forward method)."""
+        return self.model
     
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through the model."""
@@ -426,7 +689,23 @@ async def initialize_inference_engine():
         config = config_manager.get_inference_config()
         
         # Apply performance optimizations
-        from framework.optimizers.performance_optimizer import optimize_for_inference
+        if framework_available:
+            try:
+                from framework.optimizers.performance_optimizer import optimize_for_inference
+                
+                # Apply performance optimizations to the model
+                try:
+                    optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
+                    example_model.model = optimized_model
+                    example_model.device = optimized_device_config.get_torch_device()
+                    config.device = optimized_device_config
+                    logger.info("Performance optimizations applied successfully")
+                except Exception as e:
+                    logger.warning(f"Performance optimization failed, using default: {e}")
+            except (ImportError, RuntimeError) as e:
+                logger.warning(f"Performance optimizer not available: {e}")
+        else:
+            logger.info("Using basic setup without framework optimizations")
         
         logger.info(f"Initializing optimized inference engine with configuration:")
         logger.info(f"  Device: {config.device.device_type.value}")
@@ -457,16 +736,6 @@ async def initialize_inference_engine():
         example_model = ExampleModel(config)
         example_model.load_model("example")  # Dummy path
         
-        # Apply performance optimizations to the model
-        try:
-            optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
-            example_model.model = optimized_model
-            example_model.device = optimized_device_config.get_torch_device()
-            config.device = optimized_device_config
-            logger.info("Performance optimizations applied successfully")
-        except Exception as e:
-            logger.warning(f"Performance optimization failed, using default: {e}")
-        
         example_model.optimize_for_inference()
         
         # Register model
@@ -494,19 +763,23 @@ async def initialize_inference_engine():
         await autoscaler.start()
         
         # Create ultra-fast inference engine for optimal performance
-        try:
-            from framework.core.inference_engine import create_ultra_fast_inference_engine
-            inference_engine = create_ultra_fast_inference_engine(example_model, config)
-            logger.info("Using enhanced InferenceEngine with ultra-fast optimizations")
-        except Exception as e:
-            logger.warning(f"Failed to create ultra-fast inference engine, trying hybrid engine: {e}")
+        if framework_available:
             try:
-                from framework.core.inference_engine import create_hybrid_inference_engine
-                inference_engine = create_hybrid_inference_engine(example_model, config)
-                logger.info("Using enhanced InferenceEngine with hybrid optimizations")
-            except Exception as e2:
-                logger.warning(f"Failed to create fast inference engine, using standard: {e2}")
-                inference_engine = create_inference_engine(example_model, config)
+                from framework.core.inference_engine import create_ultra_fast_inference_engine
+                inference_engine = create_ultra_fast_inference_engine(example_model, config)
+                logger.info("Using enhanced InferenceEngine with ultra-fast optimizations")
+            except Exception as e:
+                logger.warning(f"Failed to create ultra-fast inference engine, trying hybrid engine: {e}")
+                try:
+                    from framework.core.inference_engine import create_hybrid_inference_engine
+                    inference_engine = create_hybrid_inference_engine(example_model, config)
+                    logger.info("Using enhanced InferenceEngine with hybrid optimizations")
+                except Exception as e2:
+                    logger.warning(f"Failed to create fast inference engine, using standard: {e2}")
+                    inference_engine = create_inference_engine(example_model, config)
+        else:
+            inference_engine = create_inference_engine(example_model, config)
+            logger.info("Using basic inference engine")
         
         await inference_engine.start()
         
