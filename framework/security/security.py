@@ -38,7 +38,7 @@ except ImportError:
     HAS_MAGIC = False
     magic = None
 
-from .config import EnterpriseConfig, EncryptionAlgorithm
+from .config import SecurityConfig, EncryptionAlgorithm
 
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class AuditLogEntry:
 class EncryptionManager:
     """Encryption and decryption management."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.algorithm = config.security.encryption_algorithm
         self._initialize_encryption()
@@ -229,7 +229,7 @@ class EncryptionManager:
 class InputValidator:
     """Input validation and sanitization."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.max_size = config.security.max_request_size_mb * 1024 * 1024
         self.allowed_extensions = set(config.security.allowed_file_types)
@@ -341,7 +341,7 @@ class InputValidator:
 class RateLimiter:
     """Rate limiting implementation."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.requests_per_minute = config.security.rate_limit_requests_per_minute
         self.burst_size = config.security.rate_limit_burst_size
@@ -407,7 +407,7 @@ class RateLimiter:
 class ThreatDetector:
     """Threat detection and anomaly analysis."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.failed_attempts: Dict[str, List[datetime]] = defaultdict(list)
         self.anomaly_thresholds = {
@@ -497,7 +497,7 @@ class ThreatDetector:
 class AuditLogger:
     """Audit logging system."""
     
-    def __init__(self, config: EnterpriseConfig, encryption_manager: EncryptionManager):
+    def __init__(self, config: SecurityConfig, encryption_manager: EncryptionManager):
         self.config = config
         self.encryption_manager = encryption_manager
         self.log_entries: List[AuditLogEntry] = []
@@ -577,7 +577,7 @@ class AuditLogger:
 class SecurityManager:
     """Main security management system."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.encryption_manager = EncryptionManager(config)
         self.input_validator = InputValidator(config)

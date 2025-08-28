@@ -603,12 +603,16 @@ class ModelManager:
                     model_id, custom_name=name, **kwargs
                 )
             elif source == "huggingface":
+                # Filter out kwargs that are not supported by huggingface downloader
+                hf_kwargs = {k: v for k, v in kwargs.items() if k in ['task']}
                 model_path, model_info = downloader.download_huggingface_model(
-                    model_id, custom_name=name, **kwargs
+                    model_id, custom_name=name, **hf_kwargs
                 )
             elif source == "url":
+                # Filter out kwargs that are not supported by url downloader
+                url_kwargs = {k: v for k, v in kwargs.items() if k in ['task', 'description', 'expected_hash']}
                 model_path, model_info = downloader.download_from_url(
-                    model_id, name, **kwargs
+                    model_id, name, **url_kwargs
                 )
             else:
                 raise ValueError(f"Unsupported source: {source}")

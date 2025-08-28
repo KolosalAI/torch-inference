@@ -10,9 +10,22 @@ import time
 from typing import Dict, List, Optional, Tuple, Union, Any
 from pathlib import Path
 import warnings
+from enum import Enum
 
 import torch
 import torch.nn as nn
+
+
+class OptimizationStrategy(Enum):
+    """Optimization strategies for model optimization."""
+    AUTO = "auto"
+    TENSORRT = "tensorrt"
+    ONNX = "onnx"
+    QUANTIZATION = "quantization"
+    JIT = "jit"
+    CUDA = "cuda"
+    MEMORY = "memory"
+    HYBRID = "hybrid"
 
 from .base_model import BaseModel, ModelLoadError, ModelInferenceError
 from .config import InferenceConfig
@@ -659,3 +672,115 @@ class OptimizationConfig:
                 'benchmark_iterations': self.benchmark_iterations
             }
         }
+
+
+class ModelOptimizer:
+    """
+    Model optimizer for applying various optimizations to PyTorch models.
+    """
+    
+    def __init__(self, config: Optional[OptimizationConfig] = None):
+        """
+        Initialize model optimizer.
+        
+        Args:
+            config: Optimization configuration
+        """
+        self.config = config or OptimizationConfig()
+        self.logger = logging.getLogger(f"{__name__}.ModelOptimizer")
+    
+    def optimize_model(self, model: nn.Module, sample_input: torch.Tensor) -> OptimizedModel:
+        """
+        Optimize a PyTorch model.
+        
+        Args:
+            model: PyTorch model to optimize
+            sample_input: Sample input for optimization
+            
+        Returns:
+            OptimizedModel instance
+        """
+        # Create inference config from optimization config
+        inference_config = InferenceConfig()
+        inference_config.update(self.config.to_inference_config())
+        
+        # Create optimized model
+        optimized_model = OptimizedModel(inference_config)
+        optimized_model.load_model_from_instance(model)
+        
+        # Apply optimizations
+        optimized_model.optimize_model(sample_input)
+        
+        return optimized_model
+    
+    def apply_tensorrt_optimization(self, model: nn.Module, sample_input: torch.Tensor) -> nn.Module:
+        """Apply TensorRT optimization."""
+        if not self.config.use_tensorrt:
+            return model
+        
+        try:
+            return convert_to_tensorrt(
+                model, 
+                sample_input,
+                precision=self.config.tensorrt_precision,
+                workspace_size=self.config.tensorrt_workspace_size
+            )
+        except Exception as e:
+            self.logger.warning(f"TensorRT optimization failed: {e}")
+            return model
+    
+    def apply_onnx_optimization(self, model: nn.Module, sample_input: torch.Tensor) -> nn.Module:
+        """Apply ONNX optimization.""" 
+        if not self.config.use_onnx:
+            return model
+        
+        try:
+            return convert_to_onnx(
+                model,
+                sample_input,
+                opset_version=self.config.onnx_opset_version
+            )
+        except Exception as e:
+            self.logger.warning(f"ONNX optimization failed: {e}")
+            return model
+    
+    def apply_quantization(self, model: nn.Module) -> nn.Module:
+        """Apply quantization optimization."""
+        if not self.config.use_quantization:
+            return model
+        
+        try:
+            return quantize_model(model, method=self.config.quantization_method)
+        except Exception as e:
+            self.logger.warning(f"Quantization failed: {e}")
+            return model
+    
+    def apply_jit_optimization(self, model: nn.Module, sample_input: torch.Tensor) -> nn.Module:
+        """Apply JIT optimization."""
+        if not self.config.use_jit:
+            return model
+        
+        try:
+            return jit_compile_model(model, sample_input, method=self.config.jit_method)
+        except Exception as e:
+            self.logger.warning(f"JIT optimization failed: {e}")
+            return model
+
+
+def apply_optimizations(model: nn.Module, 
+                       config: OptimizationConfig,
+                       sample_input: torch.Tensor) -> nn.Module:
+    """
+    Apply optimizations to a PyTorch model.
+    
+    Args:
+        model: PyTorch model to optimize
+        config: Optimization configuration
+        sample_input: Sample input for optimization
+        
+    Returns:
+        Optimized model
+    """
+    optimizer = ModelOptimizer(config)
+    optimized_model = optimizer.optimize_model(model, sample_input)
+    return optimized_model.model  # Return the underlying model

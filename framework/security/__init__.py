@@ -1,7 +1,7 @@
 """
-Enterprise-grade PyTorch inference framework.
+Security and monitoring features for PyTorch inference framework.
 
-This module provides enterprise features including:
+This module provides security features including:
 - Authentication & Authorization
 - Security & Encryption
 - Multi-tenant support
@@ -10,25 +10,23 @@ This module provides enterprise features including:
 - Compliance features
 """
 
-from .auth import EnterpriseAuth, JWTManager, RBACManager
+from .auth import SecurityAuth, JWTManager, RBACManager
 from .security import SecurityManager, EncryptionManager
-from .monitoring import EnterpriseMonitor, DistributedTracing
+from .monitoring import SecurityMonitor, DistributedTracing
 from .governance import ModelGovernance, MLOpsManager
-from .config import EnterpriseConfig
-from .engine import EnterpriseInferenceEngine
+from .config import SecurityConfig
 
 __all__ = [
-    "EnterpriseAuth",
+    "SecurityAuth",
     "JWTManager", 
     "RBACManager",
     "SecurityManager",
     "EncryptionManager",
-    "EnterpriseMonitor",
+    "SecurityMonitor",
     "DistributedTracing",
     "ModelGovernance",
     "MLOpsManager",
-    "EnterpriseConfig",
-    "EnterpriseInferenceEngine"
+    "SecurityConfig"
 ]
 
 __version__ = "1.0.0"

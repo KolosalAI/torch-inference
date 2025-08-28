@@ -145,3 +145,5 @@ kernel_cache/*
 calibration_cache/*
 models/*
 *.key
+*.bin
+*.wav

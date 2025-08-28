@@ -7,7 +7,6 @@ This module provides comprehensive authentication and authorization features inc
 - Role-based access control (RBAC)
 - Multi-factor authentication
 - API key management
-- Session management
 """
 
 import time
@@ -48,7 +47,7 @@ except ImportError:
     qrcode = None
     BytesIO = None
 
-from .config import EnterpriseConfig, AuthProvider
+from .config import SecurityConfig, AuthProvider
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +81,519 @@ class Permission(Enum):
     EXPERIMENT_READ = "experiment:read"
     EXPERIMENT_UPDATE = "experiment:update"
     EXPERIMENT_DELETE = "experiment:delete"
+
+
+@dataclass
+class UserCredentials:
+    """User credentials for authentication."""
+    
+    username: str
+    password: str
+    email: Optional[str] = None
+    user_id: Optional[str] = None
+    roles: List[str] = None
+    permissions: List[str] = None
+    metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        """Initialize default values."""
+        if self.roles is None:
+            self.roles = []
+        if self.permissions is None:
+            self.permissions = []
+        if self.metadata is None:
+            self.metadata = {}
+        if not self.user_id:
+            self.user_id = self.username
+    
+    def has_role(self, role: str) -> bool:
+        """Check if user has a specific role."""
+        return role in self.roles
+    
+    def has_permission(self, permission: str) -> bool:
+        """Check if user has a specific permission."""
+        return permission in self.permissions
+    
+    def add_role(self, role: str):
+        """Add a role to the user."""
+        if role not in self.roles:
+            self.roles.append(role)
+    
+    def remove_role(self, role: str):
+        """Remove a role from the user."""
+        if role in self.roles:
+            self.roles.remove(role)
+    
+    def add_permission(self, permission: str):
+        """Add a permission to the user."""
+        if permission not in self.permissions:
+            self.permissions.append(permission)
+    
+    def remove_permission(self, permission: str):
+        """Remove a permission from the user."""
+        if permission in self.permissions:
+            self.permissions.remove(permission)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert credentials to dictionary."""
+        return {
+            'username': self.username,
+            'email': self.email,
+            'user_id': self.user_id,
+            'roles': self.roles,
+            'permissions': self.permissions,
+            'metadata': self.metadata
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], password: str = "") -> 'UserCredentials':
+        """Create credentials from dictionary."""
+        return cls(
+            username=data.get('username', ''),
+            password=password,
+            email=data.get('email'),
+            user_id=data.get('user_id'),
+            roles=data.get('roles', []),
+            permissions=data.get('permissions', []),
+            metadata=data.get('metadata', {})
+        )
+
+
+@dataclass
+class AuthToken:
+    """Authentication token."""
+    
+    token: str
+    token_type: str = "Bearer"
+    expires_at: Optional[datetime] = None
+    user_id: Optional[str] = None
+    scopes: List[str] = None
+    
+    def __post_init__(self):
+        """Initialize default values."""
+        if self.scopes is None:
+            self.scopes = []
+    
+    def is_expired(self) -> bool:
+        """Check if token is expired."""
+        if not self.expires_at:
+            return False
+        return datetime.now(timezone.utc) > self.expires_at
+    
+    def is_valid(self) -> bool:
+        """Check if token is valid."""
+        return bool(self.token) and not self.is_expired()
+    
+    def has_scope(self, scope: str) -> bool:
+        """Check if token has a specific scope."""
+        return scope in self.scopes
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert token to dictionary."""
+        return {
+            'token': self.token,
+            'token_type': self.token_type,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'user_id': self.user_id,
+            'scopes': self.scopes
+        }
+
+
+class APIKeyAuth:
+    """API Key authentication handler."""
+    
+    def __init__(self, api_keys: Optional[Dict[str, UserCredentials]] = None):
+        """
+        Initialize API key authentication.
+        
+        Args:
+            api_keys: Dictionary mapping API keys to user credentials
+        """
+        self.api_keys = api_keys or {}
+        self.logger = logging.getLogger(f"{__name__}.APIKeyAuth")
+    
+    def add_api_key(self, api_key: str, user_credentials: UserCredentials):
+        """Add an API key for a user."""
+        self.api_keys[api_key] = user_credentials
+        self.logger.info(f"Added API key for user: {user_credentials.username}")
+    
+    def remove_api_key(self, api_key: str):
+        """Remove an API key."""
+        if api_key in self.api_keys:
+            user = self.api_keys.pop(api_key)
+            self.logger.info(f"Removed API key for user: {user.username}")
+    
+    def authenticate(self, api_key: str) -> Optional[UserCredentials]:
+        """
+        Authenticate using API key.
+        
+        Args:
+            api_key: API key to authenticate
+            
+        Returns:
+            UserCredentials if authentication successful, None otherwise
+        """
+        if api_key in self.api_keys:
+            self.logger.debug(f"API key authentication successful")
+            return self.api_keys[api_key]
+        
+        self.logger.warning(f"Invalid API key used")
+        return None
+    
+    def generate_api_key(self, user_credentials: UserCredentials) -> str:
+        """
+        Generate a new API key for a user.
+        
+        Args:
+            user_credentials: User credentials
+            
+        Returns:
+            Generated API key
+        """
+        api_key = secrets.token_urlsafe(32)
+        self.add_api_key(api_key, user_credentials)
+        return api_key
+    
+    def validate_api_key(self, api_key: str) -> bool:
+        """
+        Validate if an API key exists.
+        
+        Args:
+            api_key: API key to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        return api_key in self.api_keys
+    
+    def get_user_for_api_key(self, api_key: str) -> Optional[UserCredentials]:
+        """
+        Get user credentials for an API key.
+        
+        Args:
+            api_key: API key
+            
+        Returns:
+            UserCredentials if found, None otherwise
+        """
+        return self.api_keys.get(api_key)
+    
+    def list_api_keys(self) -> List[Tuple[str, str]]:
+        """
+        List all API keys and their associated usernames.
+        
+        Returns:
+            List of (api_key, username) tuples
+        """
+        return [(key, user.username) for key, user in self.api_keys.items()]
+
+
+class TokenAuth:
+    """Token-based authentication handler."""
+    
+    def __init__(self, secret_key: Optional[str] = None, token_expiry: int = 3600):
+        """
+        Initialize token authentication.
+        
+        Args:
+            secret_key: Secret key for token signing
+            token_expiry: Token expiry time in seconds
+        """
+        self.secret_key = secret_key or secrets.token_urlsafe(32)
+        self.token_expiry = token_expiry
+        self.active_tokens: Dict[str, AuthToken] = {}
+        self.logger = logging.getLogger(f"{__name__}.TokenAuth")
+    
+    def create_token(self, user_credentials: UserCredentials, scopes: Optional[List[str]] = None) -> AuthToken:
+        """
+        Create an authentication token for a user.
+        
+        Args:
+            user_credentials: User credentials
+            scopes: Token scopes
+            
+        Returns:
+            AuthToken instance
+        """
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.token_expiry)
+        
+        # Create token payload
+        payload = {
+            'user_id': user_credentials.user_id,
+            'username': user_credentials.username,
+            'roles': user_credentials.roles,
+            'permissions': user_credentials.permissions,
+            'scopes': scopes or [],
+            'exp': expires_at.timestamp(),
+            'iat': datetime.now(timezone.utc).timestamp()
+        }
+        
+        # Generate token
+        if JWT_AVAILABLE:
+            token_string = jwt.encode(payload, self.secret_key, algorithm='HS256')
+        else:
+            # Fallback to simple token generation
+            token_data = base64.b64encode(str(payload).encode()).decode()
+            token_string = f"simple_{token_data}"
+        
+        # Create token object
+        auth_token = AuthToken(
+            token=token_string,
+            expires_at=expires_at,
+            user_id=user_credentials.user_id,
+            scopes=scopes or []
+        )
+        
+        # Store active token
+        self.active_tokens[token_string] = auth_token
+        
+        self.logger.info(f"Created token for user: {user_credentials.username}")
+        return auth_token
+    
+    def validate_token(self, token: str) -> Optional[AuthToken]:
+        """
+        Validate an authentication token.
+        
+        Args:
+            token: Token to validate
+            
+        Returns:
+            AuthToken if valid, None otherwise
+        """
+        try:
+            # Check if token is in active tokens
+            if token in self.active_tokens:
+                auth_token = self.active_tokens[token]
+                
+                # Check if token is expired
+                if auth_token.is_expired():
+                    self.revoke_token(token)
+                    return None
+                
+                return auth_token
+            
+            # Try to decode JWT token
+            if JWT_AVAILABLE and not token.startswith('simple_'):
+                payload = jwt.decode(token, self.secret_key, algorithms=['HS256'])
+                
+                # Check expiry
+                if payload.get('exp', 0) < datetime.now(timezone.utc).timestamp():
+                    return None
+                
+                # Create token object from payload
+                expires_at = datetime.fromtimestamp(payload['exp'], timezone.utc)
+                auth_token = AuthToken(
+                    token=token,
+                    expires_at=expires_at,
+                    user_id=payload.get('user_id'),
+                    scopes=payload.get('scopes', [])
+                )
+                
+                return auth_token
+            
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"Token validation failed: {e}")
+            return None
+    
+    def revoke_token(self, token: str):
+        """
+        Revoke an authentication token.
+        
+        Args:
+            token: Token to revoke
+        """
+        if token in self.active_tokens:
+            self.active_tokens.pop(token)
+            self.logger.info("Token revoked")
+    
+    def revoke_user_tokens(self, user_id: str):
+        """
+        Revoke all tokens for a specific user.
+        
+        Args:
+            user_id: User ID
+        """
+        tokens_to_remove = []
+        for token, auth_token in self.active_tokens.items():
+            if auth_token.user_id == user_id:
+                tokens_to_remove.append(token)
+        
+        for token in tokens_to_remove:
+            self.active_tokens.pop(token)
+        
+        self.logger.info(f"Revoked {len(tokens_to_remove)} tokens for user: {user_id}")
+    
+    def cleanup_expired_tokens(self):
+        """Remove expired tokens from active tokens."""
+        expired_tokens = []
+        current_time = datetime.now(timezone.utc)
+        
+        for token, auth_token in self.active_tokens.items():
+            if auth_token.expires_at and current_time > auth_token.expires_at:
+                expired_tokens.append(token)
+        
+        for token in expired_tokens:
+            self.active_tokens.pop(token)
+        
+        if expired_tokens:
+            self.logger.info(f"Cleaned up {len(expired_tokens)} expired tokens")
+    
+    def get_active_token_count(self) -> int:
+        """Get the number of active tokens."""
+        return len(self.active_tokens)
+    
+    def refresh_token(self, token: str) -> Optional[AuthToken]:
+        """
+        Refresh an authentication token.
+        
+        Args:
+            token: Token to refresh
+            
+        Returns:
+            New AuthToken if successful, None otherwise
+        """
+        auth_token = self.validate_token(token)
+        if not auth_token:
+            return None
+        
+        # Get user info from old token
+        # For simplicity, we'll need to look up the user
+        # In a real implementation, you'd have a user store
+        
+        # Revoke old token
+        self.revoke_token(token)
+        
+        # Create new token with extended expiry
+        new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.token_expiry)
+        new_auth_token = AuthToken(
+            token=secrets.token_urlsafe(32),
+            expires_at=new_expires_at,
+            user_id=auth_token.user_id,
+            scopes=auth_token.scopes
+        )
+        
+        self.active_tokens[new_auth_token.token] = new_auth_token
+        
+        return new_auth_token
+
+
+class BasicAuth:
+    """Basic authentication handler using username/password."""
+    
+    def __init__(self):
+        self.users: Dict[str, UserCredentials] = {}
+        self.logger = logging.getLogger(f"{__name__}.BasicAuth")
+        
+        # Initialize password context if available
+        if PASSLIB_AVAILABLE:
+            self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        else:
+            self.pwd_context = None
+    
+    def add_user(self, credentials: UserCredentials):
+        """
+        Add a user to the authentication system.
+        
+        Args:
+            credentials: User credentials
+        """
+        # Hash the password if passlib is available
+        if self.pwd_context:
+            credentials.password = self.pwd_context.hash(credentials.password)
+        
+        self.users[credentials.username] = credentials
+        self.logger.info(f"Added user: {credentials.username}")
+    
+    def authenticate(self, username: str, password: str) -> Optional[UserCredentials]:
+        """
+        Authenticate a user with username and password.
+        
+        Args:
+            username: Username
+            password: Password
+            
+        Returns:
+            UserCredentials if authentication successful, None otherwise
+        """
+        user = self.users.get(username)
+        if not user:
+            self.logger.warning(f"Authentication failed: user {username} not found")
+            return None
+        
+        # Verify password
+        if self.pwd_context:
+            if not self.pwd_context.verify(password, user.password):
+                self.logger.warning(f"Authentication failed: invalid password for {username}")
+                return None
+        else:
+            # Simple string comparison if no hashing available
+            if password != user.password:
+                self.logger.warning(f"Authentication failed: invalid password for {username}")
+                return None
+        
+        self.logger.info(f"Authentication successful for user: {username}")
+        return user
+    
+    def change_password(self, username: str, old_password: str, new_password: str) -> bool:
+        """
+        Change a user's password.
+        
+        Args:
+            username: Username
+            old_password: Current password
+            new_password: New password
+            
+        Returns:
+            True if password changed successfully
+        """
+        user = self.authenticate(username, old_password)
+        if not user:
+            return False
+        
+        # Hash new password
+        if self.pwd_context:
+            hashed_password = self.pwd_context.hash(new_password)
+        else:
+            hashed_password = new_password
+        
+        # Update password
+        self.users[username].password = hashed_password
+        self.logger.info(f"Password changed for user: {username}")
+        return True
+    
+    def remove_user(self, username: str):
+        """
+        Remove a user from the authentication system.
+        
+        Args:
+            username: Username to remove
+        """
+        if username in self.users:
+            self.users.pop(username)
+            self.logger.info(f"Removed user: {username}")
+    
+    def list_users(self) -> List[str]:
+        """
+        List all usernames in the system.
+        
+        Returns:
+            List of usernames
+        """
+        return list(self.users.keys())
+    
+    def user_exists(self, username: str) -> bool:
+        """
+        Check if a user exists.
+        
+        Args:
+            username: Username to check
+            
+        Returns:
+            True if user exists
+        """
+        return username in self.users
 
 
 @dataclass
@@ -209,7 +721,7 @@ class AuthProvider(ABC):
 class JWTManager:
     """JWT token management."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.secret_key = config.auth.secret_key
         self.algorithm = config.auth.algorithm
@@ -294,14 +806,22 @@ class PasswordManager:
     """Password hashing and validation."""
     
     def __init__(self):
-        self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        if PASSLIB_AVAILABLE and CryptContext is not None:
+            self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        else:
+            self.pwd_context = None
+            logger.warning("passlib not available, password hashing disabled")
     
     def hash_password(self, password: str) -> str:
         """Hash password using bcrypt."""
+        if self.pwd_context is None:
+            raise RuntimeError("Password hashing not available - passlib not installed")
         return self.pwd_context.hash(password)
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify password against hash."""
+        if self.pwd_context is None:
+            raise RuntimeError("Password verification not available - passlib not installed")
         return self.pwd_context.verify(plain_password, hashed_password)
     
     def generate_password(self, length: int = 16) -> str:
@@ -409,7 +929,7 @@ class APIKeyManager:
 class RBACManager:
     """Role-based access control manager."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.roles = config.rbac.roles
         self.users: Dict[str, User] = {}
@@ -565,14 +1085,14 @@ class SessionManager:
         return len(expired_sessions)
 
 
-class EnterpriseAuth:
-    """Main enterprise authentication system."""
+class SecurityAuth:
+    """Main security authentication system."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config):
         self.config = config
         self.jwt_manager = JWTManager(config)
         self.password_manager = PasswordManager()
-        self.mfa_manager = MFAManager(config.auth.mfa_issuer)
+        self.mfa_manager = MFAManager(getattr(config.auth, 'mfa_issuer', 'TorchInference'))
         self.api_key_manager = APIKeyManager()
         self.rbac_manager = RBACManager(config)
         self.session_manager = SessionManager(self.jwt_manager)
@@ -714,3 +1234,9 @@ class EnterpriseAuth:
         """Get user information."""
         user = self.rbac_manager.get_user(user_id)
         return user.to_dict() if user else None
+
+
+# Alias for backward compatibility
+class AuthenticationManager(SecurityAuth):
+    """Authentication manager - alias for SecurityAuth for backward compatibility."""
+    pass

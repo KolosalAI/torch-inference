@@ -70,7 +70,7 @@ except ImportError:
     CollectorRegistry = None
     OPENTELEMETRY_AVAILABLE = False
 
-from .config import EnterpriseConfig
+from .config import SecurityConfig
 
 
 logger = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ class SLOTarget:
 class DistributedTracing:
     """Distributed tracing implementation."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.service_name = config.monitoring.tracing_service_name
         self.sampling_rate = config.monitoring.tracing_sampling_rate
@@ -248,7 +248,7 @@ class DistributedTracing:
 class PrometheusMetrics:
     """Prometheus metrics collection."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         
         # Check if prometheus dependencies are available
@@ -392,7 +392,7 @@ class PrometheusMetrics:
 class AlertManager:
     """Advanced alerting system."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.alert_rules: List[Dict[str, Any]] = []
         self.active_alerts: Dict[str, Alert] = {}
@@ -537,7 +537,7 @@ class AlertManager:
 class SLOManager:
     """Service Level Objective management."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.slo_targets: Dict[str, SLOTarget] = {}
         self.metrics_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
@@ -643,7 +643,7 @@ class SLOManager:
 class PerformanceAnalyzer:
     """Performance analysis and optimization recommendations."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config: SecurityConfig):
         self.config = config
         self.performance_data: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
         
@@ -785,16 +785,16 @@ class PerformanceAnalyzer:
         return recommendations
 
 
-class EnterpriseMonitor:
-    """Main enterprise monitoring system."""
+class SecurityMonitor:
+    """Main security monitoring system."""
     
-    def __init__(self, config: EnterpriseConfig):
+    def __init__(self, config):
         self.config = config
         
         # Initialize components
-        self.distributed_tracing = DistributedTracing(config) if config.monitoring.enable_tracing else None
-        self.prometheus_metrics = PrometheusMetrics(config) if config.monitoring.enable_metrics else None
-        self.alert_manager = AlertManager(config) if config.monitoring.enable_alerting else None
+        self.distributed_tracing = DistributedTracing(config) if getattr(config.monitoring, 'enable_tracing', False) else None
+        self.prometheus_metrics = PrometheusMetrics(config) if getattr(config.monitoring, 'enable_metrics', False) else None
+        self.alert_manager = AlertManager(config) if getattr(config.monitoring, 'enable_alerting', False) else None
         self.slo_manager = SLOManager(config)
         self.performance_analyzer = PerformanceAnalyzer(config)
         

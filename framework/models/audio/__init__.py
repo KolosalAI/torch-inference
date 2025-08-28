@@ -12,28 +12,41 @@ from .audio_base import (
     BaseAudioModel,
     BaseTTSModel, 
     BaseSTTModel,
+    AudioModel,
     AudioModelType,
     AudioFormat,
+    AudioTask,
     AudioConfig,
+    AudioModelConfig,
     TTSConfig,
     STTConfig,
     AudioMetadata,
-    AudioModelError
+    AudioModelError,
+    AudioInputError,
+    AudioProcessingError
 )
 
 from .tts_models import (
+    TTSModel,
     HuggingFaceTTSModel,
     TorchAudioTTSModel,
     CustomTTSModel,
+    SpeechSynthesizer,
     create_tts_model,
+    get_tts_model,
+    available_tts_models,
     TTS_MODEL_REGISTRY
 )
 
 from .stt_models import (
+    STTModel,
     WhisperSTTModel,
     Wav2Vec2STTModel,
     CustomSTTModel,
+    SpeechRecognizer,
     create_stt_model,
+    get_stt_model,
+    available_stt_models,
     STT_MODEL_REGISTRY
 )
 
@@ -42,28 +55,41 @@ __all__ = [
     "BaseAudioModel",
     "BaseTTSModel",
     "BaseSTTModel",
+    "AudioModel",
     
     # Enums and configs
     "AudioModelType",
-    "AudioFormat", 
+    "AudioFormat",
+    "AudioTask", 
     "AudioConfig",
+    "AudioModelConfig",
     "TTSConfig",
     "STTConfig",
     "AudioMetadata",
     "AudioModelError",
+    "AudioInputError",
+    "AudioProcessingError",
     
     # TTS models
+    "TTSModel",
     "HuggingFaceTTSModel",
     "TorchAudioTTSModel", 
     "CustomTTSModel",
+    "SpeechSynthesizer",
     "create_tts_model",
+    "get_tts_model",
+    "available_tts_models",
     "TTS_MODEL_REGISTRY",
     
     # STT models
+    "STTModel",
     "WhisperSTTModel",
     "Wav2Vec2STTModel",
-    "CustomSTTModel", 
+    "CustomSTTModel",
+    "SpeechRecognizer", 
     "create_stt_model",
+    "get_stt_model",
+    "available_stt_models",
     "STT_MODEL_REGISTRY"
 ]
 
