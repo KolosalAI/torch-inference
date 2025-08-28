@@ -23,6 +23,31 @@ from framework.core.model_downloader import (
 )
 
 
+def parse_model_identifier(model_identifier: str) -> dict:
+    """
+    Parse a model identifier string into its components.
+    
+    Args:
+        model_identifier: Model identifier in format 'source:model_id' or just 'model_id'
+        
+    Returns:
+        Dictionary with parsed components
+    """
+    if ':' in model_identifier:
+        source, model_id = model_identifier.split(':', 1)
+        return {
+            'source': source.strip(),
+            'model_id': model_id.strip(),
+            'full_identifier': model_identifier
+        }
+    else:
+        return {
+            'source': 'auto',  # Auto-detect source
+            'model_id': model_identifier.strip(),
+            'full_identifier': model_identifier
+        }
+
+
 def download_command(args):
     """Handle model download command."""
     try:
@@ -189,6 +214,43 @@ def remove_command(args):
     return 0
 
 
+def clean_command(args):
+    """Handle cache cleaning command."""
+    try:
+        downloader = get_model_downloader()
+        
+        if args.force:
+            # Clear all cache
+            print("🧹 Cleaning all cached models...")
+            cleared_count = downloader.clear_cache()
+            print(f"✅ Cleared {cleared_count} cached models")
+        else:
+            # Clean only unused/old models
+            print("🧹 Cleaning unused cached models...")
+            
+            # Get cache stats before cleaning
+            original_size = downloader.get_cache_size()
+            original_count = len(downloader.registry)
+            
+            # Perform selective cleaning (this is a simplified version)
+            # In a real implementation, you'd want more sophisticated logic
+            cleared_count = downloader.clean_old_models() if hasattr(downloader, 'clean_old_models') else 0
+            
+            # Get cache stats after cleaning
+            new_size = downloader.get_cache_size()
+            new_count = len(downloader.registry)
+            
+            print(f"✅ Cleaned cache:")
+            print(f"   Models: {original_count} → {new_count} ({original_count - new_count} removed)")
+            print(f"   Size: {original_size:.1f} MB → {new_size:.1f} MB ({original_size - new_size:.1f} MB freed)")
+        
+    except Exception as e:
+        print(f"❌ Failed to clean cache: {e}")
+        return 1
+    
+    return 0
+
+
 def cache_command(args):
     """Handle cache management command."""
     try:
@@ -282,6 +344,12 @@ Examples:
     cache_parser = subparsers.add_parser('cache', help='Show cache information')
     cache_parser.set_defaults(func=cache_command)
     
+    # Clean command
+    clean_parser = subparsers.add_parser('clean', help='Clean cached models')
+    clean_parser.add_argument('--force', action='store_true', 
+                             help='Force clean all cached models (default: clean only unused)')
+    clean_parser.set_defaults(func=clean_command)
+    
     # Parse arguments
     args = parser.parse_args()
     
@@ -291,6 +359,36 @@ Examples:
     
     # Execute command
     return args.func(args)
+
+
+class ModelDownloadScript:
+    """Script wrapper for model downloading functionality."""
+    
+    def __init__(self, cache_dir: Optional[str] = None):
+        """
+        Initialize the model download script.
+        
+        Args:
+            cache_dir: Directory to cache downloaded models
+        """
+        self.cache_dir = cache_dir
+        from framework.core.model_downloader import get_model_downloader
+        self.downloader = get_model_downloader(cache_dir)
+    
+    def download_model(self, model_name: str, **kwargs) -> Path:
+        """Download a model and return its path."""
+        return download_model(model_name, **kwargs)
+    
+    def list_models(self) -> dict:
+        """List all available models."""
+        return list_available_models()
+    
+    def run_cli(self, args: Optional[list] = None) -> int:
+        """Run the CLI interface."""
+        import sys
+        if args:
+            sys.argv = ["download_models"] + args
+        return main()
 
 
 if __name__ == "__main__":

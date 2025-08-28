@@ -22,19 +22,20 @@ import logging
 
 from .config import (
     InferenceConfig, DeviceConfig, BatchConfig, PreprocessingConfig,
-    PostprocessingConfig, PerformanceConfig, CacheConfig, SecurityConfig,
+    PostprocessingConfig, PerformanceConfig, CacheConfig, 
+    SecurityConfig as CoreSecurityConfig,
     DeviceType, ModelType
 )
 
 if TYPE_CHECKING:
-    from ..security.config import EnterpriseConfig
+    from ..security.config import SecurityConfig as SecurityFrameworkConfig
 
 try:
-    from ..security.config import EnterpriseConfig
-    ENTERPRISE_AVAILABLE = True
+    from ..security.config import SecurityConfig as SecurityFrameworkConfig
+    SECURITY_AVAILABLE = True
 except ImportError:
-    ENTERPRISE_AVAILABLE = False
-    EnterpriseConfig = None
+    SECURITY_AVAILABLE = False
+    SecurityFrameworkConfig = None
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +353,7 @@ class ConfigManager:
         if isinstance(allowed_extensions, str):
             allowed_extensions = [ext.strip() for ext in allowed_extensions.split(',')]
         
-        security_config = SecurityConfig(
+        security_config = CoreSecurityConfig(
             max_file_size_mb=self.get('MAX_FILE_SIZE_MB', 100, 'security.max_file_size_mb'),
             allowed_extensions=allowed_extensions,
             validate_inputs=self.get('VALIDATE_INPUTS', True, 'security.validate_inputs'),
@@ -373,53 +374,53 @@ class ConfigManager:
             security=security_config
         )
     
-    def get_enterprise_config(self) -> Optional[Any]:
-        """Get enterprise configuration if enterprise features are enabled."""
-        enterprise_enabled = self.get('ENTERPRISE_ENABLED', False, 'enterprise.enabled')
+    def get_security_config(self) -> Optional[Any]:
+        """Get security configuration if security features are enabled."""
+        security_enabled = self.get('SECURITY_ENABLED', True, 'security.enabled')
         
-        if not enterprise_enabled or not ENTERPRISE_AVAILABLE:
+        if not security_enabled or not SECURITY_AVAILABLE:
             return None
         
         try:
             # Create base inference config
             inference_config = self.get_inference_config()
             
-            # Create enterprise config with inference config
-            enterprise_config = EnterpriseConfig(inference=inference_config)
+            # Create security config with inference config
+            security_config = SecurityFrameworkConfig(inference=inference_config)
             
             # Set basic properties
-            enterprise_config.environment = self.get('ENVIRONMENT', 'development', 'enterprise.environment')
-            enterprise_config.tenant_id = self.get('TENANT_ID', None, 'enterprise.tenant_id')
-            enterprise_config.deployment_id = self.get('DEPLOYMENT_ID', '', 'enterprise.deployment_id')
-            enterprise_config.version = self.get('VERSION', '1.0.0', 'app.version')
+            security_config.environment = self.get('ENVIRONMENT', 'development', 'security.environment')
+            security_config.tenant_id = self.get('TENANT_ID', None, 'security.tenant_id')
+            security_config.deployment_id = self.get('DEPLOYMENT_ID', '', 'security.deployment_id')
+            security_config.version = self.get('VERSION', '1.0.0', 'app.version')
             
             # Auth configuration
-            enterprise_config.auth.secret_key = self.get('JWT_SECRET_KEY', '', 'enterprise.auth.secret_key')
-            enterprise_config.auth.oauth2_client_id = self.get('OAUTH2_CLIENT_ID', '', 'enterprise.auth.oauth2_client_id')
-            enterprise_config.auth.oauth2_client_secret = self.get('OAUTH2_CLIENT_SECRET', '', 'enterprise.auth.oauth2_client_secret')
+            security_config.auth.secret_key = self.get('JWT_SECRET_KEY', '', 'security.auth.secret_key')
+            security_config.auth.oauth2_client_id = self.get('OAUTH2_CLIENT_ID', '', 'security.auth.oauth2_client_id')
+            security_config.auth.oauth2_client_secret = self.get('OAUTH2_CLIENT_SECRET', '', 'security.auth.oauth2_client_secret')
             
             # Security configuration
-            enterprise_config.security.enable_encryption_at_rest = self.get('ENABLE_ENCRYPTION_AT_REST', False, 'enterprise.security.enable_encryption_at_rest')
-            enterprise_config.security.rate_limit_requests_per_minute = self.get('RATE_LIMIT_RPM', 100, 'enterprise.security.rate_limit_requests_per_minute')
-            enterprise_config.security.enable_audit_logging = self.get('ENABLE_AUDIT_LOGGING', False, 'enterprise.security.enable_audit_logging')
+            security_config.security.enable_encryption_at_rest = self.get('ENABLE_ENCRYPTION_AT_REST', False, 'security.security.enable_encryption_at_rest')
+            security_config.security.rate_limit_requests_per_minute = self.get('RATE_LIMIT_RPM', 100, 'security.security.rate_limit_requests_per_minute')
+            security_config.security.enable_audit_logging = self.get('ENABLE_AUDIT_LOGGING', False, 'security.security.enable_audit_logging')
             
             # Monitoring configuration
-            enterprise_config.monitoring.jaeger_endpoint = self.get('JAEGER_ENDPOINT', '', 'monitoring.tracing.jaeger_endpoint')
-            enterprise_config.monitoring.metrics_port = self.get('METRICS_PORT', 9090, 'monitoring.metrics.port')
-            enterprise_config.monitoring.log_level = self.get('LOG_LEVEL', 'INFO', 'monitoring.logging.level')
+            security_config.monitoring.jaeger_endpoint = self.get('JAEGER_ENDPOINT', '', 'monitoring.tracing.jaeger_endpoint')
+            security_config.monitoring.metrics_port = self.get('METRICS_PORT', 9090, 'monitoring.metrics.port')
+            security_config.monitoring.log_level = self.get('LOG_LEVEL', 'INFO', 'monitoring.logging.level')
             
             # Integration configuration
-            enterprise_config.integration.database_url = self.get('DATABASE_URL', '', 'enterprise.integration.database_url')
-            enterprise_config.integration.cache_url = self.get('CACHE_URL', 'redis://localhost:6379/0', 'enterprise.integration.cache_url')
-            enterprise_config.integration.message_broker_url = self.get('MESSAGE_BROKER_URL', '', 'enterprise.integration.message_broker_url')
+            security_config.integration.database_url = self.get('DATABASE_URL', '', 'security.integration.database_url')
+            security_config.integration.cache_url = self.get('CACHE_URL', 'redis://localhost:6379/0', 'security.integration.cache_url')
+            security_config.integration.message_broker_url = self.get('MESSAGE_BROKER_URL', '', 'security.integration.message_broker_url')
             
-            return enterprise_config
+            return security_config
             
         except ImportError:
-            logger.warning("Enterprise features not available")
+            logger.warning("Security features not available")
             return None
         except Exception as e:
-            logger.error(f"Failed to create enterprise config: {e}")
+            logger.error(f"Failed to create security config: {e}")
             return None
     
     def reload_config(self):
