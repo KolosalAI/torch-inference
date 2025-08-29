@@ -51,6 +51,7 @@ The framework supports various state-of-the-art TTS models:
 | **Bark** | Suno AI | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | ~4GB | Multi-lingual, emotional TTS |
 | **Tacotron2** | NVIDIA | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ~300MB | Fast, lightweight TTS |
 | **VALL-E X** | Microsoft | ⭐⭐⭐⭐⭐ | ⭐⭐ | ~3GB | Voice cloning, advanced TTS |
+| **FastSpeech2** | ESPnet | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ~500MB | Real-time synthesis |
 
 ### Foundation Models for TTS
 
@@ -61,6 +62,17 @@ The framework supports various state-of-the-art TTS models:
 | **T5** | Google | ~800MB - 3GB | Text-to-text TTS adaptation |
 
 ## ⬇️ Model Downloads
+
+### Complete TTS Model Reference
+
+| Model Name | Model ID | Provider | Source | Size | Quality | Speed | Features |
+|------------|----------|----------|--------|------|---------|-------|----------|
+| **SpeechT5** | `microsoft/speecht5_tts` | Microsoft | HuggingFace | 2.5GB | Very High | Medium | Vocoder required, High quality |
+| **Bark** | `suno/bark` | Suno AI | HuggingFace | 4GB | Very High | Slow | Voice cloning, Emotions, Multilingual |
+| **VALL-E X** | `Plachtaa/VALL-E-X` | Microsoft | HuggingFace | 3GB | Very High | Slow | Zero-shot, Voice cloning, Experimental |
+| **Tacotron2** | `tacotron2` | NVIDIA | TorchAudio | 300MB | High | Fast | WaveGlow vocoder, Real-time |
+| **BART Large** | `facebook/bart-large` | Meta | HuggingFace | 1.6GB | High | Medium | Foundation model, Adaptable |
+| **BART Base** | `facebook/bart-base` | Meta | HuggingFace | 500MB | Medium | Fast | Lightweight, Foundation model |
 
 ### Framework-Managed Downloads
 
@@ -124,6 +136,200 @@ python -m framework.tools.model_downloader \
     --auto-convert-tts
 ```
 
+#### 4. Download VALL-E X (Experimental)
+
+```bash
+# VALL-E X for advanced voice cloning
+python -m framework.tools.model_downloader \
+    --source huggingface \
+    --model-id Plachtaa/VALL-E-X \
+    --name vall_e_x \
+    --task text-to-speech \
+    --experimental \
+    --enable-large-model
+```
+
+#### 5. Download Tacotron2 with WaveGlow
+
+```bash
+# Tacotron2 via TorchAudio
+python -m framework.tools.model_downloader \
+    --source torchaudio \
+    --model-id tacotron2 \
+    --name tacotron2_tts \
+    --task text-to-speech \
+    --include-vocoder \
+    --vocoder-model waveglow
+```
+
+### Complete Model Download Guide
+
+#### Download All Core TTS Models
+
+For users who want to download all available TTS models for comprehensive testing:
+
+```bash
+#!/bin/bash
+# Complete TTS model download script
+
+echo "🎵 Downloading all available TTS models..."
+
+# 1. SpeechT5 (Recommended for beginners)
+echo "📥 Downloading SpeechT5..."
+python -m framework.tools.model_downloader \
+    --source huggingface \
+    --model-id microsoft/speecht5_tts \
+    --name speecht5_tts \
+    --task text-to-speech \
+    --include-vocoder \
+    --vocoder-model microsoft/speecht5_hifigan
+
+# 2. Bark (Best for emotional/multilingual TTS)
+echo "📥 Downloading Bark..."
+python -m framework.tools.model_downloader \
+    --source huggingface \
+    --model-id suno/bark \
+    --name bark_tts \
+    --task text-to-speech \
+    --enable-large-model
+
+# 3. BART Large (Foundation model adaptation)
+echo "📥 Downloading BART Large..."
+python -m framework.tools.model_downloader \
+    --source huggingface \
+    --model-id facebook/bart-large \
+    --name bart_large_tts \
+    --task text-generation \
+    --auto-convert-tts
+
+# 4. BART Base (Lightweight option)
+echo "📥 Downloading BART Base..."
+python -m framework.tools.model_downloader \
+    --source huggingface \
+    --model-id facebook/bart-base \
+    --name bart_base_tts \
+    --task text-generation \
+    --auto-convert-tts
+
+# 5. Tacotron2 (Fastest option)
+echo "📥 Downloading Tacotron2..."
+python -m framework.tools.model_downloader \
+    --source torchaudio \
+    --model-id tacotron2 \
+    --name tacotron2_tts \
+    --task text-to-speech \
+    --include-vocoder
+
+# 6. VALL-E X (Experimental, requires explicit flag)
+echo "📥 Downloading VALL-E X (Experimental)..."
+python -m framework.tools.model_downloader \
+    --source huggingface \
+    --model-id Plachtaa/VALL-E-X \
+    --name vall_e_x \
+    --task text-to-speech \
+    --experimental \
+    --enable-large-model
+
+echo "✅ All TTS models download initiated!"
+echo "💡 Use 'curl http://localhost:8000/models/status' to check progress"
+```
+
+#### PowerShell Script for Windows
+
+```powershell
+# Complete TTS model download script for Windows
+Write-Host "🎵 Downloading all available TTS models..." -ForegroundColor Green
+
+# Function to download model with error handling
+function Download-TTSModel {
+    param(
+        [string]$ModelId,
+        [string]$Name,
+        [string]$Source = "huggingface",
+        [string]$Task = "text-to-speech",
+        [switch]$IncludeVocoder,
+        [string]$VocoderModel = "",
+        [switch]$EnableLargeModel,
+        [switch]$Experimental,
+        [switch]$AutoConvertTTS
+    )
+    
+    Write-Host "📥 Downloading $Name..." -ForegroundColor Yellow
+    
+    $args = @(
+        "-m", "framework.tools.model_downloader",
+        "--source", $Source,
+        "--model-id", $ModelId,
+        "--name", $Name,
+        "--task", $Task
+    )
+    
+    if ($IncludeVocoder) { $args += "--include-vocoder" }
+    if ($VocoderModel) { $args += "--vocoder-model", $VocoderModel }
+    if ($EnableLargeModel) { $args += "--enable-large-model" }
+    if ($Experimental) { $args += "--experimental" }
+    if ($AutoConvertTTS) { $args += "--auto-convert-tts" }
+    
+    try {
+        & python $args
+        Write-Host "✅ $Name download initiated successfully" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "❌ Failed to download $Name`: $_" -ForegroundColor Red
+    }
+}
+
+# Download all models
+Download-TTSModel -ModelId "microsoft/speecht5_tts" -Name "speecht5_tts" -IncludeVocoder -VocoderModel "microsoft/speecht5_hifigan"
+Download-TTSModel -ModelId "suno/bark" -Name "bark_tts" -EnableLargeModel
+Download-TTSModel -ModelId "facebook/bart-large" -Name "bart_large_tts" -Task "text-generation" -AutoConvertTTS
+Download-TTSModel -ModelId "facebook/bart-base" -Name "bart_base_tts" -Task "text-generation" -AutoConvertTTS
+Download-TTSModel -ModelId "tacotron2" -Name "tacotron2_tts" -Source "torchaudio" -IncludeVocoder
+Download-TTSModel -ModelId "Plachtaa/VALL-E-X" -Name "vall_e_x" -EnableLargeModel -Experimental
+
+Write-Host "🎉 All TTS model downloads initiated!" -ForegroundColor Green
+Write-Host "💡 Monitor progress: Invoke-RestMethod -Uri 'http://localhost:8000/models/status'" -ForegroundColor Cyan
+```
+
+#### Selective Model Downloads by Use Case
+
+Choose models based on your specific needs:
+
+**For Beginners (Fast setup, good quality):**
+```bash
+# Quick start with reliable models
+python -m framework.tools.model_downloader --source huggingface --model-id microsoft/speecht5_tts --name speecht5_tts --task text-to-speech --include-vocoder
+python -m framework.tools.model_downloader --source torchaudio --model-id tacotron2 --name tacotron2_tts --task text-to-speech
+```
+
+**For Production (High quality, proven models):**
+```bash
+# Production-ready TTS models
+python -m framework.tools.model_downloader --source huggingface --model-id microsoft/speecht5_tts --name speecht5_tts --task text-to-speech --include-vocoder
+python -m framework.tools.model_downloader --source huggingface --model-id suno/bark --name bark_tts --task text-to-speech --enable-large-model
+```
+
+**For Research (Experimental models):**
+```bash
+# Latest experimental TTS technologies
+python -m framework.tools.model_downloader --source huggingface --model-id Plachtaa/VALL-E-X --name vall_e_x --task text-to-speech --experimental --enable-large-model
+python -m framework.tools.model_downloader --source huggingface --model-id suno/bark --name bark_tts --task text-to-speech --enable-large-model
+```
+
+**For Voice Cloning:**
+```bash
+# Models that support voice cloning capabilities
+python -m framework.tools.model_downloader --source huggingface --model-id suno/bark --name bark_tts --task text-to-speech --enable-large-model
+python -m framework.tools.model_downloader --source huggingface --model-id Plachtaa/VALL-E-X --name vall_e_x --task text-to-speech --experimental --enable-large-model
+```
+
+**For Multilingual Support:**
+```bash
+# Models with strong multilingual capabilities
+python -m framework.tools.model_downloader --source huggingface --model-id suno/bark --name bark_tts --task text-to-speech --enable-large-model
+python -m framework.tools.model_downloader --source huggingface --model-id microsoft/speecht5_tts --name speecht5_tts --task text-to-speech --include-vocoder
+```
+
 ### REST API Downloads
 
 Download models via HTTP API:
@@ -155,9 +361,332 @@ curl -X POST "http://localhost:8000/models/download" \
   }'
 ```
 
+```bash
+# Download VALL-E X via API (Experimental)
+curl -X POST "http://localhost:8000/models/download" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "huggingface",
+    "model_id": "Plachtaa/VALL-E-X",
+    "name": "vall_e_x",
+    "task": "text-to-speech",
+    "experimental": true,
+    "enable_large_model": true
+  }'
+```
+
+```bash
+# Download Tacotron2 via API
+curl -X POST "http://localhost:8000/models/download" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "torchaudio",
+    "model_id": "tacotron2",
+    "name": "tacotron2_tts",
+    "task": "text-to-speech",
+    "include_vocoder": true
+  }'
+```
+
+```bash
+# Download BART Large for TTS via API
+curl -X POST "http://localhost:8000/models/download" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "huggingface",
+    "model_id": "facebook/bart-large",
+    "name": "bart_large_tts",
+    "task": "text-generation",
+    "auto_convert_tts": true
+  }'
+```
+
+```bash
+# Download BART Base for TTS via API
+curl -X POST "http://localhost:8000/models/download" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "huggingface",
+    "model_id": "facebook/bart-base",
+    "name": "bart_base_tts",
+    "task": "text-generation",
+    "auto_convert_tts": true
+  }'
+```
+
+#### Batch Download via API
+
+Download multiple models in sequence:
+
+```bash
+#!/bin/bash
+# Batch download script using REST API
+
+MODELS=(
+  '{"source": "huggingface", "model_id": "microsoft/speecht5_tts", "name": "speecht5_tts", "task": "text-to-speech", "include_vocoder": true, "vocoder_model": "microsoft/speecht5_hifigan"}'
+  '{"source": "huggingface", "model_id": "suno/bark", "name": "bark_tts", "task": "text-to-speech", "enable_large_model": true}'
+  '{"source": "huggingface", "model_id": "facebook/bart-large", "name": "bart_large_tts", "task": "text-generation", "auto_convert_tts": true}'
+  '{"source": "huggingface", "model_id": "facebook/bart-base", "name": "bart_base_tts", "task": "text-generation", "auto_convert_tts": true}'
+  '{"source": "torchaudio", "model_id": "tacotron2", "name": "tacotron2_tts", "task": "text-to-speech", "include_vocoder": true}'
+  '{"source": "huggingface", "model_id": "Plachtaa/VALL-E-X", "name": "vall_e_x", "task": "text-to-speech", "experimental": true, "enable_large_model": true}'
+)
+
+for model_json in "${MODELS[@]}"; do
+  echo "🔄 Downloading model..."
+  response=$(curl -s -X POST "http://localhost:8000/models/download" \
+    -H "Content-Type: application/json" \
+    -d "$model_json")
+  
+  echo "Response: $response"
+  echo "---"
+  sleep 2
+done
+
+echo "✅ All model downloads initiated!"
+```
+
+#### PowerShell API Downloads
+
+```powershell
+# PowerShell script for downloading models via REST API
+
+$models = @(
+    @{
+        source = "huggingface"
+        model_id = "microsoft/speecht5_tts"
+        name = "speecht5_tts"
+        task = "text-to-speech"
+        include_vocoder = $true
+        vocoder_model = "microsoft/speecht5_hifigan"
+    },
+    @{
+        source = "huggingface"
+        model_id = "suno/bark"
+        name = "bark_tts"
+        task = "text-to-speech"
+        enable_large_model = $true
+    },
+    @{
+        source = "huggingface"
+        model_id = "facebook/bart-large"
+        name = "bart_large_tts"
+        task = "text-generation"
+        auto_convert_tts = $true
+    },
+    @{
+        source = "huggingface"
+        model_id = "facebook/bart-base"
+        name = "bart_base_tts"
+        task = "text-generation"
+        auto_convert_tts = $true
+    },
+    @{
+        source = "torchaudio"
+        model_id = "tacotron2"
+        name = "tacotron2_tts"
+        task = "text-to-speech"
+        include_vocoder = $true
+    },
+    @{
+        source = "huggingface"
+        model_id = "Plachtaa/VALL-E-X"
+        name = "vall_e_x"
+        task = "text-to-speech"
+        experimental = $true
+        enable_large_model = $true
+    }
+)
+
+foreach ($model in $models) {
+    Write-Host "🔄 Downloading $($model.name)..." -ForegroundColor Yellow
+    
+    $json = $model | ConvertTo-Json -Depth 3
+    
+    try {
+        $response = Invoke-RestMethod -Uri "http://localhost:8000/models/download" `
+                                    -Method POST `
+                                    -ContentType "application/json" `
+                                    -Body $json
+        
+        Write-Host "✅ $($model.name): $($response.message)" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "❌ Failed to download $($model.name): $_" -ForegroundColor Red
+    }
+    
+    Start-Sleep -Seconds 2
+}
+
+Write-Host "🎉 All model downloads initiated!" -ForegroundColor Green
+```
+
 ### PowerShell Downloads (Windows)
 
 For Windows users with PowerShell, detailed Windows-specific commands and examples are available in this guide's PowerShell sections.
+
+## 🔍 Model Verification and Management
+
+### Check Available Models
+
+Before downloading, you can check what models are available:
+
+```bash
+# List all available TTS models
+curl http://localhost:8000/models/available
+
+# Check specific TTS model categories
+curl "http://localhost:8000/models/available?category=tts"
+```
+
+```powershell
+# PowerShell equivalent
+$available = Invoke-RestMethod -Uri "http://localhost:8000/models/available"
+$available.categories.tts_models
+```
+
+### Monitor Download Progress
+
+Track the progress of your model downloads:
+
+```bash
+# Check download status for all models
+curl http://localhost:8000/models/status
+
+# Check status for specific model
+curl http://localhost:8000/models/status/speecht5_tts
+
+# Monitor download queue
+curl http://localhost:8000/models/downloads/queue
+```
+
+```powershell
+# PowerShell monitoring script
+function Monitor-Downloads {
+    do {
+        $status = Invoke-RestMethod -Uri "http://localhost:8000/models/status"
+        $downloading = $status | Where-Object { $_.status -eq "downloading" }
+        
+        if ($downloading.Count -gt 0) {
+            Write-Host "🔄 Downloads in progress:" -ForegroundColor Yellow
+            foreach ($model in $downloading) {
+                Write-Host "   $($model.name): $($model.progress)%" -ForegroundColor Cyan
+            }
+        } else {
+            Write-Host "✅ All downloads completed!" -ForegroundColor Green
+            break
+        }
+        
+        Start-Sleep -Seconds 5
+    } while ($true)
+}
+
+Monitor-Downloads
+```
+
+### Verify Model Installation
+
+After downloading, verify that models are properly installed:
+
+```bash
+# List installed TTS models
+curl http://localhost:8000/models | jq '.models[] | select(.task == "text-to-speech")'
+
+# Test model loading
+curl -X POST "http://localhost:8000/models/load" \
+  -H "Content-Type: application/json" \
+  -d '{"model_name": "speecht5_tts"}'
+
+# Quick TTS test
+curl -X POST "http://localhost:8000/tts/synthesize" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Hello, this is a test.",
+    "model_name": "speecht5_tts",
+    "output_format": "wav"
+  }'
+```
+
+```powershell
+# PowerShell verification script
+function Test-TTSModels {
+    $models = @("speecht5_tts", "bark_tts", "bart_large_tts", "bart_base_tts", "tacotron2_tts", "vall_e_x")
+    
+    foreach ($model in $models) {
+        Write-Host "🧪 Testing $model..." -ForegroundColor Yellow
+        
+        try {
+            # Test model loading
+            $loadResult = Invoke-RestMethod -Uri "http://localhost:8000/models/load" `
+                                          -Method POST `
+                                          -ContentType "application/json" `
+                                          -Body (@{model_name = $model} | ConvertTo-Json)
+            
+            if ($loadResult.success) {
+                Write-Host "✅ $model loaded successfully" -ForegroundColor Green
+                
+                # Test synthesis
+                $testText = "Testing $model model."
+                $synthesisResult = Invoke-RestMethod -Uri "http://localhost:8000/tts/synthesize" `
+                                                   -Method POST `
+                                                   -ContentType "application/json" `
+                                                   -Body (@{
+                                                       text = $testText
+                                                       model_name = $model
+                                                       output_format = "wav"
+                                                   } | ConvertTo-Json)
+                
+                if ($synthesisResult.success) {
+                    Write-Host "✅ $model synthesis test passed" -ForegroundColor Green
+                } else {
+                    Write-Host "⚠️ $model synthesis test failed" -ForegroundColor Orange
+                }
+            } else {
+                Write-Host "❌ $model failed to load" -ForegroundColor Red
+            }
+        }
+        catch {
+            Write-Host "❌ $model test failed: $_" -ForegroundColor Red
+        }
+        
+        Write-Host ""
+    }
+}
+
+Test-TTSModels
+```
+
+### Disk Space Management
+
+TTS models can be large. Monitor and manage disk space:
+
+```bash
+# Check model storage usage
+curl http://localhost:8000/models/storage
+
+# Clean up unused models
+curl -X POST "http://localhost:8000/models/cleanup" \
+  -H "Content-Type: application/json" \
+  -d '{"remove_unused": true, "keep_recent": 5}'
+```
+
+### Model Updates and Maintenance
+
+Keep your models updated:
+
+```bash
+# Check for model updates
+curl http://localhost:8000/models/updates
+
+# Update specific model
+curl -X POST "http://localhost:8000/models/update" \
+  -H "Content-Type: application/json" \
+  -d '{"model_name": "speecht5_tts"}'
+
+# Backup models before updates
+curl -X POST "http://localhost:8000/models/backup" \
+  -H "Content-Type: application/json" \
+  -d '{"models": ["speecht5_tts", "bark_tts"]}'
+```
 
 ## 🔧 Configuration
 

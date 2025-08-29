@@ -33,6 +33,9 @@ import tempfile
 import io
 import base64
 
+# Import the event loop configuration
+from framework.core.async_handler import configure_event_loop
+
 def _create_wav_bytes(audio_data: np.ndarray, sample_rate: int, channels: int = 1, sample_width: int = 2) -> bytes:
     """
     Create a proper WAV file from numpy audio data.
@@ -3736,6 +3739,9 @@ async def clear_log_file(log_file: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
+    # Configure optimal event loop for the platform
+    event_loop_type = configure_event_loop()
+    
     # Print all available endpoints first
     print_api_endpoints()
     
@@ -3744,6 +3750,7 @@ if __name__ == "__main__":
     
     # Log startup information without banners
     logger.info("Initializing PyTorch Inference Framework API Server")
+    logger.info(f"Event loop: {event_loop_type}")
     logger.info(f"Server configuration - Host: {server_config['host']}, Port: {server_config['port']}")
     logger.info(f"Environment: {config_manager.environment}")
     logger.info(f"Log level: {server_config['log_level']}")
