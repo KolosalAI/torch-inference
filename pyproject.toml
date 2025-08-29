@@ -41,7 +41,7 @@ dependencies = [
     "requests==2.32.5",
     "pyyaml==6.0.2",
     # NOTE: PyTorch packages should be installed separately via: 
-    # uv pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 torchaudio==2.5.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+    # uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
     # ONNX optimization dependencies
     "onnx==1.18.0",
     "onnxruntime==1.22.1",
@@ -105,7 +105,7 @@ dependencies = [
     "fonttools==4.59.1",
     "fqdn==1.5.1",
     "frozenlist==1.7.0",
-    "fsspec==2025.7.0",
+    "fsspec<=2025.3.0,>=2023.1.0",
     "gitdb==4.0.12",
     "gitpython==3.1.45",
     "google-auth==2.40.3",
@@ -246,7 +246,7 @@ dependencies = [
     "stack-data==0.6.3",
     "starlette==0.47.2",
     "stevedore==5.4.1",
-    "sympy==1.13.1",
+    "sympy>=1.13.3",
     "tensorboard==2.20.0",
     "tensorboard-data-server==0.7.2",
     "tensorly==0.9.0",
@@ -287,9 +287,9 @@ dependencies = [
 [project.optional-dependencies]
 # CUDA GPU support
 cuda = [
-    "torch>=2.5.0,<2.6.0",  # Limited to 2.5.x since 2.6.0+cu121 not available yet
-    "torchvision>=0.20.0", 
-    "torchaudio>=2.5.0",
+    "torch>=2.8.0,<2.9.0",  # Updated to match PyTorch 2.8.x with CUDA support
+    "torchvision>=0.23.0", 
+    "torchaudio>=2.8.0",
     "onnxruntime-gpu>=1.16.0",
 ]
 
@@ -298,7 +298,7 @@ tensorrt = [
     "tensorrt>=10.12.0",  # Updated to match available version
     # Note: torch-tensorrt version compatibility is complex:
     # - torch-tensorrt 2.5.0 requires TensorRT 10.3.x (incompatible with our 10.12.x)
-    # - torch-tensorrt 2.8.0 requires PyTorch 2.8.x (incompatible with our 2.5.x constraint)
+    # - torch-tensorrt 2.8.0 requires PyTorch 2.8.x (now compatible with our 2.8.x constraint)
     # Making torch-tensorrt optional for now until version compatibility is resolved
     # "torch-tensorrt>=2.8.0,<3.0.0",  # Requires PyTorch 2.8.x
 ]
