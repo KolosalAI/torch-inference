@@ -243,6 +243,17 @@ except ImportError as e:
     jit_compile_model = None
     _unavailable_optimizers.extend(['JITOptimizer', 'jit_compile_model'])
 
+# Post-download optimizer
+try:
+    from .post_download_optimizer import PostDownloadOptimizer, create_post_download_optimizer, optimize_downloaded_model
+    _available_optimizers.extend(['PostDownloadOptimizer', 'create_post_download_optimizer', 'optimize_downloaded_model'])
+except ImportError as e:
+    logger.info(f"Post-download optimizer not available: {e}")
+    PostDownloadOptimizer = None
+    create_post_download_optimizer = None
+    optimize_downloaded_model = None
+    _unavailable_optimizers.extend(['PostDownloadOptimizer', 'create_post_download_optimizer', 'optimize_downloaded_model'])
+
 # Log availability summary
 if _available_optimizers:
     logger.info(f"Available optimizers: {', '.join(_available_optimizers)}")
@@ -268,7 +279,8 @@ def get_available_optimizers():
         'tensor_factorization': {'available': TensorFactorizationOptimizer is not None, 'class': 'TensorFactorizationOptimizer'},
         'structured_pruning': {'available': StructuredPruningOptimizer is not None, 'class': 'StructuredPruningOptimizer'},
         'model_compression': {'available': ModelCompressionSuite is not None, 'class': 'ModelCompressionSuite'},
-        'mask_pruning': {'available': MaskBasedStructuredPruning is not None, 'class': 'MaskBasedStructuredPruning'}
+        'mask_pruning': {'available': MaskBasedStructuredPruning is not None, 'class': 'MaskBasedStructuredPruning'},
+        'post_download': {'available': PostDownloadOptimizer is not None, 'class': 'PostDownloadOptimizer'}
     }
     return optimizers
 
@@ -276,6 +288,10 @@ def get_optimization_recommendations(device='auto', model_size='medium', target=
     """Get recommended optimizers based on device, model size, and target use case."""
     available = get_available_optimizers()
     recommendations = []
+    
+    # Always recommend post-download optimization for downloaded models
+    if available['post_download']['available']:
+        recommendations.append(('post_download', 'Automatic optimization after model download (quantization + tensor factorization)'))
     
     # Always recommend basic optimizations
     if available['memory']['available']:
@@ -354,6 +370,11 @@ __all__ = [
     'VulkanOptimizer',
     'VulkanDeviceInfo',
     'NumbaOptimizer',
+    
+    # Post-download optimizer
+    'PostDownloadOptimizer',
+    'create_post_download_optimizer',
+    'optimize_downloaded_model',
     
     # Calibration and profiling
     'INT8CalibrationToolkit',

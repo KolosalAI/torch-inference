@@ -44,18 +44,18 @@ class TestServerEndpoints:
         assert "endpoints" in data
         
         # Verify specific values
-        assert data["message"] == "PyTorch Inference Framework API"
-        assert data["version"] == "1.0.0"
+        assert data["message"] == "PyTorch Inference Framework API - Enhanced with TTS Support"
+        assert data["version"] == "1.0.0-TTS-Enhanced"
         assert data["status"] == "running"
         
         # Verify endpoints structure
         endpoints = data["endpoints"]
         assert "inference" in endpoints
-        assert "batch_inference" in endpoints
         assert "health" in endpoints
         assert "stats" in endpoints
         assert "models" in endpoints
-        assert "config" in endpoints
+        assert "enhanced_downloads" in endpoints
+        assert "tts_audio" in endpoints
 
     @pytest.mark.asyncio
     async def test_health_endpoint(self, async_client):

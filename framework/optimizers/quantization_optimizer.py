@@ -61,6 +61,68 @@ class QuantizationOptimizer:
         self.backend = self._select_backend()
         self.logger.info(f"Quantization optimizer initialized with backend: {self.backend}")
     
+    def quantize_model(self, model: nn.Module, method: str = "dynamic", **kwargs) -> Tuple[nn.Module, Dict[str, Any]]:
+        """
+        Quantize model with specified method.
+        
+        Args:
+            model: Model to quantize
+            method: Quantization method ("dynamic", "static", "qat", "fx")
+            **kwargs: Additional arguments
+            
+        Returns:
+            Tuple of (quantized_model, quantization_report)
+        """
+        try:
+            self.logger.info(f"Starting quantization with method: {method}")
+            start_time = time.time()
+            
+            if method == "dynamic":
+                quantized_model = self.quantize_dynamic(model, **kwargs)
+            elif method == "static":
+                calibration_loader = kwargs.get('calibration_loader')
+                if calibration_loader is None:
+                    self.logger.warning("No calibration_loader provided for static quantization, using dynamic")
+                    quantized_model = self.quantize_dynamic(model, **kwargs)
+                else:
+                    quantized_model = self.quantize_static(model, calibration_loader, **kwargs)
+            elif method == "fx":
+                example_inputs = kwargs.get('example_inputs')
+                if example_inputs is None:
+                    self.logger.warning("No example_inputs provided for FX quantization, using dynamic")
+                    quantized_model = self.quantize_dynamic(model, **kwargs)
+                else:
+                    quantized_model = self.quantize_fx(model, example_inputs, **kwargs)
+            else:
+                self.logger.warning(f"Unknown quantization method: {method}, using dynamic")
+                quantized_model = self.quantize_dynamic(model, **kwargs)
+            
+            optimization_time = time.time() - start_time
+            
+            # Create quantization report
+            report = {
+                "method": method,
+                "success": True,
+                "optimization_time_seconds": optimization_time,
+                "original_size_mb": self._get_model_size(model) / (1024 * 1024),
+                "quantized_size_mb": self._get_model_size(quantized_model) / (1024 * 1024),
+                "size_reduction_ratio": 1.0 - (self._get_model_size(quantized_model) / self._get_model_size(model)),
+                "backend_used": self.backend
+            }
+            
+            self.logger.info(f"Quantization completed successfully in {optimization_time:.2f}s")
+            return quantized_model, report
+            
+        except Exception as e:
+            self.logger.error(f"Quantization failed: {e}")
+            report = {
+                "method": method,
+                "success": False,
+                "error": str(e),
+                "optimization_time_seconds": 0.0
+            }
+            return model, report
+    
     def _select_backend(self) -> str:
         """Select the best available quantization backend."""
         try:

@@ -187,6 +187,23 @@ class CacheConfig:
 
 
 @dataclass
+class PostDownloadOptimizationConfig:
+    """Configuration for post-download model optimizations."""
+    enable_optimization: bool = True
+    enable_quantization: bool = True
+    quantization_method: str = "dynamic"  # dynamic, static, qat, fx
+    enable_low_rank_optimization: bool = True
+    low_rank_method: str = "svd"  # svd, tucker, hlrtf
+    target_compression_ratio: float = 0.7  # Target 30% reduction
+    enable_tensor_factorization: bool = True
+    preserve_accuracy_threshold: float = 0.02  # Max 2% accuracy loss
+    enable_structured_pruning: bool = False  # More aggressive, disabled by default
+    auto_select_best_method: bool = True  # Automatically choose best optimization
+    benchmark_optimizations: bool = True  # Benchmark before/after optimization
+    save_optimized_model: bool = True  # Save optimized version separately
+
+
+@dataclass
 class SecurityConfig:
     """Security and safety configuration."""
     max_file_size_mb: int = 100
@@ -206,6 +223,7 @@ class InferenceConfig:
     performance: PerformanceConfig = field(default_factory=PerformanceConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
+    post_download_optimization: PostDownloadOptimizationConfig = field(default_factory=PostDownloadOptimizationConfig)
     
     # Custom parameters for specific model types
     custom_params: Dict[str, Any] = field(default_factory=dict)
