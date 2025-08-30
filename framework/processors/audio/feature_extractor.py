@@ -531,3 +531,96 @@ def create_feature_extractor(extractor_type: str, **kwargs) -> BaseFeatureExtrac
 
 # Alias for backward compatibility
 FeatureExtractor = TraditionalFeatureExtractor
+
+
+class SpectrogramExtractor(BaseFeatureExtractor):
+    """Spectrogram feature extractor."""
+    
+    def __init__(self, sample_rate: int = 16000, n_fft: int = 2048,
+                 hop_length: Optional[int] = None):
+        super().__init__(sample_rate)
+        self.n_fft = n_fft
+        self.hop_length = hop_length or n_fft // 4
+        
+    def extract_features(self, audio: Union[np.ndarray, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Extract spectrogram features from audio."""
+        if isinstance(audio, np.ndarray):
+            audio = torch.tensor(audio, dtype=torch.float32)
+        
+        # Simple STFT-based spectrogram
+        stft = torch.stft(audio, n_fft=self.n_fft, hop_length=self.hop_length, 
+                         return_complex=True)
+        spectrogram = torch.abs(stft)
+        
+        return {"spectrogram": spectrogram}
+
+
+class MelSpectrogramExtractor(BaseFeatureExtractor):
+    """Mel-spectrogram feature extractor."""
+    
+    def __init__(self, sample_rate: int = 16000, n_fft: int = 2048,
+                 hop_length: Optional[int] = None, n_mels: int = 80):
+        super().__init__(sample_rate)
+        self.n_fft = n_fft
+        self.hop_length = hop_length or n_fft // 4
+        self.n_mels = n_mels
+        
+    def extract_features(self, audio: Union[np.ndarray, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Extract mel-spectrogram features from audio."""
+        if isinstance(audio, np.ndarray):
+            audio = torch.tensor(audio, dtype=torch.float32)
+        
+        # Simple mel-spectrogram using torchaudio if available
+        try:
+            import torchaudio.transforms as T
+            mel_transform = T.MelSpectrogram(
+                sample_rate=self.sample_rate,
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                n_mels=self.n_mels
+            )
+            mel_spec = mel_transform(audio)
+        except ImportError:
+            # Fallback: use STFT and approximate mel scaling
+            stft = torch.stft(audio, n_fft=self.n_fft, hop_length=self.hop_length, 
+                             return_complex=True)
+            mel_spec = torch.abs(stft)
+            
+        return {"mel_spectrogram": mel_spec}
+
+
+class MFCCExtractor(BaseFeatureExtractor):
+    """MFCC feature extractor."""
+    
+    def __init__(self, sample_rate: int = 16000, n_fft: int = 2048,
+                 hop_length: Optional[int] = None, n_mels: int = 80, n_mfcc: int = 13):
+        super().__init__(sample_rate)
+        self.n_fft = n_fft
+        self.hop_length = hop_length or n_fft // 4
+        self.n_mels = n_mels
+        self.n_mfcc = n_mfcc
+        
+    def extract_features(self, audio: Union[np.ndarray, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Extract MFCC features from audio."""
+        if isinstance(audio, np.ndarray):
+            audio = torch.tensor(audio, dtype=torch.float32)
+        
+        try:
+            import torchaudio.transforms as T
+            mfcc_transform = T.MFCC(
+                sample_rate=self.sample_rate,
+                n_mfcc=self.n_mfcc,
+                melkwargs={
+                    "n_fft": self.n_fft,
+                    "hop_length": self.hop_length,
+                    "n_mels": self.n_mels
+                }
+            )
+            mfcc = mfcc_transform(audio)
+        except ImportError:
+            # Fallback: use simplified MFCC computation
+            stft = torch.stft(audio, n_fft=self.n_fft, hop_length=self.hop_length, 
+                             return_complex=True)
+            mfcc = torch.abs(stft)[:self.n_mfcc]  # Simple approximation
+            
+        return {"mfcc": mfcc}

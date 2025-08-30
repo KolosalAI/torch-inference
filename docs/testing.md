@@ -55,6 +55,16 @@ uv run pytest --cov=framework
 uv run pytest -m unit              # Unit tests only
 uv run pytest -m integration       # Integration tests only
 uv run pytest -m "not slow"        # Skip slow tests
+
+# Stream test output to log file in real-time
+# Windows (PowerShell)
+uv run pytest --performance | Tee-Object -FilePath test.log
+
+# Linux/macOS
+uv run pytest --performance | tee test.log
+
+# Append to existing log file (Linux/macOS)
+uv run pytest --performance | tee -a test.log
 ```
 
 ### Using Test Runner Script
@@ -80,6 +90,13 @@ python run_tests.py all --verbose
 
 # Performance benchmarks
 python run_tests.py performance
+
+# Stream output to log file during test execution
+# Windows (PowerShell)
+python run_tests.py all | Tee-Object -FilePath test_results.log
+
+# Linux/macOS
+python run_tests.py all | tee test_results.log
 ```
 
 ### Using Helper Scripts

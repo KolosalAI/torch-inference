@@ -629,6 +629,49 @@ class ModelManager:
             
             # Load the model
             adapter.load_model(model_path)
+            
+            # Apply post-download optimizations if enabled
+            if config.post_download_optimization.enable_optimization:
+                self.logger.info(f"Applying post-download optimizations to '{name}'")
+                try:
+                    from ..optimizers.post_download_optimizer import create_post_download_optimizer
+                    
+                    # Create post-download optimizer
+                    optimizer = create_post_download_optimizer(
+                        config.post_download_optimization,
+                        config
+                    )
+                    
+                    # Apply optimizations to the loaded model
+                    optimized_model, optimization_report = optimizer.optimize_model(
+                        adapter.model,
+                        name,
+                        example_inputs=None,  # Will auto-generate
+                        save_path=model_path.parent / "optimized" if hasattr(model_path, 'parent') else None
+                    )
+                    
+                    # Replace the model with the optimized version
+                    adapter.model = optimized_model
+                    
+                    # Log optimization results
+                    self.logger.info(f"Post-download optimization completed for '{name}'")
+                    self.logger.info(f"Applied optimizations: {optimization_report.get('optimizations_applied', [])}")
+                    if 'model_size_metrics' in optimization_report:
+                        size_reduction = optimization_report['model_size_metrics'].get('size_reduction_percent', 0)
+                        self.logger.info(f"Model size reduction: {size_reduction:.1f}%")
+                    
+                    # Store optimization report in model metadata
+                    if hasattr(adapter, 'metadata') and adapter.metadata:
+                        if hasattr(adapter.metadata, '__dict__'):
+                            adapter.metadata.__dict__['optimization_report'] = optimization_report
+                        else:
+                            adapter.metadata.optimization_report = optimization_report
+                    
+                except Exception as e:
+                    self.logger.warning(f"Post-download optimization failed for '{name}': {e}")
+                    # Continue with non-optimized model
+            
+            # Apply standard optimizations and warmup
             adapter.optimize_for_inference()
             adapter.warmup()
             

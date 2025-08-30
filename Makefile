@@ -44,11 +44,23 @@ lock-update: ## Update and regenerate lock file
 test: ## Run all tests
 	uv run pytest
 
+test-timeout: ## Run all tests with 15-minute timeout (recommended)
+	uv run python run_tests_timeout.py
+
+test-timeout-ps: ## Run all tests with 15-minute timeout (PowerShell version)
+	powershell -ExecutionPolicy Bypass -File run_tests_with_timeout.ps1
+
 test-unit: ## Run unit tests only
 	uv run pytest tests/unit/
 
+test-unit-timeout: ## Run unit tests with timeout
+	uv run python run_tests_timeout.py tests/unit/
+
 test-integration: ## Run integration tests only  
 	uv run pytest tests/integration/
+
+test-integration-timeout: ## Run integration tests with timeout
+	uv run python run_tests_timeout.py tests/integration/
 
 test-smoke: ## Run smoke tests for quick validation
 	uv run pytest -m smoke
@@ -166,8 +178,8 @@ watch: ## Watch for changes and run tests
 	uv run pytest-watch
 
 # CI/CD helpers
-ci-test: ## Run tests for CI (with XML reports)
-	uv run pytest --cov=framework --cov-report=xml --junitxml=junit.xml
+ci-test: ## Run tests for CI (with XML reports and 15-minute timeout)
+	uv run python run_tests_timeout.py --cov=framework --cov-report=xml --junitxml=junit.xml
 
 ci-lint: ## Run linting for CI
 	uv run black --check .
