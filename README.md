@@ -744,6 +744,16 @@ uv run pytest
 
 # Run with coverage
 uv run pytest --cov=framework --cov-report=html
+
+# Run tests with performance metrics and stream output to log file
+# Windows (PowerShell)
+uv run pytest --performance | Tee-Object -FilePath test.log
+
+# Linux/macOS
+uv run pytest --performance | tee test.log
+
+# Append to existing log file (Linux/macOS)
+uv run pytest --performance | tee -a test.log
 ```
 
 See [Testing Documentation](docs/testing.md) for comprehensive test information.
