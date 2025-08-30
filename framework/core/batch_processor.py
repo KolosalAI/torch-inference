@@ -681,9 +681,17 @@ class BatchProcessor:
                 for item, result in zip(batch, batch_result.results):
                     if item.future and not item.future.done():
                         if batch_result.success:
-                            item.future.set_result(result)
+                            # Check if the result is an exception
+                            if isinstance(result, Exception):
+                                item.future.set_exception(result)
+                            else:
+                                item.future.set_result(result)
                         else:
-                            item.future.set_exception(Exception(batch_result.error or "Processing failed"))
+                            # If the batch was not successful, check if we have specific exceptions in results
+                            if isinstance(result, Exception):
+                                item.future.set_exception(result)
+                            else:
+                                item.future.set_exception(Exception(batch_result.error or "Processing failed"))
                 
             except Exception as e:
                 self.logger.error(f"Processing loop error: {e}")
@@ -729,12 +737,20 @@ class BatchProcessor:
                             results.extend(handler_results)
                         except Exception as e:
                             self.logger.error(f"Handler processing failed: {e}")
-                            # Add error results for all items in this batch
-                            results.extend([e] * len(handler_items))
+                            # For single item batches with handler failures, we should propagate the exception
+                            if len(handler_items) == 1 and len(handler_groups) == 1:
+                                # This is a single item, re-raise the exception
+                                raise e
+                            else:
+                                # Add error results for all items in this batch
+                                results.extend([e] * len(handler_items))
                     else:
                         # Default fallback for items without handlers
                         for item in handler_items:
                             results.append(f"processed_{item.data}")
+                
+                # Check if any results are exceptions to determine success
+                has_exceptions = any(isinstance(result, Exception) for result in results)
                         
                 processing_time = time.time() - start_time
                 return BatchResult(
@@ -745,7 +761,8 @@ class BatchProcessor:
                     stage_times={ProcessingStage.INFERENCE: processing_time},
                     memory_usage={'current_mb': 0},
                     batch_size=len(batch),
-                    success=True
+                    success=not has_exceptions,  # Success is False if any exceptions
+                    error="Handler processing failed" if has_exceptions else None
                 )
             
             # Original tensor-based processing for ML models

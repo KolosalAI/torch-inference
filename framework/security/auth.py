@@ -1240,3 +1240,54 @@ class SecurityAuth:
 class AuthenticationManager(SecurityAuth):
     """Authentication manager - alias for SecurityAuth for backward compatibility."""
     pass
+
+
+# Global authentication instance
+_global_auth = None
+
+
+def get_auth_manager() -> SecurityAuth:
+    """Get the global authentication manager."""
+    global _global_auth
+    if _global_auth is None:
+        _global_auth = SecurityAuth()
+    return _global_auth
+
+
+# Convenience functions for backwards compatibility
+def authenticate_user(username: str, password: str, mfa_code: Optional[str] = None) -> bool:
+    """Authenticate a user with username and password."""
+    auth = get_auth_manager()
+    try:
+        user = auth.authenticate(username, password, mfa_code)
+        return user is not None
+    except Exception:
+        return False
+
+
+def generate_api_key(user_id: str, name: str = "Default API Key", 
+                    scopes: List[str] = None, expires_in_days: int = 30) -> str:
+    """Generate an API key for a user."""
+    auth = get_auth_manager()
+    api_key, _ = auth.create_api_key(user_id, name, scopes or [], expires_in_days)
+    return api_key
+
+
+def validate_token(token: str) -> bool:
+    """Validate a JWT token."""
+    auth = get_auth_manager()
+    try:
+        payload = auth.token_manager.verify_token(token)
+        return payload is not None
+    except Exception:
+        return False
+
+
+def revoke_token(token: str) -> bool:
+    """Revoke a JWT token."""
+    auth = get_auth_manager()
+    try:
+        auth.token_manager.revoke_token(token)
+        return True
+    except Exception:
+        return False
