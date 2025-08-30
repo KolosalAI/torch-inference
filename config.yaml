@@ -161,6 +161,21 @@ optimization:
     - "CUDAExecutionProvider"  # Prioritize CUDA
     - "CPUExecutionProvider"
 
+# Post-Download Optimization Configuration - NEW FEATURE
+post_download_optimization:
+  enable_optimization: true  # Enable automatic post-download optimization
+  enable_quantization: true  # Apply quantization after download
+  quantization_method: "dynamic"  # dynamic, static, qat, fx - dynamic is safest and fastest
+  enable_low_rank_optimization: true  # Apply tensor factorization for model compression
+  low_rank_method: "svd"  # svd, tucker, hlrtf - SVD is most stable
+  target_compression_ratio: 0.7  # Target 30% model size reduction
+  enable_tensor_factorization: true  # Enable hierarchical tensor factorization
+  preserve_accuracy_threshold: 0.02  # Maximum acceptable accuracy loss (2%)
+  enable_structured_pruning: false  # More aggressive, disabled by default
+  auto_select_best_method: true  # Automatically choose best optimization method
+  benchmark_optimizations: true  # Benchmark before/after optimization
+  save_optimized_model: true  # Save optimized version separately for future use
+
 # Monitoring Configuration
 monitoring:
   enable_metrics: true

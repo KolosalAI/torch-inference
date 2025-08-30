@@ -12,8 +12,11 @@ Welcome to the comprehensive documentation for the PyTorch Inference Framework -
 ### 🔧 Core Features  
 - **[Framework Overview](framework.md)** - Architecture and components
 - **[Model Management](models.md)** - Loading and managing models
+- **[Model Download Guide](model_download.md)** - Download models from various sources
 - **[Inference Engine](inference.md)** - Sync and async inference
 - **[Optimization](optimization.md)** - TensorRT, ONNX, quantization
+- **[Audio Processing](audio.md)** - Text-to-Speech and Speech-to-Text
+- **[TTS Models Guide](tts_models.md)** - Comprehensive Text-to-Speech models
 
 ### 🏭 Production Use
 - **[Deployment](deployment.md)** - Docker and production deployment
@@ -61,8 +64,11 @@ docs/
 ├── configuration.md      # Configuration management
 ├── framework.md          # Core framework concepts
 ├── models.md             # Model management
+├── model_download.md     # Model downloading and sources
 ├── inference.md          # Inference capabilities
 ├── optimization.md       # Performance optimization
+├── audio.md              # Audio processing features
+├── tts_models.md         # Text-to-Speech models guide
 ├── deployment.md         # Production deployment
 ├── monitoring.md         # Monitoring and metrics
 ├── security.md           # Security features

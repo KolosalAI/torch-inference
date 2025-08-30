@@ -462,3 +462,92 @@ def set_config_manager(config_manager: ConfigManager):
     """Set the global configuration manager instance."""
     global _config_manager
     _config_manager = config_manager
+
+
+class ConfigLoader:
+    """Configuration loader utility class."""
+    
+    @staticmethod
+    def load_from_file(config_file: Union[str, Path]) -> Dict[str, Any]:
+        """Load configuration from a file."""
+        config_path = Path(config_file)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_file}")
+        
+        with open(config_path, 'r') as f:
+            if config_path.suffix in ['.yaml', '.yml']:
+                return yaml.safe_load(f) or {}
+            elif config_path.suffix == '.json':
+                import json
+                return json.load(f)
+            else:
+                raise ValueError(f"Unsupported configuration file format: {config_path.suffix}")
+    
+    @staticmethod
+    def load_from_env() -> Dict[str, Any]:
+        """Load configuration from environment variables."""
+        return dict(os.environ)
+
+
+class ConfigValidator:
+    """Configuration validator utility class."""
+    
+    @staticmethod
+    def validate_config(config: Dict[str, Any]) -> bool:
+        """Validate configuration dictionary."""
+        required_keys = ['device', 'model', 'batch']
+        for key in required_keys:
+            if key not in config:
+                return False
+        return True
+
+
+def load_config(config_file: Union[str, Path] = None, environment: str = None) -> InferenceConfig:
+    """Load configuration from file or environment."""
+    config_manager = get_config_manager(environment)
+    return config_manager.get_inference_config()
+
+
+def save_config(config: InferenceConfig, config_file: Union[str, Path]) -> None:
+    """Save configuration to file."""
+    config_dict = {
+        'device': {
+            'device_type': config.device.device_type.value,
+            'device_ids': config.device.device_ids,
+            'memory_fraction': config.device.memory_fraction
+        },
+        'model': {
+            'model_type': config.model.model_type.value,
+            'model_path': config.model.model_path,
+            'cache_size': config.model.cache_size
+        },
+        'batch': {
+            'batch_size': config.batch.batch_size,
+            'max_batch_size': config.batch.max_batch_size,
+            'timeout_ms': config.batch.timeout_ms
+        }
+    }
+    
+    config_path = Path(config_file)
+    with open(config_path, 'w') as f:
+        if config_path.suffix in ['.yaml', '.yml']:
+            yaml.dump(config_dict, f, default_flow_style=False)
+        elif config_path.suffix == '.json':
+            import json
+            json.dump(config_dict, f, indent=2)
+        else:
+            raise ValueError(f"Unsupported configuration file format: {config_path.suffix}")
+
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    """Validate configuration dictionary."""
+    return ConfigValidator.validate_config(config)
+
+
+def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge multiple configuration dictionaries."""
+    merged = {}
+    for config in configs:
+        if config:
+            merged.update(config)
+    return merged

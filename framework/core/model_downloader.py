@@ -425,15 +425,21 @@ class ModelDownloader:
         self,
         model_id: str,
         task: str = "feature-extraction",
-        custom_name: Optional[str] = None
+        custom_name: Optional[str] = None,
+        auto_convert_tts: bool = False,
+        include_vocoder: bool = False,
+        vocoder_model: Optional[str] = None
     ) -> Tuple[Path, ModelInfo]:
         """
-        Download a model from Hugging Face Hub.
+        Download a model from Hugging Face Hub with enhanced TTS support.
         
         Args:
             model_id: Hugging Face model identifier (e.g., 'bert-base-uncased')
             task: Task type for the model
             custom_name: Custom name for the model. If None, uses model_id.
+            auto_convert_tts: Whether to prepare model for TTS use
+            include_vocoder: Whether to download vocoder for TTS models
+            vocoder_model: Specific vocoder model to download
             
         Returns:
             Tuple of (model_path, model_info)
@@ -445,6 +451,8 @@ class ModelDownloader:
             custom_name = model_id.replace('/', '_')
         
         self.logger.info(f"Downloading Hugging Face model: {model_id}")
+        if auto_convert_tts:
+            self.logger.info(f"  TTS conversion enabled, Include vocoder: {include_vocoder}")
         
         # Check if already cached
         if self.is_model_cached(custom_name):
@@ -458,20 +466,48 @@ class ModelDownloader:
             model_dir = self._get_model_cache_dir(custom_name)
             model_dir.mkdir(parents=True, exist_ok=True)
             
-            # Choose appropriate model class based on task
-            if task == "text-classification":
-                model = AutoModelForSequenceClassification.from_pretrained(model_id)
-            elif task == "image-classification":
-                model = AutoModelForImageClassification.from_pretrained(model_id)
+            # Enhanced task mapping for TTS models
+            if auto_convert_tts or task == "text-to-speech":
+                # For TTS models, try to use appropriate model classes
+                if "speecht5" in model_id.lower():
+                    try:
+                        from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech
+                        self.logger.info("Loading SpeechT5 TTS model")
+                        processor = SpeechT5Processor.from_pretrained(model_id)
+                        model = SpeechT5ForTextToSpeech.from_pretrained(model_id)
+                        processor.save_pretrained(model_dir)
+                    except ImportError:
+                        self.logger.warning("SpeechT5 classes not available, using AutoModel")
+                        model = AutoModel.from_pretrained(model_id)
+                elif "bark" in model_id.lower():
+                    try:
+                        from transformers import BarkProcessor, BarkModel
+                        self.logger.info("Loading Bark TTS model")
+                        processor = BarkProcessor.from_pretrained(model_id)
+                        model = BarkModel.from_pretrained(model_id)
+                        processor.save_pretrained(model_dir)
+                    except ImportError:
+                        self.logger.warning("Bark classes not available, using AutoModel")
+                        model = AutoModel.from_pretrained(model_id)
+                else:
+                    # Generic TTS model handling
+                    model = AutoModel.from_pretrained(model_id)
             else:
-                model = AutoModel.from_pretrained(model_id)
+                # Choose appropriate model class based on task
+                if task == "text-classification":
+                    model = AutoModelForSequenceClassification.from_pretrained(model_id)
+                elif task == "image-classification":
+                    model = AutoModelForImageClassification.from_pretrained(model_id)
+                else:
+                    model = AutoModel.from_pretrained(model_id)
             
-            # Try to load tokenizer
+            # Try to load tokenizer/processor
             try:
                 tokenizer = AutoTokenizer.from_pretrained(model_id)
                 tokenizer.save_pretrained(model_dir)
-            except:
-                self.logger.warning(f"Could not load tokenizer for {model_id}")
+                self.logger.info(f"Tokenizer saved for {model_id}")
+            except Exception as e:
+                self.logger.warning(f"Could not load tokenizer for {model_id}: {e}")
             
             # Save the model
             model_path = model_dir / "pytorch_model.pt"
@@ -482,35 +518,88 @@ class ModelDownloader:
             torch.save(model, full_model_path)
             
             # Save config
-            config = AutoConfig.from_pretrained(model_id)
-            config.save_pretrained(model_dir)
+            try:
+                config = AutoConfig.from_pretrained(model_id)
+                config.save_pretrained(model_dir)
+            except Exception as e:
+                self.logger.warning(f"Could not save config for {model_id}: {e}")
             
-            # Create model info
+            # Handle TTS-specific downloads
+            tts_info = {}
+            if auto_convert_tts or task == "text-to-speech":
+                tts_info["tts_enabled"] = True
+                tts_info["task"] = "text-to-speech"
+                
+                # Download vocoder if requested
+                if include_vocoder and vocoder_model:
+                    try:
+                        self.logger.info(f"Downloading vocoder: {vocoder_model}")
+                        vocoder_dir = model_dir / "vocoder"
+                        vocoder_dir.mkdir(exist_ok=True)
+                        
+                        # Download vocoder model
+                        vocoder = AutoModel.from_pretrained(vocoder_model)
+                        vocoder_path = vocoder_dir / "vocoder.pt"
+                        torch.save(vocoder, vocoder_path)
+                        
+                        tts_info["vocoder_model"] = vocoder_model
+                        tts_info["vocoder_path"] = str(vocoder_path)
+                        
+                        self.logger.info(f"Vocoder downloaded: {vocoder_model}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to download vocoder {vocoder_model}: {e}")
+                        tts_info["vocoder_error"] = str(e)
+            
+            # Determine tags based on model and task
+            tags = ["huggingface", "transformers", task]
+            if auto_convert_tts or task == "text-to-speech":
+                tags.extend(["tts", "text-to-speech"])
+            if "speecht5" in model_id.lower():
+                tags.append("speecht5")
+            elif "bark" in model_id.lower():
+                tags.append("bark")
+            elif "bart" in model_id.lower():
+                tags.extend(["bart", "tts-adaptable"])
+            
+            # Create enhanced model info
             model_info = ModelInfo(
                 name=custom_name,
                 source="huggingface",
                 model_id=model_id,
                 task=task,
-                description=f"Hugging Face model: {model_id}",
+                description=f"Hugging Face model: {model_id}" + 
+                           (" (TTS-enabled)" if auto_convert_tts else ""),
                 size_mb=full_model_path.stat().st_size / (1024 * 1024),
-                tags=["huggingface", "transformers", task]
+                tags=tags
             )
             
-            # Save model info
+            # Save model info with TTS details
+            info_dict = asdict(model_info)
+            if tts_info:
+                info_dict["tts_info"] = tts_info
+            
             info_path = model_dir / "model_info.json"
             with open(info_path, 'w') as f:
-                json.dump(asdict(model_info), f, indent=2)
+                json.dump(info_dict, f, indent=2)
             
-            # Register model
-            self._register_model(custom_name, {
+            # Register model with enhanced info
+            registry_entry = {
                 "path": str(full_model_path),
                 "state_dict_path": str(model_path),
                 "info_path": str(info_path),
                 "config_path": str(model_dir / "config.json"),
-                "info": asdict(model_info)
-            })
+                "info": info_dict
+            }
+            
+            if tts_info:
+                registry_entry["tts_info"] = tts_info
+            
+            self._register_model(custom_name, registry_entry)
             
             self.logger.info(f"Successfully downloaded {custom_name} ({model_info.size_mb:.1f} MB)")
+            if auto_convert_tts:
+                self.logger.info(f"  TTS features: {tts_info}")
+                
             return full_model_path, model_info
             
         except Exception as e:

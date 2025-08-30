@@ -24,6 +24,23 @@ class OptimizationMode(Enum):
     MEMORY = "memory"
 
 
+class OptimizationLevel(Enum):
+    """Optimization levels for processors (alias for OptimizationMode)."""
+    DISABLED = "disabled"
+    BASIC = "basic"
+    BALANCED = "balanced"
+    AGGRESSIVE = "aggressive"
+    MAXIMUM = "maximum"
+
+
+class ProcessingMode(Enum):
+    """Processing modes."""
+    SYNCHRONOUS = "sync"
+    ASYNCHRONOUS = "async"
+    STREAMING = "streaming"
+    BATCH = "batch"
+
+
 class ProcessorType(Enum):
     """Types of processors."""
     PREPROCESSOR = "preprocessor"
@@ -398,3 +415,78 @@ def auto_optimize_processors(preprocessor_pipeline=None, postprocessor_pipeline=
 
 # Alias for backward compatibility
 PerformanceConfig = ProcessorPerformanceConfig
+
+
+def get_performance_config(optimization_level: OptimizationLevel = OptimizationLevel.BALANCED) -> ProcessorPerformanceConfig:
+    """Get performance configuration for given optimization level."""
+    if optimization_level == OptimizationLevel.DISABLED:
+        return ProcessorPerformanceConfig(
+            optimization_mode=OptimizationMode.DISABLED,
+            enable_caching=False,
+            enable_parallel_processing=False,
+            enable_batch_processing=False
+        )
+    elif optimization_level == OptimizationLevel.BASIC:
+        return ProcessorPerformanceConfig(
+            optimization_mode=OptimizationMode.BASIC,
+            enable_caching=True,
+            enable_parallel_processing=True,
+            max_parallel_workers=2
+        )
+    elif optimization_level == OptimizationLevel.BALANCED:
+        return ProcessorPerformanceConfig(
+            optimization_mode=OptimizationMode.AUTO,
+            enable_caching=True,
+            enable_parallel_processing=True,
+            max_parallel_workers=4
+        )
+    elif optimization_level == OptimizationLevel.AGGRESSIVE:
+        return ProcessorPerformanceConfig(
+            optimization_mode=OptimizationMode.AGGRESSIVE,
+            enable_caching=True,
+            enable_parallel_processing=True,
+            max_parallel_workers=8
+        )
+    else:  # MAXIMUM
+        return ProcessorPerformanceConfig(
+            optimization_mode=OptimizationMode.AGGRESSIVE,
+            enable_caching=True,
+            enable_parallel_processing=True,
+            max_parallel_workers=psutil.cpu_count()
+        )
+
+
+def optimize_for_inference(config: ProcessorPerformanceConfig) -> ProcessorPerformanceConfig:
+    """Optimize configuration for inference workloads."""
+    config.enable_caching = True
+    config.enable_batch_processing = True
+    config.adaptive_batching = True
+    return config
+
+
+def get_optimal_batch_size(input_size: int, memory_limit: int = None) -> int:
+    """Get optimal batch size based on input size and memory constraints."""
+    if memory_limit is None:
+        # Default heuristic based on available memory
+        memory_limit = psutil.virtual_memory().available // (1024 * 1024)  # MB
+    
+    # Simple heuristic: larger inputs need smaller batches
+    base_batch_size = max(1, min(32, memory_limit // (input_size + 1)))
+    return base_batch_size
+
+
+def estimate_memory_usage(config: ProcessorPerformanceConfig, input_size: int) -> int:
+    """Estimate memory usage in bytes for given configuration and input size."""
+    base_memory = input_size * 4  # Assume float32
+    
+    if config.enable_batch_processing:
+        base_memory *= config.max_batch_size
+    
+    if config.enable_caching:
+        cache_memory = config.cache_size * input_size * 4
+        base_memory += cache_memory
+    
+    if config.enable_parallel_processing:
+        base_memory *= config.max_parallel_workers
+    
+    return base_memory
