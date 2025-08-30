@@ -157,7 +157,8 @@ class TestRequestQueue:
         """Create RequestQueue fixture"""
         return RequestQueue(max_size=10, enable_priority=True)
     
-    def test_queue_put_get(self, queue):
+    @pytest.mark.asyncio
+    async def test_queue_put_get(self, queue):
         """Test basic put/get operations"""
         request = {"id": "test", "data": "test_data"}
         
@@ -165,10 +166,11 @@ class TestRequestQueue:
         assert queue.size() == 1
         
         retrieved = queue.get()
-        assert retrieved == request
+        assert retrieved == request  # get() returns the original dict for compatibility
         assert queue.size() == 0
     
-    def test_queue_priority_ordering(self, queue):
+    @pytest.mark.asyncio
+    async def test_queue_priority_ordering(self, queue):
         """Test priority ordering in queue"""
         low_request = {"id": "low", "priority": "low"}
         normal_request = {"id": "normal", "priority": "normal"}
@@ -184,7 +186,8 @@ class TestRequestQueue:
         assert queue.get()["id"] == "normal"
         assert queue.get()["id"] == "low"
     
-    def test_queue_max_size_enforcement(self, queue):
+    @pytest.mark.asyncio
+    async def test_queue_max_size_enforcement(self, queue):
         """Test queue size limit enforcement"""
         # Fill queue to capacity
         for i in range(10):

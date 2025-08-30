@@ -64,7 +64,8 @@ class TestBatchConfig:
 class TestBatchItem:
     """Test BatchItem dataclass"""
     
-    def test_batch_item_creation(self):
+    @pytest.mark.asyncio
+    async def test_batch_item_creation(self):
         """Test batch item creation"""
         future = asyncio.Future()
         item = BatchItem(
@@ -81,7 +82,8 @@ class TestBatchItem:
         assert item.priority == 1
         assert isinstance(item.timestamp, float)
     
-    def test_batch_item_comparison(self):
+    @pytest.mark.asyncio
+    async def test_batch_item_comparison(self):
         """Test batch item priority comparison"""
         future1 = asyncio.Future()
         future2 = asyncio.Future()
@@ -333,7 +335,8 @@ class TestBatchScheduler:
         if batch_entry:
             assert len(batch_entry['batch']) == 2
     
-    def test_scheduler_priority_ordering(self):
+    @pytest.mark.asyncio
+    async def test_scheduler_priority_ordering(self):
         """Test priority-based item ordering"""
         scheduler = BatchScheduler(max_batch_size=3, timeout_ms=100)
         
@@ -352,13 +355,8 @@ class TestBatchScheduler:
         
         # Just test that scheduling works with priorities
         # The actual priority ordering is handled internally by the scheduler
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            batch_id = loop.run_until_complete(scheduler.schedule_batch([items[0]], priority=3))
-            assert isinstance(batch_id, str)
-        finally:
-            loop.close()
+        batch_id = await scheduler.schedule_batch([items[0]], priority=3)
+        assert isinstance(batch_id, str)
     
     def test_scheduler_statistics(self):
         """Test scheduler statistics"""

@@ -8,6 +8,9 @@ to the project's models/ directory based on configuration.
 
 import sys
 import argparse
+import json
+import time
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -16,6 +19,8 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from framework.core.model_downloader import get_model_downloader, ModelInfo
+
+logger = logging.getLogger(__name__)
 
 
 def download_model_auto(
@@ -385,6 +390,11 @@ class SourceDetector:
             'url': [
                 r'^https?://',
                 r'^ftp://',
+            ],
+            'file': [
+                r'^[/\\]',  # Unix and Windows absolute paths
+                r'^\w:',  # Windows drive paths
+                r'^\.',  # Relative paths starting with .
                 r'\.pth$',
                 r'\.pt$',
                 r'\.onnx$',
@@ -397,11 +407,124 @@ class SourceDetector:
         
         model_id = model_identifier.lower().strip()
         
-        # Check each source pattern
+        # Check file patterns first (most specific)
+        if any(re.match(pattern, model_id) for pattern in self.source_patterns['file']):
+            return 'file'
+        
+        # Check URL patterns
+        if any(re.match(pattern, model_id) for pattern in self.source_patterns['url']):
+            return 'url'
+        
+        # Check other source patterns
         for source, patterns in self.source_patterns.items():
+            if source in ['file', 'url']:  # Already checked
+                continue
             for pattern in patterns:
                 if re.match(pattern, model_id):
                     return source
         
         # Default fallback
         return 'pytorch_hub'
+
+
+class ModelRegistry:
+    """Registry for downloaded models."""
+    
+    def __init__(self, registry_file: str = None):
+        self.registry_file = registry_file or Path.home() / '.torch_inference' / 'model_registry.json'
+        self.registry_file = Path(self.registry_file)
+        self.registry_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        self._registry = self._load_registry()
+    
+    def _load_registry(self) -> Dict[str, Any]:
+        """Load registry from file."""
+        if self.registry_file.exists():
+            try:
+                with open(self.registry_file, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError):
+                pass
+        return {}
+    
+    def _save_registry(self):
+        """Save registry to file."""
+        try:
+            with open(self.registry_file, 'w') as f:
+                json.dump(self._registry, f, indent=2)
+        except IOError as e:
+            logger.warning(f"Failed to save model registry: {e}")
+    
+    def register_model(self, model_id: str, model_path: str, metadata: Dict[str, Any] = None):
+        """Register a downloaded model."""
+        self._registry[model_id] = {
+            'path': str(model_path),
+            'metadata': metadata or {},
+            'timestamp': time.time()
+        }
+        self._save_registry()
+    
+    def get_model_path(self, model_id: str) -> Optional[str]:
+        """Get path for a registered model."""
+        if model_id in self._registry:
+            return self._registry[model_id]['path']
+        return None
+    
+    def list_models(self) -> List[str]:
+        """List all registered models."""
+        return list(self._registry.keys())
+    
+    def remove_model(self, model_id: str):
+        """Remove a model from registry."""
+        if model_id in self._registry:
+            del self._registry[model_id]
+            self._save_registry()
+    
+    def clear(self):
+        """Clear all models from registry."""
+        self._registry.clear()
+        self._save_registry()
+
+
+# Global registry instance
+_model_registry = None
+
+
+def get_model_registry() -> ModelRegistry:
+    """Get the global model registry."""
+    global _model_registry
+    if _model_registry is None:
+        _model_registry = ModelRegistry()
+    return _model_registry
+
+
+# Convenience functions
+def auto_download_model(model_identifier: str, **kwargs) -> str:
+    """Auto-download a model based on identifier."""
+    downloader = AutoDownloader()
+    path, info = downloader.auto_download(model_identifier, **kwargs)
+    return model_identifier  # Return the identifier for backward compatibility
+
+
+def detect_model_source(model_identifier: str) -> str:
+    """Detect the source of a model identifier."""
+    detector = SourceDetector()
+    return detector.detect_source(model_identifier)
+
+
+def register_model(model_id: str, model_path: str, metadata: Dict[str, Any] = None):
+    """Register a downloaded model."""
+    registry = get_model_registry()
+    registry.register_model(model_id, model_path, metadata)
+
+
+def get_registered_models() -> List[str]:
+    """Get list of registered models."""
+    registry = get_model_registry()
+    return registry.list_models()
+
+
+def cleanup_downloaded_models():
+    """Clean up downloaded models."""
+    registry = get_model_registry()
+    registry.clear()
