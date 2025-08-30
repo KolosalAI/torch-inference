@@ -461,7 +461,9 @@ addopts = [
     "--durations=10",
     "--color=yes",
     "--disable-warnings",
-    "--maxfail=5"
+    "--maxfail=5",
+    "--timeout=120",
+    "--timeout-method=thread"
 ]
 
 # Asyncio support
@@ -506,8 +508,12 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 junit_family = "xunit2"
 junit_suite_name = "torch_inference_tests"
 
-# Timeout (if pytest-timeout is installed)
-timeout = 300
+# Timeout (if pytest-timeout is installed) 
+# Individual test timeout: 120 seconds per test
+# Session timeout: 900 seconds (15 minutes) for entire test suite
+timeout = 120
+timeout_func_only = true
+timeout_method = "thread"
 
 [tool.coverage.run]
 source = ["framework"]

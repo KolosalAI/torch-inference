@@ -11,6 +11,7 @@ Tests the integration utility including:
 import pytest
 import asyncio
 import time
+import unittest.mock
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from typing import Dict, Any, Callable
 from contextlib import asynccontextmanager
@@ -255,7 +256,7 @@ class TestOptimizedInferenceServer:
         
         # Should record failed completion
         server.performance_optimizer.complete_request.assert_called_once_with(
-            pytest.any(str), success=False
+            unittest.mock.ANY, success=False
         )
     
     @pytest.mark.asyncio
@@ -405,7 +406,7 @@ class TestFastAPIIntegration:
         assert response == mock_response
         server.performance_optimizer.record_request.assert_called_once()
         server.performance_optimizer.complete_request.assert_called_once_with(
-            pytest.any(str), success=True
+            unittest.mock.ANY, success=True
         )
     
     @pytest.mark.asyncio
@@ -428,7 +429,7 @@ class TestFastAPIIntegration:
             await middleware_func(mock_request, failing_call_next)
         
         server.performance_optimizer.complete_request.assert_called_once_with(
-            pytest.any(str), success=False
+            unittest.mock.ANY, success=False
         )
     
     def test_startup_handler_creation(self):

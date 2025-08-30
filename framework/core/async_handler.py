@@ -375,11 +375,21 @@ class ResponseCache:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
-        total_size = sum(
-            len(json.dumps(entry['data']) if not entry.get('compressed', False) 
-                else len(entry['data']))
-            for entry in self.cache.values()
-        )
+        total_size = 0
+        for entry in self.cache.values():
+            try:
+                if not entry.get('compressed', False):
+                    # Try to serialize the data to get size
+                    if isinstance(entry['data'], Exception):
+                        # Handle exceptions separately
+                        total_size += len(str(entry['data']))
+                    else:
+                        total_size += len(json.dumps(entry['data']))
+                else:
+                    total_size += len(entry['data'])
+            except (TypeError, ValueError):
+                # If serialization fails, use string representation
+                total_size += len(str(entry['data']))
         
         total_requests = self._hits + self._misses
         hit_rate = self._hits / max(total_requests, 1)
@@ -989,6 +999,17 @@ class AsyncRequestHandler:
                 key_data += f":{content_headers}"
         
         return hashlib.sha256(key_data.encode()).hexdigest()[:32]
+
+    async def get_cached_response(self, key: str) -> Optional[Any]:
+        """Get cached response by key"""
+        if not self.cache:
+            return None
+        return self.cache.get(key)
+
+    async def cache_response(self, key: str, response: Any) -> None:
+        """Cache a response by key"""
+        if self.cache:
+            self.cache.put(key, response)
     
     async def make_request_with_retry(self, method: str, url: str, max_retries: int = 3, **kwargs) -> Dict[str, Any]:
         """Make HTTP request with retry logic"""
