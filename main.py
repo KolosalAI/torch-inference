@@ -1460,6 +1460,54 @@ async def download_model_endpoint(
     logger.info(f"  Include Vocoder: {request.include_vocoder}")
     
     try:
+        # Check if model already exists and is loaded
+        if model_manager.is_model_loaded(request.name):
+            logger.info(f"[ENDPOINT] Model '{request.name}' already exists and is loaded")
+            return ModelDownloadResponse(
+                success=True,
+                download_id=download_id,
+                message=f"Model '{request.name}' already exists and is ready to use",
+                model_name=request.name,
+                source=request.source,
+                model_id=request.model_id,
+                status="already_exists",
+                download_info={
+                    "download_id": download_id,
+                    "existed_at": datetime.now().isoformat(),
+                    "note": "Model was already loaded and ready to use"
+                }
+            )
+        
+        # Check if model exists in downloader cache (downloaded but not loaded)
+        downloader = model_manager.get_downloader()
+        if downloader.is_model_cached(request.name):
+            logger.info(f"[ENDPOINT] Model '{request.name}' already exists in cache")
+            
+            # Get model info from cache
+            model_info = downloader.get_model_info(request.name)
+            model_path = downloader.get_model_path(request.name)
+            
+            if model_path and model_path.exists():
+                logger.info(f"[ENDPOINT] Model '{request.name}' found in cache at {model_path}")
+                return ModelDownloadResponse(
+                    success=True,
+                    download_id=download_id,
+                    message=f"Model '{request.name}' already exists in cache and is ready to use",
+                    model_name=request.name,
+                    source=request.source,
+                    model_id=request.model_id,
+                    status="already_exists",
+                    download_info={
+                        "download_id": download_id,
+                        "existed_at": datetime.now().isoformat(),
+                        "note": "Model was already available in cache",
+                        "cached_path": str(model_path),
+                        "cached_size_mb": model_info.size_mb if model_info else None
+                    }
+                )
+            else:
+                logger.warning(f"[ENDPOINT] Model '{request.name}' in registry but file not found. Proceeding with download.")
+
         # Enhanced source validation with TTS support
         valid_sources = ["pytorch_hub", "torchvision", "huggingface", "url", "tts_auto", "nvidia"]
         if request.source not in valid_sources:
