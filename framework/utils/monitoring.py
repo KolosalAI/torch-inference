@@ -3,6 +3,7 @@ Performance monitoring and metrics collection utilities.
 
 This module provides comprehensive monitoring capabilities for the inference framework,
 including performance metrics, resource usage tracking, and alerting.
+Includes Numba JIT acceleration for statistical computations.
 """
 
 import time
@@ -14,7 +15,14 @@ import logging
 from enum import Enum
 import statistics
 import json
+import numpy as np
 
+# Import Numba optimizer for JIT acceleration
+try:
+    from ..optimizers.numba_optimizer import NumbaOptimizer
+    NUMBA_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    NUMBA_OPTIMIZER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -382,7 +390,7 @@ class MetricsCollector:
 
 
 class PerformanceMonitor:
-    """High-level performance monitoring."""
+    """High-level performance monitoring with Numba acceleration for statistical computations."""
     
     def __init__(self, metrics_collector: Optional[MetricsCollector] = None):
         self.metrics_collector = metrics_collector or MetricsCollector()
@@ -395,6 +403,62 @@ class PerformanceMonitor:
         self.active_requests: Dict[str, float] = {}
         self.batch_metrics = deque(maxlen=100)  # Store batch metrics
         self.start_time = time.time()
+        
+        # Initialize Numba optimizer for statistical computations
+        self.numba_optimizer = None
+        self.numba_ops = {}
+        self._numba_enabled = False
+        if NUMBA_OPTIMIZER_AVAILABLE:
+            try:
+                self.numba_optimizer = NumbaOptimizer()
+                if self.numba_optimizer.is_available():
+                    self._setup_numba_stats_functions()
+                    self._numba_enabled = True
+                    logger.debug("Numba acceleration enabled for performance monitoring")
+                else:
+                    logger.debug("Numba available but not functional")
+            except Exception as e:
+                logger.debug(f"Failed to initialize Numba optimizer: {e}")
+    
+    def _setup_numba_stats_functions(self):
+        """Setup Numba-accelerated statistical functions."""
+        try:
+            import numba as nb
+            
+            @nb.jit(nopython=True, cache=True)
+            def fast_percentile(arr, percentile):
+                """Fast percentile calculation using Numba."""
+                n = len(arr)
+                if n == 0:
+                    return 0.0
+                sorted_arr = np.sort(arr)
+                index = (percentile / 100.0) * (n - 1)
+                lower = int(index)
+                upper = min(lower + 1, n - 1)
+                weight = index - lower
+                return sorted_arr[lower] * (1 - weight) + sorted_arr[upper] * weight
+            
+            @nb.jit(nopython=True, cache=True)
+            def fast_stats(arr):
+                """Fast statistical calculations using Numba."""
+                if len(arr) == 0:
+                    return 0.0, 0.0, 0.0, 0.0, 0.0  # count, sum, min, max, avg
+                
+                count = float(len(arr))
+                sum_val = np.sum(arr)
+                min_val = np.min(arr)
+                max_val = np.max(arr)
+                avg_val = sum_val / count
+                
+                return count, sum_val, min_val, max_val, avg_val
+            
+            self._fast_percentile = fast_percentile
+            self._fast_stats = fast_stats
+            logger.debug("Numba statistical functions setup completed")
+            
+        except Exception as e:
+            logger.debug(f"Failed to setup Numba statistical functions: {e}")
+            self._numba_enabled = False
     
     def start_timer(self, name: str) -> None:
         """Start a named timer."""

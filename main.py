@@ -859,6 +859,19 @@ async def initialize_inference_engine():
         # Get configuration from config manager
         config = config_manager.get_inference_config()
         
+        # Initialize JIT integration for performance optimization
+        if framework_available:
+            try:
+                from framework.core.jit_integration import initialize_jit_integration
+                jit_manager = initialize_jit_integration(enable_jit=True)
+                if jit_manager.is_available():
+                    logger.info("JIT acceleration initialized successfully")
+                    logger.info(f"JIT stats: {jit_manager.get_performance_stats()}")
+                else:
+                    logger.info("JIT acceleration not available")
+            except Exception as e:
+                logger.warning(f"Failed to initialize JIT acceleration: {e}")
+        
         # Apply performance optimizations
         if framework_available:
             try:

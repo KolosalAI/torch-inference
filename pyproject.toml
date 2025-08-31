@@ -42,7 +42,7 @@ dependencies = [
     "tqdm==4.67.1",
     "requests==2.32.5",
     "pyyaml==6.0.2",
-    # NOTE: PyTorch packages should be installed separately via: 
+    # NOTE: PyTorch packages should be installed separately via:
     # uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
     # ONNX optimization dependencies
     "onnx==1.18.0",
@@ -284,6 +284,7 @@ dependencies = [
     "wrapt==1.17.3",
     "yarl==1.20.1",
     "zipp==3.23.0",
+    "taichi>=1.7.4",
 ]
 
 [project.optional-dependencies]
