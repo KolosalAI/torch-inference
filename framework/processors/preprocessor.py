@@ -567,10 +567,64 @@ class ImagePreprocessor(BasePreprocessor):
             def rgb_to_bgr_fast(arr):
                 return arr[:, :, [2, 1, 0]]
             
+            @nb.jit(nopython=True, cache=True, parallel=True)
+            def resize_bilinear_fast(src, dst_height, dst_width):
+                """Fast bilinear resize using Numba."""
+                src_height, src_width = src.shape[:2]
+                
+                # Calculate scale factors
+                scale_x = src_width / dst_width
+                scale_y = src_height / dst_height
+                
+                # Create output array
+                if len(src.shape) == 3:
+                    result = np.empty((dst_height, dst_width, src.shape[2]), dtype=src.dtype)
+                else:
+                    result = np.empty((dst_height, dst_width), dtype=src.dtype)
+                
+                # Perform bilinear interpolation
+                    for x in range(dst_width):
+                        # Calculate source coordinates
+                        src_x = x * scale_x
+                        src_y = y * scale_y
+                        
+                        # Get integer coordinates
+                        x0 = int(src_x)
+                        y0 = int(src_y)
+                        x1 = min(x0 + 1, src_width - 1)
+                        y1 = min(y0 + 1, src_height - 1)
+                        
+                        # Calculate interpolation weights
+                        wx = src_x - x0
+                        wy = src_y - y0
+                        
+                        # Bilinear interpolation
+                        if len(src.shape) == 3:
+                            for c in range(src.shape[2]):
+                                top = src[y0, x0, c] * (1 - wx) + src[y0, x1, c] * wx
+                                bottom = src[y1, x0, c] * (1 - wx) + src[y1, x1, c] * wx
+                                result[y, x, c] = top * (1 - wy) + bottom * wy
+                        else:
+                            top = src[y0, x0] * (1 - wx) + src[y0, x1] * wx
+                            bottom = src[y1, x0] * (1 - wx) + src[y1, x1] * wx
+                            result[y, x] = top * (1 - wy) + bottom * wy
+                
+                return result
+            
+            @nb.jit(nopython=True, cache=True, parallel=True)
+            def apply_brightness_contrast_fast(arr, brightness, contrast):
+                """Fast brightness and contrast adjustment using Numba."""
+                result = np.empty_like(arr)
+                for i in nb.prange(arr.size):
+                    result.flat[i] = np.clip(arr.flat[i] * contrast + brightness, 0, 255)
+                return result
+            
             self._normalize_fast = normalize_array_fast
             self._rgb_to_bgr_fast = rgb_to_bgr_fast
+            self._resize_bilinear_fast = resize_bilinear_fast
+            self._brightness_contrast_fast = apply_brightness_contrast_fast
             self._numpy_ops_compiled = True
-            self.logger.debug("Numba-compiled numpy operations enabled")
+            self.logger.debug("Enhanced Numba-compiled numpy operations enabled")
             
         except Exception as e:
             self.logger.debug(f"Could not setup numba optimizations: {e}")
