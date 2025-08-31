@@ -583,8 +583,7 @@ class ImagePreprocessor(BasePreprocessor):
                     result = np.empty((dst_height, dst_width), dtype=src.dtype)
                 
                 # Perform bilinear interpolation
-                for y in nb.prange(dst_height):
-                    for x in nb.prange(dst_width):
+                    for x in range(dst_width):
                         # Calculate source coordinates
                         src_x = x * scale_x
                         src_y = y * scale_y
