@@ -110,6 +110,7 @@ class ModelSource(Enum):
 
 
 @dataclass
+@dataclass
 class ModelInfo:
     """Information about a downloadable model."""
     name: str
@@ -120,6 +121,7 @@ class ModelInfo:
     size_mb: Optional[float] = None
     license: Optional[str] = None
     tags: List[str] = None
+    tts_info: Optional[Dict[str, Any]] = None  # Additional TTS-specific information
     
     def __post_init__(self):
         if self.tags is None:
