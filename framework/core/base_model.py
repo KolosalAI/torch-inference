@@ -3,6 +3,7 @@ Base model interface and abstract classes for the PyTorch inference framework.
 
 This module defines the core interfaces that all model implementations must follow,
 ensuring consistency and interoperability across different model types.
+Includes Numba JIT acceleration for computational optimizations.
 """
 
 from abc import ABC, abstractmethod
@@ -15,6 +16,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ..core.config import InferenceConfig
+
+# Import Numba optimizer for JIT acceleration
+try:
+    from ..optimizers.numba_optimizer import NumbaOptimizer
+    NUMBA_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    NUMBA_OPTIMIZER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +76,7 @@ class BaseModel(ABC):
     
     This class defines the interface that all model implementations must follow,
     ensuring consistency and proper resource management.
+    Includes Numba JIT acceleration capabilities for computational optimizations.
     """
     
     def __init__(self, config: InferenceConfig):
@@ -78,8 +87,24 @@ class BaseModel(ABC):
         self._is_loaded = False
         self._compiled_model = None
         
-        # Setup logging
+        # Setup logging first
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+        
+        # Initialize Numba optimizer for JIT acceleration
+        self.numba_optimizer = None
+        self.numba_ops = {}
+        self._numba_enabled = False
+        if NUMBA_OPTIMIZER_AVAILABLE:
+            try:
+                self.numba_optimizer = NumbaOptimizer()
+                if self.numba_optimizer.is_available():
+                    self.numba_ops = self.numba_optimizer.create_optimized_operations()
+                    self._numba_enabled = True
+                    self.logger.debug("Numba JIT acceleration enabled for model")
+                else:
+                    self.logger.debug("Numba available but not functional")
+            except Exception as e:
+                self.logger.debug(f"Failed to initialize Numba optimizer: {e}")
     
     @abstractmethod
     def load_model(self, model_path: Union[str, Path]) -> None:

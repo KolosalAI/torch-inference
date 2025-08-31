@@ -3439,6 +3439,20 @@ wheels = [
 ]
 
 [[package]]
+name = "taichi"
+version = "1.7.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "dill", marker = "sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'win32'" },
+    { name = "rich", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/b2/c576be78f77759c14aa839aa650d177b880467da9da3907245668e070209/taichi-1.7.4-cp310-cp310-win_amd64.whl", hash = "sha256:0cd550e5f91429b6078872d1d4d366a6257c3e50171c6eed21fa4e9801810f6e", size = 83307098, upload-time = "2025-07-31T14:48:43.171Z" },
+]
+
+[[package]]
 name = "tensorboard"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3820,6 +3834,7 @@ dependencies = [
     { name = "starlette", marker = "sys_platform == 'win32'" },
     { name = "stevedore", marker = "sys_platform == 'win32'" },
     { name = "sympy", marker = "sys_platform == 'win32'" },
+    { name = "taichi", marker = "sys_platform == 'win32'" },
     { name = "tensorboard", marker = "sys_platform == 'win32'" },
     { name = "tensorboard-data-server", marker = "sys_platform == 'win32'" },
     { name = "tensorly", marker = "sys_platform == 'win32'" },
@@ -4201,6 +4216,7 @@ requires-dist = [
     { name = "starlette", specifier = "==0.47.2" },
     { name = "stevedore", specifier = "==5.4.1" },
     { name = "sympy", specifier = ">=1.13.3" },
+    { name = "taichi", specifier = ">=1.7.4" },
     { name = "tensorboard", specifier = "==2.20.0" },
     { name = "tensorboard-data-server", specifier = "==0.7.2" },
     { name = "tensorly", specifier = "==0.9.0" },
