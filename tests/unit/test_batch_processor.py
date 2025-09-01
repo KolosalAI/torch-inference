@@ -910,6 +910,66 @@ class TestBatchProcessorIntegration:
         
         await processor.stop()
 
+    @pytest.mark.asyncio
+    async def test_batch_failure_isolation(self):
+        """Test that individual failures in batches are properly isolated"""
+        config = BatchConfig(
+            max_batch_size=4,
+            batch_timeout_ms=50,
+            enable_adaptive_batching=False
+        )
+        processor = BatchProcessor(config)
+        await processor.start()
+        
+        async def failure_prone_batch_handler(batch_data):
+            # This handler always fails when called with batch data
+            # But the fallback individual processing should work
+            if isinstance(batch_data, list) and len(batch_data) > 1:
+                # Force batch processing to fail to trigger individual item fallback
+                raise ValueError("Batch processing always fails")
+            else:
+                # Individual item processing - some items fail based on content
+                data = batch_data if not isinstance(batch_data, list) else batch_data[0]
+                if "fail" in data:
+                    raise ValueError(f"Simulated failure for {data}")
+                return f"success_{data}"
+        
+        # Submit a batch with mixed success/failure items
+        tasks = []
+        expected_failures = 2  # Items 0 and 5 will fail
+        expected_successes = 6  # Other items will succeed
+        
+        for i in range(8):  # Will create 2 batches of 4 items each
+            if i % 5 == 0:  # Every 5th item fails (items 0 and 5)
+                data = f"fail_item_{i}"
+            else:
+                data = f"success_item_{i}"
+            
+            task = processor.process_item(data=data, handler=failure_prone_batch_handler)
+            tasks.append(task)
+        
+        # Execute all tasks and collect results
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Analyze results
+        successful_results = [r for r in results if not isinstance(r, Exception)]
+        failed_results = [r for r in results if isinstance(r, Exception)]
+        
+        # Verify failure isolation
+        assert len(successful_results) == expected_successes, f"Expected {expected_successes} successes, got {len(successful_results)}"
+        assert len(failed_results) == expected_failures, f"Expected {expected_failures} failures, got {len(failed_results)}"
+        
+        # Check that successful results are correct
+        for result in successful_results:
+            assert "success_" in result
+            
+        # Check that failed results are correct exceptions
+        for result in failed_results:
+            assert isinstance(result, ValueError)
+            assert "Simulated failure" in str(result)
+        
+        await processor.stop()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
