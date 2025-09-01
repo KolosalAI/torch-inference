@@ -903,27 +903,8 @@ class BatchProcessor:
         def dummy_inference(tensor_batch: torch.Tensor) -> torch.Tensor:
             # Placeholder: just return the input transformed
             with torch.no_grad():
-                # Apply Numba-accelerated operations if available
-                if self._numba_enabled and tensor_batch.is_cpu:
-                    try:
-                        # Convert to numpy for Numba processing
-                        np_batch = tensor_batch.detach().numpy()
-                        
-                        # Apply ReLU using Numba if available
-                        if 'relu' in self.numba_ops:
-                            np_result = self.numba_ops['relu'](np_batch)
-                            result = torch.from_numpy(np_result).sum(dim=-1, keepdim=True)
-                        else:
-                            # Fallback to standard PyTorch
-                            result = torch.nn.functional.relu(tensor_batch.sum(dim=-1, keepdim=True))
-                    except Exception as e:
-                        self.logger.debug(f"Numba inference optimization failed: {e}")
-                        # Fallback to standard PyTorch
-                        result = torch.nn.functional.relu(tensor_batch.sum(dim=-1, keepdim=True))
-                else:
-                    # Standard transformation for GPU tensors or when Numba is not available
-                    result = torch.nn.functional.relu(tensor_batch.sum(dim=-1, keepdim=True))
-                
+                # Always use PyTorch's built-in ReLU for efficiency
+                result = torch.nn.functional.relu(tensor_batch.sum(dim=-1, keepdim=True))
                 return result
         
         # Stack tensors for batch processing
