@@ -306,7 +306,7 @@ class TestFullOptimizationStackIntegration:
         
         # Verify performance under load
         assert throughput > 7.5  # Should handle at least 7.5 RPS (adjusted for individual processing overhead)
-        assert success_rate > 0.90  # Should have high success rate (accounting for 2% random failures)
+        assert success_rate > 0.90  # Should have high success rate with proper failure isolation
         assert avg_latency < 0.15  # Average latency should be reasonable
         
         # Check that optimizations were applied
