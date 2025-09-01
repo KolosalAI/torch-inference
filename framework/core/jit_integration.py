@@ -231,10 +231,16 @@ def apply_array_jit(array: np.ndarray, operation: str = "relu") -> np.ndarray:
 
 
 # Optimized mathematical functions with JIT acceleration
-@jit_optimize(target="parallel", parallel=True)
-def fast_matrix_multiply(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Fast matrix multiplication with JIT acceleration."""
-    return np.dot(a, b)
+    # Manual matrix multiplication to benefit from JIT
+    m, k = a.shape
+    k2, n = b.shape
+    assert k == k2, "Inner dimensions must match for matrix multiplication"
+    result = np.zeros((m, n), dtype=a.dtype)
+    for i in range(m):
+        for j in range(n):
+            for l in range(k):
+                result[i, j] += a[i, l] * b[l, j]
+    return result
 
 
 @jit_optimize(target="parallel", parallel=True)
