@@ -525,7 +525,11 @@ def initialize_security_mitigations():
     
     # Return instances of security mitigations
     pytorch_security = PyTorchSecurityMitigation()
-    pytorch_security.initialize()  # Initialize the instance
+    try:
+        pytorch_security.initialize()  # Initialize the instance
+    except Exception as e:
+        security_logger.warning(f"Failed to initialize PyTorch security: {e}")
+        # Continue with ECDSA security even if PyTorch security fails
     
     ecdsa_security = ECDSASecurityMitigation()
     
