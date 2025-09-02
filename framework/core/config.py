@@ -58,14 +58,14 @@ class OptimizationLevel(Enum):
 
 @dataclass
 class DeviceConfig:
-    """Device and hardware configuration."""
+    """Device and hardware configuration with conservative defaults."""
     device_type: DeviceType = DeviceType.AUTO
     device_id: Optional[int] = None
-    use_fp16: bool = False
+    use_fp16: bool = False  # Conservative default - let optimizer enable this
     use_int8: bool = False
     use_tensorrt: bool = False
-    use_torch_compile: bool = False  # Disabled by default to avoid C++ compilation issues
-    compile_mode: str = "reduce-overhead"
+    use_torch_compile: bool = False  # Conservative default - let optimizer enable this  
+    compile_mode: str = "reduce-overhead"  # Balanced optimization
     memory_fraction: float = 0.9  # Fraction of CUDA memory to allocate
     
     # Enhanced JIT optimization options
@@ -166,15 +166,15 @@ class PostprocessingConfig:
 
 @dataclass
 class PerformanceConfig:
-    """Performance and monitoring configuration."""
+    """Performance and monitoring configuration with conservative defaults."""
     enable_profiling: bool = False
     enable_metrics: bool = True
-    warmup_iterations: int = 3
+    warmup_iterations: int = 5
     benchmark_iterations: int = 10
     log_level: str = "INFO"
     enable_async: bool = True
-    max_workers: int = 4
-    max_concurrent_requests: int = 10
+    max_workers: int = 8
+    max_concurrent_requests: int = 10  # Conservative default
 
 
 @dataclass

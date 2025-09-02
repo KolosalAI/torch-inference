@@ -260,7 +260,8 @@ class TestBaseModel:
         mock_compile.assert_called_once_with(
             model.model,
             mode="reduce-overhead",
-            fullgraph=False
+            fullgraph=False,
+            dynamic=False
         )
         assert model._compiled_model == mock_compiled_model
     

@@ -26,15 +26,33 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Initialize security for model adapters
-if SECURITY_AVAILABLE:
-    _pytorch_security = PyTorchSecurityMitigation()
-    _ecdsa_security = ECDSASecurityMitigation()
-    logger.info("Security mitigations initialized for model adapters")
-else:
-    _pytorch_security = None
-    _ecdsa_security = None
-    logger.warning("Security mitigations not available for model adapters")
+# Initialize security for model adapters (lazy initialization to prevent hanging)
+_pytorch_security = None
+_ecdsa_security = None
+
+def _get_pytorch_security():
+    """Lazy initialization of PyTorch security."""
+    global _pytorch_security
+    if SECURITY_AVAILABLE and _pytorch_security is None:
+        try:
+            _pytorch_security = PyTorchSecurityMitigation()
+            logger.info("PyTorch security mitigation initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize PyTorch security: {e}")
+            _pytorch_security = False  # Mark as failed to avoid retrying
+    return _pytorch_security if _pytorch_security is not False else None
+
+def _get_ecdsa_security():
+    """Lazy initialization of ECDSA security."""
+    global _ecdsa_security
+    if SECURITY_AVAILABLE and _ecdsa_security is None:
+        try:
+            _ecdsa_security = ECDSASecurityMitigation()
+            logger.info("ECDSA security mitigation initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize ECDSA security: {e}")
+            _ecdsa_security = False  # Mark as failed to avoid retrying
+    return _ecdsa_security if _ecdsa_security is not False else None
 
 
 class PyTorchModelAdapter(BaseModel):
@@ -54,8 +72,9 @@ class PyTorchModelAdapter(BaseModel):
             self.logger.info(f"Target device: {self.device}")
             
             # Use security context for model loading
-            if _pytorch_security:
-                with _pytorch_security.secure_context():
+            pytorch_security = _get_pytorch_security()
+            if pytorch_security:
+                with pytorch_security.secure_context():
                     # Load model
                     if model_path.suffix == '.pt' or model_path.suffix == '.pth':
                         checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
