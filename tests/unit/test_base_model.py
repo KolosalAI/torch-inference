@@ -260,7 +260,8 @@ class TestBaseModel:
         mock_compile.assert_called_once_with(
             model.model,
             mode="reduce-overhead",
-            fullgraph=False
+            fullgraph=False,
+            dynamic=False
         )
         assert model._compiled_model == mock_compiled_model
     
@@ -281,6 +282,9 @@ class TestBaseModel:
     
     def test_optimize_for_inference(self, test_config):
         """Test optimization for inference."""
+        # Enable torch compile to ensure compile_model is called
+        test_config.device.use_torch_compile = True
+        
         model = MockModel(test_config)
         model.load_model("test_path")
         

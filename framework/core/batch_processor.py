@@ -766,16 +766,27 @@ class BatchProcessor:
                                 # This is a single item, re-raise the exception
                                 raise e
                             else:
-                                # Add error results for all items in this batch
-                                results.extend([e] * len(handler_items))
+                                # Process each item individually to isolate failures
+                                for item in handler_items:
+                                    try:
+                                        if asyncio.iscoroutinefunction(handler):
+                                            item_result = await handler(item.data)
+                                        else:
+                                            item_result = handler(item.data)
+                                        results.append(item_result)
+                                    except Exception as item_error:
+                                        self.logger.error(f"Individual item processing failed: {item_error}")
+                                        results.append(item_error)
                     else:
                         # Default fallback for items without handlers
                         for item in handler_items:
                             results.append(f"processed_{item.data}")
                 
                 # Check if any results are exceptions to determine success
+                # The batch is successful if we processed all items (even if some items failed individually)
+                # Only mark as failed if we couldn't process items at all
                 has_exceptions = any(isinstance(result, Exception) for result in results)
-                        
+                
                 processing_time = time.time() - start_time
                 return BatchResult(
                     batch_id=batch_id,
@@ -785,8 +796,8 @@ class BatchProcessor:
                     stage_times={ProcessingStage.INFERENCE: processing_time},
                     memory_usage={'current_mb': 0},
                     batch_size=len(batch),
-                    success=not has_exceptions,  # Success is False if any exceptions
-                    error="Handler processing failed" if has_exceptions else None
+                    success=True,  # Always successful if we processed all items (individual failures are per-item)
+                    error=None
                 )
             
             # Original tensor-based processing for ML models

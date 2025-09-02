@@ -324,8 +324,8 @@ class TestAdvancedMemoryPool:
         )
         pool = AdvancedMemoryPool(config)
         
-        # Start background cleanup
-        pool.start_background_cleanup()
+        # Start background cleanup with force_enable for testing
+        pool.start_background_cleanup(force_enable=True)
         
         assert pool.cleanup_thread_running
         assert pool.cleanup_thread is not None

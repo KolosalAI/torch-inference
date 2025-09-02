@@ -34,12 +34,20 @@ except ImportError:
     SECURITY_AVAILABLE = False
     logger.warning("Security mitigations not available")
 
-# Initialize security if available
-if SECURITY_AVAILABLE:
-    _pytorch_security = PyTorchSecurityMitigation()
-    logger.info("Security mitigations initialized for base models")
-else:
-    _pytorch_security = None
+# Initialize security if available (lazy initialization to prevent hanging)
+_pytorch_security = None
+
+def _get_pytorch_security():
+    """Lazy initialization of PyTorch security for base models."""
+    global _pytorch_security
+    if SECURITY_AVAILABLE and _pytorch_security is None:
+        try:
+            _pytorch_security = PyTorchSecurityMitigation()
+            logger.info("Security mitigations initialized for base models")
+        except Exception as e:
+            logger.warning(f"Failed to initialize base model security: {e}")
+            _pytorch_security = False  # Mark as failed to avoid retrying
+    return _pytorch_security if _pytorch_security is not False else None
 
 
 @dataclass
@@ -175,14 +183,31 @@ class BaseModel(ABC):
             # Preprocess
             preprocessed_inputs = self.preprocess(inputs)
             
-            # Forward pass
-            with torch.no_grad():
+            # ROI Optimization 0: Use inference_mode for better performance than no_grad
+            with torch.inference_mode():
                 try:
-                    raw_outputs = self.forward(preprocessed_inputs)
+                    # ROI Optimization 1: Mixed precision inference with optimal dtype selection
+                    if self.device.type == 'cuda' and self.config.device.use_fp16:
+                        # Use bfloat16 if supported for better numerical stability, else fp16
+                        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                        with torch.amp.autocast('cuda', dtype=dtype):
+                            raw_outputs = self.forward(preprocessed_inputs)
+                    else:
+                        raw_outputs = self.forward(preprocessed_inputs)
+                        
                 except Exception as e:
                     # Handle compilation errors by falling back to non-compiled model
-                    if "CppCompileError" in str(e) and self._compiled_model is not None:
-                        self.logger.warning("Torch compilation failed, falling back to non-compiled model")
+                    error_msg = str(e)
+                    compilation_errors = [
+                        "CppCompileError", 
+                        "TritonMissing", 
+                        "Cannot find a working triton installation",
+                        "triton is required",
+                        "Dynamo failed"
+                    ]
+                    
+                    if any(error in error_msg for error in compilation_errors) and self._compiled_model is not None:
+                        self.logger.warning(f"Torch compilation failed ({error_msg[:100]}...), falling back to non-compiled model")
                         self.config.device.use_torch_compile = False
                         self._compiled_model = None
                         raw_outputs = self.forward(preprocessed_inputs)
@@ -305,16 +330,36 @@ class BaseModel(ABC):
         
         try:
             self.logger.info("Compiling model with torch.compile")
-            self._compiled_model = torch.compile(
-                self.model,
-                mode=self.config.device.compile_mode,
-                fullgraph=False
-            )
-            self.logger.info("Model compilation completed")
+            
+            # ROI Optimization 2: Choose optimal compile mode based on config
+            compile_mode = getattr(self.config.device, 'compile_mode', 'reduce-overhead')
+            if compile_mode not in ['max-autotune', 'reduce-overhead', 'default']:
+                compile_mode = 'reduce-overhead'  # Safe default
+            
+            # Enhanced compile options for better performance
+            compile_options = {
+                'mode': compile_mode,
+                'fullgraph': False,  # More compatible than True
+                'dynamic': False,    # Static shapes for better optimization
+            }
+            
+            # Add backend-specific optimizations
+            if self.device.type == 'cuda':
+                compile_options['backend'] = 'inductor'
+            
+            self._compiled_model = torch.compile(self.model, **compile_options)
+            self.logger.info(f"Model compilation completed with mode '{compile_mode}'")
+            
         except Exception as e:
             error_msg = str(e)
-            if "triton" in error_msg.lower() or "inductor" in error_msg.lower():
-                self.logger.warning(f"Model compilation failed due to triton/inductor issue: {e}. Disabling torch.compile globally.")
+            compilation_errors = [
+                "triton", "inductor", "TritonMissing", 
+                "Cannot find a working triton installation",
+                "triton is required", "CppCompileError", "Dynamo failed"
+            ]
+            
+            if any(error in error_msg.lower() for error in compilation_errors):
+                self.logger.warning(f"Model compilation failed due to missing dependencies: {error_msg[:150]}... Disabling torch.compile.")
                 # Disable torch.compile for this configuration
                 self.config.device.use_torch_compile = False
             else:
@@ -330,11 +375,61 @@ class BaseModel(ABC):
         if not self._is_loaded:
             return
         
-        # Set to evaluation mode
+        # ROI Optimization 0: Set to evaluation mode (critical for BN/Dropout)
         self.model.eval()
         
         # Move to target device
         self.model.to(self.device)
+        
+        # ROI Optimization 1: Enable TF32 for Ampere+ GPUs
+        if self.device.type == 'cuda':
+            try:
+                # Check if GPU supports TF32 (Ampere or newer)
+                if torch.cuda.get_device_capability(self.device.index if self.device.index else 0)[0] >= 8:
+                    torch.set_float32_matmul_precision('high')  # Enables TF32
+                    self.logger.info("TF32 matmul precision enabled for Ampere+ GPU")
+                else:
+                    torch.set_float32_matmul_precision('highest')  # FP32 for older GPUs
+            except Exception as e:
+                self.logger.debug(f"TF32 setup failed: {e}")
+        
+        # ROI Optimization 4: CUDNN optimizations for fixed input sizes
+        if torch.backends.cudnn.is_available() and self.device.type == 'cuda':
+            torch.backends.cudnn.benchmark = True  # Auto-select fastest conv algorithms
+            torch.backends.cudnn.deterministic = False  # Allow non-deterministic for speed
+            torch.backends.cudnn.enabled = True
+            self.logger.info("CUDNN optimizations enabled with benchmarking")
+        
+        # ROI Optimization 4: Memory format optimization for CNNs
+        if self._has_conv_layers():
+            try:
+                self.model = self.model.to(memory_format=torch.channels_last)
+                self.logger.info("Enabled channels_last memory format for CNN optimization")
+            except Exception as e:
+                self.logger.debug(f"Channels-last optimization failed: {e}")
+        
+        # ROI Optimization 7: CPU optimizations 
+        if self.device.type == 'cpu':
+            # Set sensible thread count to avoid oversubscription
+            import os
+            cpu_count = os.cpu_count() or 4
+            # Use 75% of available cores, min 1, max 16
+            optimal_threads = max(1, min(16, int(cpu_count * 0.75)))
+            torch.set_num_threads(optimal_threads)
+            self.logger.info(f"Set CPU threads to {optimal_threads} for optimal performance")
+        
+        # Compile model if requested
+        if self.config.device.use_torch_compile:
+            self.compile_model()
+        
+        self.logger.info("Model optimization for inference completed")
+    
+    def _has_conv_layers(self) -> bool:
+        """Check if model has convolutional layers that would benefit from channels_last."""
+        try:
+            return any(isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) for m in self.model.modules())
+        except Exception:
+            return False
         
         # Apply FP16 if requested and model supports it
         # Skip FP16 for transformer models with embeddings to avoid dtype issues
@@ -539,8 +634,9 @@ class ModelManager:
         self.register_model(str(model_path), adapter)
         
         # Use secure model loading if security is available
-        if SECURITY_AVAILABLE and _pytorch_security:
-            with _pytorch_security.secure_torch_context():
+        pytorch_security = _get_pytorch_security()
+        if pytorch_security:
+            with pytorch_security.secure_torch_context():
                 adapter.load_model(model_path)
                 adapter.optimize_for_inference()
                 adapter.warmup()
@@ -558,8 +654,9 @@ class ModelManager:
         model = self.get_model(name)
         
         # Use secure model loading if security is available
-        if SECURITY_AVAILABLE and _pytorch_security:
-            with _pytorch_security.secure_torch_context():
+        pytorch_security = _get_pytorch_security()
+        if pytorch_security:
+            with pytorch_security.secure_torch_context():
                 model.load_model(model_path)
                 model.optimize_for_inference()
                 model.warmup()
