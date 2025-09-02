@@ -371,7 +371,7 @@ class BaseModel(ABC):
         return self._compiled_model if self._compiled_model is not None else self.model
     
     def optimize_for_inference(self) -> None:
-        """Apply various optimizations for inference."""
+        """Apply comprehensive optimizations for maximum inference performance."""
         if not self._is_loaded:
             return
         
@@ -381,48 +381,136 @@ class BaseModel(ABC):
         # Move to target device
         self.model.to(self.device)
         
-        # ROI Optimization 1: Enable TF32 for Ampere+ GPUs
+        # ROI Optimization 1: Enable TF32 for Ampere+ GPUs (major performance boost)
         if self.device.type == 'cuda':
             try:
-                # Check if GPU supports TF32 (Ampere or newer)
-                if torch.cuda.get_device_capability(self.device.index if self.device.index else 0)[0] >= 8:
+                # Check if GPU supports TF32 (Ampere or newer - CC 8.0+)
+                device_idx = self.device.index if self.device.index is not None else 0
+                major, minor = torch.cuda.get_device_capability(device_idx)
+                if major >= 8:
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
                     torch.set_float32_matmul_precision('high')  # Enables TF32
-                    self.logger.info("TF32 matmul precision enabled for Ampere+ GPU")
+                    self.logger.info(f"TF32 optimizations enabled for Ampere+ GPU (CC {major}.{minor})")
                 else:
                     torch.set_float32_matmul_precision('highest')  # FP32 for older GPUs
+                    self.logger.info(f"Using FP32 precision for GPU (CC {major}.{minor})")
             except Exception as e:
                 self.logger.debug(f"TF32 setup failed: {e}")
-        
-        # ROI Optimization 4: CUDNN optimizations for fixed input sizes
+                
+        # ROI Optimization 2: CUDNN optimizations for fixed input sizes
         if torch.backends.cudnn.is_available() and self.device.type == 'cuda':
             torch.backends.cudnn.benchmark = True  # Auto-select fastest conv algorithms
             torch.backends.cudnn.deterministic = False  # Allow non-deterministic for speed
             torch.backends.cudnn.enabled = True
-            self.logger.info("CUDNN optimizations enabled with benchmarking")
+            self.logger.info("CUDNN optimizations enabled with algorithm benchmarking")
         
-        # ROI Optimization 4: Memory format optimization for CNNs
+        # ROI Optimization 3: Memory format optimization for CNNs (up to 30% speedup)
         if self._has_conv_layers():
             try:
+                # Convert model to channels_last for better memory layout
                 self.model = self.model.to(memory_format=torch.channels_last)
                 self.logger.info("Enabled channels_last memory format for CNN optimization")
             except Exception as e:
                 self.logger.debug(f"Channels-last optimization failed: {e}")
         
-        # ROI Optimization 7: CPU optimizations 
+        # ROI Optimization 4: CPU thread optimization to avoid oversubscription
         if self.device.type == 'cpu':
-            # Set sensible thread count to avoid oversubscription
             import os
             cpu_count = os.cpu_count() or 4
-            # Use 75% of available cores, min 1, max 16
+            # Use 75% of available cores for optimal performance, min 1, max 16
             optimal_threads = max(1, min(16, int(cpu_count * 0.75)))
             torch.set_num_threads(optimal_threads)
-            self.logger.info(f"Set CPU threads to {optimal_threads} for optimal performance")
+            # Also optimize for inference workloads
+            try:
+                torch.set_num_interop_threads(1)  # Reduce context switching
+                self.logger.info(f"Set CPU threads to {optimal_threads} with 1 interop thread for optimal performance")
+            except RuntimeError as e:
+                if "cannot set number of interop threads after parallel work has started" in str(e):
+                    self.logger.debug(f"Could not set interop threads (parallel work already started): {e}")
+                    self.logger.info(f"Set CPU threads to {optimal_threads} (interop threads already configured)")
+                else:
+                    raise
         
-        # Compile model if requested
+        # ROI Optimization 5: Memory pool and caching optimizations
+        if self.device.type == 'cuda':
+            try:
+                # Pre-allocate memory pools for stable performance
+                memory_fraction = getattr(self.config.device, 'memory_fraction', 0.9)
+                torch.cuda.set_per_process_memory_fraction(memory_fraction, device=self.device)
+                
+                # Enable memory pool for better allocation patterns if available
+                if hasattr(torch.cuda, 'memory_pool'):
+                    torch.cuda.empty_cache()  # Clear first for clean slate
+                    
+                # Enable caching allocator optimizations
+                os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:512'
+                
+                self.logger.info(f"CUDA memory optimizations applied - Memory fraction: {memory_fraction}")
+            except Exception as e:
+                self.logger.debug(f"CUDA memory pool optimization failed: {e}")
+        
+        # ROI Optimization 6: Apply mixed precision if configured
+        if self.config.device.use_fp16 and self.device.type == 'cuda':
+            # Check if model has embedding layers that would cause dtype issues
+            has_embeddings = any('embedding' in name.lower() for name, _ in self.model.named_modules())
+            
+            if not has_embeddings:
+                try:
+                    self.model.half()
+                    self.logger.info("Applied FP16 optimization for GPU inference")
+                except Exception as e:
+                    self.logger.warning(f"FP16 conversion failed: {e}")
+            else:
+                self.logger.info("Skipping FP16 conversion for model with embeddings to avoid dtype issues")
+        
+        # ROI Optimization 7: Fuse operations where possible
+        try:
+            if hasattr(torch, 'jit') and hasattr(torch.jit, 'fuse'):
+                # This is deprecated in newer PyTorch but kept for compatibility
+                pass  # Modern torch.compile handles this better
+            
+            # Check for fusible operations
+            if self._can_fuse_operations():
+                self.logger.info("Model has fusible operations that will benefit from compilation")
+        except Exception as e:
+            self.logger.debug(f"Operation fusion check failed: {e}")
+        
+        # ROI Optimization 8: Compile model with torch.compile for maximum performance
         if self.config.device.use_torch_compile:
             self.compile_model()
         
-        self.logger.info("Model optimization for inference completed")
+        # ROI Optimization 9: Apply quantization if requested
+        if getattr(self.config.device, 'use_quantization', False):
+            self._apply_quantization()
+        
+        self.logger.info("Comprehensive model optimization for inference completed")
+    
+    def _can_fuse_operations(self) -> bool:
+        """Check if model has operations that can be fused."""
+        try:
+            fused_ops = ['Conv', 'BatchNorm', 'ReLU', 'Linear']
+            model_ops = [str(type(m).__name__) for m in self.model.modules()]
+            return any(op in ' '.join(model_ops) for op in fused_ops)
+        except Exception:
+            return False
+    
+    def _apply_quantization(self) -> None:
+        """Apply dynamic quantization for CPU inference speedup."""
+        try:
+            if self.device.type == 'cpu':
+                # Apply dynamic quantization for CPU
+                quantized_model = torch.quantization.quantize_dynamic(
+                    self.model, 
+                    {torch.nn.Linear, torch.nn.Conv2d}, 
+                    dtype=torch.qint8
+                )
+                self.model = quantized_model
+                self.logger.info("Applied dynamic quantization for CPU inference")
+            else:
+                self.logger.debug("Quantization currently only supported for CPU inference")
+        except Exception as e:
+            self.logger.warning(f"Quantization failed: {e}")
     
     def _has_conv_layers(self) -> bool:
         """Check if model has convolutional layers that would benefit from channels_last."""

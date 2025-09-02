@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
-# Optional uvloop import - only available on Unix systems
+# Optional uvloop import - available on Unix systems and Windows with uvloop>=0.17.0
 try:
     import uvloop
     UVLOOP_AVAILABLE = True
@@ -41,13 +41,17 @@ logger = logging.getLogger(__name__)
 def configure_event_loop():
     """Configure the optimal event loop for the current platform."""
     if UVLOOP_AVAILABLE and uvloop is not None:
-        # Use uvloop for better performance on Unix systems
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        logger.info("Configured uvloop event loop policy for optimized performance")
-        return "uvloop"
+        try:
+            # Use uvloop for better performance on all platforms where available
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            logger.info("Configured uvloop event loop policy for optimized performance")
+            return "uvloop"
+        except Exception as e:
+            logger.warning(f"Failed to configure uvloop: {e}. Falling back to default asyncio.")
+            return "asyncio"
     else:
-        # Use default asyncio event loop on Windows or when uvloop is unavailable
-        logger.info("Using default asyncio event loop policy")
+        # Use default asyncio event loop when uvloop is unavailable
+        logger.info("Using default asyncio event loop policy (uvloop not available)")
         return "asyncio"
 
 
