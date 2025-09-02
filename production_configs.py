@@ -19,14 +19,15 @@ from framework.core.inference_engine import (
 # ============================================================================
 
 def get_high_throughput_config():
-    """Configuration for high-throughput scenarios (1000+ req/s)."""
+    """Configuration for high-throughput scenarios (1000+ req/s) with ROI optimizations."""
     return InferenceConfig(
         device=DeviceConfig(
             device_type=DeviceType.CUDA,  # Use GPU for best performance
             device_id=0,
-            use_fp16=True,               # Enable FP16 for faster inference
+            use_fp16=True,               # ROI Optimization 1: Enable mixed precision
             use_tensorrt=True,           # Enable TensorRT optimization
-            use_torch_compile=True       # Enable torch.compile
+            use_torch_compile=True,      # ROI Optimization 2: Enable torch.compile
+            compile_mode="max-autotune"  # Aggressive optimization for throughput
         ),
         batch=BatchConfig(
             batch_size=8,                # Larger batches for throughput
@@ -36,7 +37,7 @@ def get_high_throughput_config():
         ),
         performance=PerformanceConfig(
             max_workers=16,              # Many workers for concurrency
-            warmup_iterations=10,        # Thorough warmup
+            warmup_iterations=10,        # ROI Optimization 0: Proper warmup for kernel selection
             enable_profiling=False       # Disable profiling in production
         )
     )
@@ -47,24 +48,25 @@ def get_high_throughput_config():
 # ============================================================================
 
 def get_low_latency_config():
-    """Configuration for low-latency scenarios (<20ms response time)."""
+    """Configuration for low-latency scenarios (<20ms response time) with ROI optimizations."""
     return InferenceConfig(
         device=DeviceConfig(
             device_type=DeviceType.CUDA,
             device_id=0,
-            use_fp16=True,               # FP16 for speed
+            use_fp16=True,               # ROI Optimization 1: FP16 for speed
             use_tensorrt=False,          # Skip TensorRT to avoid startup delay
-            use_torch_compile=False      # Skip compilation for faster startup
+            use_torch_compile=True,      # ROI Optimization 2: Enable for performance
+            compile_mode="reduce-overhead"  # Optimize for latency
         ),
         batch=BatchConfig(
-            batch_size=1,                # Prefer single requests
+            batch_size=1,                # Prefer single requests for lowest latency
             max_batch_size=4,            # Small max batch
             min_batch_size=1,
             queue_size=100               # Small queue for quick processing
         ),
         performance=PerformanceConfig(
             max_workers=8,               # Moderate workers to avoid overhead
-            warmup_iterations=3,         # Quick warmup
+            warmup_iterations=5,         # ROI Optimization 0: Adequate warmup
             enable_profiling=False
         )
     )
@@ -75,14 +77,15 @@ def get_low_latency_config():
 # ============================================================================
 
 def get_balanced_config():
-    """Configuration balanced for both latency and throughput."""
+    """Configuration balanced for both latency and throughput with ROI optimizations."""
     return InferenceConfig(
         device=DeviceConfig(
             device_type=DeviceType.CUDA,
             device_id=0,
-            use_fp16=True,
+            use_fp16=True,               # ROI Optimization 1: Mixed precision
             use_tensorrt=True,
-            use_torch_compile=True
+            use_torch_compile=True,      # ROI Optimization 2: torch.compile
+            compile_mode="reduce-overhead"  # Balanced optimization
         ),
         batch=BatchConfig(
             batch_size=4,                # Moderate batch size
@@ -92,7 +95,7 @@ def get_balanced_config():
         ),
         performance=PerformanceConfig(
             max_workers=8,
-            warmup_iterations=5,
+            warmup_iterations=5,         # ROI Optimization 0: Adequate warmup
             enable_profiling=False
         )
     )

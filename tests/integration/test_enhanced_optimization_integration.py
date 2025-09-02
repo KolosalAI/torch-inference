@@ -76,6 +76,7 @@ class TestEnhancedOptimizationIntegration:
         return model_path
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(30)
     def test_end_to_end_optimization_pipeline(self, enhanced_config, temp_model_path, image_input):
         """Test complete end-to-end optimization pipeline."""
         # Create framework
@@ -83,7 +84,8 @@ class TestEnhancedOptimizationIntegration:
         
         # Mock the model loading and optimization process
         with patch('framework.load_model') as mock_load_model, \
-             patch('framework.core.inference_engine.create_inference_engine') as mock_create_engine:
+             patch('framework.core.inference_engine.create_inference_engine') as mock_create_engine, \
+             patch('torch.compile') as mock_compile:
             
             # Create mock model
             mock_model = Mock()
@@ -98,6 +100,9 @@ class TestEnhancedOptimizationIntegration:
             # Create mock engine
             mock_engine = Mock()
             mock_create_engine.return_value = mock_engine
+            
+            # Mock torch.compile to avoid timeout
+            mock_compile.return_value = mock_model.model
             
             # Load model
             framework.load_model(temp_model_path)
@@ -122,6 +127,7 @@ class TestEnhancedOptimizationIntegration:
             assert result is not None
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(25)
     def test_optimizer_pipeline_creation_and_execution(self, enhanced_config):
         """Test creating and executing an optimizer pipeline."""
         # Define pipeline configuration
@@ -176,6 +182,7 @@ class TestEnhancedOptimizationIntegration:
                             pytest.skip(f"Pipeline creation failed: {e}")
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(20)
     def test_optimization_with_different_model_types(self, enhanced_config):
         """Test optimization with different types of models."""
         model_configs = [
@@ -224,6 +231,7 @@ class TestEnhancedOptimizationIntegration:
                 assert isinstance(applied, dict)
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(25)
     def test_optimization_with_different_hardware_scenarios(self, temp_model_path):
         """Test optimization recommendations for different hardware scenarios."""
         hardware_scenarios = [
@@ -264,6 +272,7 @@ class TestEnhancedOptimizationIntegration:
     
     @pytest.mark.asyncio
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(30)
     async def test_async_inference_with_optimizations(self, enhanced_config, temp_model_path, image_input):
         """Test async inference with enhanced optimizations."""
         framework = TorchInferenceFramework(enhanced_config)
@@ -310,6 +319,7 @@ class TestEnhancedOptimizationIntegration:
         
         await framework.stop_engine()
     
+    @pytest.mark.timeout(20)
     def test_optimization_performance_monitoring(self, enhanced_config, temp_model_path):
         """Test performance monitoring with optimizations."""
         framework = TorchInferenceFramework(enhanced_config)
@@ -342,6 +352,7 @@ class TestEnhancedOptimizationIntegration:
         assert "optimized" in str(benchmark_results["model_info"])
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(25)
     def test_optimization_error_recovery(self, enhanced_config, temp_model_path):
         """Test error recovery during optimization process."""
         framework = TorchInferenceFramework(enhanced_config)
@@ -421,6 +432,7 @@ class TestOptimizedFrameworkIntegration:
             )
         )
     
+    @pytest.mark.timeout(20)
     def test_create_optimized_framework(self, optimized_config):
         """Test creating optimized framework."""
         framework = create_optimized_framework(optimized_config)
@@ -428,6 +440,7 @@ class TestOptimizedFrameworkIntegration:
         assert isinstance(framework, TorchInferenceFramework)
         assert framework.config == optimized_config
     
+    @pytest.mark.timeout(25)
     def test_optimized_framework_model_loading(self, optimized_config, tmp_path):
         """Test model loading in optimized framework."""
         # Create a simple model
@@ -437,7 +450,7 @@ class TestOptimizedFrameworkIntegration:
         
         framework = create_optimized_framework(optimized_config)
         
-        # Mock OptimizedModel
+        # Mock OptimizedModel and avoid torch.compile
         with patch('framework.OptimizedModel') as mock_optimized_model_class:
             mock_optimized_model = Mock()
             mock_optimized_model.load_model = Mock()
@@ -445,21 +458,26 @@ class TestOptimizedFrameworkIntegration:
             mock_optimized_model.model_info = {"optimized": True, "type": "enhanced"}
             mock_optimized_model_class.return_value = mock_optimized_model
             
-            # Mock inference engine creation
+            # Mock inference engine creation to avoid torch.compile timeout
             with patch('framework.core.inference_engine.create_inference_engine') as mock_create_engine:
                 mock_engine = Mock()
                 mock_create_engine.return_value = mock_engine
                 
-                # Load model
-                framework.load_model(model_path)
-                
-                assert framework._initialized
-                assert framework.model == mock_optimized_model
-                
-                # Should use OptimizedModel instead of regular model
-                mock_optimized_model_class.assert_called_once_with(optimized_config)
-                mock_optimized_model.load_model.assert_called_once_with(model_path)
+                # Mock torch.compile to avoid actual compilation
+                with patch('torch.compile') as mock_compile:
+                    mock_compile.return_value = model  # Return original model
+                    
+                    # Load model
+                    framework.load_model(model_path)
+                    
+                    assert framework._initialized
+                    assert framework.model == mock_optimized_model
+                    
+                    # Should use OptimizedModel instead of regular model
+                    mock_optimized_model_class.assert_called_once_with(optimized_config)
+                    mock_optimized_model.load_model.assert_called_once_with(model_path)
     
+    @pytest.mark.timeout(20)
     def test_optimized_framework_inference(self, optimized_config):
         """Test inference with optimized framework."""
         framework = create_optimized_framework(optimized_config)
@@ -526,6 +544,7 @@ class TestRealWorldOptimizationScenarios:
         }
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(25)
     def test_edge_device_optimization(self, real_world_configs):
         """Test optimization for edge device scenario."""
         config = real_world_configs["edge_device"]
@@ -567,6 +586,7 @@ class TestRealWorldOptimizationScenarios:
         assert isinstance(applied, dict)
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(25)
     def test_gpu_server_optimization(self, real_world_configs):
         """Test optimization for GPU server scenario."""
         config = real_world_configs["gpu_server"]
@@ -610,6 +630,7 @@ class TestRealWorldOptimizationScenarios:
         applied = framework.apply_automatic_optimizations(aggressive=True)
         assert isinstance(applied, dict)
     
+    @pytest.mark.timeout(25)
     def test_production_server_optimization(self, real_world_configs):
         """Test optimization for production server scenario."""
         config = real_world_configs["production_server"]
@@ -656,6 +677,7 @@ class TestOptimizationCompatibility:
     """Test compatibility between different optimization strategies."""
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
+    @pytest.mark.timeout(30)
     def test_mixed_optimization_compatibility(self):
         """Test compatibility when mixing different optimization types."""
         from framework.core.config import InferenceConfig, DeviceConfig
@@ -712,6 +734,7 @@ class TestOptimizationCompatibility:
                     # Some combinations might not be compatible
                     pytest.skip(f"Optimization combination {combination} not compatible: {e}")
     
+    @pytest.mark.timeout(25)
     def test_optimization_fallback_chain(self):
         """Test fallback chain when optimizations are not available."""
         from framework.core.config import InferenceConfig, DeviceConfig
