@@ -539,6 +539,22 @@ class BaseModel(ABC):
     
     def _create_dummy_input(self) -> torch.Tensor:
         """Create dummy input for warmup. Override in subclasses."""
+        # Determine the appropriate dtype based on model configuration
+        target_dtype = torch.float32
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Try to get dtype from the first parameter of the model
+                first_param = next(iter(self.model.parameters()), None)
+                if first_param is not None:
+                    target_dtype = first_param.dtype
+            except Exception:
+                # Fallback: check if FP16 is enabled in config
+                if (hasattr(self.config, 'device') and 
+                    getattr(self.config.device, 'use_fp16', False) and 
+                    self.device.type == 'cuda'):
+                    # Use bfloat16 if supported, otherwise float16
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
         # Try to infer from model structure if possible
         if hasattr(self, 'model') and self.model is not None:
             try:
@@ -553,25 +569,25 @@ class BaseModel(ABC):
                     # CNN model - create image-like input
                     in_channels = first_layer.in_channels
                     # Use reasonable default image size
-                    return torch.randn(1, in_channels, 64, 64, device=self.device)
+                    return torch.randn(1, in_channels, 64, 64, device=self.device, dtype=target_dtype)
                 elif isinstance(first_layer, torch.nn.Conv1d):
                     # 1D CNN - create sequence-like input
                     in_channels = first_layer.in_channels
-                    return torch.randn(1, in_channels, 64, device=self.device)
+                    return torch.randn(1, in_channels, 64, device=self.device, dtype=target_dtype)
                 elif isinstance(first_layer, torch.nn.Linear):
                     # Linear model - create flat input
                     in_features = first_layer.in_features
-                    return torch.randn(1, in_features, device=self.device)
+                    return torch.randn(1, in_features, device=self.device, dtype=target_dtype)
             except Exception as e:
                 logger.debug(f"Failed to infer input shape from model: {e}")
         
         # Default implementation for image models using config
         if hasattr(self.config, 'preprocessing') and hasattr(self.config.preprocessing, 'input_size'):
             height, width = self.config.preprocessing.input_size
-            return torch.randn(1, 3, height, width, device=self.device)
+            return torch.randn(1, 3, height, width, device=self.device, dtype=target_dtype)
         else:
             # Generic dummy input - use a safe shape that works for most models
-            return torch.randn(1, 3, 64, 64, device=self.device)
+            return torch.randn(1, 3, 64, 64, device=self.device, dtype=target_dtype)
     
     def get_memory_usage(self) -> Dict[str, float]:
         """Get current memory usage information."""
