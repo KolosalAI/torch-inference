@@ -698,6 +698,22 @@ class ExampleModel(BaseModel):
     
     def preprocess(self, inputs: Any) -> torch.Tensor:
         """Preprocess inputs."""
+        # Determine the appropriate dtype based on model configuration
+        target_dtype = torch.float32
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Try to get dtype from the first parameter of the model
+                first_param = next(iter(self.model.parameters()), None)
+                if first_param is not None:
+                    target_dtype = first_param.dtype
+            except Exception:
+                # Fallback: check if FP16 is enabled in config
+                if (hasattr(self.config, 'device') and 
+                    getattr(self.config.device, 'use_fp16', False) and 
+                    self.device.type == 'cuda'):
+                    # Use bfloat16 if supported, otherwise float16
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
         if isinstance(inputs, list) and all(isinstance(x, (int, float)) for x in inputs):
             # List of numbers - pad or truncate to size 10
             input_list = list(inputs)
@@ -706,37 +722,37 @@ class ExampleModel(BaseModel):
             elif len(input_list) < 10:
                 input_list = input_list + [0.0] * (10 - len(input_list))
             
-            tensor_input = torch.tensor(input_list, dtype=torch.float32).unsqueeze(0)
+            tensor_input = torch.tensor(input_list, dtype=target_dtype).unsqueeze(0)
             return tensor_input.to(self.device)
         elif isinstance(inputs, (int, float)):
             # Single number, pad to size 10
             padded_inputs = [float(inputs)] + [0.0] * 9
-            return torch.tensor(padded_inputs, dtype=torch.float32).unsqueeze(0).to(self.device)
+            return torch.tensor(padded_inputs, dtype=target_dtype).unsqueeze(0).to(self.device)
         elif isinstance(inputs, str):
             # Convert string to numeric (hash-based)
             numeric_input = [float(hash(inputs) % 1000) / 1000] + [0.0] * 9
-            return torch.tensor(numeric_input, dtype=torch.float32).unsqueeze(0).to(self.device)
+            return torch.tensor(numeric_input, dtype=target_dtype).unsqueeze(0).to(self.device)
         else:
             # Default: try to convert to tensor
             try:
                 if hasattr(inputs, '__iter__') and not isinstance(inputs, str):
                     # Convert to numpy array first to avoid the warning
                     np_array = np.array(list(inputs), dtype=np.float32)
-                    tensor_input = torch.from_numpy(np_array)
+                    tensor_input = torch.from_numpy(np_array).to(target_dtype)
                 else:
-                    tensor_input = torch.tensor([inputs], dtype=torch.float32)
+                    tensor_input = torch.tensor([inputs], dtype=target_dtype)
                 
                 # Pad or truncate to size 10
                 if tensor_input.numel() > 10:
                     tensor_input = tensor_input[:10]
                 elif tensor_input.numel() < 10:
-                    padding = torch.zeros(10 - tensor_input.numel())
+                    padding = torch.zeros(10 - tensor_input.numel(), dtype=target_dtype)
                     tensor_input = torch.cat([tensor_input.flatten(), padding])
                 
                 return tensor_input.unsqueeze(0).to(self.device)
             except Exception:
                 # Fallback: random input
-                return torch.randn(1, 10, device=self.device)
+                return torch.randn(1, 10, device=self.device, dtype=target_dtype)
     
     def get_model_for_inference(self):
         """Get the model for inference (required by the forward method)."""
@@ -757,7 +773,23 @@ class ExampleModel(BaseModel):
     
     def _create_dummy_input(self) -> torch.Tensor:
         """Create dummy input for warmup."""
-        return torch.randn(1, 10, device=self.device)
+        # Determine the appropriate dtype based on model configuration
+        target_dtype = torch.float32
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Try to get dtype from the first parameter of the model
+                first_param = next(iter(self.model.parameters()), None)
+                if first_param is not None:
+                    target_dtype = first_param.dtype
+            except Exception:
+                # Fallback: check if FP16 is enabled in config
+                if (hasattr(self.config, 'device') and 
+                    getattr(self.config.device, 'use_fp16', False) and 
+                    self.device.type == 'cuda'):
+                    # Use bfloat16 if supported, otherwise float16
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
+        return torch.randn(1, 10, device=self.device, dtype=target_dtype)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
