@@ -1,0 +1,17 @@
+# Development Configuration
+
+# Override default settings for development
+debug: true
+environment: "development"
+
+server:
+  reload: true
+  log_level: "DEBUG"
+
+logging:
+  level: "DEBUG"
+
+# Development-specific features
+features:
+  enable_debug_endpoints: true
+  detailed_error_responses: true
