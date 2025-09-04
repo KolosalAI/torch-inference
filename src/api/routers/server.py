@@ -20,10 +20,10 @@ async def get_server_config() -> APIResponse:
         settings = get_settings()
         config = {
             "environment": settings.environment,
-            "host": settings.host,
-            "port": settings.port,
-            "log_level": settings.log_level,
-            "cors_enabled": settings.cors_enabled,
+            "host": settings.server.host,
+            "port": settings.server.port,
+            "log_level": settings.server.log_level,
+            "cors_enabled": getattr(settings.security, 'cors_enabled', True),
             "debug": settings.debug,
         }
         return APIResponse(

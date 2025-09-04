@@ -203,3 +203,8 @@ def get_config_manager() -> ConfigManager:
 def get_config() -> AppConfig:
     """Get the current application configuration."""
     return get_config_manager().config
+
+
+def get_settings() -> AppConfig:
+    """Get the current application settings (alias for get_config)."""
+    return get_config()

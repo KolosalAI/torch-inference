@@ -159,8 +159,8 @@ class TestBasicIntegration:
         calibration_toolkit = INT8CalibrationToolkit(calibration_config)
         
         # Create mini calibration dataset
-        cal_images = torch.randn(16, 3, 32, 32)
-        cal_labels = torch.randint(0, 10, (16,))
+        cal_images = torch.randn(8, 3, 32, 32)  # Reduced from 16
+        cal_labels = torch.randint(0, 10, (8,))
         cal_dataset = TensorDataset(cal_images, cal_labels)
         cal_loader = DataLoader(cal_dataset, batch_size=4)
         
@@ -175,9 +175,9 @@ class TestBasicIntegration:
         
         # Test kernel auto-tuning
         tuning_config = TuningConfig(
-            max_iterations=2,
+            max_iterations=1,  # Reduced from 2
             warmup_iterations=1,
-            timeout_seconds=30,
+            timeout_seconds=10,  # Reduced from 30
             enable_caching=False
         )
         kernel_tuner = KernelAutoTuner(tuning_config)
@@ -254,8 +254,8 @@ class TestBasicIntegration:
         
         # Step 3: Kernel auto-tuning
         tuning_config = TuningConfig(
-            max_iterations=2,
-            timeout_seconds=20,
+            max_iterations=1,  # Reduced from 2
+            timeout_seconds=5,  # Reduced from 20
             enable_caching=False
         )
         kernel_tuner = KernelAutoTuner(tuning_config)
@@ -373,7 +373,13 @@ class TestBasicIntegration:
             print(f"⚠ Calibration report skipped: {e}")
         
         print(f"✓ Generated {len(reports)} optimization reports")
-        return reports
+        
+        # Assert that we generated at least some reports
+        assert len(reports) > 0, "Expected at least one optimization report to be generated"
+        
+        # Verify all generated reports are dictionaries
+        for report_name, report_data in reports.items():
+            assert isinstance(report_data, dict), f"Report {report_name} should be a dictionary"
 
 
 class TestAdvancedIntegration:

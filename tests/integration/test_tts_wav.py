@@ -3,6 +3,7 @@
 Test script to check TTS output and fix WAV corruption issues.
 """
 
+import pytest
 import requests
 import json
 import base64
@@ -23,7 +24,7 @@ def test_tts_service():
 
     try:
         print("Testing TTS service...")
-        response = requests.post(url, json=data)
+        response = requests.post(url, json=data, timeout=5)
         print(f'Status: {response.status_code}')
         
         if response.status_code == 200:
@@ -52,17 +53,25 @@ def test_tts_service():
                     wav_file.writeframes(audio_data)
                 
                 print('Saved as test_output_fixed.wav')
-                return True
+                
+                # Assert successful TTS synthesis
+                assert len(audio_data) > 0, "Audio data should not be empty"
+                assert len(audio_array) > 0, "Audio samples should not be empty"
+                assert result['sample_rate'] > 0, "Sample rate should be positive"
+                
             else:
                 print(f'Error: {result["error"]}')
-                return False
+                pytest.fail(f"TTS synthesis failed: {result['error']}")
         else:
             print(f'HTTP Error: {response.text}')
-            return False
+            pytest.fail(f"HTTP request failed with status {response.status_code}: {response.text}")
             
+    except requests.exceptions.ConnectionError:
+        print("TTS service is not running on localhost:8000")
+        pytest.skip("TTS service is not available. Start the service to run this test.")
     except Exception as e:
         print(f'Request failed: {e}')
-        return False
+        pytest.fail(f"TTS service test failed: {e}")
 
 def analyze_existing_wav():
     """Analyze the existing corrupted WAV file."""
