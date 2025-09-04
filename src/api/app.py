@@ -64,6 +64,15 @@ def create_app() -> FastAPI:
     # Add event handlers
     _setup_event_handlers(app)
     
+    # Add simple health endpoint for load balancers
+    @app.get("/health",
+             tags=["Health"],
+             summary="Simple Health Check",
+             description="Simple health check endpoint for load balancers")
+    async def simple_health_check():
+        """Simple health check for load balancers."""
+        return {"status": "healthy"}
+    
     logger.info("[APP] FastAPI application created and configured")
     
     return app
@@ -181,16 +190,6 @@ async def custom_500_handler(request, exc):
         "message": "An unexpected error occurred. Please try again later.",
         "status_code": 500
     }
-
-
-# Health check endpoint at root level for load balancers
-@app.get("/health",
-         tags=["Health"],
-         summary="Simple Health Check",
-         description="Simple health check endpoint for load balancers")
-async def simple_health_check():
-    """Simple health check for load balancers."""
-    return {"status": "healthy"}
 
 
 if __name__ == "__main__":

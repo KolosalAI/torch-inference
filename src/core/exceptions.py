@@ -53,3 +53,18 @@ class SecurityError(InferenceFrameworkError):
 class ServiceUnavailableError(InferenceFrameworkError):
     """Service unavailable errors."""
     pass
+
+
+class InternalServerError(InferenceFrameworkError):
+    """Internal server errors."""
+    pass
+
+
+class ProcessingError(InferenceFrameworkError):
+    """Processing related errors."""
+    pass
+
+
+class NotFoundError(InferenceFrameworkError):
+    """Resource not found errors."""
+    pass

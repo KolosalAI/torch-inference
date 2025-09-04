@@ -3,6 +3,7 @@
 Test mask-based structured pruning integration.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -82,13 +83,17 @@ def test_mask_based_pruning():
         convenience_output = convenience_model(test_input)
         logger.info(f"✅ Convenience function output shape: {convenience_output.shape}")
         
-        return True
+        # Assert successful optimization
+        assert pruned_model is not None, "Pruned model should not be None"
+        assert pruned_output.shape == (1, 10), f"Expected output shape (1, 10), got {pruned_output.shape}"
+        assert convenience_model is not None, "Convenience model should not be None"
+        assert convenience_output.shape == (1, 10), f"Expected output shape (1, 10), got {convenience_output.shape}"
         
     except Exception as e:
         logger.error(f"❌ Mask-based pruning test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        pytest.fail(f"Mask-based pruning test failed: {e}")
 
 
 def test_gradual_pruning():
@@ -119,13 +124,16 @@ def test_gradual_pruning():
         logger.info(f"   Compression ratio: {effective_params/original_params:.3f}")
         logger.info(f"   Output shape: {output.shape}")
         
-        return True
+        # Assert successful optimization
+        assert pruned_model is not None, "Pruned model should not be None"
+        assert output.shape == (1, 10), f"Expected output shape (1, 10), got {output.shape}"
+        assert effective_params > 0, "Effective params should be positive"
         
     except Exception as e:
         logger.error(f"❌ Gradual pruning test failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        pytest.fail(f"Gradual pruning test failed: {e}")
 
 
 if __name__ == "__main__":
