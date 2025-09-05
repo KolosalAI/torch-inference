@@ -197,8 +197,9 @@ class DownloadService:
             
             # Perform download through model manager
             self._update_download_status(download_id, "downloading", progress=50)
-            
-            # Simulate download process (replace with actual implementation)
+
+            # TODO: Implement actual download logic with progress tracking and error handling
+            # Tracking issue: https://github.com/torch-inference/issues/download-implementation
             if hasattr(self.model_manager, 'download_and_load_model'):
                 self.model_manager.download_and_load_model(
                     request.source,
