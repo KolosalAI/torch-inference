@@ -175,6 +175,10 @@ class PerformanceConfig:
     enable_async: bool = True
     max_workers: int = 8
     max_concurrent_requests: int = 10  # Conservative default
+    enable_cuda_graphs: bool = True  # Enable CUDA graphs for repetitive workloads
+    enable_numba_jit: bool = True  # Enable Numba JIT acceleration
+    optimize_memory_layout: bool = True  # Optimize tensor memory layouts
+    enable_tensor_cores: bool = True  # Enable tensor core usage on supported hardware
 
 
 @dataclass

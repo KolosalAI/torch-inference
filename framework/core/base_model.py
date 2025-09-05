@@ -12,8 +12,18 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 import logging
+import os
+import time
+import asyncio
+import pickle
+import json
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
+from weakref import WeakValueDictionary
+from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from collections import deque, defaultdict
 
 from ..core.config import InferenceConfig
 
@@ -98,6 +108,23 @@ class BaseModel(ABC):
         # Setup logging first
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         
+        # Advanced caching and optimization state
+        self._tensor_cache = WeakValueDictionary()
+        self._preprocessing_cache = {}
+        self._postprocessing_cache = {}
+        self._compiled_functions = {}
+        self._channels_last_enabled = False
+        
+        # Performance monitoring
+        self._performance_stats = defaultdict(list)
+        self._error_counts = defaultdict(int)
+        
+        # Async processing
+        self._batch_queue = deque()
+        self._batch_size = config.batch.batch_size
+        self._batch_timeout = getattr(config.batch, 'timeout_ms', 50) / 1000.0
+        self._executor = ThreadPoolExecutor(max_workers=2)
+        
         # Initialize Numba optimizer for JIT acceleration
         self.numba_optimizer = None
         self.numba_ops = {}
@@ -166,9 +193,79 @@ class BaseModel(ABC):
         """
         pass
     
+    # Enhanced caching and tensor management methods
+    @lru_cache(maxsize=128)
+    def _get_tensor_shape_info(self, shape_tuple: Tuple[int, ...]) -> Dict[str, Any]:
+        """Cache tensor shape computations."""
+        return {
+            'numel': torch.Size(shape_tuple).numel(),
+            'ndim': len(shape_tuple),
+            'memory_size': torch.Size(shape_tuple).numel() * 4,  # Assume float32
+        }
+    
+    def _get_cached_tensor(self, shape: Tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
+        """Get or create cached tensor for common shapes."""
+        cache_key = (shape, dtype, str(self.device))
+        
+        if cache_key in self._tensor_cache:
+            return self._tensor_cache[cache_key]
+        
+        # Create new tensor and cache it
+        tensor = torch.empty(shape, dtype=dtype, device=self.device)
+        self._tensor_cache[cache_key] = tensor
+        return tensor
+    
+    def _compute_input_hash(self, inputs: Any) -> str:
+        """Compute hash for input caching."""
+        try:
+            if isinstance(inputs, torch.Tensor):
+                return f"tensor_{inputs.shape}_{inputs.dtype}_{inputs.sum().item():.6f}"
+            elif isinstance(inputs, (list, tuple)):
+                return f"sequence_{len(inputs)}_{hash(str(inputs))}"
+            else:
+                return f"other_{hash(str(inputs))}"
+        except Exception:
+            # Fallback for unhashable inputs
+            return f"fallback_{id(inputs)}"
+    
+    def _compute_tensor_hash(self, tensor: torch.Tensor) -> str:
+        """Compute hash for tensor caching."""
+        try:
+            return f"tensor_{tensor.shape}_{tensor.dtype}_{tensor.sum().item():.6f}"
+        except Exception:
+            return f"tensor_fallback_{id(tensor)}"
+    
+    @contextmanager
+    def _performance_monitor(self, operation: str):
+        """Context manager for performance monitoring."""
+        start_time = time.perf_counter()
+        start_memory = torch.cuda.memory_allocated(self.device) if self.device.type == 'cuda' else 0
+        
+        try:
+            yield
+        finally:
+            end_time = time.perf_counter()
+            end_memory = torch.cuda.memory_allocated(self.device) if self.device.type == 'cuda' else 0
+            
+            duration = end_time - start_time
+            memory_delta = end_memory - start_memory
+            
+            self._performance_stats[f"{operation}_time"].append(duration)
+            if self.device.type == 'cuda':
+                self._performance_stats[f"{operation}_memory"].append(memory_delta)
+    
+    def _get_inference_context(self):
+        """Get optimal inference context based on configuration."""
+        if self.device.type == 'cuda' and self.config.device.use_fp16:
+            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            return torch.amp.autocast('cuda', dtype=dtype)
+        else:
+            return torch.inference_mode()
+    
     def predict(self, inputs: Any) -> Any:
         """
         Complete prediction pipeline: preprocess -> forward -> postprocess.
+        Enhanced with caching and performance monitoring.
         
         Args:
             inputs: Raw inputs
@@ -179,53 +276,67 @@ class BaseModel(ABC):
         if not self._is_loaded:
             raise ModelInferenceError("Model not loaded. Call load_model() first.")
         
-        try:
-            # Preprocess
-            preprocessed_inputs = self.preprocess(inputs)
-            
-            # ROI Optimization 0: Use inference_mode for better performance than no_grad
-            with torch.inference_mode():
-                try:
-                    # ROI Optimization 1: Mixed precision inference with optimal dtype selection
-                    if self.device.type == 'cuda' and self.config.device.use_fp16:
-                        # Use bfloat16 if supported for better numerical stability, else fp16
-                        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-                        with torch.amp.autocast('cuda', dtype=dtype):
-                            raw_outputs = self.forward(preprocessed_inputs)
-                    else:
-                        raw_outputs = self.forward(preprocessed_inputs)
+        with self._performance_monitor("predict"):
+            try:
+                # Cache preprocessing results for identical inputs
+                input_hash = self._compute_input_hash(inputs)
+                if input_hash in self._preprocessing_cache:
+                    preprocessed_inputs = self._preprocessing_cache[input_hash]
+                else:
+                    with self._performance_monitor("preprocess"):
+                        preprocessed_inputs = self.preprocess(inputs)
+                    if len(self._preprocessing_cache) < 100:  # Limit cache size
+                        self._preprocessing_cache[input_hash] = preprocessed_inputs
+                
+                # Optimized inference context
+                with self._performance_monitor("forward"):
+                    with self._get_inference_context():
+                        # Channel-last conversion if enabled
+                        if hasattr(self, '_channels_last_enabled') and self._channels_last_enabled:
+                            if preprocessed_inputs.dim() == 4:  # NCHW tensor
+                                preprocessed_inputs = preprocessed_inputs.to(memory_format=torch.channels_last)
                         
-                except Exception as e:
-                    # Handle compilation errors by falling back to non-compiled model
-                    error_msg = str(e)
-                    compilation_errors = [
-                        "CppCompileError", 
-                        "TritonMissing", 
-                        "Cannot find a working triton installation",
-                        "triton is required",
-                        "Dynamo failed"
-                    ]
-                    
-                    if any(error in error_msg for error in compilation_errors) and self._compiled_model is not None:
-                        self.logger.warning(f"Torch compilation failed ({error_msg[:100]}...), falling back to non-compiled model")
-                        self.config.device.use_torch_compile = False
-                        self._compiled_model = None
-                        raw_outputs = self.forward(preprocessed_inputs)
-                    else:
-                        raise
-            
-            # Postprocess
-            predictions = self.postprocess(raw_outputs)
-            
-            # Convert to dict for backward compatibility if needed
-            if hasattr(predictions, 'to_dict'):
-                return predictions.to_dict()
-            
-            return predictions
-            
-        except Exception as e:
-            self.logger.error(f"Prediction failed: {e}")
-            raise ModelInferenceError(f"Prediction failed: {e}") from e
+                        try:
+                            raw_outputs = self.forward(preprocessed_inputs)
+                        except Exception as e:
+                            # Handle compilation errors by falling back to non-compiled model
+                            error_msg = str(e)
+                            compilation_errors = [
+                                "CppCompileError", 
+                                "TritonMissing", 
+                                "Cannot find a working triton installation",
+                                "triton is required",
+                                "Dynamo failed"
+                            ]
+                            
+                            if any(error in error_msg for error in compilation_errors) and self._compiled_model is not None:
+                                self.logger.warning(f"Torch compilation failed ({error_msg[:100]}...), falling back to non-compiled model")
+                                self.config.device.use_torch_compile = False
+                                self._compiled_model = None
+                                raw_outputs = self.forward(preprocessed_inputs)
+                            else:
+                                raise
+                
+                # Cache postprocessing if applicable
+                output_hash = self._compute_tensor_hash(raw_outputs)
+                if output_hash in self._postprocessing_cache:
+                    predictions = self._postprocessing_cache[output_hash]
+                else:
+                    with self._performance_monitor("postprocess"):
+                        predictions = self.postprocess(raw_outputs)
+                    if len(self._postprocessing_cache) < 50:
+                        self._postprocessing_cache[output_hash] = predictions
+                
+                # Convert to dict for backward compatibility if needed
+                if hasattr(predictions, 'to_dict'):
+                    return predictions.to_dict()
+                
+                return predictions
+                
+            except Exception as e:
+                self._error_counts[type(e).__name__] += 1
+                self.logger.error(f"Prediction failed: {e}")
+                raise ModelInferenceError(f"Prediction failed: {e}") from e
     
     def predict_batch(self, inputs: List[Any]) -> List[Any]:
         """
@@ -256,6 +367,81 @@ class BaseModel(ABC):
                 results.extend(batch_result)
         
         return results
+    
+    def predict_batch_optimized(self, inputs: List[Any]) -> List[Any]:
+        """Optimized batch prediction with dynamic batching."""
+        if not inputs:
+            return []
+        
+        # Sort by input complexity for better batching
+        sorted_inputs = self._sort_inputs_by_complexity(inputs)
+        
+        results = [None] * len(inputs)
+        original_indices = [i for i in range(len(inputs))]
+        
+        # Process in optimal batch sizes
+        optimal_batch_size = self._calculate_optimal_batch_size(inputs[0])
+        
+        for i in range(0, len(sorted_inputs), optimal_batch_size):
+            batch = sorted_inputs[i:i + optimal_batch_size]
+            batch_indices = original_indices[i:i + optimal_batch_size]
+            
+            # True batch processing
+            batch_results = self._process_true_batch(batch)
+            
+            # Restore original order
+            for idx, result in zip(batch_indices, batch_results):
+                results[idx] = result
+        
+        return results
+    
+    async def predict_async(self, inputs: Any) -> Any:
+        """Asynchronous prediction with automatic batching."""
+        return await asyncio.get_event_loop().run_in_executor(
+            self._executor, self.predict, inputs
+        )
+    
+    def _calculate_optimal_batch_size(self, sample_input: Any) -> int:
+        """Calculate optimal batch size based on memory and input complexity."""
+        base_batch_size = self.config.batch.batch_size
+        
+        if self.device.type == 'cuda':
+            try:
+                # Estimate memory usage per sample
+                sample_tensor = self.preprocess(sample_input)
+                memory_per_sample = sample_tensor.numel() * sample_tensor.element_size()
+                
+                # Available memory (conservative estimate)
+                available_memory = torch.cuda.get_device_properties(self.device).total_memory * 0.3
+                
+                # Calculate memory-bound batch size
+                memory_batch_size = max(1, int(available_memory / (memory_per_sample * 4)))  # 4x safety factor
+                
+                return min(base_batch_size, memory_batch_size)
+            except Exception as e:
+                self.logger.debug(f"Optimal batch size calculation failed: {e}")
+        
+        return base_batch_size
+    
+    def _sort_inputs_by_complexity(self, inputs: List[Any]) -> List[Any]:
+        """Sort inputs by complexity for better batching efficiency."""
+        try:
+            # Simple complexity metric based on input size
+            def complexity(inp):
+                if hasattr(inp, 'size'):
+                    return inp.size if isinstance(inp.size, int) else sum(inp.size)
+                elif isinstance(inp, (list, tuple)):
+                    return len(inp)
+                else:
+                    return len(str(inp))
+            
+            return sorted(inputs, key=complexity)
+        except Exception:
+            return inputs  # Return original order if sorting fails
+    
+    def _process_true_batch(self, batch: List[Any]) -> List[Any]:
+        """Process a true batch. Override in subclasses for better batch processing."""
+        return self.predict_batch_internal(batch)
     
     def predict_batch_internal(self, inputs: List[Any]) -> List[Any]:
         """
@@ -371,7 +557,7 @@ class BaseModel(ABC):
         return self._compiled_model if self._compiled_model is not None else self.model
     
     def optimize_for_inference(self) -> None:
-        """Apply various optimizations for inference."""
+        """Apply comprehensive optimizations for maximum inference performance."""
         if not self._is_loaded:
             return
         
@@ -381,48 +567,276 @@ class BaseModel(ABC):
         # Move to target device
         self.model.to(self.device)
         
-        # ROI Optimization 1: Enable TF32 for Ampere+ GPUs
+        # ROI Optimization 1: Enhanced TF32 and Tensor Core optimizations
         if self.device.type == 'cuda':
-            try:
-                # Check if GPU supports TF32 (Ampere or newer)
-                if torch.cuda.get_device_capability(self.device.index if self.device.index else 0)[0] >= 8:
-                    torch.set_float32_matmul_precision('high')  # Enables TF32
-                    self.logger.info("TF32 matmul precision enabled for Ampere+ GPU")
-                else:
-                    torch.set_float32_matmul_precision('highest')  # FP32 for older GPUs
-            except Exception as e:
-                self.logger.debug(f"TF32 setup failed: {e}")
-        
-        # ROI Optimization 4: CUDNN optimizations for fixed input sizes
+            self._optimize_gpu_compute()
+                
+        # ROI Optimization 2: Advanced CUDNN optimizations
         if torch.backends.cudnn.is_available() and self.device.type == 'cuda':
-            torch.backends.cudnn.benchmark = True  # Auto-select fastest conv algorithms
-            torch.backends.cudnn.deterministic = False  # Allow non-deterministic for speed
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
             torch.backends.cudnn.enabled = True
-            self.logger.info("CUDNN optimizations enabled with benchmarking")
+            # Enable additional CUDNN optimizations for newer versions
+            if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                torch.backends.cudnn.allow_tf32 = True
+            self.logger.info("Enhanced CUDNN optimizations enabled")
         
-        # ROI Optimization 4: Memory format optimization for CNNs
+        # ROI Optimization 3: Memory format optimization with fallback
         if self._has_conv_layers():
             try:
                 self.model = self.model.to(memory_format=torch.channels_last)
-                self.logger.info("Enabled channels_last memory format for CNN optimization")
+                self._channels_last_enabled = True
+                self.logger.info("Enabled channels_last memory format")
             except Exception as e:
                 self.logger.debug(f"Channels-last optimization failed: {e}")
+                self._channels_last_enabled = False
         
-        # ROI Optimization 7: CPU optimizations 
+        # ROI Optimization 4: Intelligent CPU thread management
         if self.device.type == 'cpu':
-            # Set sensible thread count to avoid oversubscription
-            import os
-            cpu_count = os.cpu_count() or 4
-            # Use 75% of available cores, min 1, max 16
-            optimal_threads = max(1, min(16, int(cpu_count * 0.75)))
-            torch.set_num_threads(optimal_threads)
-            self.logger.info(f"Set CPU threads to {optimal_threads} for optimal performance")
+            self._optimize_cpu_threads()
         
-        # Compile model if requested
+        # ROI Optimization 5: Advanced memory management
+        if self.device.type == 'cuda':
+            self._optimize_cuda_memory()
+        
+        # ROI Optimization 6: Model fusion and optimization
+        self._apply_model_fusion()
+        
+        # ROI Optimization 7: Compilation with better error handling
         if self.config.device.use_torch_compile:
             self.compile_model()
         
-        self.logger.info("Model optimization for inference completed")
+        # ROI Optimization 8: Apply quantization if requested
+        if getattr(self.config.device, 'use_quantization', False):
+            self._apply_quantization()
+        
+        self.logger.info("Comprehensive model optimization for inference completed")
+    
+    def _optimize_gpu_compute(self) -> None:
+        """Enhanced GPU compute optimizations."""
+        try:
+            device_idx = self.device.index if self.device.index is not None else 0
+            major, minor = torch.cuda.get_device_capability(device_idx)
+            
+            if major >= 8:  # Ampere+
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.set_float32_matmul_precision('high')
+                # Enable Flash Attention if available
+                if hasattr(torch.backends.cuda, 'flash_sdp_enabled'):
+                    torch.backends.cuda.flash_sdp_enabled = True
+                self.logger.info(f"TF32 and Flash Attention enabled for Ampere+ GPU (CC {major}.{minor})")
+            elif major >= 7:  # Volta/Turing
+                torch.set_float32_matmul_precision('high')
+                # Optimize for Tensor Cores
+                torch.backends.cuda.matmul.allow_tf32 = False  # Use FP16 instead
+                self.logger.info(f"Tensor Core optimizations enabled for Volta/Turing GPU (CC {major}.{minor})")
+            else:
+                torch.set_float32_matmul_precision('highest')
+                self.logger.info(f"High precision mode for older GPU (CC {major}.{minor})")
+                
+        except Exception as e:
+            self.logger.debug(f"GPU optimization setup failed: {e}")
+    
+    def _optimize_cpu_threads(self) -> None:
+        """Optimize CPU threading for inference workloads."""
+        cpu_count = os.cpu_count() or 4
+        
+        # Dynamic thread allocation based on model size
+        if hasattr(self.model, 'parameters'):
+            param_count = sum(p.numel() for p in self.model.parameters())
+            if param_count > 100_000_000:  # Large models
+                optimal_threads = max(2, min(16, cpu_count))
+            else:  # Smaller models
+                optimal_threads = max(1, min(8, int(cpu_count * 0.75)))
+        else:
+            optimal_threads = max(1, min(8, int(cpu_count * 0.75)))
+        
+        torch.set_num_threads(optimal_threads)
+        try:
+            torch.set_num_interop_threads(1)
+            self.logger.info(f"Optimized CPU threads: {optimal_threads} intra, 1 inter")
+        except RuntimeError as e:
+            if "cannot set number of interop threads" in str(e):
+                self.logger.debug("Interop threads already configured")
+            else:
+                raise
+    
+    def _optimize_cuda_memory(self) -> None:
+        """Advanced CUDA memory optimizations."""
+        try:
+            # Memory pool configuration
+            memory_fraction = getattr(self.config.device, 'memory_fraction', 0.85)  # More conservative
+            torch.cuda.set_per_process_memory_fraction(memory_fraction, device=self.device)
+            
+            # Advanced memory allocator settings
+            os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 
+                                'max_split_size_mb:512,roundup_power2_divisions:16')
+            
+            # Enable memory pool caching
+            torch.cuda.empty_cache()
+            
+            # Pre-allocate small buffer to stabilize allocations
+            _ = torch.zeros(1024, device=self.device)
+            
+            self.logger.info(f"CUDA memory optimized - fraction: {memory_fraction}")
+        except Exception as e:
+            self.logger.debug(f"CUDA memory optimization failed: {e}")
+    
+    def _apply_model_fusion(self) -> None:
+        """Apply model-level fusion optimizations."""
+        try:
+            # Check for fusible conv-bn-relu patterns
+            if self._has_fusible_patterns():
+                # Modern PyTorch handles this through torch.compile
+                self.logger.info("Model has fusible patterns - will benefit from compilation")
+            
+            # Apply layer-specific optimizations
+            self._optimize_model_layers()
+            
+        except Exception as e:
+            self.logger.debug(f"Model fusion failed: {e}")
+    
+    def _has_fusible_patterns(self) -> bool:
+        """Detect common fusible patterns in the model."""
+        if not self.model:
+            return False
+        
+        modules = list(self.model.modules())
+        for i, module in enumerate(modules[:-2]):
+            if isinstance(module, nn.Conv2d):
+                # Check for Conv->BN->ReLU pattern
+                if (i + 2 < len(modules) and 
+                    isinstance(modules[i+1], nn.BatchNorm2d) and
+                    isinstance(modules[i+2], (nn.ReLU, nn.ReLU6))):
+                    return True
+        return False
+    
+    def _optimize_model_layers(self) -> None:
+        """Apply layer-specific optimizations."""
+        for module in self.model.modules():
+            # Optimize dropout layers for inference
+            if isinstance(module, (nn.Dropout, nn.Dropout2d, nn.Dropout3d)):
+                module.eval()  # Ensure dropout is disabled
+            
+            # Optimize batch norm layers
+            elif isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+                module.eval()
+                # Fuse batch norm if possible
+                if hasattr(module, 'track_running_stats') and module.track_running_stats:
+                    module.momentum = 0.0  # Freeze running statistics
+    
+    def _can_fuse_operations(self) -> bool:
+        """Check if model has operations that can be fused."""
+        try:
+            fused_ops = ['Conv', 'BatchNorm', 'ReLU', 'Linear']
+            model_ops = [str(type(m).__name__) for m in self.model.modules()]
+            return any(op in ' '.join(model_ops) for op in fused_ops)
+        except Exception:
+            return False
+    
+    def _apply_quantization(self) -> None:
+        """Apply dynamic quantization for CPU inference speedup."""
+        try:
+            if self.device.type == 'cpu':
+                # Apply dynamic quantization for CPU
+                quantized_model = torch.quantization.quantize_dynamic(
+                    self.model, 
+                    {torch.nn.Linear, torch.nn.Conv2d}, 
+                    dtype=torch.qint8
+                )
+                self.model = quantized_model
+                self.logger.info("Applied dynamic quantization for CPU inference")
+            else:
+                self.logger.debug("Quantization currently only supported for CPU inference")
+        except Exception as e:
+            self.logger.warning(f"Quantization failed: {e}")
+    
+    # Model state management and persistence
+    def save_optimized_state(self, path: Union[str, Path]) -> None:
+        """Save optimized model state for faster loading."""
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+        
+        state = {
+            'model_state': self.model.state_dict() if self.model else None,
+            'config': self.config,
+            'metadata': self.metadata,
+            'optimization_flags': {
+                'channels_last_enabled': getattr(self, '_channels_last_enabled', False),
+                'numba_enabled': self._numba_enabled,
+                'compiled': self._compiled_model is not None,
+            },
+            'cache_stats': {
+                'preprocessing_cache_size': len(self._preprocessing_cache),
+                'postprocessing_cache_size': len(self._postprocessing_cache),
+            }
+        }
+        
+        # Save state
+        torch.save(state, path / 'optimized_state.pth')
+        
+        # Save human-readable info
+        info = {
+            'optimization_applied': True,
+            'device': str(self.device),
+            'memory_usage': self.get_memory_usage(),
+        }
+        with open(path / 'optimization_info.json', 'w') as f:
+            json.dump(info, f, indent=2)
+        
+        self.logger.info(f"Saved optimized state to {path}")
+    
+    def load_optimized_state(self, path: Union[str, Path]) -> bool:
+        """Load previously optimized model state."""
+        path = Path(path)
+        state_file = path / 'optimized_state.pth'
+        
+        if not state_file.exists():
+            return False
+        
+        try:
+            state = torch.load(state_file, map_location=self.device, weights_only=False)
+            
+            # Restore optimization flags
+            opt_flags = state.get('optimization_flags', {})
+            self._channels_last_enabled = opt_flags.get('channels_last_enabled', False)
+            self._numba_enabled = opt_flags.get('numba_enabled', False)
+            
+            # Restore model state if available
+            if state.get('model_state') and self.model:
+                self.model.load_state_dict(state['model_state'])
+            
+            self.logger.info(f"Loaded optimized state from {path}")
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to load optimized state: {e}")
+            return False
+    
+    # Performance monitoring and statistics
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get detailed performance statistics."""
+        stats = {}
+        
+        for operation, times in self._performance_stats.items():
+            if times:
+                stats[operation] = {
+                    'count': len(times),
+                    'mean': sum(times) / len(times),
+                    'min': min(times),
+                    'max': max(times),
+                    'p95': sorted(times)[int(len(times) * 0.95)] if len(times) > 20 else max(times),
+                }
+        
+        stats['error_counts'] = dict(self._error_counts)
+        return stats
+    
+    def reset_stats(self) -> None:
+        """Reset performance statistics."""
+        self._performance_stats.clear()
+        self._error_counts.clear()
+        self.logger.info("Performance statistics reset")
     
     def _has_conv_layers(self) -> bool:
         """Check if model has convolutional layers that would benefit from channels_last."""
@@ -430,27 +844,25 @@ class BaseModel(ABC):
             return any(isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)) for m in self.model.modules())
         except Exception:
             return False
-        
-        # Apply FP16 if requested and model supports it
-        # Skip FP16 for transformer models with embeddings to avoid dtype issues
-        if self.config.device.use_fp16:
-            # Check if model has embedding layers that would cause dtype issues
-            has_embeddings = any('embedding' in name.lower() for name, _ in self.model.named_modules())
-            if not has_embeddings:
-                self.model.half()
-            else:
-                self.logger.warning("Skipping FP16 conversion for model with embeddings to avoid dtype mismatch")
-        
-        # Compile model if requested
-        self.compile_model()
-        
-        # Configure CUDA optimizations
-        if self.device.type == 'cuda':
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cudnn.deterministic = False
     
     def _create_dummy_input(self) -> torch.Tensor:
         """Create dummy input for warmup. Override in subclasses."""
+        # Determine the appropriate dtype based on model configuration
+        target_dtype = torch.float32
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Try to get dtype from the first parameter of the model
+                first_param = next(iter(self.model.parameters()), None)
+                if first_param is not None:
+                    target_dtype = first_param.dtype
+            except Exception:
+                # Fallback: check if FP16 is enabled in config
+                if (hasattr(self.config, 'device') and 
+                    getattr(self.config.device, 'use_fp16', False) and 
+                    self.device.type == 'cuda'):
+                    # Use bfloat16 if supported, otherwise float16
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
         # Try to infer from model structure if possible
         if hasattr(self, 'model') and self.model is not None:
             try:
@@ -465,25 +877,25 @@ class BaseModel(ABC):
                     # CNN model - create image-like input
                     in_channels = first_layer.in_channels
                     # Use reasonable default image size
-                    return torch.randn(1, in_channels, 64, 64, device=self.device)
+                    return torch.randn(1, in_channels, 64, 64, device=self.device, dtype=target_dtype)
                 elif isinstance(first_layer, torch.nn.Conv1d):
                     # 1D CNN - create sequence-like input
                     in_channels = first_layer.in_channels
-                    return torch.randn(1, in_channels, 64, device=self.device)
+                    return torch.randn(1, in_channels, 64, device=self.device, dtype=target_dtype)
                 elif isinstance(first_layer, torch.nn.Linear):
                     # Linear model - create flat input
                     in_features = first_layer.in_features
-                    return torch.randn(1, in_features, device=self.device)
+                    return torch.randn(1, in_features, device=self.device, dtype=target_dtype)
             except Exception as e:
                 logger.debug(f"Failed to infer input shape from model: {e}")
         
         # Default implementation for image models using config
         if hasattr(self.config, 'preprocessing') and hasattr(self.config.preprocessing, 'input_size'):
             height, width = self.config.preprocessing.input_size
-            return torch.randn(1, 3, height, width, device=self.device)
+            return torch.randn(1, 3, height, width, device=self.device, dtype=target_dtype)
         else:
             # Generic dummy input - use a safe shape that works for most models
-            return torch.randn(1, 3, 64, 64, device=self.device)
+            return torch.randn(1, 3, 64, 64, device=self.device, dtype=target_dtype)
     
     def get_memory_usage(self) -> Dict[str, float]:
         """Get current memory usage information."""

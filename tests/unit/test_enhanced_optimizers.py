@@ -29,7 +29,7 @@ except ImportError:
     PerformanceOptimizer = None
 
 
-class TestModel(nn.Module):
+class EnhancedTestModel(nn.Module):
     """Simple test model for optimization tests."""
     def __init__(self):
         super().__init__()
@@ -60,7 +60,7 @@ class TestVulkanOptimizer:
     @pytest.fixture
     def model(self):
         """Create test model."""
-        return TestModel()
+        return EnhancedTestModel()
     
     @pytest.mark.skipif(VulkanOptimizer is None, reason="Vulkan optimizer not available")
     def test_vulkan_optimizer_creation(self, config):
@@ -96,7 +96,7 @@ class TestNumbaOptimizer:
     @pytest.fixture
     def model(self):
         """Create test model."""
-        return TestModel()
+        return EnhancedTestModel()
     
     @pytest.mark.skipif(NumbaOptimizer is None, reason="Numba optimizer not available")
     def test_numba_optimizer_creation(self, config):
@@ -131,7 +131,7 @@ class TestEnhancedJITOptimizer:
     @pytest.fixture
     def model(self):
         """Create test model."""
-        return TestModel()
+        return EnhancedTestModel()
     
     @pytest.mark.skipif(EnhancedJITOptimizer is None, reason="Enhanced JIT optimizer not available")
     def test_enhanced_jit_optimizer_creation(self, config):
@@ -167,7 +167,7 @@ class TestPerformanceOptimizer:
     @pytest.fixture
     def model(self):
         """Create test model."""
-        return TestModel()
+        return EnhancedTestModel()
     
     @pytest.mark.skipif(PerformanceOptimizer is None, reason="Performance optimizer not available")
     def test_performance_optimizer_creation(self, config):

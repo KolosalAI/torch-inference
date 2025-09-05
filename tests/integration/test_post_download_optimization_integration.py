@@ -19,7 +19,7 @@ from framework.core.base_model import ModelManager, get_model_manager
 from framework.optimizers.post_download_optimizer import PostDownloadOptimizer
 
 
-class TestModel(nn.Module):
+class PostOptTestModel(nn.Module):
     """Realistic test model for integration testing."""
     
     def __init__(self, num_classes=10):
@@ -65,7 +65,7 @@ def integration_config():
 @pytest.fixture
 def test_model():
     """Create a test model for integration testing."""
-    model = TestModel()
+    model = PostOptTestModel()
     model.eval()
     return model
 
@@ -91,7 +91,7 @@ class TestModelManagerIntegration:
             # Mock the download method to simulate successful download and optimization
             def mock_download_and_load(source, model_id, name):
                 # Simulate successful download and optimization
-                test_model = TestModel()
+                test_model = PostOptTestModel()
                 return {
                     'model': test_model,
                     'optimization_report': {
@@ -125,7 +125,7 @@ class TestModelManagerIntegration:
             
             def mock_download_and_load(source, model_id, name):
                 # Simulate download without optimization
-                test_model = TestModel()
+                test_model = PostOptTestModel()
                 return {
                     'model': test_model,
                     'optimization_report': {
@@ -149,7 +149,7 @@ class TestModelManagerIntegration:
             
             def mock_download_with_error(source, model_id, name):
                 # Simulate optimization error but successful fallback
-                test_model = TestModel()
+                test_model = PostOptTestModel()
                 return {
                     'model': test_model,
                     'optimization_report': {
@@ -517,7 +517,7 @@ if __name__ == "__main__":
     print("Running post-download optimization integration tests...")
     
     # Test basic integration
-    test_model = TestModel()
+    test_model = PostOptTestModel()
     config = PostDownloadOptimizationConfig()
     
     # Test model manager integration

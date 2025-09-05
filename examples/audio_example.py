@@ -98,11 +98,12 @@ class AudioExampleClient:
             print(f"❌ Models list error: {e}")
             return None
     
-    async def synthesize_speech(self, text: str, model_name: str = "default", **kwargs):
+    async def synthesize_speech(self, text: str, model_name: str = "default", token: str = None, **kwargs):
         """Synthesize speech from text using TTS."""
         request_data = {
-            "text": text,
             "model_name": model_name,
+            "inputs": text,
+            "token": token,
             **kwargs
         }
         
@@ -112,7 +113,7 @@ class AudioExampleClient:
         
         try:
             async with self.session.post(
-                f"{self.base_url}/tts/synthesize",
+                f"{self.base_url}/synthesize",
                 json=request_data
             ) as response:
                 if response.status == 200:
