@@ -42,7 +42,7 @@ class ConfigResponse(BaseResponse):
     configuration: Dict[str, Any] = Field(..., description="Configuration data")
     environment: str = Field(..., description="Current environment")
     
-
+    
 class StatsResponse(BaseResponse):
     """Statistics response model."""
     stats: Dict[str, Any] = Field(..., description="Service statistics")

@@ -88,7 +88,7 @@ A comprehensive, production-ready PyTorch inference framework that delivers **2-
 - **Speech-to-Text (STT)**: Whisper (all sizes), Wav2Vec2, real-time transcription
 - **Audio Pipeline**: Complete preprocessing, feature extraction, augmentation
 - **Multi-format Support**: WAV, MP3, FLAC, M4A, OGG input/output
-- **RESTful Audio API**: `/tts/synthesize`, `/stt/transcribe` with comprehensive options
+- **RESTful Audio API**: `/synthesize`, `/stt/transcribe` with comprehensive options
 - **Language Support**: Multi-language TTS/STT with auto-detection
 
 ### 🔧 **Developer Experience**
@@ -165,9 +165,9 @@ import base64
 # Text-to-Speech Example
 async def tts_example():
     async with aiohttp.ClientSession() as session:
-        async with session.post("http://localhost:8000/tts/synthesize", json={
-            "text": "Hello, this is PyTorch inference framework!",
+        async with session.post("http://localhost:8000/synthesize", json={
             "model_name": "default",
+            "inputs": "Hello, this is PyTorch inference framework!",
             "speed": 1.0,
             "language": "en"
         }) as response:

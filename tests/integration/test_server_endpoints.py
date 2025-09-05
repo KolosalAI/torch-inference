@@ -106,6 +106,7 @@ class TestServerEndpoints:
             async with async_client as client:
                 # Test with simple numeric input
                 payload = {
+                    "model_name": "example",  # Add required model_name field
                     "inputs": 42,
                     "priority": 1,
                     "timeout": 10.0
@@ -133,14 +134,18 @@ class TestServerEndpoints:
 
 def test_predict_endpoint_without_engine(client):
     """Test predict endpoint when engine is not initialized."""
-    payload = {"inputs": 42}
+    payload = {
+        "inputs": 42,
+        "model_name": "test_model"  # Add required model_name field
+    }
     
     with patch('main.inference_engine', None):
         response = client.post("/predict", json=payload)
-
-        # Should return 503 Service Unavailable
+        
+        # Should return 503 Service Unavailable since engine is None
         assert response.status_code == 503
-        assert "Inference services not available" in response.json()["detail"]
+        data = response.json()
+        assert "Inference services not available" in data["detail"]
     
     @pytest.mark.asyncio
     async def test_batch_predict_endpoint(self, async_client):
@@ -652,7 +657,10 @@ class TestServerPerformance:
                 
                 tasks = []
                 for i in range(num_predictions):
-                    payload = {"inputs": i}
+                    payload = {
+                        "model_name": "example",  # Add required model_name field
+                        "inputs": i
+                    }
                     task = client.post("/predict", json=payload)
                     tasks.append(task)
                 
@@ -702,7 +710,11 @@ class TestServerStressTest:
                 async def make_request(request_id: int):
                     """Make a single request."""
                     try:
-                        payload = {"inputs": request_id, "timeout": 10.0}
+                        payload = {
+                            "model_name": "example",  # Add required model_name field
+                            "inputs": request_id, 
+                            "timeout": 10.0
+                        }
                         response = await client.post("/predict", json=payload)
                         return response.status_code == 200 and response.json().get("success", False)
                     except Exception:

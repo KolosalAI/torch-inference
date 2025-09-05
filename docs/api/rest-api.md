@@ -13,14 +13,12 @@ http://localhost:8000
 | Category | Endpoint | Method | Description |
 |----------|----------|--------|-------------|
 | **Core** | `/` | GET | API information |
-| **Core** | `/predict` | POST | General prediction |
-| **Core** | `/{model_name}/predict` | POST | Model-specific prediction |
-| **Core** | `/predict/batch` | POST | Batch prediction |
+| **Core** | `/predict` | POST | Unified prediction endpoint |
+| **Audio** | `/synthesize` | POST | Text-to-speech synthesis |
 | **Health** | `/health` | GET | System health check |
 | **Stats** | `/stats` | GET | Performance statistics |
 | **Config** | `/config` | GET | Configuration info |
 | **Models** | `/models` | GET | List loaded models |
-| **Audio** | `/tts/synthesize` | POST | Text-to-speech |
 | **Audio** | `/stt/transcribe` | POST | Speech-to-text |
 | **GPU** | `/gpu/detect` | GET | GPU detection |
 | **Autoscaling** | `/autoscaler/stats` | GET | Autoscaler statistics |
@@ -104,9 +102,9 @@ GET /
 }
 ```
 
-### General Prediction
+### Unified Prediction
 
-Perform inference using the default model.
+Perform inference using any torch model or deep learning model with ultra-optimized processing.
 
 **Request:**
 ```http
@@ -114,8 +112,29 @@ POST /predict
 Content-Type: application/json
 
 {
+  "model_name": "my_model",
   "inputs": [1, 2, 3, 4, 5],
+  "token": "optional_auth_token",
   "priority": 0,
+  "timeout": 30.0,
+  "enable_batching": true
+}
+```
+
+**Batch Request:**
+```http
+POST /predict
+Content-Type: application/json
+
+{
+  "model_name": "my_model",
+  "inputs": [
+    [1, 2, 3, 4, 5],
+    [6, 7, 8, 9, 10],
+    [11, 12, 13, 14, 15]
+  ],
+  "token": "optional_auth_token",
+  "priority": 1,
   "timeout": 30.0,
   "enable_batching": true
 }
@@ -128,7 +147,7 @@ Content-Type: application/json
   "result": 0.75,
   "processing_time": 0.025,
   "model_info": {
-    "model": "example",
+    "model": "my_model",
     "device": "cuda:0",
     "input_type": "single",
     "input_count": 1,
@@ -140,26 +159,6 @@ Content-Type: application/json
     "concurrent_optimization": false
   }
 }
-```
-
-### Model-Specific Prediction
-
-Perform inference using a specific model with ultra-optimized processing.
-
-**Request:**
-```http
-POST /{model_name}/predict
-Content-Type: application/json
-
-{
-  "inputs": "Hello world",
-  "priority": 1,
-  "timeout": 10.0,
-  "enable_batching": true
-}
-```
-
-**Response:**
 ```json
 {
   "success": true,
@@ -609,12 +608,13 @@ Convert text to speech using TTS models.
 
 **Request:**
 ```http
-POST /tts/synthesize
+POST /synthesize
 Content-Type: application/json
 
 {
-  "text": "Hello, this is a test of the text-to-speech system.",
   "model_name": "speecht5_tts",
+  "inputs": "Hello, this is a test of the text-to-speech system.",
+  "token": "optional_auth_token",
   "voice": "default",
   "speed": 1.0,
   "pitch": 1.0,

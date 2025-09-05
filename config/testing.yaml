@@ -40,9 +40,21 @@ logging:
   backup_count: 2
 
 security:
-  enable_api_keys: false
+  enable_api_keys: true
+  enable_auth: true
   rate_limit_per_minute: 100
   cors_origins: ["http://localhost:3000"]
+  protected_endpoints: ["/inference", "/models", "/predict", "/stats"]
+  public_endpoints: ["/health", "/auth", "/"]
+
+auth:
+  jwt_secret_key: "your-super-secret-jwt-key-for-testing-change-in-production"
+  jwt_algorithm: "HS256"
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+  api_key_length: 32
+  user_store_file: "./data/users.json"
+  session_store_file: "./data/sessions.json"
   
 features:
   autoscaling: false
