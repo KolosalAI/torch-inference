@@ -337,7 +337,11 @@ class ConfigManager:
             benchmark_iterations=self.get('BENCHMARK_ITERATIONS', 10, 'performance.benchmark_iterations'),
             log_level=self.get('LOG_LEVEL', 'INFO', 'monitoring.logging.level'),
             enable_async=self.get('ENABLE_ASYNC', True, 'performance.enable_async'),
-            max_workers=self.get('MAX_WORKERS', 4, 'performance.max_workers')
+            max_workers=self.get('MAX_WORKERS', 4, 'performance.max_workers'),
+            enable_cuda_graphs=self.get('ENABLE_CUDA_GRAPHS', True, 'performance.enable_cuda_graphs'),
+            enable_numba_jit=self.get('ENABLE_NUMBA_JIT', True, 'performance.enable_numba_jit'),
+            optimize_memory_layout=self.get('OPTIMIZE_MEMORY_LAYOUT', True, 'performance.optimize_memory_layout'),
+            enable_tensor_cores=self.get('ENABLE_TENSOR_CORES', True, 'performance.enable_tensor_cores')
         )
         
         # Cache configuration

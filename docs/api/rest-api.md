@@ -15,13 +15,13 @@ http://localhost:8000
 | **Core** | `/` | GET | API information |
 | **Core** | `/predict` | POST | Unified prediction endpoint |
 | **Audio** | `/synthesize` | POST | Text-to-speech synthesis |
-| **Health** | `/health` | GET | System health check |
+| **Health** | `/health` | GET | System health check with autoscaler info |
+| **Info** | `/info` | GET | Comprehensive system information |
 | **Stats** | `/stats` | GET | Performance statistics |
 | **Config** | `/config` | GET | Configuration info |
 | **Models** | `/models` | GET | List loaded models |
 | **Audio** | `/stt/transcribe` | POST | Speech-to-text |
-| **GPU** | `/gpu/detect` | GET | GPU detection |
-| **Autoscaling** | `/autoscaler/stats` | GET | Autoscaler statistics |
+| **TTS** | `/tts/health` | GET | TTS service health check |
 
 ## Authentication
 
@@ -222,7 +222,7 @@ Content-Type: application/json
 
 ### Health Check
 
-Check system health and component status.
+Check system health and component status, including autoscaler information.
 
 **Request:**
 ```http
@@ -243,6 +243,113 @@ GET /health
     "requests_processed": 1234,
     "avg_processing_time": 0.025,
     "active_requests": 2
+  },
+  "autoscaler": {
+    "healthy": true,
+    "state": "running",
+    "components": {
+      "zero_scaler": {
+        "status": "healthy",
+        "last_activity": 1705315800.123
+      },
+      "model_loader": {
+        "status": "healthy",
+        "active_loaders": 2
+      }
+    }
+  }
+}
+```
+
+### System Information
+
+Get comprehensive system information including server configuration, performance metrics, and TTS capabilities.
+
+**Request:**
+```http
+GET /info
+```
+
+**Response:**
+```json
+{
+  "timestamp": "2025-09-05T13:34:20.123456",
+  "server_config": {
+    "optimization_level": "high",
+    "caching_strategy": "aggressive",
+    "tts_backend": "huggingface_transformers",
+    "auto_optimization": true,
+    "server_features": [
+      "model_caching",
+      "auto_optimization",
+      "tts_synthesis",
+      "batch_processing",
+      "gpu_acceleration"
+    ],
+    "tts_configuration": {
+      "default_models": {
+        "tts": "speecht5_tts",
+        "vocoder": "microsoft/speecht5_hifigan"
+      },
+      "supported_formats": ["wav", "mp3", "flac"],
+      "max_text_length": 5000,
+      "default_sample_rate": 16000,
+      "auto_model_download": true
+    },
+    "performance_settings": {
+      "enable_model_compilation": true,
+      "enable_fp16": true,
+      "batch_optimization": true,
+      "memory_management": "auto"
+    }
+  },
+  "performance_metrics": {
+    "cache_hit_rate": 0.87,
+    "active_optimizations": [
+      "model_compilation",
+      "memory_pooling",
+      "batch_processing"
+    ],
+    "models_in_memory": 3,
+    "system_metrics": {
+      "cpu_percent": 45.2,
+      "memory_percent": 68.5,
+      "memory_available_gb": 12.3,
+      "memory_total_gb": 16.0
+    },
+    "gpu_metrics": {
+      "gpu_available": true,
+      "gpu_count": 1,
+      "current_device": 0,
+      "memory_allocated_mb": 2048.5,
+      "memory_reserved_mb": 2500.0,
+      "gpu_utilization": 85.0
+    },
+    "tts_metrics": {
+      "tts_models_loaded": 2,
+      "tts_models": ["speecht5_tts", "bark_tts"],
+      "avg_synthesis_time_ms": 850,
+      "synthesis_requests_total": 42
+    }
+  },
+  "tts_service": {
+    "status": "healthy",
+    "available_voices": ["default", "female", "male"],
+    "supported_languages": ["en", "es", "fr", "de", "it"],
+    "optimizations_enabled": [
+      "model_caching",
+      "gpu_acceleration",
+      "batch_synthesis",
+      "audio_optimization"
+    ],
+    "loaded_tts_models": ["speecht5_tts", "bark_tts"],
+    "capabilities": {
+      "text_to_speech": true,
+      "voice_cloning": true,
+      "emotion_synthesis": true,
+      "streaming": false,
+      "real_time": true
+    }
   }
 }
 ```
