@@ -37,9 +37,14 @@ class AudioService:
         start_time = time.perf_counter()
         
         try:
+            # Import config to get max text length
+            from ..core.config import get_config
+            config = get_config()
+            max_text_length = config.audio.max_text_length
+            
             # Validate text length
-            if len(request.text) > 5000:
-                raise AudioProcessingError("Text too long. Maximum 5000 characters allowed.")
+            if len(request.text) > max_text_length:
+                raise AudioProcessingError(f"Text too long. Maximum {max_text_length} characters allowed.")
             
             # Import audio modules dynamically
             try:

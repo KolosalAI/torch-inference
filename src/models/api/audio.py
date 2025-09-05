@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field
 
 class TTSRequest(BaseModel):
     """Request model for Text-to-Speech synthesis."""
-    text: str = Field(..., description="Text to synthesize")
+    text: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Text to synthesize (1-5000 characters)"
+    )
     model_name: str = Field(default="default", description="TTS model to use")
     voice: Optional[str] = Field(default=None, description="Voice to use for synthesis")
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed (0.5-2.0)")

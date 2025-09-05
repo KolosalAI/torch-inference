@@ -31,6 +31,18 @@ class SecurityConfig:
     allowed_extensions: list = field(default_factory=lambda: [".wav", ".mp3", ".flac", ".m4a", ".ogg"])
     enable_rate_limiting: bool = True
     max_requests_per_minute: int = 100
+    # CORS configuration with secure defaults
+    enable_cors: bool = True
+    allowed_origins: list = field(default_factory=lambda: ["http://localhost:3000", "http://localhost:8080"])
+    
+    
+@dataclass
+class InferenceConfig:
+    """Inference configuration settings."""
+    fallback_model: str = "example"
+    default_timeout: float = 30.0
+    enable_batching: bool = True
+    max_batch_size: int = 8
 
 
 @dataclass 
@@ -54,6 +66,7 @@ class AppConfig:
     server: ServerConfig = field(default_factory=ServerConfig)
     security: SecurityConfig = field(default_factory=SecurityConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
+    inference: InferenceConfig = field(default_factory=InferenceConfig)
 
 
 class ConfigManager:
@@ -122,6 +135,7 @@ class ConfigManager:
         server_dict = config_dict.get("server", {})
         security_dict = config_dict.get("security", {})
         audio_dict = config_dict.get("audio", {})
+        inference_dict = config_dict.get("inference", {})
         
         return AppConfig(
             environment=config_dict.get("environment", "development"),
@@ -129,7 +143,8 @@ class ConfigManager:
             project_root=config_dict.get("project_root", str(Path(__file__).parent.parent.parent)),
             server=ServerConfig(**server_dict),
             security=SecurityConfig(**security_dict),
-            audio=AudioConfig(**audio_dict)
+            audio=AudioConfig(**audio_dict),
+            inference=InferenceConfig(**inference_dict)
         )
     
     @property

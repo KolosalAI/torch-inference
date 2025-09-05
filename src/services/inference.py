@@ -22,6 +22,14 @@ class InferenceService:
         self.inference_engine = inference_engine
         self.autoscaler = autoscaler
         self.logger = logger
+        
+        # Load configuration for fallback model
+        try:
+            from ..core.config import get_config
+            config = get_config()
+            self.fallback_model = config.inference.fallback_model
+        except Exception:
+            self.fallback_model = 'example'
     
     async def predict(
         self, 
@@ -43,9 +51,9 @@ class InferenceService:
         try:
             # Validate model exists
             if not self._is_model_available(model_name):
-                if model_name != "example":
-                    self.logger.warning(f"Model '{model_name}' not found, using 'example'")
-                    model_name = "example"
+                if model_name != self.fallback_model:
+                    self.logger.warning(f"Model '{model_name}' not found, using '{self.fallback_model}'")
+                    model_name = self.fallback_model
                     
                 if not self._is_model_available(model_name):
                     raise ModelNotFoundError(f"Model '{model_name}' not available")
@@ -194,7 +202,7 @@ class InferenceService:
     def _is_model_available(self, model_name: str) -> bool:
         """Check if model is available."""
         if not self.model_manager:
-            return model_name == "example"  # Fallback for basic service
+            return model_name == self.fallback_model  # Use configurable fallback
         return model_name in self.model_manager.list_models()
     
     async def _execute_prediction(

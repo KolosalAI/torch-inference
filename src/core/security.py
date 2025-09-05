@@ -22,8 +22,18 @@ class SecurityConfig:
         self.secret_key = self._get_or_generate_secret_key()
         self.token_expiry_minutes = 60
         self.max_request_rate = 100  # requests per minute
-        self.enable_cors = True
-        self.allowed_origins = ["*"]  # Configure for production
+        
+        # Load CORS configuration from main config
+        try:
+            from .config import get_config
+            config = get_config()
+            self.enable_cors = config.security.enable_cors
+            self.allowed_origins = config.security.allowed_origins
+        except Exception:
+            # Secure defaults - no wildcards
+            self.enable_cors = True
+            self.allowed_origins = ["http://localhost:3000", "http://localhost:8080"]
+            
         self.enable_api_key_auth = False
         self.api_keys_file = "api_keys.txt"
     

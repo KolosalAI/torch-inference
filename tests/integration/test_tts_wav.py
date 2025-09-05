@@ -9,13 +9,19 @@ import json
 import base64
 import wave
 import numpy as np
+import os
 from pathlib import Path
+
+# Configuration - can be overridden by environment variables
+TTS_SERVICE_HOST = os.getenv('TTS_SERVICE_HOST', 'localhost')
+TTS_SERVICE_PORT = os.getenv('TTS_SERVICE_PORT', '8000')
+TTS_SERVICE_URL = f'http://{TTS_SERVICE_HOST}:{TTS_SERVICE_PORT}'
 
 def test_tts_service():
     """Test the TTS service and analyze the output."""
     
     # Test TTS synthesis
-    url = 'http://localhost:8000/tts/synthesize'
+    url = f'{TTS_SERVICE_URL}/tts/synthesize'
     data = {
         'text': 'Hello, this is a test of the text to speech system.',
         'model_name': 'speecht5_tts',
@@ -67,8 +73,8 @@ def test_tts_service():
             pytest.fail(f"HTTP request failed with status {response.status_code}: {response.text}")
             
     except requests.exceptions.ConnectionError:
-        print("TTS service is not running on localhost:8000")
-        pytest.skip("TTS service is not available. Start the service to run this test.")
+        print(f"TTS service is not running on {TTS_SERVICE_HOST}:{TTS_SERVICE_PORT}")
+        pytest.skip(f"TTS service is not available at {TTS_SERVICE_URL}. Start the service to run this test.")
     except Exception as e:
         print(f'Request failed: {e}')
         pytest.fail(f"TTS service test failed: {e}")
