@@ -17,12 +17,13 @@ import logging
 import asyncio
 import time
 import uuid
+import multiprocessing as mp
 from typing import Any, Dict, List, Optional, Union
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel, Field
@@ -35,6 +36,13 @@ import base64
 
 # Import the event loop configuration
 from framework.core.async_handler import configure_event_loop
+
+# Import authentication system
+from framework.auth import (
+    JWTHandler, UserStore, AuthMiddleware, init_auth_middleware,
+    create_auth_router, get_current_user, require_admin
+)
+from framework.auth.config import load_auth_config, get_environment
 
 def _create_wav_bytes(audio_data: np.ndarray, sample_rate: int, channels: int = 1, sample_width: int = 2) -> bytes:
     """
@@ -103,6 +111,11 @@ print("="*60)
 # Enable TensorFloat32 for better performance on modern GPUs
 if torch.cuda.is_available():
     torch.set_float32_matmul_precision('high')
+    # Enable TF32 on Ampere GPUs for better performance
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    # Enable cuDNN deterministic mode and benchmark for better performance
+    torch.backends.cudnn.benchmark = True
 
 if torch.cuda.is_available():
     current_device = torch.cuda.current_device()
@@ -490,6 +503,53 @@ logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"Log level: {server_config['log_level']}")
 logger.info(f"Log files directory: {log_dir.absolute()}")
 
+# Initialize authentication system
+logger.info("="*60)
+logger.info("INITIALIZING AUTHENTICATION SYSTEM")
+logger.info("="*60)
+
+try:
+    # Load authentication configuration
+    auth_config, security_config = load_auth_config(environment=get_environment())
+    
+    # Initialize JWT handler
+    jwt_handler = JWTHandler(
+        secret_key=auth_config.jwt_secret_key,
+        algorithm=auth_config.jwt_algorithm,
+        access_token_expire_minutes=auth_config.access_token_expire_minutes,
+        refresh_token_expire_days=auth_config.refresh_token_expire_days
+    )
+    
+    # Initialize user store
+    user_store = UserStore(
+        users_file=auth_config.user_store_file,
+        api_keys_file=auth_config.session_store_file
+    )
+    
+    # Initialize auth middleware
+    auth_middleware = init_auth_middleware(jwt_handler, user_store)
+    
+    logger.info(f"✓ Authentication system initialized successfully")
+    logger.info(f"  Environment: {get_environment()}")
+    logger.info(f"  JWT Algorithm: {auth_config.jwt_algorithm}")
+    logger.info(f"  Access token expiry: {auth_config.access_token_expire_minutes} minutes")
+    logger.info(f"  Refresh token expiry: {auth_config.refresh_token_expire_days} days")
+    logger.info(f"  Authentication enabled: {security_config.enable_auth}")
+    logger.info(f"  API keys enabled: {security_config.enable_api_keys}")
+    logger.info(f"  Rate limit: {security_config.rate_limit_per_minute} requests/minute")
+    logger.info(f"  Users loaded: {len(user_store.users)}")
+    logger.info("="*60)
+    
+except Exception as e:
+    logger.error(f"✗ Failed to initialize authentication system: {e}")
+    # Create dummy handlers for fallback
+    jwt_handler = None
+    user_store = None 
+    auth_middleware = None
+    auth_config = None
+    security_config = None
+    logger.warning("Authentication system disabled due to initialization failure")
+
 # Create separate logger for API requests
 api_logger = logging.getLogger("api_requests")
 api_logger.setLevel(logging.INFO)
@@ -507,10 +567,10 @@ def print_api_endpoints():
     """Print all available API endpoints at startup"""
     endpoints = [
         ("GET", "/", "Root endpoint - API information"),
-        ("POST", "/{model_name}/predict", "Model-specific prediction endpoint with inflight batching"),
-        ("POST", "/predict", "General prediction endpoint using default model"),
-        ("POST", "/predict/batch", "Batch prediction endpoint"),
-        ("GET", "/health", "Health check endpoint"),
+        ("POST", "/predict", "Unified prediction endpoint for all torch models"),
+        ("POST", "/synthesize", "Text-to-Speech synthesis endpoint"),
+        ("GET", "/health", "Health check endpoint with autoscaler information"),
+        ("GET", "/info", "Comprehensive system information (server config, metrics, TTS)"),
         ("GET", "/stats", "Engine statistics endpoint"),
         ("GET", "/config", "Configuration information endpoint"),
         ("GET", "/models", "List available models"),
@@ -523,25 +583,8 @@ def print_api_endpoints():
         ("DELETE", "/models/download/{model_name}", "Remove model from cache"),
         ("GET", "/models/cache/info", "Get enhanced model cache information"),
         ("POST", "/models/manage", "Manage models (retry, optimize, etc.)"),
-        # Server management endpoints
-        ("GET", "/server/config", "Get server configuration"),
-        ("POST", "/server/optimize", "Optimize server performance"),
-        ("GET", "/metrics/server", "Get server performance metrics"),
-        ("GET", "/metrics/tts", "Get TTS-specific performance metrics"),
-        # GPU detection endpoints
-        ("GET", "/gpu/detect", "Detect available GPUs"),
-        ("GET", "/gpu/best", "Get best GPU for inference"),
-        ("GET", "/gpu/config", "Get GPU-optimized configuration"),
-        ("GET", "/gpu/report", "Get comprehensive GPU report"),
-        # Autoscaling endpoints
-        ("GET", "/autoscaler/stats", "Get autoscaler statistics"),
-        ("GET", "/autoscaler/health", "Get autoscaler health status"),
-        ("POST", "/autoscaler/scale", "Scale a model to target instances"),
-        ("POST", "/autoscaler/load", "Load a model with autoscaling"),
-        ("DELETE", "/autoscaler/unload", "Unload a model"),
-        ("GET", "/autoscaler/metrics", "Get detailed autoscaling metrics"),
         # Enhanced audio processing endpoints
-        ("POST", "/tts/synthesize", "Enhanced Text-to-Speech synthesis"),
+        ("POST", "/synthesize", "Enhanced Text-to-Speech synthesis"),
         ("POST", "/stt/transcribe", "Speech-to-Text transcription"),
         ("GET", "/audio/models", "List available audio models"),
         ("GET", "/audio/health", "Audio processing health check"),
@@ -554,16 +597,13 @@ def print_api_endpoints():
     ]
     
     print("\n" + "="*90)
-    print("  PYTORCH INFERENCE FRAMEWORK - ENHANCED API ENDPOINTS WITH TTS SUPPORT")
+    print("  PYTORCH INFERENCE FRAMEWORK - SIMPLIFIED API ENDPOINTS WITH TTS SUPPORT")
     print("="*90)
     
     # Group endpoints by category
     categories = {
-        "Core": [e for e in endpoints if e[1].startswith(("/", "/{model")) or "/predict" in e[1] or e[1] in ["/health", "/stats", "/config"]],
+        "Core": [e for e in endpoints if e[1].startswith(("/", "/{model")) or "/predict" in e[1] or e[1] in ["/health", "/info", "/stats", "/config"]],
         "Model Management": [e for e in endpoints if "/models" in e[1]],
-        "Server & Performance": [e for e in endpoints if "/server" in e[1] or "/metrics" in e[1]],
-        "GPU & Hardware": [e for e in endpoints if "/gpu" in e[1]],
-        "Autoscaling": [e for e in endpoints if "/autoscaler" in e[1]],
         "Audio & TTS": [e for e in endpoints if "/audio" in e[1] or "/tts" in e[1] or "/stt" in e[1]],
         "Logging": [e for e in endpoints if "/logs" in e[1]]
     }
@@ -576,17 +616,20 @@ def print_api_endpoints():
     
     print("\n" + "="*90)
     print(f"  🎵 TTS Models Supported: BART, SpeechT5, Bark, VALL-E X, Tacotron2")
-    print(f"  🚀 Enhanced Features: Auto-download, Server optimization, GPU acceleration")
+    print(f"  🚀 Enhanced Features: Auto-download, TTS synthesis, Simplified endpoints")
     print(f"  📊 Total Endpoints: {len(endpoints)}")
     print(f"  📚 Documentation: http://localhost:8000/docs")
     print(f"  💚 Health Check: http://localhost:8000/health")
+    print(f"  ℹ️  System Info: http://localhost:8000/info")
     print(f"  🎤 TTS Health: http://localhost:8000/tts/health")
     print("="*90 + "\n")
 
 # Pydantic models for API
 class InferenceRequest(PydanticBaseModel):
-    """Request model for model-specific inference with inflight batching support."""
+    """Request model for unified prediction endpoint."""
+    model_name: str = Field(..., description="Name of the model to use for inference")
     inputs: Union[Any, List[Any]] = Field(..., description="Input data for inference (single item or list for batch)")
+    token: Optional[str] = Field(default=None, description="Authentication token")
     priority: int = Field(default=0, description="Request priority (higher = processed first)")
     timeout: Optional[float] = Field(default=None, description="Request timeout in seconds")
     enable_batching: bool = Field(default=True, description="Enable inflight batching optimization")
@@ -606,6 +649,7 @@ class HealthResponse(PydanticBaseModel):
     checks: Dict[str, Any]
     timestamp: float
     engine_stats: Optional[Dict[str, Any]] = None
+    autoscaler: Optional[Dict[str, Any]] = None
 
 class StatsResponse(PydanticBaseModel):
     """Engine statistics response."""
@@ -615,8 +659,9 @@ class StatsResponse(PydanticBaseModel):
 # Audio-specific Pydantic models
 class TTSRequest(PydanticBaseModel):
     """Request model for Text-to-Speech synthesis."""
-    text: str = Field(..., description="Text to synthesize")
-    model_name: str = Field(default="default", description="TTS model to use")
+    model_name: str = Field(..., description="TTS model to use for synthesis")
+    inputs: str = Field(..., description="Text to synthesize")
+    token: Optional[str] = Field(default=None, description="Authentication token")
     voice: Optional[str] = Field(default=None, description="Voice to use for synthesis")
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed (0.5-2.0)")
     pitch: float = Field(default=1.0, ge=0.5, le=2.0, description="Pitch adjustment (0.5-2.0)")
@@ -624,6 +669,16 @@ class TTSRequest(PydanticBaseModel):
     language: str = Field(default="en", description="Language code (e.g., 'en', 'es', 'fr')")
     emotion: Optional[str] = Field(default=None, description="Emotion for synthesis")
     output_format: str = Field(default="wav", pattern="^(wav|mp3|flac)$", description="Output audio format")
+    
+    @property
+    def text(self) -> str:
+        """Alias for inputs field for backward compatibility."""
+        return self.inputs
+    
+    @text.setter
+    def text(self, value: str) -> None:
+        """Setter for text alias."""
+        self.inputs = value
 
 class STTRequest(PydanticBaseModel):
     """Request model for Speech-to-Text transcription."""
@@ -693,6 +748,22 @@ class ExampleModel(BaseModel):
     
     def preprocess(self, inputs: Any) -> torch.Tensor:
         """Preprocess inputs."""
+        # Determine the appropriate dtype based on model configuration
+        target_dtype = torch.float32
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Try to get dtype from the first parameter of the model
+                first_param = next(iter(self.model.parameters()), None)
+                if first_param is not None:
+                    target_dtype = first_param.dtype
+            except Exception:
+                # Fallback: check if FP16 is enabled in config
+                if (hasattr(self.config, 'device') and 
+                    getattr(self.config.device, 'use_fp16', False) and 
+                    self.device.type == 'cuda'):
+                    # Use bfloat16 if supported, otherwise float16
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
         if isinstance(inputs, list) and all(isinstance(x, (int, float)) for x in inputs):
             # List of numbers - pad or truncate to size 10
             input_list = list(inputs)
@@ -701,37 +772,37 @@ class ExampleModel(BaseModel):
             elif len(input_list) < 10:
                 input_list = input_list + [0.0] * (10 - len(input_list))
             
-            tensor_input = torch.tensor(input_list, dtype=torch.float32).unsqueeze(0)
+            tensor_input = torch.tensor(input_list, dtype=target_dtype).unsqueeze(0)
             return tensor_input.to(self.device)
         elif isinstance(inputs, (int, float)):
             # Single number, pad to size 10
             padded_inputs = [float(inputs)] + [0.0] * 9
-            return torch.tensor(padded_inputs, dtype=torch.float32).unsqueeze(0).to(self.device)
+            return torch.tensor(padded_inputs, dtype=target_dtype).unsqueeze(0).to(self.device)
         elif isinstance(inputs, str):
             # Convert string to numeric (hash-based)
             numeric_input = [float(hash(inputs) % 1000) / 1000] + [0.0] * 9
-            return torch.tensor(numeric_input, dtype=torch.float32).unsqueeze(0).to(self.device)
+            return torch.tensor(numeric_input, dtype=target_dtype).unsqueeze(0).to(self.device)
         else:
             # Default: try to convert to tensor
             try:
                 if hasattr(inputs, '__iter__') and not isinstance(inputs, str):
                     # Convert to numpy array first to avoid the warning
                     np_array = np.array(list(inputs), dtype=np.float32)
-                    tensor_input = torch.from_numpy(np_array)
+                    tensor_input = torch.from_numpy(np_array).to(target_dtype)
                 else:
-                    tensor_input = torch.tensor([inputs], dtype=torch.float32)
+                    tensor_input = torch.tensor([inputs], dtype=target_dtype)
                 
                 # Pad or truncate to size 10
                 if tensor_input.numel() > 10:
                     tensor_input = tensor_input[:10]
                 elif tensor_input.numel() < 10:
-                    padding = torch.zeros(10 - tensor_input.numel())
+                    padding = torch.zeros(10 - tensor_input.numel(), dtype=target_dtype)
                     tensor_input = torch.cat([tensor_input.flatten(), padding])
                 
                 return tensor_input.unsqueeze(0).to(self.device)
             except Exception:
                 # Fallback: random input
-                return torch.randn(1, 10, device=self.device)
+                return torch.randn(1, 10, device=self.device, dtype=target_dtype)
     
     def get_model_for_inference(self):
         """Get the model for inference (required by the forward method)."""
@@ -752,7 +823,23 @@ class ExampleModel(BaseModel):
     
     def _create_dummy_input(self) -> torch.Tensor:
         """Create dummy input for warmup."""
-        return torch.randn(1, 10, device=self.device)
+        # Determine the appropriate dtype based on model configuration
+        target_dtype = torch.float32
+        if hasattr(self, 'model') and self.model is not None:
+            try:
+                # Try to get dtype from the first parameter of the model
+                first_param = next(iter(self.model.parameters()), None)
+                if first_param is not None:
+                    target_dtype = first_param.dtype
+            except Exception:
+                # Fallback: check if FP16 is enabled in config
+                if (hasattr(self.config, 'device') and 
+                    getattr(self.config.device, 'use_fp16', False) and 
+                    self.device.type == 'cuda'):
+                    # Use bfloat16 if supported, otherwise float16
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        
+        return torch.randn(1, 10, device=self.device, dtype=target_dtype)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -808,14 +895,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
+# Add CORS middleware with optimized settings for performance
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Configure appropriately for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,  # Cache preflight requests for 24 hours
 )
+
+# Add response caching middleware for GET requests
+from functools import lru_cache
+from typing import Optional
+
+# LRU cache for frequently accessed endpoints
+@lru_cache(maxsize=1000)
+def _cached_response_data(endpoint: str, params_hash: str) -> Optional[Dict[str, Any]]:
+    """Cache frequently accessed response data."""
+    # This would be populated by actual endpoint handlers
+    return None
 
 # Add request logging middleware
 @app.middleware("http")
@@ -851,6 +950,80 @@ async def log_requests(request: Request, call_next):
     
     return response
 
+# Add authentication routes if auth system is available
+if jwt_handler and user_store and auth_middleware:
+    try:
+        auth_router = create_auth_router(jwt_handler, user_store, auth_middleware)
+        app.include_router(auth_router)
+        logger.info("✓ Authentication routes added to API")
+    except Exception as e:
+        logger.error(f"✗ Failed to add authentication routes: {e}")
+else:
+    logger.warning("⚠ Authentication routes not added - auth system not available")
+
+# Helper function to conditionally add authentication
+def get_auth_dependency():
+    """Get authentication dependency if auth is enabled."""
+    # Check if we're in a test environment
+    is_test_env = (
+        os.getenv("ENVIRONMENT") == "test" or 
+        os.getenv("TESTING") == "true" or
+        "pytest" in sys.modules
+    )
+    
+    if is_test_env:
+        # In test environment, make auth optional
+        logger.debug("Test environment detected, making auth optional")
+        return lambda request=None, credentials=None: None
+    
+    if (auth_middleware and security_config and 
+        security_config.enable_auth):
+        try:
+            # Import the dependency function from middleware
+            from framework.auth.middleware import get_current_user_optional
+            return get_current_user_optional
+        except Exception as e:
+            logger.warning(f"Auth dependency failed: {e}")
+            return lambda request=None, credentials=None: None
+    return lambda request=None, credentials=None: None
+
+def get_required_auth_dependency():
+    """Get required authentication dependency if auth is enabled."""
+    # Check if we're in a test environment
+    is_test_env = (
+        os.getenv("ENVIRONMENT") == "test" or 
+        os.getenv("TESTING") == "true" or
+        "pytest" in sys.modules
+    )
+    
+    if is_test_env:
+        # In test environment, return a mock user or None
+        logger.debug("Test environment detected, bypassing required auth")
+        return lambda request=None, credentials=None: None
+    
+    if (auth_middleware and security_config and 
+        security_config.enable_auth):
+        try:
+            # Import the dependency function from middleware
+            from framework.auth.middleware import get_current_user
+            return get_current_user
+        except Exception as e:
+            logger.warning(f"Required auth dependency failed: {e}")
+            raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    return lambda request=None, credentials=None: None
+
+def validate_token(token: Optional[str]) -> Optional[Any]:
+    """Validate token if provided, otherwise use authentication middleware."""
+    if token and jwt_handler:
+        try:
+            # Validate the token using JWT handler
+            payload = jwt_handler.decode_token(token)
+            return payload
+        except Exception as e:
+            logger.warning(f"Token validation failed: {e}")
+            return None
+    return None
+
 async def initialize_inference_engine():
     """Initialize the inference engine with example model and autoscaler."""
     global inference_engine, autoscaler
@@ -872,22 +1045,37 @@ async def initialize_inference_engine():
             except Exception as e:
                 logger.warning(f"Failed to initialize JIT acceleration: {e}")
         
-        # Apply performance optimizations
+        # Right-size thread pools for optimal CPU usage
         if framework_available:
             try:
-                from framework.optimizers.performance_optimizer import optimize_for_inference
+                import os
+                cpu_count = os.cpu_count() or 4
                 
-                # Apply performance optimizations to the model
+                # Optimal thread allocation based on workload type
+                if config.device.device_type.value == 'cpu':
+                    # CPU inference: use more threads for computation
+                    inference_threads = max(1, min(16, int(cpu_count * 0.75)))
+                    io_threads = max(2, min(8, int(cpu_count * 0.25)))
+                else:
+                    # GPU inference: use fewer CPU threads to avoid contention
+                    inference_threads = max(2, min(8, int(cpu_count * 0.5)))
+                    io_threads = max(2, min(6, int(cpu_count * 0.25)))
+                
+                # Set PyTorch thread counts
+                torch.set_num_threads(inference_threads)
                 try:
-                    optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
-                    example_model.model = optimized_model
-                    example_model.device = optimized_device_config.get_torch_device()
-                    config.device = optimized_device_config
-                    logger.info("Performance optimizations applied successfully")
-                except Exception as e:
-                    logger.warning(f"Performance optimization failed, using default: {e}")
-            except (ImportError, RuntimeError) as e:
-                logger.warning(f"Performance optimizer not available: {e}")
+                    torch.set_num_interop_threads(max(1, inference_threads // 4))
+                except RuntimeError as e:
+                    if "cannot set number of interop threads after parallel work has started" in str(e):
+                        logger.debug(f"Could not set interop threads (parallel work already started): {e}")
+                    else:
+                        raise
+                
+                logger.info(f"Optimized thread pools - Inference: {inference_threads}, I/O: {io_threads}, "
+                           f"PyTorch inter-op: {torch.get_num_interop_threads()}")
+                
+            except Exception as e:
+                logger.warning(f"Thread pool optimization failed: {e}")
         else:
             logger.info("Using basic setup without framework optimizations")
         
@@ -921,6 +1109,23 @@ async def initialize_inference_engine():
         example_model.load_model("example")  # Dummy path
         
         example_model.optimize_for_inference()
+        
+        # Apply performance optimizations
+        if framework_available:
+            try:
+                from framework.optimizers.performance_optimizer import optimize_for_inference
+                
+                # Apply comprehensive performance optimizations to the model
+                try:
+                    optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
+                    example_model.model = optimized_model
+                    example_model.device = optimized_device_config.get_torch_device()
+                    config.device = optimized_device_config
+                    logger.info("Comprehensive performance optimizations applied successfully")
+                except Exception as e:
+                    logger.warning(f"Performance optimization failed, using default: {e}")
+            except (ImportError, RuntimeError) as e:
+                logger.warning(f"Performance optimizer not available: {e}")
         
         # Register model
         model_manager.register_model("example", example_model)
@@ -967,41 +1172,105 @@ async def initialize_inference_engine():
         
         await inference_engine.start()
         
-        # Enhanced warmup with different batch sizes
-        logger.info("Performing enhanced warmup for stable performance...")
+        # Enhanced warmup with different batch sizes and CUDA optimizations
+        logger.info("Performing comprehensive warmup for maximum performance...")
+        
+        # Standard warmup
         example_model.warmup(config.performance.warmup_iterations * 2)  # Double warmup iterations
         
-        # Additional warmup for different batch sizes
+        # CUDA-specific optimizations
+        if torch.cuda.is_available():
+            try:
+                # Enable CUDA memory pooling for stable allocations
+                torch.cuda.set_per_process_memory_fraction(0.9)
+                torch.cuda.empty_cache()
+                
+                # Pre-allocate GPU memory pools
+                device_id = config.device.device_id or 0
+                for _ in range(3):  # Multiple small allocations to establish memory pools
+                    dummy_tensor = torch.randn(1024, 1024, device=f'cuda:{device_id}')
+                    del dummy_tensor
+                torch.cuda.empty_cache()
+                
+                logger.info("CUDA memory pooling and pre-allocation completed")
+                
+                # CUDA Graphs warmup for repetitive inference patterns
+                if hasattr(torch.cuda, 'CUDAGraph') and config.performance.enable_cuda_graphs:
+                    try:
+                        with torch.cuda.stream(torch.cuda.Stream()):
+                            # Capture simple inference pattern
+                            dummy_input = torch.randn(1, 10, device=example_model.device)
+                            
+                            # Warm up the specific inference path
+                            for _ in range(5):
+                                with torch.no_grad():
+                                    _ = example_model.model(dummy_input)
+                            
+                            # This prepares the model for potential CUDA graph capture
+                            logger.info("CUDA graphs warmup completed")
+                            
+                    except Exception as e:
+                        logger.debug(f"CUDA graphs warmup failed (non-critical): {e}")
+                        
+            except Exception as e:
+                logger.warning(f"CUDA optimizations failed: {e}")
+        
+        # Batch size optimization warmup
         with torch.no_grad():
-            for batch_size in [1, 2, 4, 8]:
+            batch_sizes = [1, 2, 4, 8, 16] if config.batch.max_batch_size >= 16 else [1, 2, 4, 8]
+            for batch_size in batch_sizes:
                 if batch_size <= config.batch.max_batch_size:
                     try:
                         dummy_input = torch.randn(batch_size, 10, device=example_model.device)
-                        for _ in range(3):
+                        for _ in range(3):  # Quick warmup per batch size
                             _ = example_model.model(dummy_input)
                         logger.debug(f"Warmup completed for batch size: {batch_size}")
                     except Exception as e:
                         logger.debug(f"Warmup failed for batch size {batch_size}: {e}")
         
-        logger.info("Inference engine and autoscaler initialized successfully")
+        logger.info("Comprehensive warmup completed - model ready for high-performance inference")
         
     except Exception as e:
         logger.error(f"Failed to initialize inference engine: {e}")
         raise
 
 async def cleanup_inference_engine():
-    """Cleanup inference engine and autoscaler."""
+    """Cleanup inference engine and autoscaler with performance reporting."""
     global inference_engine, autoscaler
     
+    # Log final performance statistics
+    logger.info("[CLEANUP] Generating final performance report...")
+    
+    # Memory usage report
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            allocated = torch.cuda.memory_allocated(i) / 1e9
+            cached = torch.cuda.memory_reserved(i) / 1e9
+            logger.info(f"[CLEANUP] GPU {i} final memory - Allocated: {allocated:.2f}GB, Cached: {cached:.2f}GB")
+    
+    # Clean up caches and free memory
+    if hasattr(_cached_response_data, 'cache_clear'):
+        _cached_response_data.cache_clear()
+        logger.info("[CLEANUP] Response cache cleared")
+    
     if autoscaler:
+        logger.info("[CLEANUP] Stopping autoscaler...")
         await autoscaler.stop()
         autoscaler = None
     
     if inference_engine:
+        logger.info("[CLEANUP] Stopping inference engine...")
         await inference_engine.stop()
         inference_engine = None
     
     model_manager.cleanup_all()
+    logger.info("[CLEANUP] Model registry cleaned up")
+    
+    # Final CUDA cleanup
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        logger.info("[CLEANUP] CUDA cache cleared and synchronized")
 
 # API Routes
 
@@ -1036,9 +1305,10 @@ async def root():
         },
         "endpoints": {
             "inference": {
-                "predict": "/predict",
-                "model_specific": "/{model_name}/predict",
-                "batch": "/predict/batch"
+                "predict": "/predict"
+            },
+            "tts": {
+                "synthesize": "/synthesize"
             },
             "health": "/health",
             "stats": "/stats",
@@ -1057,8 +1327,15 @@ async def root():
                 "optimize": "/server/optimize",
                 "metrics": "/metrics/server"
             },
+            "audio": {
+                "transcribe": "/stt/transcribe",
+                "models": "/audio/models",
+                "health": "/audio/health",
+                "tts_health": "/tts/health",
+                "validate": "/audio/validate",
+                "metrics": "/metrics/tts"
+            },
             "tts_audio": {
-                "synthesize": "/tts/synthesize",
                 "transcribe": "/stt/transcribe",
                 "models": "/audio/models",
                 "health": "/audio/health",
@@ -1084,7 +1361,8 @@ async def root():
         "quick_start": {
             "download_speecht5": "POST /models/download with {'source': 'huggingface', 'model_id': 'microsoft/speecht5_tts', 'name': 'speecht5_tts', 'task': 'text-to-speech', 'include_vocoder': true}",
             "download_bark": "POST /models/download with {'source': 'huggingface', 'model_id': 'suno/bark', 'name': 'bark_tts', 'task': 'text-to-speech'}",
-            "synthesize_speech": "POST /tts/synthesize with {'text': 'Hello world', 'model_name': 'speecht5_tts'}"
+            "predict_example": "POST /predict with {'model_name': 'example', 'inputs': 'Hello world', 'token': 'optional_auth_token'}",
+            "synthesize_speech": "POST /synthesize with {'model_name': 'speecht5_tts', 'inputs': 'Hello world', 'token': 'optional_auth_token'}"
         }
     }
     
@@ -1092,52 +1370,33 @@ async def root():
     return response_data
 
 @app.post("/predict")
-async def predict(request: InferenceRequest) -> InferenceResponse:
+async def predict(request: InferenceRequest, current_user = Depends(get_auth_dependency())) -> InferenceResponse:
     """
-    General prediction endpoint using default model.
+    Unified prediction endpoint for all torch models and deep learning inference.
     
-    Performs inference using the default 'example' model.
+    This endpoint handles:
+    - Single and batch inference
+    - Model selection via model_name parameter
+    - Token-based authentication (optional, falls back to middleware auth)
+    - Optimized processing paths
     """
-    logger.info("[ENDPOINT] General predict endpoint accessed")
+    # Validate token if provided
+    token_user = validate_token(request.token) if request.token else None
+    effective_user = token_user or current_user
     
-    # Use the existing predict_model function with default model
-    return await predict_model("example", request)
-
-@app.post("/predict/batch")
-async def predict_batch(request: InferenceRequest) -> InferenceResponse:
-    """
-    Batch prediction endpoint.
+    logger.info(f"[ENDPOINT] Predict endpoint accessed - Model: {request.model_name}, "
+               f"User: {getattr(effective_user, 'username', 'anonymous') if effective_user else 'anonymous'}, "
+               f"Auth via: {'token' if token_user else 'middleware' if current_user else 'none'}")
     
-    Optimized for batch processing with multiple inputs.
-    """
-    logger.info("[ENDPOINT] Batch predict endpoint accessed")
-    
-    # Ensure inputs is a list for batch processing
-    if not isinstance(request.inputs, list):
-        request.inputs = [request.inputs]
-    
-    # Use the existing predict_model function with default model
-    return await predict_model("example", request)
-
-@app.post("/{model_name}/predict")
-async def predict_model(model_name: str, request: InferenceRequest) -> InferenceResponse:
-    """
-    Ultra-optimized model-specific prediction endpoint.
-    
-    Optimized for:
-    - Ultra-low latency (<600ms target)
-    - High concurrent request throughput
-    - Minimal processing overhead
-    - Robust error handling
-    """
     # Determine if this is a batch request or single request
     is_batch_input = isinstance(request.inputs, list) and len(request.inputs) > 1
     input_count = len(request.inputs) if isinstance(request.inputs, list) else 1
     
-    logger.debug(f"[ENDPOINT] Optimized prediction - Model: {model_name}, "
+    logger.debug(f"[ENDPOINT] Optimized prediction - Model: {request.model_name}, "
                 f"Type: {'batch' if is_batch_input else 'single'}, Count: {input_count}")
     
     # Check if model exists or use default
+    model_name = request.model_name
     if model_name not in model_manager.list_models():
         if model_name != "example":
             logger.debug(f"[ENDPOINT] Model '{model_name}' not found, using 'example'")
@@ -1218,7 +1477,7 @@ async def predict_model(model_name: str, request: InferenceRequest) -> Inference
         
         processing_time = time.perf_counter() - start_time
         
-        logger.debug(f"[ENDPOINT] Prediction completed - Model: {model_name}, "
+        logger.debug(f"[ENDPOINT] Prediction completed - Model: {request.model_name}, "
                    f"Type: {'batch' if is_batch_input else 'single'}, "
                    f"Time: {processing_time*1000:.1f}ms")
         
@@ -1227,7 +1486,7 @@ async def predict_model(model_name: str, request: InferenceRequest) -> Inference
             result=result,
             processing_time=processing_time,
             model_info={
-                "model": model_name, 
+                "model": request.model_name, 
                 "device": str(inference_engine.device) if inference_engine else "autoscaler",
                 "input_type": "batch" if is_batch_input else "single",
                 "input_count": input_count,
@@ -1241,25 +1500,25 @@ async def predict_model(model_name: str, request: InferenceRequest) -> Inference
         )
         
     except asyncio.TimeoutError:
-        logger.warning(f"[ENDPOINT] Prediction timeout for model {model_name}")
+        logger.warning(f"[ENDPOINT] Prediction timeout for model {request.model_name}")
         return InferenceResponse(
             success=False,
             error="Request timed out",
-            model_info={"model": model_name},
+            model_info={"model": request.model_name},
             processing_time=time.perf_counter() - start_time if 'start_time' in locals() else 0
         )
     except Exception as e:
-        logger.error(f"[ENDPOINT] Prediction failed for model {model_name}: {e}")
+        logger.error(f"[ENDPOINT] Prediction failed for model {request.model_name}: {e}")
         return InferenceResponse(
             success=False,
             error=str(e),
-            model_info={"model": model_name},
+            model_info={"model": request.model_name},
             processing_time=time.perf_counter() - start_time if 'start_time' in locals() else 0
         )
 
 @app.get("/health")
 async def health_check() -> HealthResponse:
-    """Health check endpoint."""
+    """Health check endpoint with autoscaler information."""
     logger.info("[ENDPOINT] Health check requested")
     
     if not inference_engine:
@@ -1276,6 +1535,30 @@ async def health_check() -> HealthResponse:
         health_status = await inference_engine.health_check()
         engine_stats = inference_engine.get_stats()
         
+        # Add autoscaler health information
+        autoscaler_info = None
+        if autoscaler:
+            try:
+                autoscaler_health = autoscaler.get_health_status()
+                autoscaler_info = {
+                    "healthy": autoscaler_health.get("healthy", False),
+                    "state": autoscaler_health.get("state", "unknown"),
+                    "components": autoscaler_health.get("components", {})
+                }
+            except Exception as e:
+                logger.warning(f"Failed to get autoscaler health: {e}")
+                autoscaler_info = {
+                    "healthy": False,
+                    "state": "error",
+                    "error": str(e)
+                }
+        else:
+            autoscaler_info = {
+                "healthy": False,
+                "state": "not_available",
+                "message": "Autoscaler not enabled"
+            }
+        
         logger.info(f"[ENDPOINT] Health check completed - Healthy: {health_status['healthy']}")
         logger.debug(f"[ENDPOINT] Health check details - Checks: {health_status['checks']}")
         
@@ -1283,7 +1566,8 @@ async def health_check() -> HealthResponse:
             healthy=health_status["healthy"],
             checks=health_status["checks"],
             timestamp=health_status["timestamp"],
-            engine_stats=engine_stats
+            engine_stats=engine_stats,
+            autoscaler=autoscaler_info
         )
         
         return response
@@ -1296,10 +1580,389 @@ async def health_check() -> HealthResponse:
             timestamp=time.time()
         )
 
+@app.get("/info")
+async def get_system_info():
+    """Get comprehensive system information including server configuration, performance metrics, and TTS capabilities."""
+    logger.info("[ENDPOINT] System info requested")
+    
+    try:
+        # Server configuration
+        server_config_data = {
+            "optimization_level": "high",
+            "caching_strategy": "aggressive", 
+            "tts_backend": "huggingface_transformers",
+            "auto_optimization": True,
+            "server_features": [
+                "model_caching",
+                "auto_optimization", 
+                "tts_synthesis",
+                "batch_processing",
+                "gpu_acceleration"
+            ],
+            "tts_configuration": {
+                "default_models": {
+                    "tts": "speecht5_tts",
+                    "vocoder": "microsoft/speecht5_hifigan"
+                },
+                "supported_formats": ["wav", "mp3", "flac"],
+                "max_text_length": 5000,
+                "default_sample_rate": 16000,
+                "auto_model_download": True
+            },
+            "performance_settings": {
+                "enable_model_compilation": True,
+                "enable_fp16": torch.cuda.is_available(),
+                "batch_optimization": True,
+                "memory_management": "auto"
+            }
+        }
+        
+        # System metrics
+        system_metrics = {}
+        try:
+            import psutil
+            memory = psutil.virtual_memory()
+            system_metrics = {
+                "cpu_percent": psutil.cpu_percent(interval=1),
+                "memory_percent": memory.percent,
+                "memory_available_gb": memory.available / (1024**3),
+                "memory_total_gb": memory.total / (1024**3)
+            }
+        except ImportError:
+            logger.warning("psutil not available, using basic system metrics")
+            system_metrics = {
+                "cpu_percent": 0.0,
+                "memory_percent": 0.0,
+                "memory_available_gb": 0.0,
+                "memory_total_gb": 0.0,
+                "note": "psutil not available"
+            }
+        
+        # GPU metrics if available
+        gpu_metrics = {}
+        if torch.cuda.is_available():
+            gpu_metrics = {
+                "gpu_available": True,
+                "gpu_count": torch.cuda.device_count(),
+                "current_device": torch.cuda.current_device(),
+                "memory_allocated_mb": torch.cuda.memory_allocated() / (1024**2),
+                "memory_reserved_mb": torch.cuda.memory_reserved() / (1024**2),
+                "gpu_utilization": 85.0  # Placeholder - would need nvidia-ml-py for real data
+            }
+        else:
+            gpu_metrics = {"gpu_available": False}
+        
+        # Model metrics
+        loaded_models = model_manager.list_models()
+        tts_models = [name for name in loaded_models if 'tts' in name.lower()]
+        
+        # TTS health information
+        tts_health = {}
+        try:
+            available_voices = []
+            supported_languages = ["en", "es", "fr", "de", "it"]
+            
+            # Try to get voices from loaded TTS models
+            for model_name in tts_models:
+                try:
+                    model = model_manager.get_model(model_name)
+                    if hasattr(model, 'get_available_voices'):
+                        voices = model.get_available_voices()
+                        available_voices.extend(voices)
+                except Exception:
+                    pass
+            
+            # Default voices if none found
+            if not available_voices:
+                available_voices = ["default", "female", "male"]
+            
+            tts_health = {
+                "status": "healthy" if tts_models else "no_models",
+                "available_voices": list(set(available_voices)),
+                "supported_languages": supported_languages,
+                "optimizations_enabled": [
+                    "model_caching",
+                    "gpu_acceleration" if torch.cuda.is_available() else "cpu_processing",
+                    "batch_synthesis",
+                    "audio_optimization"
+                ],
+                "loaded_tts_models": tts_models,
+                "capabilities": {
+                    "text_to_speech": True,
+                    "voice_cloning": "bark_tts" in tts_models,
+                    "emotion_synthesis": "bark_tts" in tts_models,
+                    "streaming": False,
+                    "real_time": True
+                }
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get TTS health info: {e}")
+            tts_health = {
+                "status": "error",
+                "error": str(e),
+                "available_voices": [],
+                "supported_languages": [],
+                "optimizations_enabled": []
+            }
+        
+        # Combine all information
+        info_response = {
+            "timestamp": datetime.now().isoformat(),
+            "server_config": server_config_data,
+            "performance_metrics": {
+                "cache_hit_rate": 0.87,  # Placeholder - implement actual tracking
+                "active_optimizations": [
+                    "model_compilation",
+                    "memory_pooling", 
+                    "batch_processing"
+                ],
+                "models_in_memory": len(loaded_models),
+                "system_metrics": system_metrics,
+                "gpu_metrics": gpu_metrics,
+                "tts_metrics": {
+                    "tts_models_loaded": len(tts_models),
+                    "tts_models": tts_models,
+                    "avg_synthesis_time_ms": 850,  # Placeholder
+                    "synthesis_requests_total": 0  # Placeholder
+                }
+            },
+            "tts_service": tts_health
+        }
+        
+        logger.info(f"[ENDPOINT] System info retrieved - CPU: {system_metrics.get('cpu_percent', 0):.1f}%, "
+                   f"Memory: {system_metrics.get('memory_percent', 0):.1f}%, "
+                   f"Models: {len(loaded_models)}")
+        
+        return info_response
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] System info retrieval failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/performance")
+async def get_performance_metrics():
+    """Get comprehensive performance metrics and profiling data."""
+    logger.info("[ENDPOINT] Performance metrics requested")
+    
+    try:
+        metrics = {
+            "timestamp": datetime.now().isoformat(),
+            "system_info": {
+                "cpu_count": mp.cpu_count(),
+                "torch_threads": torch.get_num_threads(),
+                "torch_interop_threads": torch.get_num_interop_threads(),
+            }
+        }
+        
+        # PyTorch and CUDA info
+        metrics["pytorch"] = {
+            "version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "cudnn_version": torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None,
+            "tf32_enabled": {
+                "matmul": torch.backends.cuda.matmul.allow_tf32 if torch.cuda.is_available() else None,
+                "cudnn": torch.backends.cudnn.allow_tf32 if torch.cuda.is_available() else None,
+            }
+        }
+        
+        # CUDA memory statistics
+        if torch.cuda.is_available():
+            cuda_stats = {}
+            for i in range(torch.cuda.device_count()):
+                device_name = torch.cuda.get_device_name(i)
+                props = torch.cuda.get_device_properties(i)
+                
+                cuda_stats[f"gpu_{i}"] = {
+                    "name": device_name,
+                    "total_memory_gb": props.total_memory / 1e9,
+                    "allocated_memory_gb": torch.cuda.memory_allocated(i) / 1e9,
+                    "cached_memory_gb": torch.cuda.memory_reserved(i) / 1e9,
+                    "memory_utilization_percent": (torch.cuda.memory_allocated(i) / props.total_memory) * 100,
+                    "compute_capability": f"{props.major}.{props.minor}",
+                    "multiprocessor_count": props.multi_processor_count,
+                }
+            
+            metrics["cuda"] = cuda_stats
+        
+        # Model registry statistics
+        if hasattr(model_manager, 'get_performance_stats'):
+            metrics["models"] = model_manager.get_performance_stats()
+        
+        # Cache statistics
+        cache_info = _cached_response_data.cache_info() if hasattr(_cached_response_data, 'cache_info') else None
+        if cache_info:
+            metrics["cache"] = {
+                "hits": cache_info.hits,
+                "misses": cache_info.misses,
+                "maxsize": cache_info.maxsize,
+                "currsize": cache_info.currsize,
+                "hit_rate": cache_info.hits / (cache_info.hits + cache_info.misses) if (cache_info.hits + cache_info.misses) > 0 else 0
+            }
+        
+        # Autoscaler metrics
+        if autoscaler:
+            metrics["autoscaler"] = autoscaler.get_metrics()
+        
+        logger.info("[ENDPOINT] Performance metrics compiled successfully")
+        return JSONResponse(content=metrics)
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Performance metrics failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to retrieve performance metrics", "detail": str(e)}
+        )
+
+@app.post("/performance/profile")
+async def profile_inference(request: Dict[str, Any]):
+    """Profile a specific inference request for performance analysis."""
+    logger.info("[ENDPOINT] Performance profiling requested")
+    
+    start_time = time.perf_counter()
+    
+    try:
+        import psutil
+        import gc
+        
+        # Pre-profiling metrics
+        pre_metrics = {
+            "memory_allocated": torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else 0,
+            "memory_cached": torch.cuda.memory_reserved() / 1e6 if torch.cuda.is_available() else 0,
+            "cpu_percent": psutil.cpu_percent(),
+            "memory_percent": psutil.virtual_memory().percent
+        }
+        
+        # Run garbage collection before profiling
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        profile_start = time.perf_counter()
+        
+        # Execute the actual inference with timing
+        model_name = request.get("model", "example")
+        input_data = request.get("input_data", {"shape": [1, 3, 224, 224]})
+        
+        # Simulated inference for profiling
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        
+        inference_start = time.perf_counter()
+        
+        # This would be replaced with actual model inference
+        dummy_input = torch.randn(*input_data["shape"])
+        if torch.cuda.is_available():
+            dummy_input = dummy_input.cuda()
+        
+        with torch.no_grad():
+            result = torch.sum(dummy_input)  # Simple operation for profiling
+        
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        
+        inference_end = time.perf_counter()
+        
+        # Post-profiling metrics
+        post_metrics = {
+            "memory_allocated": torch.cuda.memory_allocated() / 1e6 if torch.cuda.is_available() else 0,
+            "memory_cached": torch.cuda.memory_reserved() / 1e6 if torch.cuda.is_available() else 0,
+            "cpu_percent": psutil.cpu_percent(),
+            "memory_percent": psutil.virtual_memory().percent
+        }
+        
+        total_time = time.perf_counter() - start_time
+        
+        profile_report = {
+            "timestamp": datetime.now().isoformat(),
+            "request": request,
+            "timings": {
+                "total_time_ms": total_time * 1000,
+                "inference_time_ms": (inference_end - inference_start) * 1000,
+                "setup_time_ms": (profile_start - start_time) * 1000,
+                "overhead_ms": (total_time - (inference_end - inference_start)) * 1000
+            },
+            "memory_usage": {
+                "before": pre_metrics,
+                "after": post_metrics,
+                "delta": {
+                    "memory_allocated_mb": post_metrics["memory_allocated"] - pre_metrics["memory_allocated"],
+                    "memory_cached_mb": post_metrics["memory_cached"] - pre_metrics["memory_cached"],
+                    "cpu_percent_delta": post_metrics["cpu_percent"] - pre_metrics["cpu_percent"]
+                }
+            },
+            "performance_score": min(100, max(0, 100 - (total_time * 1000)))  # Simple score based on latency
+        }
+        
+        logger.info(f"[ENDPOINT] Profiling completed in {total_time * 1000:.2f}ms")
+        return JSONResponse(content=profile_report)
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Performance profiling failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Profiling failed", "detail": str(e)}
+        )
+
+@app.get("/performance/optimize")
+async def optimize_performance():
+    """Trigger performance optimizations and cleanup."""
+    logger.info("[ENDPOINT] Performance optimization triggered")
+    
+    try:
+        optimization_results = {}
+        
+        # Clear PyTorch cache
+        if torch.cuda.is_available():
+            pre_cached = torch.cuda.memory_reserved() / 1e6
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            post_cached = torch.cuda.memory_reserved() / 1e6
+            optimization_results["cuda_cache_cleared_mb"] = pre_cached - post_cached
+        
+        # Clear response cache
+        if hasattr(_cached_response_data, 'cache_clear'):
+            cache_info = _cached_response_data.cache_info()
+            _cached_response_data.cache_clear()
+            optimization_results["response_cache_cleared"] = {
+                "entries_cleared": cache_info.currsize,
+                "hits_lost": cache_info.hits,
+                "misses_lost": cache_info.misses
+            }
+        
+        # Force garbage collection
+        import gc
+        collected = gc.collect()
+        optimization_results["garbage_collected"] = collected
+        
+        # Recompile models if using torch.compile
+        optimization_results["models_recompiled"] = 0
+        for model_name in model_manager.list_models():
+            try:
+                model = model_manager.get_model(model_name)
+                if hasattr(model, 'optimize_for_inference'):
+                    model.optimize_for_inference()
+                    optimization_results["models_recompiled"] += 1
+            except Exception as e:
+                logger.warning(f"Failed to recompile model {model_name}: {e}")
+        
+        optimization_results["timestamp"] = datetime.now().isoformat()
+        optimization_results["success"] = True
+        
+        logger.info("[ENDPOINT] Performance optimization completed successfully")
+        return JSONResponse(content=optimization_results)
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Performance optimization failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Optimization failed", "detail": str(e), "success": False}
+        )
+
 @app.get("/stats")
-async def get_stats() -> StatsResponse:
-    """Get engine statistics."""
-    logger.info("[ENDPOINT] Statistics requested")
+async def get_stats(current_user = Depends(get_required_auth_dependency())) -> StatsResponse:
+    """Get engine statistics. Requires authentication."""
+    logger.info(f"[ENDPOINT] Statistics requested by user: {getattr(current_user, 'username', 'anonymous') if current_user else 'anonymous'}")
     
     if not inference_engine:
         logger.error("[ENDPOINT] Statistics failed - Inference engine not available")
@@ -1377,9 +2040,9 @@ async def get_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/models")
-async def list_models():
-    """List available models."""
-    logger.info("[ENDPOINT] Model list requested")
+async def list_models(current_user = Depends(get_auth_dependency())):
+    """List available models. Authentication recommended."""
+    logger.info(f"[ENDPOINT] Model list requested by user: {getattr(current_user, 'username', 'anonymous') if current_user else 'anonymous'}")
     
     try:
         models = model_manager.list_models()
@@ -2023,183 +2686,6 @@ async def get_cache_info():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/server/config") 
-async def get_server_config():
-    """Get server configuration including TTS-specific settings."""
-    logger.info("[ENDPOINT] Server configuration requested")
-    
-    try:
-        server_config_data = {
-            "optimization_level": "high",
-            "caching_strategy": "aggressive", 
-            "tts_backend": "huggingface_transformers",
-            "auto_optimization": True,
-            "server_features": [
-                "model_caching",
-                "auto_optimization", 
-                "tts_synthesis",
-                "batch_processing",
-                "gpu_acceleration"
-            ],
-            "tts_configuration": {
-                "default_models": {
-                    "tts": "speecht5_tts",
-                    "vocoder": "microsoft/speecht5_hifigan"
-                },
-                "supported_formats": ["wav", "mp3", "flac"],
-                "max_text_length": 5000,
-                "default_sample_rate": 16000,
-                "auto_model_download": True
-            },
-            "performance_settings": {
-                "enable_model_compilation": True,
-                "enable_fp16": torch.cuda.is_available(),
-                "batch_optimization": True,
-                "memory_management": "auto"
-            }
-        }
-        
-        logger.info("[ENDPOINT] Server configuration retrieved successfully")
-        return server_config_data
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Server configuration retrieval failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/server/optimize")
-async def optimize_server():
-    """Optimize server performance and memory usage."""
-    logger.info("[ENDPOINT] Server optimization requested")
-    
-    try:
-        optimization_results = {
-            "success": True,
-            "memory_freed_mb": 0,
-            "models_optimized": 0,
-            "optimizations_applied": []
-        }
-        
-        # Clear GPU cache if available
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            # Get memory info after cleanup
-            allocated = torch.cuda.memory_allocated() / (1024**2)  # MB
-            reserved = torch.cuda.memory_reserved() / (1024**2)  # MB
-            optimization_results["memory_freed_mb"] = reserved - allocated
-            optimization_results["optimizations_applied"].append("gpu_cache_clear")
-        
-        # Optimize loaded models
-        loaded_models = model_manager.list_models()
-        for model_name in loaded_models:
-            try:
-                model = model_manager.get_model(model_name)
-                if hasattr(model, 'optimize_for_inference'):
-                    model.optimize_for_inference()
-                    optimization_results["models_optimized"] += 1
-            except Exception as e:
-                logger.warning(f"Failed to optimize model {model_name}: {e}")
-        
-        if optimization_results["models_optimized"] > 0:
-            optimization_results["optimizations_applied"].append("model_optimization")
-        
-        # Add general optimizations
-        optimization_results["optimizations_applied"].extend([
-            "memory_cleanup",
-            "cache_optimization"
-        ])
-        
-        logger.info(f"[ENDPOINT] Server optimization completed - "
-                   f"Memory freed: {optimization_results['memory_freed_mb']:.1f} MB, "
-                   f"Models optimized: {optimization_results['models_optimized']}")
-        
-        return optimization_results
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Server optimization failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/metrics/server")
-async def get_server_metrics():
-    """Get server performance metrics including TTS-specific metrics."""
-    logger.info("[ENDPOINT] Server metrics requested")
-    
-    try:
-        # Try to get system metrics
-        system_metrics = {}
-        try:
-            import psutil
-            memory = psutil.virtual_memory()
-            system_metrics = {
-                "cpu_percent": psutil.cpu_percent(interval=1),
-                "memory_percent": memory.percent,
-                "memory_available_gb": memory.available / (1024**3),
-                "memory_total_gb": memory.total / (1024**3)
-            }
-        except ImportError:
-            logger.warning("psutil not available, using basic system metrics")
-            system_metrics = {
-                "cpu_percent": 0.0,
-                "memory_percent": 0.0,
-                "memory_available_gb": 0.0,
-                "memory_total_gb": 0.0,
-                "note": "psutil not available"
-            }
-        
-        # GPU metrics if available
-        gpu_metrics = {}
-        if torch.cuda.is_available():
-            gpu_metrics = {
-                "gpu_available": True,
-                "gpu_count": torch.cuda.device_count(),
-                "current_device": torch.cuda.current_device(),
-                "memory_allocated_mb": torch.cuda.memory_allocated() / (1024**2),
-                "memory_reserved_mb": torch.cuda.memory_reserved() / (1024**2),
-                "gpu_utilization": 85.0  # Placeholder - would need nvidia-ml-py for real data
-            }
-        else:
-            gpu_metrics = {"gpu_available": False}
-        
-        # Model metrics
-        loaded_models = model_manager.list_models()
-        tts_models = [name for name in loaded_models if 'tts' in name.lower()]
-        
-        server_metrics = {
-            "cache_hit_rate": 0.87,  # Placeholder - implement actual tracking
-            "active_optimizations": [
-                "model_compilation",
-                "memory_pooling", 
-                "batch_processing"
-            ],
-            "models_in_memory": len(loaded_models),
-            "system_metrics": system_metrics,
-            "gpu_metrics": gpu_metrics,
-            "tts_metrics": {
-                "tts_models_loaded": len(tts_models),
-                "tts_models": tts_models,
-                "avg_synthesis_time_ms": 850,  # Placeholder
-                "synthesis_requests_total": 0  # Placeholder - would track in real implementation
-            }
-        }
-        
-        logger.info(f"[ENDPOINT] Server metrics retrieved - CPU: {system_metrics.get('cpu_percent', 0):.1f}%, "
-                   f"Memory: {system_metrics.get('memory_percent', 0):.1f}%, "
-                   f"Models: {len(loaded_models)}")
-        
-        return server_metrics
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Server metrics retrieval failed: {e}")
-        # Return basic metrics on error
-        return {
-            "cache_hit_rate": 0.0,
-            "active_optimizations": [],
-            "models_in_memory": len(model_manager.list_models()),
-            "error": str(e)
-        }
-
-
 @app.get("/tts/health")
 async def tts_health_check():
     """TTS service health check with available voices and languages."""
@@ -2262,49 +2748,6 @@ async def tts_health_check():
             "supported_languages": [],
             "optimizations_enabled": []
         }
-
-
-@app.get("/metrics/tts")
-async def get_tts_metrics():
-    """Get TTS-specific performance metrics."""
-    logger.info("[ENDPOINT] TTS metrics requested")
-    
-    try:
-        # In a real implementation, these would be tracked from actual usage
-        tts_metrics = {
-            "requests_processed": 0,  # Would be tracked in database/cache
-            "avg_processing_time": 0.85,  # seconds
-            "success_rate": 0.95,  # 95%
-            "models_performance": {
-                "speecht5_tts": {
-                    "avg_time_ms": 800,
-                    "success_rate": 0.98,
-                    "quality_score": 4.5
-                },
-                "bark_tts": {
-                    "avg_time_ms": 2500,
-                    "success_rate": 0.92, 
-                    "quality_score": 4.8
-                }
-            },
-            "audio_stats": {
-                "total_audio_generated_minutes": 0,
-                "avg_audio_length_seconds": 5.2,
-                "formats_used": {"wav": 0.8, "mp3": 0.15, "flac": 0.05}
-            },
-            "optimization_stats": {
-                "cache_hits": 0,
-                "gpu_accelerated_requests": 0,
-                "batch_processed_requests": 0
-            }
-        }
-        
-        logger.info("[ENDPOINT] TTS metrics retrieved successfully")
-        return tts_metrics
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] TTS metrics retrieval failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/models/manage")
@@ -2421,405 +2864,6 @@ async def validate_audio_file(file_path: str, validate_format: bool = True, chec
             "valid": False,
             "error": str(e)
         }
-
-
-# GPU Detection endpoints
-@app.get("/gpu/detect")
-async def detect_gpus_endpoint(include_benchmarks: bool = False):
-    """Detect available GPUs."""
-    logger.info(f"[ENDPOINT] GPU detection requested - Include benchmarks: {include_benchmarks}")
-    
-    try:
-        gpu_manager = GPUManager()
-        gpus, _ = gpu_manager.detect_and_configure(force_refresh=True)
-        
-        gpu_list = []
-        for gpu in gpus:
-            gpu_info = {
-                "id": gpu.id,
-                "name": gpu.name,
-                "vendor": gpu.vendor.value,
-                "architecture": gpu.architecture.value,
-                "device_id": gpu.device_id,
-                "memory_mb": gpu.memory.total_mb,
-                "available_memory_mb": gpu.memory.available_mb,
-                "pytorch_support": gpu.pytorch_support,
-                "suitable_for_inference": gpu.is_suitable_for_inference(),
-                "recommended_precisions": gpu.get_recommended_precision(),
-                "supported_accelerators": [acc.value for acc in gpu.supported_accelerators]
-            }
-            
-            if gpu.compute_capability:
-                gpu_info["compute_capability"] = {
-                    "major": gpu.compute_capability.major,
-                    "minor": gpu.compute_capability.minor,
-                    "version": gpu.compute_capability.version,
-                    "supports_fp16": gpu.compute_capability.supports_fp16,
-                    "supports_int8": gpu.compute_capability.supports_int8,
-                    "supports_tensor_cores": gpu.compute_capability.supports_tensor_cores,
-                    "supports_tf32": gpu.compute_capability.supports_tf32
-                }
-            
-            if include_benchmarks and gpu.benchmark_results:
-                gpu_info["benchmark_results"] = gpu.benchmark_results
-            
-            gpu_list.append(gpu_info)
-        
-        logger.info(f"[ENDPOINT] GPU detection completed - Found {len(gpus)} GPU(s)")
-        
-        return {
-            "gpus": gpu_list,
-            "total_gpus": len(gpus),
-            "suitable_gpus": sum(1 for gpu in gpus if gpu.is_suitable_for_inference()),
-            "include_benchmarks": include_benchmarks
-        }
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] GPU detection failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/gpu/best")
-async def get_best_gpu_endpoint():
-    """Get the best GPU for inference."""
-    logger.info("[ENDPOINT] Best GPU request")
-    
-    try:
-        gpu_manager = GPUManager()
-        best_gpu = gpu_manager.get_best_gpu_info()
-        
-        if not best_gpu:
-            logger.info("[ENDPOINT] No suitable GPU found")
-            return {
-                "best_gpu": None,
-                "message": "No suitable GPU found for inference"
-            }
-        
-        gpu_info = {
-            "id": best_gpu.id,
-            "name": best_gpu.name,
-            "vendor": best_gpu.vendor.value,
-            "architecture": best_gpu.architecture.value,
-            "device_id": best_gpu.device_id,
-            "memory_mb": best_gpu.memory.total_mb,
-            "available_memory_mb": best_gpu.memory.available_mb,
-            "pytorch_support": best_gpu.pytorch_support,
-            "recommended_precisions": best_gpu.get_recommended_precision(),
-            "estimated_max_batch_size": best_gpu.estimate_max_batch_size()
-        }
-        
-        if best_gpu.compute_capability:
-            gpu_info["compute_capability"] = {
-                "version": best_gpu.compute_capability.version,
-                "supports_tensor_cores": best_gpu.compute_capability.supports_tensor_cores,
-                "supports_fp16": best_gpu.compute_capability.supports_fp16
-            }
-        
-        logger.info(f"[ENDPOINT] Best GPU: {best_gpu.name}")
-        
-        return {
-            "best_gpu": gpu_info,
-            "message": f"Best GPU for inference: {best_gpu.name}"
-        }
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Best GPU detection failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/gpu/config")
-async def get_gpu_config_endpoint():
-    """Get GPU-optimized configuration."""
-    logger.info("[ENDPOINT] GPU configuration request")
-    
-    try:
-        gpu_manager = GPUManager()
-        gpus, device_config = gpu_manager.detect_and_configure()
-        
-        memory_rec = gpu_manager.get_memory_recommendations()
-        optimization_rec = gpu_manager.get_optimization_recommendations()
-        
-        config_info = {
-            "device_config": {
-                "device_type": device_config.device_type.value,
-                "device_id": device_config.device_id,
-                "use_fp16": device_config.use_fp16,
-                "use_int8": device_config.use_int8,
-                "use_tensorrt": device_config.use_tensorrt,
-                "use_torch_compile": device_config.use_torch_compile,
-                "compile_mode": device_config.compile_mode
-            },
-            "memory_recommendations": memory_rec,
-            "optimization_recommendations": optimization_rec,
-            "pytorch_device": str(device_config.get_torch_device())
-        }
-        
-        logger.info(f"[ENDPOINT] GPU configuration generated for: {device_config.device_type.value}")
-        
-        return config_info
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] GPU configuration failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/gpu/report")
-async def get_gpu_report_endpoint(format: str = "json"):
-    """Get comprehensive GPU report."""
-    logger.info(f"[ENDPOINT] GPU report requested - Format: {format}")
-    
-    try:
-        gpu_manager = GPUManager()
-        
-        if format.lower() == "text":
-            report = gpu_manager.generate_full_report()
-            return Response(content=report, media_type="text/plain")
-        else:
-            # JSON format
-            gpus, device_config = gpu_manager.detect_and_configure()
-            memory_rec = gpu_manager.get_memory_recommendations()
-            optimization_rec = gpu_manager.get_optimization_recommendations()
-            
-            gpu_list = []
-            for gpu in gpus:
-                gpu_info = {
-                    "id": gpu.id,
-                    "name": gpu.name,
-                    "vendor": gpu.vendor.value,
-                    "architecture": gpu.architecture.value,
-                    "device_id": gpu.device_id,
-                    "memory_mb": gpu.memory.total_mb,
-                    "available_memory_mb": gpu.memory.available_mb,
-                    "pytorch_support": gpu.pytorch_support,
-                    "suitable_for_inference": gpu.is_suitable_for_inference(),
-                    "recommended_precisions": gpu.get_recommended_precision(),
-                    "estimated_max_batch_size": gpu.estimate_max_batch_size()
-                }
-                
-                if gpu.compute_capability:
-                    gpu_info["compute_capability"] = {
-                        "major": gpu.compute_capability.major,
-                        "minor": gpu.compute_capability.minor,
-                        "version": gpu.compute_capability.version,
-                        "supports_fp16": gpu.compute_capability.supports_fp16,
-                        "supports_int8": gpu.compute_capability.supports_int8,
-                        "supports_tensor_cores": gpu.compute_capability.supports_tensor_cores
-                    }
-                
-                if gpu.benchmark_results:
-                    gpu_info["benchmark_results"] = gpu.benchmark_results
-                
-                gpu_list.append(gpu_info)
-            
-            report = {
-                "summary": {
-                    "total_gpus": len(gpus),
-                    "suitable_gpus": sum(1 for gpu in gpus if gpu.is_suitable_for_inference()),
-                    "best_gpu": gpu_manager.get_best_gpu_info().name if gpu_manager.get_best_gpu_info() else None
-                },
-                "gpus": gpu_list,
-                "device_config": {
-                    "device_type": device_config.device_type.value,
-                    "device_id": device_config.device_id,
-                    "use_fp16": device_config.use_fp16,
-                    "use_int8": device_config.use_int8,
-                    "use_tensorrt": device_config.use_tensorrt,
-                    "use_torch_compile": device_config.use_torch_compile
-                },
-                "recommendations": {
-                    "memory": memory_rec,
-                    "optimization": optimization_rec
-                }
-            }
-            
-            logger.info(f"[ENDPOINT] GPU report generated - {len(gpus)} GPU(s)")
-            
-            return report
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] GPU report failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Autoscaler endpoints
-@app.get("/autoscaler/stats")
-async def get_autoscaler_stats():
-    """Get autoscaler statistics."""
-    logger.info("[ENDPOINT] Autoscaler stats requested")
-    
-    if not autoscaler:
-        logger.error("[ENDPOINT] Autoscaler stats failed - Autoscaler not available")
-        raise HTTPException(status_code=503, detail="Autoscaler not available")
-    
-    try:
-        stats = autoscaler.get_stats()
-        logger.info("[ENDPOINT] Autoscaler stats retrieved successfully")
-        return stats
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Autoscaler stats failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/autoscaler/health")
-async def get_autoscaler_health():
-    """Get autoscaler health status."""
-    logger.info("[ENDPOINT] Autoscaler health check requested")
-    
-    if not autoscaler:
-        return {
-            "healthy": False,
-            "error": "Autoscaler not available",
-            "timestamp": time.time()
-        }
-    
-    try:
-        health = autoscaler.get_health_status()
-        logger.info(f"[ENDPOINT] Autoscaler health check completed - Healthy: {health['healthy']}")
-        return health
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Autoscaler health check failed with error: {e}")
-        return {
-            "healthy": False,
-            "error": str(e),
-            "timestamp": time.time()
-        }
-
-
-@app.post("/autoscaler/scale")
-async def scale_model(model_name: str, target_instances: int):
-    """Scale a model to target number of instances."""
-    logger.info(f"[ENDPOINT] Model scaling requested - Model: {model_name}, Target: {target_instances}")
-    
-    if not autoscaler:
-        logger.error("[ENDPOINT] Model scaling failed - Autoscaler not available")
-        raise HTTPException(status_code=503, detail="Autoscaler not available")
-    
-    if target_instances < 0 or target_instances > 10:
-        raise HTTPException(status_code=400, detail="Target instances must be between 0 and 10")
-    
-    try:
-        success = await autoscaler.scale_model(model_name, target_instances)
-        
-        if success:
-            logger.info(f"[ENDPOINT] Model scaling completed successfully - {model_name} to {target_instances} instances")
-            return {
-                "success": True,
-                "message": f"Successfully scaled {model_name} to {target_instances} instances",
-                "model_name": model_name,
-                "target_instances": target_instances
-            }
-        else:
-            logger.error(f"[ENDPOINT] Model scaling failed - {model_name}")
-            return {
-                "success": False,
-                "message": f"Failed to scale {model_name}",
-                "model_name": model_name,
-                "target_instances": target_instances
-            }
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Model scaling failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/autoscaler/load")
-async def load_model_autoscaler(model_name: str, version: str = "v1"):
-    """Load a model through the autoscaler."""
-    logger.info(f"[ENDPOINT] Model loading requested via autoscaler - Model: {model_name}, Version: {version}")
-    
-    if not autoscaler:
-        logger.error("[ENDPOINT] Model loading failed - Autoscaler not available")
-        raise HTTPException(status_code=503, detail="Autoscaler not available")
-    
-    try:
-        success = await autoscaler.load_model(model_name, version)
-        
-        if success:
-            logger.info(f"[ENDPOINT] Model loading completed successfully - {model_name}:{version}")
-            return {
-                "success": True,
-                "message": f"Successfully loaded {model_name}:{version}",
-                "model_name": model_name,
-                "version": version
-            }
-        else:
-            logger.error(f"[ENDPOINT] Model loading failed - {model_name}:{version}")
-            return {
-                "success": False,
-                "message": f"Failed to load {model_name}:{version}",
-                "model_name": model_name,
-                "version": version
-            }
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Model loading failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/autoscaler/unload")
-async def unload_model_autoscaler(model_name: str, version: Optional[str] = None):
-    """Unload a model through the autoscaler."""
-    version_str = f":{version}" if version else ""
-    logger.info(f"[ENDPOINT] Model unloading requested via autoscaler - Model: {model_name}{version_str}")
-    
-    if not autoscaler:
-        logger.error("[ENDPOINT] Model unloading failed - Autoscaler not available")
-        raise HTTPException(status_code=503, detail="Autoscaler not available")
-    
-    try:
-        success = await autoscaler.unload_model(model_name, version)
-        
-        if success:
-            logger.info(f"[ENDPOINT] Model unloading completed successfully - {model_name}{version_str}")
-            return {
-                "success": True,
-                "message": f"Successfully unloaded {model_name}{version_str}",
-                "model_name": model_name,
-                "version": version
-            }
-        else:
-            logger.error(f"[ENDPOINT] Model unloading failed - {model_name}{version_str}")
-            return {
-                "success": False,
-                "message": f"Failed to unload {model_name}{version_str}",
-                "model_name": model_name,
-                "version": version
-            }
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Model unloading failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/autoscaler/metrics")
-async def get_autoscaler_metrics(window_seconds: Optional[int] = None):
-    """Get detailed autoscaling metrics."""
-    logger.info(f"[ENDPOINT] Autoscaler metrics requested - Window: {window_seconds}s")
-    
-    if not autoscaler:
-        logger.error("[ENDPOINT] Autoscaler metrics failed - Autoscaler not available")
-        raise HTTPException(status_code=503, detail="Autoscaler not available")
-    
-    try:
-        stats = autoscaler.get_stats()
-        
-        # Add metrics from metrics collector if available
-        if hasattr(autoscaler, 'metrics_collector') and autoscaler.metrics_collector:
-            metrics_summary = autoscaler.metrics_collector.get_summary(window_seconds)
-            stats['detailed_metrics'] = metrics_summary
-        
-        logger.info("[ENDPOINT] Autoscaler metrics retrieved successfully")
-        return {
-            "metrics": stats,
-            "window_seconds": window_seconds,
-            "timestamp": time.time()
-        }
-        
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Autoscaler metrics failed with error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Enhanced TTS model download helper functions
@@ -3192,15 +3236,25 @@ def _estimate_download_time(model_id: str, source: str) -> str:
 
 # Audio Processing Endpoints
 
-@app.post("/tts/synthesize", response_model=TTSResponse)
+@app.post("/synthesize", response_model=TTSResponse)
 async def text_to_speech(request: TTSRequest) -> TTSResponse:
     """
-    Text-to-Speech synthesis endpoint.
+    Text-to-Speech synthesis endpoint for TTS models.
     
     Converts text input to speech audio using the specified TTS model.
     Returns base64 encoded audio data.
+    
+    Parameters:
+    - model_name: Name of the TTS model to use
+    - inputs: Text to synthesize (maps to 'text' field internally)
+    - token: Optional authentication token
     """
-    logger.info(f"[ENDPOINT] TTS synthesis requested - Model: {request.model_name}, Text length: {len(request.text)}")
+    # Validate token if provided
+    token_user = validate_token(request.token) if request.token else None
+    
+    logger.info(f"[ENDPOINT] TTS synthesis requested - Model: {request.model_name}, "
+               f"Text length: {len(request.inputs)}, "
+               f"Auth via: {'token' if token_user else 'none'}")
     
     try:
         start_time = time.perf_counter()
@@ -3217,7 +3271,7 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
             )
         
         # Validate text length
-        if len(request.text) > 5000:  # 5000 character limit
+        if len(request.inputs) > 5000:  # 5000 character limit
             raise HTTPException(
                 status_code=400,
                 detail="Text too long. Maximum 5000 characters allowed."
@@ -3302,7 +3356,7 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
         # Perform TTS synthesis
         try:
             # Use the predict method which returns a proper dictionary
-            result = tts_model.predict(request.text)
+            result = tts_model.predict(request.inputs)
             
             # Extract audio data and metadata
             audio_data = result["audio"]

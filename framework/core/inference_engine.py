@@ -1417,6 +1417,19 @@ class InferenceEngine:
             
             # Try different input shapes for comprehensive warmup
             if hasattr(self.model, 'model'):
+                # Determine the appropriate dtype based on model configuration
+                target_dtype = torch.float32
+                if self._mixed_precision_enabled and self.device.type == 'cuda':
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                elif hasattr(self.model.model, 'parameters'):
+                    try:
+                        # Try to get dtype from the first parameter of the model
+                        first_param = next(iter(self.model.model.parameters()), None)
+                        if first_param is not None:
+                            target_dtype = first_param.dtype
+                    except Exception:
+                        pass
+                
                 # Generate representative dummy inputs
                 common_shapes = [
                     [1, 3, 224, 224],  # Standard image input
@@ -1427,7 +1440,7 @@ class InferenceEngine:
                 
                 for shape in common_shapes:
                     try:
-                        dummy_input = torch.randn(*shape, device=self.device)
+                        dummy_input = torch.randn(*shape, device=self.device, dtype=target_dtype)
                         if self.engine_config.use_channels_last and len(shape) == 4:
                             dummy_input = dummy_input.to(memory_format=torch.channels_last)
                         dummy_inputs.append(dummy_input)
@@ -1435,9 +1448,14 @@ class InferenceEngine:
                         continue  # Skip shapes that don't work
             
             if not dummy_inputs:
+                # Determine the appropriate dtype for fallback inputs
+                target_dtype = torch.float32
+                if self._mixed_precision_enabled and self.device.type == 'cuda':
+                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                
                 # Fallback dummy inputs
                 dummy_inputs = [
-                    torch.randn(1, 100, device=self.device),
+                    torch.randn(1, 100, device=self.device, dtype=target_dtype),
                     [1.0, 2.0, 3.0],  # List input
                 ]
             

@@ -3,18 +3,25 @@
 Test script to check TTS output and fix WAV corruption issues.
 """
 
+import pytest
 import requests
 import json
 import base64
 import wave
 import numpy as np
+import os
 from pathlib import Path
+
+# Configuration - can be overridden by environment variables
+TTS_SERVICE_HOST = os.getenv('TTS_SERVICE_HOST', 'localhost')
+TTS_SERVICE_PORT = os.getenv('TTS_SERVICE_PORT', '8000')
+TTS_SERVICE_URL = f'http://{TTS_SERVICE_HOST}:{TTS_SERVICE_PORT}'
 
 def test_tts_service():
     """Test the TTS service and analyze the output."""
     
     # Test TTS synthesis
-    url = 'http://localhost:8000/tts/synthesize'
+    url = f'{TTS_SERVICE_URL}/tts/synthesize'
     data = {
         'text': 'Hello, this is a test of the text to speech system.',
         'model_name': 'speecht5_tts',
@@ -23,7 +30,7 @@ def test_tts_service():
 
     try:
         print("Testing TTS service...")
-        response = requests.post(url, json=data)
+        response = requests.post(url, json=data, timeout=5)
         print(f'Status: {response.status_code}')
         
         if response.status_code == 200:
@@ -52,17 +59,25 @@ def test_tts_service():
                     wav_file.writeframes(audio_data)
                 
                 print('Saved as test_output_fixed.wav')
-                return True
+                
+                # Assert successful TTS synthesis
+                assert len(audio_data) > 0, "Audio data should not be empty"
+                assert len(audio_array) > 0, "Audio samples should not be empty"
+                assert result['sample_rate'] > 0, "Sample rate should be positive"
+                
             else:
                 print(f'Error: {result["error"]}')
-                return False
+                pytest.fail(f"TTS synthesis failed: {result['error']}")
         else:
             print(f'HTTP Error: {response.text}')
-            return False
+            pytest.fail(f"HTTP request failed with status {response.status_code}: {response.text}")
             
+    except requests.exceptions.ConnectionError:
+        print(f"TTS service is not running on {TTS_SERVICE_HOST}:{TTS_SERVICE_PORT}")
+        pytest.skip(f"TTS service is not available at {TTS_SERVICE_URL}. Start the service to run this test.")
     except Exception as e:
         print(f'Request failed: {e}')
-        return False
+        pytest.fail(f"TTS service test failed: {e}")
 
 def analyze_existing_wav():
     """Analyze the existing corrupted WAV file."""

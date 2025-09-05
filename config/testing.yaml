@@ -1,0 +1,62 @@
+# Testing configuration
+server:
+  host: "127.0.0.1"
+  port: 8001
+  debug: true
+  reload: false
+  log_level: "INFO"
+  cors_enabled: true
+  max_workers: 2
+
+inference:
+  device:
+    type: "cpu"  # Force CPU for testing
+    id: null
+    use_fp16: false
+    use_tensorrt: false
+    use_torch_compile: false
+  
+  batch:
+    batch_size: 2
+    max_batch_size: 4
+    timeout: 10.0
+  
+  performance:
+    warmup_iterations: 1
+    enable_profiling: false
+    enable_caching: true
+    cache_size: 100
+
+models:
+  auto_download: false
+  cache_directory: "./test_models"
+  default_model: "test"
+  
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_logging: true
+  max_file_size_mb: 10
+  backup_count: 2
+
+security:
+  enable_api_keys: true
+  enable_auth: true
+  rate_limit_per_minute: 100
+  cors_origins: ["http://localhost:3000"]
+  protected_endpoints: ["/inference", "/models", "/predict", "/stats"]
+  public_endpoints: ["/health", "/auth", "/"]
+
+auth:
+  jwt_secret_key: "your-super-secret-jwt-key-for-testing-change-in-production"
+  jwt_algorithm: "HS256"
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+  api_key_length: 32
+  user_store_file: "./data/users.json"
+  session_store_file: "./data/sessions.json"
+  
+features:
+  autoscaling: false
+  tts_support: true
+  gpu_optimization: false

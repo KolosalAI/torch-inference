@@ -88,7 +88,7 @@ A comprehensive, production-ready PyTorch inference framework that delivers **2-
 - **Speech-to-Text (STT)**: Whisper (all sizes), Wav2Vec2, real-time transcription
 - **Audio Pipeline**: Complete preprocessing, feature extraction, augmentation
 - **Multi-format Support**: WAV, MP3, FLAC, M4A, OGG input/output
-- **RESTful Audio API**: `/tts/synthesize`, `/stt/transcribe` with comprehensive options
+- **RESTful Audio API**: `/synthesize`, `/stt/transcribe` with comprehensive options
 - **Language Support**: Multi-language TTS/STT with auto-detection
 
 ### 🔧 **Developer Experience**
@@ -165,9 +165,9 @@ import base64
 # Text-to-Speech Example
 async def tts_example():
     async with aiohttp.ClientSession() as session:
-        async with session.post("http://localhost:8000/tts/synthesize", json={
-            "text": "Hello, this is PyTorch inference framework!",
+        async with session.post("http://localhost:8000/synthesize", json={
             "model_name": "default",
+            "inputs": "Hello, this is PyTorch inference framework!",
             "speed": 1.0,
             "language": "en"
         }) as response:
@@ -237,25 +237,35 @@ asyncio.run(stt_example())
 - **Comprehensive Metrics**: Real-time performance, resource, and scaling metrics
 - **Alert System**: Configurable thresholds and notifications (Slack, email, custom)
 - **Resource Management**: Automatic cleanup and intelligent resource allocation
-- **Production-Ready API**: 6 new REST endpoints for autoscaling operations
+- **Simplified API**: Streamlined REST endpoints for cleaner integration
 
-### New API Endpoints
+### Simplified API Endpoints
 ```bash
-GET    /autoscaler/stats     # Get autoscaler statistics
-GET    /autoscaler/health    # Get autoscaler health status  
-POST   /autoscaler/scale     # Scale a model to target instances
-POST   /autoscaler/load      # Load a model with autoscaling
-DELETE /autoscaler/unload    # Unload a model
-GET    /autoscaler/metrics   # Get detailed autoscaling metrics
+GET    /health               # Health check with autoscaler information
+GET    /info                 # Comprehensive system information
+GET    /tts/health           # TTS service health check
+GET    /stats                # Performance statistics
+GET    /config               # Configuration information
 ```
+
+### Key Changes
+- **Consolidated Information**: Server config, metrics, and TTS info available in `/info`
+- **Enhanced Health Check**: `/health` now includes autoscaler status
+- **Simplified Structure**: Removed redundant endpoints for cleaner API design
+- **Focused Endpoints**: Each endpoint serves a specific, well-defined purpose
 
 ### Usage Example
 ```python
-# Existing prediction code works as before - now with autoscaling!
-response = requests.post("http://localhost:8000/predict", json={"inputs": data})
+# Health check with autoscaler info
+response = requests.get("http://localhost:8000/health")
+autoscaler_status = response.json().get("autoscaler", {})
 
-# Advanced autoscaling control
-requests.post("http://localhost:8000/autoscaler/scale?model_name=my_model&target_instances=3")
+# Comprehensive system information
+response = requests.get("http://localhost:8000/info")
+system_info = response.json()
+server_config = system_info["server_config"]
+performance_metrics = system_info["performance_metrics"]
+tts_service = system_info["tts_service"]
 ```
 
 ## 🧪 Comprehensive Test Suite

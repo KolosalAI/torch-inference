@@ -3,6 +3,7 @@
 Comprehensive HLRTF-inspired optimization test with working components.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -74,11 +75,14 @@ def test_tensor_factorization():
         logger.info(f"   Compression ratio: {compression_ratio:.3f}")
         logger.info(f"   Output shape: {output.shape}")
         
-        return True, optimized_model, compression_ratio
+        # Assert successful optimization
+        assert optimized_model is not None, "Optimized model should not be None"
+        assert compression_ratio > 0, "Compression ratio should be positive"
+        assert output.shape == (1, 10), f"Expected output shape (1, 10), got {output.shape}"
         
     except Exception as e:
         logger.error(f"❌ Tensor Factorization failed: {e}")
-        return False, None, 0
+        pytest.fail(f"Tensor factorization test failed: {e}")
 
 
 def test_mask_based_pruning():
@@ -113,11 +117,14 @@ def test_mask_based_pruning():
         logger.info(f"   Compression ratio: {compression_ratio:.3f}")
         logger.info(f"   Output shape: {output.shape}")
         
-        return True, pruned_model, compression_ratio
+        # Assert successful optimization
+        assert pruned_model is not None, "Pruned model should not be None"
+        assert compression_ratio > 0, "Compression ratio should be positive"
+        assert output.shape == (1, 10), f"Expected output shape (1, 10), got {output.shape}"
         
     except Exception as e:
         logger.error(f"❌ Mask-Based Pruning failed: {e}")
-        return False, None, 0
+        pytest.fail(f"Mask-based pruning test failed: {e}")
 
 
 def test_combined_optimization():
@@ -166,13 +173,16 @@ def test_combined_optimization():
         logger.info(f"   Parameter reduction: {(1-final_compression_ratio):.1%}")
         logger.info(f"   Output shape: {output.shape}")
         
-        return True, combined_model, final_compression_ratio
+        # Assert successful optimization
+        assert combined_model is not None, "Combined model should not be None"
+        assert final_compression_ratio > 0, "Final compression ratio should be positive"
+        assert output.shape == (1, 10), f"Expected output shape (1, 10), got {output.shape}"
         
     except Exception as e:
         logger.error(f"❌ Combined Optimization failed: {e}")
         import traceback
         traceback.print_exc()
-        return False, None, 0
+        pytest.fail(f"Combined optimization test failed: {e}")
 
 
 def test_performance_benchmark():
@@ -222,11 +232,14 @@ def test_performance_benchmark():
         logger.info(f"   Optimized: {optimized_fps:.2f} FPS")
         logger.info(f"   Speedup: {speedup:.2f}x")
         
-        return True
+        # Assert successful benchmarking
+        assert original_fps > 0, "Original model FPS should be positive"
+        assert optimized_fps > 0, "Optimized model FPS should be positive"
+        assert speedup > 0, "Speedup should be positive"
         
     except Exception as e:
         logger.error(f"❌ Benchmarking failed: {e}")
-        return False
+        pytest.fail(f"Performance benchmark test failed: {e}")
 
 
 if __name__ == "__main__":
@@ -236,17 +249,37 @@ if __name__ == "__main__":
     logger.info("")
     
     # Test individual optimizations
-    tf_success, _, tf_ratio = test_tensor_factorization()
-    logger.info("")
+    try:
+        test_tensor_factorization()
+        tf_success = True
+        logger.info("")
+    except Exception:
+        tf_success = False
+        logger.info("")
     
-    mp_success, _, mp_ratio = test_mask_based_pruning()
-    logger.info("")
+    try:
+        test_mask_based_pruning()
+        mp_success = True
+        logger.info("")
+    except Exception:
+        mp_success = False
+        logger.info("")
     
-    combined_success, _, combined_ratio = test_combined_optimization()
-    logger.info("")
+    try:
+        test_combined_optimization()
+        combined_success = True
+        logger.info("")
+    except Exception:
+        combined_success = False
+        logger.info("")
     
-    perf_success = test_performance_benchmark()
-    logger.info("")
+    try:
+        test_performance_benchmark()
+        perf_success = True
+        logger.info("")
+    except Exception:
+        perf_success = False
+        logger.info("")
     
     # Summary
     logger.info("=" * 70)

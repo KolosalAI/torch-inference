@@ -3,6 +3,7 @@
 Simple mask-based structured pruning test.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -189,13 +190,17 @@ def test_masked_pruning():
         logger.info(f"✅ Mask-based pruning: {original_params:,} → {effective_params:,} effective params")
         logger.info(f"   Compression ratio: {compression_ratio:.3f}")
         
-        return True
+        # Assert successful pruning
+        assert pruned_model is not None, "Pruned model should not be None"
+        assert effective_params > 0, "Effective params should be positive"
+        assert compression_ratio > 0, "Compression ratio should be positive"
+        assert pruned_output.shape == original_output.shape, "Output shape should remain the same"
         
     except Exception as e:
         logger.error(f"❌ Mask-based pruning failed: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        pytest.fail(f"Mask-based pruning test failed: {e}")
 
 if __name__ == "__main__":
     logger.info("=" * 50)

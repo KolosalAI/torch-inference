@@ -24,7 +24,7 @@ from framework.optimizers import (
 )
 
 
-class TestCNNModel(nn.Module):
+class CNNTestModel(nn.Module):
     """Test CNN model for integration tests."""
     
     def __init__(self):
@@ -61,7 +61,7 @@ class TestSequentialOptimization:
     
     def test_tensor_factorization_then_pruning(self):
         """Test applying tensor factorization followed by structured pruning."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Step 1: Apply very conservative tensor factorization (minimal compression)
         tf_config = TensorFactorizationConfig()
@@ -96,7 +96,7 @@ class TestSequentialOptimization:
     
     def test_pruning_then_tensor_factorization(self):
         """Test applying structured pruning followed by tensor factorization."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Step 1: Apply minimal structured pruning
         pruning_config = MaskPruningConfig()
@@ -135,7 +135,7 @@ class TestIntegratedCompressionSuite:
     
     def test_full_compression_pipeline_sequential(self):
         """Test full compression pipeline with sequential schedule."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Configure comprehensive compression - use only basic methods to avoid dimension issues
         config = CompressionConfig()
@@ -158,7 +158,7 @@ class TestIntegratedCompressionSuite:
     
     def test_full_compression_pipeline_parallel(self):
         """Test full compression pipeline with parallel schedule."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Configure comprehensive compression
         config = CompressionConfig()
@@ -181,7 +181,7 @@ class TestIntegratedCompressionSuite:
     
     def test_compression_with_knowledge_distillation(self):
         """Test compression pipeline including knowledge distillation."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Configure compression with distillation
         config = CompressionConfig()
@@ -216,7 +216,7 @@ class TestCompressionMetrics:
     
     def test_parameter_reduction_tracking(self):
         """Test that parameter reduction is properly tracked."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Count original parameters
         original_params = sum(p.numel() for p in model.parameters())
@@ -248,7 +248,7 @@ class TestCompressionMetrics:
     
     def test_compression_ratio_accuracy(self):
         """Test that actual compression ratio matches expected."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         target_ratios = [0.3, 0.5, 0.7]
         
@@ -269,7 +269,7 @@ class TestCompressionMetrics:
     
     def test_performance_preservation(self):
         """Test that model performance is reasonably preserved."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Create test dataset
         test_data = [
@@ -301,7 +301,7 @@ class TestOptimizationRobustness:
     
     def test_optimization_with_different_input_sizes(self):
         """Test optimization works with different input sizes."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         input_sizes = [(1, 3, 32, 32), (4, 3, 32, 32), (8, 3, 32, 32)]
         
@@ -324,8 +324,8 @@ class TestOptimizationRobustness:
     
     def test_optimization_reproducibility(self):
         """Test that optimization results are reproducible."""
-        model1 = TestCNNModel()
-        model2 = TestCNNModel()
+        model1 = CNNTestModel()
+        model2 = CNNTestModel()
         
         # Set same weights for both models
         model2.load_state_dict(model1.state_dict())
@@ -355,7 +355,7 @@ class TestOptimizationRobustness:
     
     def test_optimization_error_handling(self):
         """Test error handling in optimization pipeline."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Test with invalid configuration
         config = CompressionConfig()
@@ -378,7 +378,7 @@ class TestCrossOptimizationCompatibility:
     
     def test_tensor_factorization_mask_pruning_compatibility(self):
         """Test that tensor factorization and mask pruning work together."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Apply both optimizations through compression suite (conservative)
         config = CompressionConfig()
@@ -405,7 +405,7 @@ class TestCrossOptimizationCompatibility:
     
     def test_optimization_preserves_gradients(self):
         """Test that optimized models still support gradient computation."""
-        model = TestCNNModel()
+        model = CNNTestModel()
         
         # Apply optimization (conservative)
         config = CompressionConfig()

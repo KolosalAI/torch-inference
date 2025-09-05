@@ -253,7 +253,7 @@ class TestAudioAPIMocking:
         
         # Test valid TTS request
         request = TTSRequest(
-            text="Hello, world!",
+            inputs="Hello, world!",  # Changed from text to inputs
             model_name="test-tts",
             speed=1.0,
             pitch=1.0,
@@ -262,7 +262,8 @@ class TestAudioAPIMocking:
             output_format="wav"
         )
         
-        assert request.text == "Hello, world!"
+        assert request.inputs == "Hello, world!"  # Changed from text to inputs
+        assert request.text == "Hello, world!"  # Using the property alias
         assert request.model_name == "test-tts"
         assert request.speed == 1.0
         assert request.language == "en"

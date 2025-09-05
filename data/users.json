@@ -1,0 +1,23 @@
+{
+  "users": [
+    {
+      "id": "user_A4sRoeq9meUVyeCh0fy-qw",
+      "username": "admin",
+      "email": "admin@example.com",
+      "full_name": "Administrator",
+      "roles": [
+        "admin"
+      ],
+      "is_active": true,
+      "is_verified": true,
+      "created_at": "2025-09-05T08:40:00.409352+00:00",
+      "last_login": null,
+      "locked_until": null,
+      "failed_attempts": 0,
+      "metadata": {},
+      "hashed_password": "$2b$12$WXK94/gqwJ.vqs91B.l1tu461O3WiIg47olZaNaftHiiOTAZj/wrS",
+      "api_keys": []
+    }
+  ],
+  "updated_at": "2025-09-05T12:51:44.271328+00:00"
+}

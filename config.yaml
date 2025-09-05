@@ -42,22 +42,31 @@ models:
         timeout_seconds: 300
     registry_file: "model_registry.json"
 
-# Device Configuration - OPTIMIZED FOR PERFORMANCE
+# Device Configuration - ULTRA-HIGH PERFORMANCE OPTIMIZATIONS
 device:
   type: "auto"  # auto, cpu, cuda, mps
   id: 0  # GPU ID if using CUDA
-  use_fp16: true  # Enable FP16 for speed
+  use_fp16: true  # Enable FP16 for maximum speed on modern GPUs
   use_torch_compile: true  # Enable torch.compile for acceleration
+  compile_mode: "max-autotune"  # Use most aggressive compilation mode
   memory_fraction: 0.9  # Use more GPU memory for better performance
+  use_tf32: true  # Enable TF32 on Ampere+ GPUs for massive speedup
+  use_quantization: false  # Enable for CPU inference speedup (experimental)
+  enable_flash_attention: true  # Enable if available for transformers
+  enable_kernel_fusion: true  # Enable automatic kernel fusion
+  enable_memory_pooling: true  # Enable CUDA memory pooling for stable performance
 
-# Batch Processing Configuration - OPTIMIZED FOR ULTRA-LOW LATENCY
+# Batch Processing Configuration - ULTRA-LOW LATENCY WITH HIGH THROUGHPUT
 batch:
-  batch_size: 2  # Optimal batch size based on benchmark
+  batch_size: 4  # Optimal batch size for latency/throughput balance
   min_batch_size: 1
-  max_batch_size: 8  # Reduced max for better latency
+  max_batch_size: 16  # Increased for better throughput when needed
   adaptive_batching: true
-  timeout_seconds: 0.05  # Very aggressive timeout (50ms)
-  queue_size: 500  # Larger queue for better concurrency
+  timeout_seconds: 0.02  # Ultra-aggressive timeout (20ms) for sub-50ms inference
+  queue_size: 1000  # Larger queue for high-concurrency workloads
+  enable_kernel_fusion: true  # Fuse batch operations for efficiency
+  enable_tensor_caching: true  # Cache intermediate tensors
+  enable_pipeline_processing: true  # Pipeline pre/post processing
 
 # Preprocessing Configuration
 preprocessing:
@@ -80,14 +89,18 @@ postprocessing:
   apply_sigmoid: false
   apply_softmax: false
 
-# Performance Configuration - ULTRA-HIGH PERFORMANCE
+# Performance Configuration - MAXIMUM PERFORMANCE
 performance:
   enable_profiling: false  # Disable profiling for production
   enable_metrics: true
-  warmup_iterations: 20  # More warmup for stable performance
-  benchmark_iterations: 100  # Better benchmarking
+  warmup_iterations: 50  # Extensive warmup for maximum stability
+  benchmark_iterations: 200  # Better benchmarking for optimization
   enable_async: true
-  max_workers: 12  # Increased workers for better concurrency
+  max_workers: 16  # Increased workers for maximum concurrency
+  enable_numba_jit: true  # Enable Numba JIT acceleration
+  enable_cuda_graphs: true  # Enable CUDA graphs for repetitive workloads
+  optimize_memory_layout: true  # Optimize tensor memory layouts
+  enable_tensor_cores: true  # Enable tensor core usage on supported hardware
 
 # Caching Configuration
 cache:
@@ -149,17 +162,22 @@ security:
   validate_inputs: true
   sanitize_outputs: true
 
-# Optimization Configuration - ENHANCED FOR SPEED
+# Optimization Configuration - ENHANCED FOR MAXIMUM SPEED
 optimization:
   enable_jit: true
   enable_quantization: true  # Enable quantization for speed
   quantization_mode: "dynamic"  # dynamic, static, qat
   enable_tensorrt: true  # Enable TensorRT if available
   tensorrt_precision: "fp16"  # Use FP16 for TensorRT
-  enable_onnx: false
+  enable_onnx: true  # Enable ONNX Runtime for additional speed
   onnx_providers:
-    - "CUDAExecutionProvider"  # Prioritize CUDA
-    - "CPUExecutionProvider"
+    - "TensorrtExecutionProvider"  # Prioritize TensorRT
+    - "CUDAExecutionProvider"  # Then CUDA
+    - "CPUExecutionProvider"  # Fallback to CPU
+  enable_model_compilation: true  # Enable comprehensive model compilation
+  enable_operator_fusion: true  # Fuse compatible operators
+  enable_constant_folding: true  # Pre-compute constant operations
+  enable_dead_code_elimination: true  # Remove unused operations
 
 # Post-Download Optimization Configuration - NEW FEATURE
 post_download_optimization:

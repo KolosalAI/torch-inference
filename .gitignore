@@ -147,3 +147,5 @@ models/*
 *.key
 *.bin
 *.wav
+
+data/*
