@@ -1521,12 +1521,37 @@ async def health_check() -> HealthResponse:
     """Health check endpoint with autoscaler information."""
     logger.info("[ENDPOINT] Health check requested")
     
+    # Always collect autoscaler health information
+    autoscaler_info = None
+    if autoscaler:
+        try:
+            autoscaler_health = autoscaler.get_health_status()
+            autoscaler_info = {
+                "healthy": autoscaler_health.get("healthy", False),
+                "state": autoscaler_health.get("state", "unknown"),
+                "components": autoscaler_health.get("components", {})
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get autoscaler health: {e}")
+            autoscaler_info = {
+                "healthy": False,
+                "state": "error",
+                "error": str(e)
+            }
+    else:
+        autoscaler_info = {
+            "healthy": False,
+            "state": "not_available",
+            "message": "Autoscaler not enabled"
+        }
+    
     if not inference_engine:
         logger.warning("[ENDPOINT] Health check - Inference engine not available")
         response = HealthResponse(
             healthy=False,
             checks={"inference_engine": False},
-            timestamp=time.time()
+            timestamp=time.time(),
+            autoscaler=autoscaler_info
         )
         logger.debug(f"[ENDPOINT] Health check response: unhealthy - {response.checks}")
         return response
@@ -1534,30 +1559,6 @@ async def health_check() -> HealthResponse:
     try:
         health_status = await inference_engine.health_check()
         engine_stats = inference_engine.get_stats()
-        
-        # Add autoscaler health information
-        autoscaler_info = None
-        if autoscaler:
-            try:
-                autoscaler_health = autoscaler.get_health_status()
-                autoscaler_info = {
-                    "healthy": autoscaler_health.get("healthy", False),
-                    "state": autoscaler_health.get("state", "unknown"),
-                    "components": autoscaler_health.get("components", {})
-                }
-            except Exception as e:
-                logger.warning(f"Failed to get autoscaler health: {e}")
-                autoscaler_info = {
-                    "healthy": False,
-                    "state": "error",
-                    "error": str(e)
-                }
-        else:
-            autoscaler_info = {
-                "healthy": False,
-                "state": "not_available",
-                "message": "Autoscaler not enabled"
-            }
         
         logger.info(f"[ENDPOINT] Health check completed - Healthy: {health_status['healthy']}")
         logger.debug(f"[ENDPOINT] Health check details - Checks: {health_status['checks']}")
@@ -1577,7 +1578,8 @@ async def health_check() -> HealthResponse:
         return HealthResponse(
             healthy=False,
             checks={"error": str(e)},
-            timestamp=time.time()
+            timestamp=time.time(),
+            autoscaler=autoscaler_info
         )
 
 @app.get("/info")
