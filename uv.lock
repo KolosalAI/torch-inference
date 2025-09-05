@@ -731,7 +731,7 @@ wheels = [
 
 [[package]]
 name = "espnet"
-version = "202506"
+version = "202402"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asteroid-filterbanks", marker = "sys_platform == 'win32'" },
@@ -749,7 +749,6 @@ dependencies = [
     { name = "jamo", marker = "sys_platform == 'win32'" },
     { name = "kaldiio", marker = "sys_platform == 'win32'" },
     { name = "librosa", marker = "sys_platform == 'win32'" },
-    { name = "lightning", marker = "sys_platform == 'win32'" },
     { name = "nltk", marker = "sys_platform == 'win32'" },
     { name = "numpy", marker = "sys_platform == 'win32'" },
     { name = "opt-einsum", marker = "sys_platform == 'win32'" },
@@ -766,9 +765,9 @@ dependencies = [
     { name = "torch-complex", marker = "sys_platform == 'win32'" },
     { name = "typeguard", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/29/24f1f392e441cdb663fa19a42c79408c83e66dc288800243c1c28faa7cf6/espnet-202506.tar.gz", hash = "sha256:3184d12007cfa4e2f0fe1622c121f29d5e5a1d10b79bfd31516c70c639df6d7b", size = 1626929, upload-time = "2025-08-11T20:34:02.646Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/50/29ccdc4a07ff6c20e4a127af03cbd0c13e5b356550ef9be4ab6dde7a639e/espnet-202402.tar.gz", hash = "sha256:d203e2daca7c85adc11b85ae0d882a1b5814dd14a1c33e33d6c3220baa387d2f", size = 1351006, upload-time = "2024-02-06T03:28:44.38Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/9f/1ff9303634d1145768168fc8d7f90366f9439583cb3598bd6820769425e2/espnet-202506-py3-none-any.whl", hash = "sha256:332d436780e17633413255c97b1ed7a288fbb9bed2b446745ba45e6845c36188", size = 2184120, upload-time = "2025-08-11T20:34:01.126Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/1f/a68eb2d2c8366a4127482d51ad67419b7a3c981dff892503f0ad55027708/espnet-202402-py3-none-any.whl", hash = "sha256:3a1055c92679213b59eba54df7d255f52c8d9428c82bb1e5c9d5bfb8201b4bed", size = 1795321, upload-time = "2024-02-06T03:28:41.78Z" },
 ]
 
 [[package]]
@@ -1210,15 +1209,15 @@ wheels = [
 
 [[package]]
 name = "inflect"
-version = "7.5.0"
+version = "7.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "more-itertools", marker = "sys_platform == 'win32'" },
-    { name = "typeguard", marker = "sys_platform == 'win32'" },
+    { name = "pydantic", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/78/c6/943357d44a21fd995723d07ccaddd78023eace03c1846049a2645d4324a3/inflect-7.5.0.tar.gz", hash = "sha256:faf19801c3742ed5a05a8ce388e0d8fe1a07f8d095c82201eb904f5d27ad571f", size = 73751, upload-time = "2024-12-28T17:11:18.897Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9f/90/1d0a889847fdce963ebe9684de24a749e4fad627bf595e9f0d32730f85a8/inflect-7.0.0.tar.gz", hash = "sha256:63da9325ad29da81ec23e055b41225795ab793b4ecb483be5dc1fa363fd4717e", size = 70963, upload-time = "2023-07-04T14:17:02.791Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/eb/427ed2b20a38a4ee29f24dbe4ae2dafab198674fe9a85e3d6adf9e5f5f41/inflect-7.5.0-py3-none-any.whl", hash = "sha256:2aea70e5e70c35d8350b8097396ec155ffd68def678c7ff97f51aa69c1d92344", size = 35197, upload-time = "2024-12-28T17:11:15.931Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/c6/d9feb758be584f729424390af24687d3a4363d968164f94079f83cd536b4/inflect-7.0.0-py3-none-any.whl", hash = "sha256:9544afed6182176e43955c44b1acdaed30f9b2b56c16d1fc5b222d98218b546e", size = 34788, upload-time = "2023-07-04T14:17:00.625Z" },
 ]
 
 [[package]]
@@ -1673,40 +1672,6 @@ wheels = [
 ]
 
 [[package]]
-name = "lightning"
-version = "2.5.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fsspec", extra = ["http"], marker = "sys_platform == 'win32'" },
-    { name = "lightning-utilities", marker = "sys_platform == 'win32'" },
-    { name = "packaging", marker = "sys_platform == 'win32'" },
-    { name = "pytorch-lightning", marker = "sys_platform == 'win32'" },
-    { name = "pyyaml", marker = "sys_platform == 'win32'" },
-    { name = "torch", marker = "sys_platform == 'win32'" },
-    { name = "torchmetrics", marker = "sys_platform == 'win32'" },
-    { name = "tqdm", marker = "sys_platform == 'win32'" },
-    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/01/80/dddb5a382aa0ff18045aee6491f81e40371102cb05da2ad5a8436a51c475/lightning-2.5.3.tar.gz", hash = "sha256:4ed3e12369a1e0f928beecf5c9f5efdabda60a9216057954851e2d89f1abecde", size = 636577, upload-time = "2025-08-13T20:29:32.361Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/6b/00e9c2b03a449c21d7a4d73a7104ac94f56c37a1e6eae77b1c702d8dddf0/lightning-2.5.3-py3-none-any.whl", hash = "sha256:c551111fda0db0bce267791f9a90cd4f9cf94bc327d36348af0ef79ec752d666", size = 824181, upload-time = "2025-08-13T20:29:30.244Z" },
-]
-
-[[package]]
-name = "lightning-utilities"
-version = "0.15.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging", marker = "sys_platform == 'win32'" },
-    { name = "setuptools", marker = "sys_platform == 'win32'" },
-    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/39/6fc58ca81492db047149b4b8fd385aa1bfb8c28cd7cacb0c7eb0c44d842f/lightning_utilities-0.15.2.tar.gz", hash = "sha256:cdf12f530214a63dacefd713f180d1ecf5d165338101617b4742e8f22c032e24", size = 31090, upload-time = "2025-08-06T13:57:39.242Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/de/73/3d757cb3fc16f0f9794dd289bcd0c4a031d9cf54d8137d6b984b2d02edf3/lightning_utilities-0.15.2-py3-none-any.whl", hash = "sha256:ad3ab1703775044bbf880dbf7ddaaac899396c96315f3aa1779cec9d618a9841", size = 29431, upload-time = "2025-08-06T13:57:38.046Z" },
-]
-
-[[package]]
 name = "llvmlite"
 version = "0.43.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2024,15 +1989,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/54/b7/3ae68694f43b3ea946babaab341a128bebdd7301296f510fd61a7cdfe6c4/mlflow_tracing-3.3.1.tar.gz", hash = "sha256:ba2973300836b8d656ec516f64145130bbe07332e43429765507234db8a8f632", size = 926128, upload-time = "2025-08-20T14:51:47.496Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/07/4d1a8fff5a035bbb947727375e5dbd7ad3ecd94f437d06c8ff05b9f78668/mlflow_tracing-3.3.1-py3-none-any.whl", hash = "sha256:ab92e6287fdaac2940528b520f1728a300d02b5858052f0c5831df2b1bb4fbbc", size = 1120150, upload-time = "2025-08-20T14:51:45.675Z" },
-]
-
-[[package]]
-name = "more-itertools"
-version = "10.7.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ce/a0/834b0cebabbfc7e311f30b46c8188790a37f89fc8d756660346fe5abfd09/more_itertools-10.7.0.tar.gz", hash = "sha256:9fddd5403be01a94b204faadcff459ec3568cf110265d3c54323e1e866ad29d3", size = 127671, upload-time = "2025-04-22T14:17:41.838Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/9f/7ba6f94fc1e9ac3d2b853fdff3035fb2fa5afbed898c4a72b8a020610594/more_itertools-10.7.0-py3-none-any.whl", hash = "sha256:d43980384673cb07d2f7d2d918c616b30c659c089ee23953f601d6609c67510e", size = 65278, upload-time = "2025-04-22T14:17:40.49Z" },
 ]
 
 [[package]]
@@ -2921,25 +2877,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pytorch-lightning"
-version = "2.5.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fsspec", extra = ["http"], marker = "sys_platform == 'win32'" },
-    { name = "lightning-utilities", marker = "sys_platform == 'win32'" },
-    { name = "packaging", marker = "sys_platform == 'win32'" },
-    { name = "pyyaml", marker = "sys_platform == 'win32'" },
-    { name = "torch", marker = "sys_platform == 'win32'" },
-    { name = "torchmetrics", marker = "sys_platform == 'win32'" },
-    { name = "tqdm", marker = "sys_platform == 'win32'" },
-    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/32/a8/31fe79bf96dab33cee5537ed6f08230ed6f032834bb4ff529cc487fb40e8/pytorch_lightning-2.5.3.tar.gz", hash = "sha256:65f4eee774ee1adba181aacacffb9f677fe5c5f9fd3d01a95f603403f940be6a", size = 639897, upload-time = "2025-08-13T20:29:39.161Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/a2/5f2b7b40ec5213db5282e98dd32fd419fe5b73b5b53895dfff56fe12fed0/pytorch_lightning-2.5.3-py3-none-any.whl", hash = "sha256:7476bd36282d9253dda175b9263b07942489d70ad90bbd1bc0a59c46e012f353", size = 828186, upload-time = "2025-08-13T20:29:37.41Z" },
-]
-
-[[package]]
 name = "pytz"
 version = "2025.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3265,21 +3202,21 @@ wheels = [
 
 [[package]]
 name = "sentencepiece"
-version = "0.2.0"
+version = "0.1.97"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c9/d2/b9c7ca067c26d8ff085d252c89b5f69609ca93fb85a00ede95f4857865d4/sentencepiece-0.2.0.tar.gz", hash = "sha256:a52c19171daaf2e697dc6cbe67684e0fa341b1248966f6aebb541de654d15843", size = 2632106, upload-time = "2024-02-19T17:06:47.428Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/87/f26695307c0aa00e6938f5de795fc7f2c718a448b48d29a4c8c8dbf829d3/sentencepiece-0.1.97.tar.gz", hash = "sha256:c901305e0a710bbcd296f66d79e96f744e6e175b29812bd5178318437d4e1f6c", size = 524731, upload-time = "2022-08-07T07:57:17.148Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/e4/55f97cef14293171fef5f96e96999919ab5b4d1ce95b53547ad653d7e3bf/sentencepiece-0.2.0-cp310-cp310-win32.whl", hash = "sha256:a1151d6a6dd4b43e552394aed0edfe9292820272f0194bd56c7c1660a0c06c3d", size = 936747, upload-time = "2024-02-19T17:05:48.705Z" },
-    { url = "https://files.pythonhosted.org/packages/85/f4/4ef1a6e0e9dbd8a60780a91df8b7452ada14cfaa0e17b3b8dfa42cecae18/sentencepiece-0.2.0-cp310-cp310-win_amd64.whl", hash = "sha256:d490142b0521ef22bc1085f061d922a2a6666175bb6b42e588ff95c0db6819b2", size = 991525, upload-time = "2024-02-19T17:05:55.145Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/b9/a887a0855acccceb2b26a852a5f78fb24d084628f1ab2c7eaf00e9e01cb2/sentencepiece-0.1.97-cp310-cp310-win32.whl", hash = "sha256:ee3c9dbd558d8d85bb1617087b86df6ea2b856a528669630ce6cedeb4353b823", size = 1061891, upload-time = "2022-08-07T07:57:13.056Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/6d/bf0668915c5a526b6eb24b7663f14fd61f6ee194a399b48f942f10e8eb81/sentencepiece-0.1.97-cp310-cp310-win_amd64.whl", hash = "sha256:f7dc55379e2f7dee86537180283db2e5f8418c6825fdd2fe436c724eb5604c05", size = 1133120, upload-time = "2022-08-07T07:57:15.2Z" },
 ]
 
 [[package]]
 name = "setuptools"
-version = "73.0.1"
+version = "80.9.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8d/37/f4d4ce9bc15e61edba3179f9b0f763fc6d439474d28511b11f0d95bab7a2/setuptools-73.0.1.tar.gz", hash = "sha256:d59a3e788ab7e012ab2c4baed1b376da6366883ee20d7a5fc426816e3d7b1193", size = 2526506, upload-time = "2024-08-20T18:27:53.037Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/18/5d/3bf57dcd21979b887f014ea83c24ae194cfcd12b9e0fda66b957c69d1fca/setuptools-80.9.0.tar.gz", hash = "sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c", size = 1319958, upload-time = "2025-05-27T00:56:51.443Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/6a/0270e295bf30c37567736b7fca10167640898214ff911273af37ddb95770/setuptools-73.0.1-py3-none-any.whl", hash = "sha256:b208925fcb9f7af924ed2dc04708ea89791e24bde0d3020b27df0e116088b34e", size = 2346588, upload-time = "2024-08-20T18:27:50.018Z" },
+    { url = "https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl", hash = "sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922", size = 1201486, upload-time = "2025-05-27T00:56:49.664Z" },
 ]
 
 [[package]]
@@ -4202,7 +4139,7 @@ requires-dist = [
     { name = "scikit-learn", specifier = "==1.7.1" },
     { name = "scipy", specifier = "==1.15.3" },
     { name = "send2trash", specifier = "==1.8.3" },
-    { name = "setuptools", specifier = "==73.0.1" },
+    { name = "setuptools", specifier = ">=80.9.0" },
     { name = "shellingham", specifier = "==1.5.4" },
     { name = "six", specifier = "==1.17.0" },
     { name = "smmap", specifier = "==5.0.2" },
@@ -4302,21 +4239,6 @@ wheels = [
 ]
 
 [[package]]
-name = "torchmetrics"
-version = "1.8.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "lightning-utilities", marker = "sys_platform == 'win32'" },
-    { name = "numpy", marker = "sys_platform == 'win32'" },
-    { name = "packaging", marker = "sys_platform == 'win32'" },
-    { name = "torch", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/78/1f/2cd9eb8f3390c3ec4693ac0871913d4b468964b3833638e4091a70817e0a/torchmetrics-1.8.1.tar.gz", hash = "sha256:04ca021105871637c5d34d0a286b3ab665a1e3d2b395e561f14188a96e862fdb", size = 580373, upload-time = "2025-08-07T20:44:44.631Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/59/5c1c1cb08c494621901cf549a543f87143019fac1e6dd191eb4630bbc8fb/torchmetrics-1.8.1-py3-none-any.whl", hash = "sha256:2437501351e0da3d294c71210ce8139b9c762b5e20604f7a051a725443db8f4b", size = 982961, upload-time = "2025-08-07T20:44:42.608Z" },
-]
-
-[[package]]
 name = "torchvision"
 version = "0.23.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4405,14 +4327,11 @@ wheels = [
 
 [[package]]
 name = "typeguard"
-version = "4.4.4"
+version = "2.13.3"
 source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/68/71c1a15b5f65f40e91b65da23b8224dad41349894535a97f63a52e462196/typeguard-4.4.4.tar.gz", hash = "sha256:3a7fd2dffb705d4d0efaed4306a704c89b9dee850b688f060a8b1615a79e5f74", size = 75203, upload-time = "2025-06-18T09:56:07.624Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/38/c61bfcf62a7b572b5e9363a802ff92559cb427ee963048e1442e3aef7490/typeguard-2.13.3.tar.gz", hash = "sha256:00edaa8da3a133674796cf5ea87d9f4b4c367d77476e185e80251cc13dfbb8c4", size = 40604, upload-time = "2021-12-10T21:09:39.158Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/a9/e3aee762739c1d7528da1c3e06d518503f8b6c439c35549b53735ba52ead/typeguard-4.4.4-py3-none-any.whl", hash = "sha256:b5f562281b6bfa1f5492470464730ef001646128b180769880468bd84b68b09e", size = 34874, upload-time = "2025-06-18T09:56:05.999Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/bb/d43e5c75054e53efce310e79d63df0ac3f25e34c926be5dffb7d283fb2a8/typeguard-2.13.3-py3-none-any.whl", hash = "sha256:5e3e3be01e887e7eafae5af63d1f36c849aaa94e3a0112097312aabfa16284f1", size = 17605, upload-time = "2021-12-10T21:09:37.844Z" },
 ]
 
 [[package]]
