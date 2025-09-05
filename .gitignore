@@ -149,3 +149,6 @@ models/*
 *.wav
 
 data/*
+encryption.key
+secret_key.txt
+next_steps.txt
