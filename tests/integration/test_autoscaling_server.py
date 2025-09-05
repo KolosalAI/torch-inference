@@ -224,7 +224,10 @@ class TestAutoscalerServerEndpoints:
         """Test that predict endpoint uses autoscaler when available."""
         response = client_with_mock_autoscaler.post(
             "/predict",
-            json={"inputs": {"text": "test input"}}
+            json={
+                "model_name": "example",  # Add required model_name field
+                "inputs": {"text": "test input"}
+            }
         )
         
         assert response.status_code == 200

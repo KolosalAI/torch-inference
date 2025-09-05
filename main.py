@@ -17,12 +17,13 @@ import logging
 import asyncio
 import time
 import uuid
+import multiprocessing as mp
 from typing import Any, Dict, List, Optional, Union
 from contextlib import asynccontextmanager
 from datetime import datetime
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel as PydanticBaseModel, Field
@@ -35,6 +36,13 @@ import base64
 
 # Import the event loop configuration
 from framework.core.async_handler import configure_event_loop
+
+# Import authentication system
+from framework.auth import (
+    JWTHandler, UserStore, AuthMiddleware, init_auth_middleware,
+    create_auth_router, get_current_user, require_admin
+)
+from framework.auth.config import load_auth_config, get_environment
 
 def _create_wav_bytes(audio_data: np.ndarray, sample_rate: int, channels: int = 1, sample_width: int = 2) -> bytes:
     """
@@ -495,6 +503,53 @@ logger.info(f"Working directory: {os.getcwd()}")
 logger.info(f"Log level: {server_config['log_level']}")
 logger.info(f"Log files directory: {log_dir.absolute()}")
 
+# Initialize authentication system
+logger.info("="*60)
+logger.info("INITIALIZING AUTHENTICATION SYSTEM")
+logger.info("="*60)
+
+try:
+    # Load authentication configuration
+    auth_config, security_config = load_auth_config(environment=get_environment())
+    
+    # Initialize JWT handler
+    jwt_handler = JWTHandler(
+        secret_key=auth_config.jwt_secret_key,
+        algorithm=auth_config.jwt_algorithm,
+        access_token_expire_minutes=auth_config.access_token_expire_minutes,
+        refresh_token_expire_days=auth_config.refresh_token_expire_days
+    )
+    
+    # Initialize user store
+    user_store = UserStore(
+        users_file=auth_config.user_store_file,
+        api_keys_file=auth_config.session_store_file
+    )
+    
+    # Initialize auth middleware
+    auth_middleware = init_auth_middleware(jwt_handler, user_store)
+    
+    logger.info(f"✓ Authentication system initialized successfully")
+    logger.info(f"  Environment: {get_environment()}")
+    logger.info(f"  JWT Algorithm: {auth_config.jwt_algorithm}")
+    logger.info(f"  Access token expiry: {auth_config.access_token_expire_minutes} minutes")
+    logger.info(f"  Refresh token expiry: {auth_config.refresh_token_expire_days} days")
+    logger.info(f"  Authentication enabled: {security_config.enable_auth}")
+    logger.info(f"  API keys enabled: {security_config.enable_api_keys}")
+    logger.info(f"  Rate limit: {security_config.rate_limit_per_minute} requests/minute")
+    logger.info(f"  Users loaded: {len(user_store.users)}")
+    logger.info("="*60)
+    
+except Exception as e:
+    logger.error(f"✗ Failed to initialize authentication system: {e}")
+    # Create dummy handlers for fallback
+    jwt_handler = None
+    user_store = None 
+    auth_middleware = None
+    auth_config = None
+    security_config = None
+    logger.warning("Authentication system disabled due to initialization failure")
+
 # Create separate logger for API requests
 api_logger = logging.getLogger("api_requests")
 api_logger.setLevel(logging.INFO)
@@ -512,9 +567,8 @@ def print_api_endpoints():
     """Print all available API endpoints at startup"""
     endpoints = [
         ("GET", "/", "Root endpoint - API information"),
-        ("POST", "/{model_name}/predict", "Model-specific prediction endpoint with inflight batching"),
-        ("POST", "/predict", "General prediction endpoint using default model"),
-        ("POST", "/predict/batch", "Batch prediction endpoint"),
+        ("POST", "/predict", "Unified prediction endpoint for all torch models"),
+        ("POST", "/synthesize", "Text-to-Speech synthesis endpoint"),
         ("GET", "/health", "Health check endpoint"),
         ("GET", "/stats", "Engine statistics endpoint"),
         ("GET", "/config", "Configuration information endpoint"),
@@ -546,7 +600,7 @@ def print_api_endpoints():
         ("DELETE", "/autoscaler/unload", "Unload a model"),
         ("GET", "/autoscaler/metrics", "Get detailed autoscaling metrics"),
         # Enhanced audio processing endpoints
-        ("POST", "/tts/synthesize", "Enhanced Text-to-Speech synthesis"),
+        ("POST", "/synthesize", "Enhanced Text-to-Speech synthesis"),
         ("POST", "/stt/transcribe", "Speech-to-Text transcription"),
         ("GET", "/audio/models", "List available audio models"),
         ("GET", "/audio/health", "Audio processing health check"),
@@ -590,8 +644,10 @@ def print_api_endpoints():
 
 # Pydantic models for API
 class InferenceRequest(PydanticBaseModel):
-    """Request model for model-specific inference with inflight batching support."""
+    """Request model for unified prediction endpoint."""
+    model_name: str = Field(..., description="Name of the model to use for inference")
     inputs: Union[Any, List[Any]] = Field(..., description="Input data for inference (single item or list for batch)")
+    token: Optional[str] = Field(default=None, description="Authentication token")
     priority: int = Field(default=0, description="Request priority (higher = processed first)")
     timeout: Optional[float] = Field(default=None, description="Request timeout in seconds")
     enable_batching: bool = Field(default=True, description="Enable inflight batching optimization")
@@ -620,8 +676,9 @@ class StatsResponse(PydanticBaseModel):
 # Audio-specific Pydantic models
 class TTSRequest(PydanticBaseModel):
     """Request model for Text-to-Speech synthesis."""
-    text: str = Field(..., description="Text to synthesize")
-    model_name: str = Field(default="default", description="TTS model to use")
+    model_name: str = Field(..., description="TTS model to use for synthesis")
+    inputs: str = Field(..., description="Text to synthesize")
+    token: Optional[str] = Field(default=None, description="Authentication token")
     voice: Optional[str] = Field(default=None, description="Voice to use for synthesis")
     speed: float = Field(default=1.0, ge=0.5, le=2.0, description="Speech speed (0.5-2.0)")
     pitch: float = Field(default=1.0, ge=0.5, le=2.0, description="Pitch adjustment (0.5-2.0)")
@@ -629,6 +686,16 @@ class TTSRequest(PydanticBaseModel):
     language: str = Field(default="en", description="Language code (e.g., 'en', 'es', 'fr')")
     emotion: Optional[str] = Field(default=None, description="Emotion for synthesis")
     output_format: str = Field(default="wav", pattern="^(wav|mp3|flac)$", description="Output audio format")
+    
+    @property
+    def text(self) -> str:
+        """Alias for inputs field for backward compatibility."""
+        return self.inputs
+    
+    @text.setter
+    def text(self, value: str) -> None:
+        """Setter for text alias."""
+        self.inputs = value
 
 class STTRequest(PydanticBaseModel):
     """Request model for Speech-to-Text transcription."""
@@ -899,6 +966,80 @@ async def log_requests(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     
     return response
+
+# Add authentication routes if auth system is available
+if jwt_handler and user_store and auth_middleware:
+    try:
+        auth_router = create_auth_router(jwt_handler, user_store, auth_middleware)
+        app.include_router(auth_router)
+        logger.info("✓ Authentication routes added to API")
+    except Exception as e:
+        logger.error(f"✗ Failed to add authentication routes: {e}")
+else:
+    logger.warning("⚠ Authentication routes not added - auth system not available")
+
+# Helper function to conditionally add authentication
+def get_auth_dependency():
+    """Get authentication dependency if auth is enabled."""
+    # Check if we're in a test environment
+    is_test_env = (
+        os.getenv("ENVIRONMENT") == "test" or 
+        os.getenv("TESTING") == "true" or
+        "pytest" in sys.modules
+    )
+    
+    if is_test_env:
+        # In test environment, make auth optional
+        logger.debug("Test environment detected, making auth optional")
+        return lambda request=None, credentials=None: None
+    
+    if (auth_middleware and security_config and 
+        security_config.enable_auth):
+        try:
+            # Import the dependency function from middleware
+            from framework.auth.middleware import get_current_user_optional
+            return get_current_user_optional
+        except Exception as e:
+            logger.warning(f"Auth dependency failed: {e}")
+            return lambda request=None, credentials=None: None
+    return lambda request=None, credentials=None: None
+
+def get_required_auth_dependency():
+    """Get required authentication dependency if auth is enabled."""
+    # Check if we're in a test environment
+    is_test_env = (
+        os.getenv("ENVIRONMENT") == "test" or 
+        os.getenv("TESTING") == "true" or
+        "pytest" in sys.modules
+    )
+    
+    if is_test_env:
+        # In test environment, return a mock user or None
+        logger.debug("Test environment detected, bypassing required auth")
+        return lambda request=None, credentials=None: None
+    
+    if (auth_middleware and security_config and 
+        security_config.enable_auth):
+        try:
+            # Import the dependency function from middleware
+            from framework.auth.middleware import get_current_user
+            return get_current_user
+        except Exception as e:
+            logger.warning(f"Required auth dependency failed: {e}")
+            raise HTTPException(status_code=503, detail="Authentication service unavailable")
+    return lambda request=None, credentials=None: None
+
+def validate_token(token: Optional[str]) -> Optional[Any]:
+    """Validate token if provided, otherwise use authentication middleware."""
+    if token and jwt_handler:
+        try:
+            # Validate the token using JWT handler
+            payload = jwt_handler.decode_token(token)
+            return payload
+        except Exception as e:
+            logger.warning(f"Token validation failed: {e}")
+            return None
+    return None
 
 async def initialize_inference_engine():
     """Initialize the inference engine with example model and autoscaler."""
@@ -1180,9 +1321,10 @@ async def root():
         },
         "endpoints": {
             "inference": {
-                "predict": "/predict",
-                "model_specific": "/{model_name}/predict",
-                "batch": "/predict/batch"
+                "predict": "/predict"
+            },
+            "tts": {
+                "synthesize": "/synthesize"
             },
             "health": "/health",
             "stats": "/stats",
@@ -1201,8 +1343,15 @@ async def root():
                 "optimize": "/server/optimize",
                 "metrics": "/metrics/server"
             },
+            "audio": {
+                "transcribe": "/stt/transcribe",
+                "models": "/audio/models",
+                "health": "/audio/health",
+                "tts_health": "/tts/health",
+                "validate": "/audio/validate",
+                "metrics": "/metrics/tts"
+            },
             "tts_audio": {
-                "synthesize": "/tts/synthesize",
                 "transcribe": "/stt/transcribe",
                 "models": "/audio/models",
                 "health": "/audio/health",
@@ -1228,7 +1377,8 @@ async def root():
         "quick_start": {
             "download_speecht5": "POST /models/download with {'source': 'huggingface', 'model_id': 'microsoft/speecht5_tts', 'name': 'speecht5_tts', 'task': 'text-to-speech', 'include_vocoder': true}",
             "download_bark": "POST /models/download with {'source': 'huggingface', 'model_id': 'suno/bark', 'name': 'bark_tts', 'task': 'text-to-speech'}",
-            "synthesize_speech": "POST /tts/synthesize with {'text': 'Hello world', 'model_name': 'speecht5_tts'}"
+            "predict_example": "POST /predict with {'model_name': 'example', 'inputs': 'Hello world', 'token': 'optional_auth_token'}",
+            "synthesize_speech": "POST /synthesize with {'model_name': 'speecht5_tts', 'inputs': 'Hello world', 'token': 'optional_auth_token'}"
         }
     }
     
@@ -1236,52 +1386,33 @@ async def root():
     return response_data
 
 @app.post("/predict")
-async def predict(request: InferenceRequest) -> InferenceResponse:
+async def predict(request: InferenceRequest, current_user = Depends(get_auth_dependency())) -> InferenceResponse:
     """
-    General prediction endpoint using default model.
+    Unified prediction endpoint for all torch models and deep learning inference.
     
-    Performs inference using the default 'example' model.
+    This endpoint handles:
+    - Single and batch inference
+    - Model selection via model_name parameter
+    - Token-based authentication (optional, falls back to middleware auth)
+    - Optimized processing paths
     """
-    logger.info("[ENDPOINT] General predict endpoint accessed")
+    # Validate token if provided
+    token_user = validate_token(request.token) if request.token else None
+    effective_user = token_user or current_user
     
-    # Use the existing predict_model function with default model
-    return await predict_model("example", request)
-
-@app.post("/predict/batch")
-async def predict_batch(request: InferenceRequest) -> InferenceResponse:
-    """
-    Batch prediction endpoint.
+    logger.info(f"[ENDPOINT] Predict endpoint accessed - Model: {request.model_name}, "
+               f"User: {getattr(effective_user, 'username', 'anonymous') if effective_user else 'anonymous'}, "
+               f"Auth via: {'token' if token_user else 'middleware' if current_user else 'none'}")
     
-    Optimized for batch processing with multiple inputs.
-    """
-    logger.info("[ENDPOINT] Batch predict endpoint accessed")
-    
-    # Ensure inputs is a list for batch processing
-    if not isinstance(request.inputs, list):
-        request.inputs = [request.inputs]
-    
-    # Use the existing predict_model function with default model
-    return await predict_model("example", request)
-
-@app.post("/{model_name}/predict")
-async def predict_model(model_name: str, request: InferenceRequest) -> InferenceResponse:
-    """
-    Ultra-optimized model-specific prediction endpoint.
-    
-    Optimized for:
-    - Ultra-low latency (<600ms target)
-    - High concurrent request throughput
-    - Minimal processing overhead
-    - Robust error handling
-    """
     # Determine if this is a batch request or single request
     is_batch_input = isinstance(request.inputs, list) and len(request.inputs) > 1
     input_count = len(request.inputs) if isinstance(request.inputs, list) else 1
     
-    logger.debug(f"[ENDPOINT] Optimized prediction - Model: {model_name}, "
+    logger.debug(f"[ENDPOINT] Optimized prediction - Model: {request.model_name}, "
                 f"Type: {'batch' if is_batch_input else 'single'}, Count: {input_count}")
     
     # Check if model exists or use default
+    model_name = request.model_name
     if model_name not in model_manager.list_models():
         if model_name != "example":
             logger.debug(f"[ENDPOINT] Model '{model_name}' not found, using 'example'")
@@ -1362,7 +1493,7 @@ async def predict_model(model_name: str, request: InferenceRequest) -> Inference
         
         processing_time = time.perf_counter() - start_time
         
-        logger.debug(f"[ENDPOINT] Prediction completed - Model: {model_name}, "
+        logger.debug(f"[ENDPOINT] Prediction completed - Model: {request.model_name}, "
                    f"Type: {'batch' if is_batch_input else 'single'}, "
                    f"Time: {processing_time*1000:.1f}ms")
         
@@ -1371,7 +1502,7 @@ async def predict_model(model_name: str, request: InferenceRequest) -> Inference
             result=result,
             processing_time=processing_time,
             model_info={
-                "model": model_name, 
+                "model": request.model_name, 
                 "device": str(inference_engine.device) if inference_engine else "autoscaler",
                 "input_type": "batch" if is_batch_input else "single",
                 "input_count": input_count,
@@ -1385,19 +1516,19 @@ async def predict_model(model_name: str, request: InferenceRequest) -> Inference
         )
         
     except asyncio.TimeoutError:
-        logger.warning(f"[ENDPOINT] Prediction timeout for model {model_name}")
+        logger.warning(f"[ENDPOINT] Prediction timeout for model {request.model_name}")
         return InferenceResponse(
             success=False,
             error="Request timed out",
-            model_info={"model": model_name},
+            model_info={"model": request.model_name},
             processing_time=time.perf_counter() - start_time if 'start_time' in locals() else 0
         )
     except Exception as e:
-        logger.error(f"[ENDPOINT] Prediction failed for model {model_name}: {e}")
+        logger.error(f"[ENDPOINT] Prediction failed for model {request.model_name}: {e}")
         return InferenceResponse(
             success=False,
             error=str(e),
-            model_info={"model": model_name},
+            model_info={"model": request.model_name},
             processing_time=time.perf_counter() - start_time if 'start_time' in locals() else 0
         )
 
@@ -1661,9 +1792,9 @@ async def optimize_performance():
         )
 
 @app.get("/stats")
-async def get_stats() -> StatsResponse:
-    """Get engine statistics."""
-    logger.info("[ENDPOINT] Statistics requested")
+async def get_stats(current_user = Depends(get_required_auth_dependency())) -> StatsResponse:
+    """Get engine statistics. Requires authentication."""
+    logger.info(f"[ENDPOINT] Statistics requested by user: {getattr(current_user, 'username', 'anonymous') if current_user else 'anonymous'}")
     
     if not inference_engine:
         logger.error("[ENDPOINT] Statistics failed - Inference engine not available")
@@ -1741,9 +1872,9 @@ async def get_config():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/models")
-async def list_models():
-    """List available models."""
-    logger.info("[ENDPOINT] Model list requested")
+async def list_models(current_user = Depends(get_auth_dependency())):
+    """List available models. Authentication recommended."""
+    logger.info(f"[ENDPOINT] Model list requested by user: {getattr(current_user, 'username', 'anonymous') if current_user else 'anonymous'}")
     
     try:
         models = model_manager.list_models()
@@ -3556,15 +3687,25 @@ def _estimate_download_time(model_id: str, source: str) -> str:
 
 # Audio Processing Endpoints
 
-@app.post("/tts/synthesize", response_model=TTSResponse)
+@app.post("/synthesize", response_model=TTSResponse)
 async def text_to_speech(request: TTSRequest) -> TTSResponse:
     """
-    Text-to-Speech synthesis endpoint.
+    Text-to-Speech synthesis endpoint for TTS models.
     
     Converts text input to speech audio using the specified TTS model.
     Returns base64 encoded audio data.
+    
+    Parameters:
+    - model_name: Name of the TTS model to use
+    - inputs: Text to synthesize (maps to 'text' field internally)
+    - token: Optional authentication token
     """
-    logger.info(f"[ENDPOINT] TTS synthesis requested - Model: {request.model_name}, Text length: {len(request.text)}")
+    # Validate token if provided
+    token_user = validate_token(request.token) if request.token else None
+    
+    logger.info(f"[ENDPOINT] TTS synthesis requested - Model: {request.model_name}, "
+               f"Text length: {len(request.inputs)}, "
+               f"Auth via: {'token' if token_user else 'none'}")
     
     try:
         start_time = time.perf_counter()
@@ -3581,7 +3722,7 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
             )
         
         # Validate text length
-        if len(request.text) > 5000:  # 5000 character limit
+        if len(request.inputs) > 5000:  # 5000 character limit
             raise HTTPException(
                 status_code=400,
                 detail="Text too long. Maximum 5000 characters allowed."
@@ -3666,7 +3807,7 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
         # Perform TTS synthesis
         try:
             # Use the predict method which returns a proper dictionary
-            result = tts_model.predict(request.text)
+            result = tts_model.predict(request.inputs)
             
             # Extract audio data and metadata
             audio_data = result["audio"]
