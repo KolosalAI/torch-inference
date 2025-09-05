@@ -84,19 +84,29 @@ def test_environment_variable_configuration():
     test_host = "testhost"
     test_port = "9999"
     
+    # Set environment variables first
     os.environ['TTS_SERVICE_HOST'] = test_host
     os.environ['TTS_SERVICE_PORT'] = test_port
     
-    # Import the test module to verify it reads environment variables
-    from tests.integration.test_tts_wav import TTS_SERVICE_HOST, TTS_SERVICE_PORT, TTS_SERVICE_URL
-    
-    assert TTS_SERVICE_HOST == test_host
-    assert TTS_SERVICE_PORT == test_port
-    assert f"{test_host}:{test_port}" in TTS_SERVICE_URL
-    
-    # Clean up
-    del os.environ['TTS_SERVICE_HOST']
-    del os.environ['TTS_SERVICE_PORT']
+    try:
+        # Import the test module to verify it reads environment variables
+        # Need to reload the module to pick up new environment variables
+        import sys
+        if 'tests.integration.test_tts_wav' in sys.modules:
+            del sys.modules['tests.integration.test_tts_wav']
+        
+        from tests.integration.test_tts_wav import TTS_SERVICE_HOST, TTS_SERVICE_PORT, TTS_SERVICE_URL
+        
+        assert TTS_SERVICE_HOST == test_host
+        assert TTS_SERVICE_PORT == test_port
+        assert f"{test_host}:{test_port}" in TTS_SERVICE_URL
+        
+    finally:
+        # Clean up
+        if 'TTS_SERVICE_HOST' in os.environ:
+            del os.environ['TTS_SERVICE_HOST']
+        if 'TTS_SERVICE_PORT' in os.environ:
+            del os.environ['TTS_SERVICE_PORT']
 
 def test_configuration_structure():
     """Test that all configuration sections are properly structured."""
