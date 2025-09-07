@@ -55,6 +55,47 @@ device:
   enable_flash_attention: true  # Enable if available for transformers
   enable_kernel_fusion: true  # Enable automatic kernel fusion
   enable_memory_pooling: true  # Enable CUDA memory pooling for stable performance
+  
+  # Multi-GPU Configuration
+  multi_gpu:
+    enabled: false
+    strategy: "data_parallel"  # data_parallel, model_parallel, pipeline_parallel, hybrid
+    device_ids: null  # Auto-detect available GPUs, or specify [0, 1, 2, 3]
+    load_balancing: "dynamic"  # round_robin, weighted, dynamic
+    synchronization: "barrier"  # barrier, async, pipeline
+    memory_balancing: true
+    fault_tolerance: true
+    max_devices: null  # Maximum number of GPUs to use (null = no limit)
+    preferred_device_order: null  # Preferred device order [0, 1, 2, 3]
+    
+    # Phase 3 Performance Optimization Settings
+    performance_optimization:
+      # Memory optimization
+      memory_pool_size_mb: 512
+      enable_memory_monitoring: true
+      memory_gc_threshold: 0.8
+      memory_defrag_threshold: 0.3
+      
+      # Communication optimization
+      enable_nccl: true
+      comm_chunk_size_mb: 4
+      comm_overlap_threshold_mb: 1
+      comm_bandwidth_limit: 0.8
+      
+      # Dynamic scaling
+      enable_dynamic_scaling: true
+      scale_up_cooldown: 30.0
+      scale_down_cooldown: 60.0
+      scaling_evaluation_interval: 10.0
+      scaling_stability_threshold: 0.1
+      
+      # Advanced scheduling
+      enable_advanced_scheduling: true
+      scheduling_strategy: "balanced"  # round_robin, least_loaded, memory_aware, balanced
+      max_tasks_per_device: 4
+      task_timeout: 300.0
+      enable_task_preemption: false
+      enable_task_migration: false
 
 # Batch Processing Configuration - ULTRA-LOW LATENCY WITH HIGH THROUGHPUT
 batch:

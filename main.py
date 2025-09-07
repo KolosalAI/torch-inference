@@ -1786,6 +1786,37 @@ async def get_performance_metrics():
             
             metrics["cuda"] = cuda_stats
         
+        # Multi-GPU statistics
+        try:
+            from framework.core.gpu_manager import get_gpu_manager
+            gpu_manager = get_gpu_manager()
+            
+            if gpu_manager.multi_gpu_manager and gpu_manager.multi_gpu_manager.is_initialized:
+                multi_gpu_stats = gpu_manager.multi_gpu_manager.get_detailed_stats()
+                metrics["multi_gpu"] = {
+                    "enabled": True,
+                    "status": multi_gpu_stats.get("status", "unknown"),
+                    "device_count": multi_gpu_stats.get("stats", {}).get("total_devices", 0),
+                    "active_devices": multi_gpu_stats.get("stats", {}).get("active_devices", 0),
+                    "strategy": multi_gpu_stats.get("config", {}).get("strategy", "unknown"),
+                    "load_balancing": multi_gpu_stats.get("config", {}).get("load_balancing", "unknown"),
+                    "fault_events": multi_gpu_stats.get("stats", {}).get("fault_events", 0),
+                    "rebalance_count": multi_gpu_stats.get("stats", {}).get("rebalance_count", 0),
+                    "devices": multi_gpu_stats.get("devices", {})
+                }
+            else:
+                from framework.core.gpu_manager import get_multi_gpu_configuration
+                multi_gpu_config = get_multi_gpu_configuration()
+                metrics["multi_gpu"] = {
+                    "enabled": False,
+                    "available": multi_gpu_config.get("multi_gpu_available", False),
+                    "device_count": multi_gpu_config.get("device_count", 0),
+                    "reason": multi_gpu_config.get("reason", "Not configured")
+                }
+        except Exception as e:
+            logger.debug(f"Multi-GPU stats collection failed: {e}")
+            metrics["multi_gpu"] = {"enabled": False, "error": str(e)}
+        
         # Model registry statistics
         if hasattr(model_manager, 'get_performance_stats'):
             metrics["models"] = model_manager.get_performance_stats()

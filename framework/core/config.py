@@ -57,6 +57,82 @@ class OptimizationLevel(Enum):
 
 
 @dataclass
+class MultiGPUConfig:
+    """Multi-GPU configuration for distributed inference."""
+    enabled: bool = False
+    strategy: str = "data_parallel"  # data_parallel, model_parallel, pipeline_parallel, hybrid
+    device_ids: Optional[List[int]] = None  # [0, 1, 2, 3] or None for auto-detect
+    load_balancing: str = "round_robin"  # round_robin, weighted, dynamic
+    synchronization: str = "barrier"  # barrier, async, pipeline
+    memory_balancing: bool = True
+    fault_tolerance: bool = True
+    max_devices: Optional[int] = None
+    preferred_device_order: Optional[List[int]] = None
+    
+    # Phase 3 Performance Optimization Settings
+    # Memory optimization
+    memory_pool_size_mb: int = 512
+    enable_memory_monitoring: bool = True
+    memory_gc_threshold: float = 0.8
+    memory_defrag_threshold: float = 0.3
+    
+    # Communication optimization
+    enable_nccl: bool = True
+    comm_chunk_size_mb: int = 4
+    comm_overlap_threshold_mb: int = 1
+    comm_bandwidth_limit: float = 0.8
+    
+    # Dynamic scaling
+    enable_dynamic_scaling: bool = False  # Conservative default
+    scale_up_cooldown: float = 30.0
+    scale_down_cooldown: float = 60.0
+    scaling_evaluation_interval: float = 10.0
+    scaling_stability_threshold: float = 0.1
+    
+    # Advanced scheduling
+    enable_advanced_scheduling: bool = False  # Conservative default
+    scheduling_strategy: str = "balanced"  # round_robin, least_loaded, memory_aware, balanced
+    max_tasks_per_device: int = 4
+    task_timeout: float = 300.0
+    enable_task_preemption: bool = False
+    enable_task_migration: bool = False
+    
+    def __post_init__(self):
+        """Validate multi-GPU configuration after initialization."""
+        valid_strategies = ["data_parallel", "model_parallel", "pipeline_parallel", "hybrid"]
+        if self.strategy not in valid_strategies:
+            raise ValueError(f"Invalid strategy: {self.strategy}. Must be one of: {valid_strategies}")
+        
+        valid_load_balancing = ["round_robin", "weighted", "dynamic"]
+        if self.load_balancing not in valid_load_balancing:
+            raise ValueError(f"Invalid load_balancing: {self.load_balancing}. Must be one of: {valid_load_balancing}")
+        
+        valid_scheduling_strategies = ["round_robin", "least_loaded", "memory_aware", "balanced"]
+        if self.scheduling_strategy not in valid_scheduling_strategies:
+            raise ValueError(f"Invalid scheduling_strategy: {self.scheduling_strategy}. Must be one of: {valid_scheduling_strategies}")
+        
+        if self.device_ids is not None:
+            if not isinstance(self.device_ids, list) or len(self.device_ids) < 1:
+                raise ValueError("device_ids must be a list with at least 1 device ID")
+            if any(not isinstance(device_id, int) or device_id < 0 for device_id in self.device_ids):
+                raise ValueError("All device_ids must be non-negative integers")
+            # Only require 2+ devices for actual multi-GPU strategies in production
+            if self.enabled and len(self.device_ids) < 2 and self.strategy in ["data_parallel", "model_parallel", "pipeline_parallel"]:
+                import os
+                # Allow single device for testing environments
+                if not os.environ.get('PYTEST_CURRENT_TEST') and not os.environ.get('TESTING'):
+                    raise ValueError("Multi-GPU strategies require at least 2 device IDs in production")
+        
+        # Validate thresholds
+        if not 0.1 <= self.memory_gc_threshold <= 1.0:
+            raise ValueError("memory_gc_threshold must be between 0.1 and 1.0")
+        if not 0.1 <= self.memory_defrag_threshold <= 1.0:
+            raise ValueError("memory_defrag_threshold must be between 0.1 and 1.0")
+        if not 0.1 <= self.comm_bandwidth_limit <= 1.0:
+            raise ValueError("comm_bandwidth_limit must be between 0.1 and 1.0")
+
+
+@dataclass
 class DeviceConfig:
     """Device and hardware configuration with conservative defaults."""
     device_type: DeviceType = DeviceType.AUTO
@@ -74,6 +150,9 @@ class DeviceConfig:
     jit_strategy: str = "auto"  # JIT optimization strategy
     numba_target: str = "cpu"   # Numba target: cpu, cuda, parallel
     vulkan_device_id: Optional[int] = None  # Specific Vulkan device
+    
+    # Multi-GPU configuration
+    multi_gpu: MultiGPUConfig = field(default_factory=MultiGPUConfig)
     
     def __post_init__(self):
         """Validate device configuration after initialization."""

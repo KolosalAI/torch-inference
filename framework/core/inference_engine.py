@@ -1,5 +1,5 @@
 """
-Advanced inference engine with optimized batching, async support, and monitoring.
+Advanced inference engine with optimized batching, async support, monitoring, and multi-GPU capabilities.
 
 This module provides a production-ready inference engine with features like:
 - Dynamic batch sizing with PID control
@@ -8,6 +8,7 @@ This module provides a production-ready inference engine with features like:
 - Memory management
 - Error handling and recovery
 - Security mitigations for safe model operations
+- Multi-GPU support with load balancing and fault tolerance
 """
 
 import asyncio
@@ -19,7 +20,7 @@ import concurrent.futures
 import weakref
 import hashlib
 import numpy as np
-from typing import Any, Dict, List, Optional, Union, Callable, Tuple, Literal
+from typing import Any, Dict, List, Optional, Union, Callable, Tuple, Literal, TYPE_CHECKING
 from dataclasses import dataclass
 from collections import deque, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -28,6 +29,11 @@ import torch.nn as nn
 from contextlib import asynccontextmanager
 from threading import RLock
 import psutil
+
+# Multi-GPU imports
+if TYPE_CHECKING:
+    from .multi_gpu_manager import MultiGPUManager
+    from .multi_gpu_strategies import MultiGPUStrategy
 
 # Import Numba optimizer for JIT acceleration
 try:
@@ -52,8 +58,8 @@ def _convert_numpy_types(obj):
         return [_convert_numpy_types(item) for item in obj]
     return obj
 
-from ..core.base_model import BaseModel
-from ..core.config import InferenceConfig
+from .base_model import BaseModel
+from .config import InferenceConfig, MultiGPUConfig
 from ..utils.monitoring import PerformanceMonitor, MetricsCollector
 
 # Import security mitigations
@@ -850,7 +856,7 @@ class LockFreeRequestQueue:
 
 class InferenceEngine:
     """
-    Advanced inference engine with ultra-fast optimizations, dynamic batching, and async support.
+    Advanced inference engine with ultra-fast optimizations, dynamic batching, async support, and multi-GPU capabilities.
     
     Features integrated from ultra-fast and fast engines:
     - Lock-free operations where possible
@@ -860,6 +866,7 @@ class InferenceEngine:
     - Direct model execution paths
     - Enhanced concurrency handling
     - Advanced batching strategies
+    - Multi-GPU support with load balancing and fault tolerance
     """
     
     def __init__(self, model: BaseModel, config: Optional[InferenceConfig] = None, 
@@ -877,6 +884,12 @@ class InferenceEngine:
         
         # Initialize ultra fast engine optimizations directly integrated
         self.ultra_fast_engine = None
+        
+        # Multi-GPU initialization
+        self._multi_gpu_manager: Optional['MultiGPUManager'] = None
+        self._multi_gpu_strategy: Optional['MultiGPUStrategy'] = None
+        self._multi_gpu_enabled = False
+        self._setup_multi_gpu()
         
         # Initialize security mitigations
         inference_security = _get_inference_security()
@@ -998,6 +1011,36 @@ class InferenceEngine:
         
         self.logger.info(f"Enhanced inference engine initialized with device: {self.device}")
         self.logger.info(f"Features: cache={self._cache_enabled}, compiled={self.engine_config.model_compilation_enabled}, workers={self._num_workers}")
+        if self._multi_gpu_enabled:
+            self.logger.info(f"Multi-GPU: enabled with {self._multi_gpu_manager.stats.total_devices} devices")
+    
+    def _setup_multi_gpu(self):
+        """Setup multi-GPU support if enabled."""
+        try:
+            # Check if multi-GPU is enabled in config
+            multi_gpu_config = getattr(self.config.device, 'multi_gpu', None)
+            if multi_gpu_config and multi_gpu_config.enabled:
+                from .multi_gpu_manager import setup_multi_gpu
+                from .multi_gpu_strategies import MultiGPUStrategyFactory
+                
+                # Setup multi-GPU manager
+                self._multi_gpu_manager = setup_multi_gpu(multi_gpu_config)
+                
+                # Initialize the manager
+                init_result = self._multi_gpu_manager.initialize()
+                if init_result["status"] == "initialized":
+                    # Create strategy
+                    self._multi_gpu_strategy = MultiGPUStrategyFactory.create_strategy(
+                        multi_gpu_config.strategy, self._multi_gpu_manager
+                    )
+                    self._multi_gpu_enabled = True
+                    self.logger.info(f"Multi-GPU enabled with {init_result['device_count']} devices using {multi_gpu_config.strategy} strategy")
+                else:
+                    self.logger.warning("Multi-GPU initialization failed, falling back to single GPU")
+                    
+        except Exception as e:
+            self.logger.warning(f"Multi-GPU setup failed, falling back to single GPU: {e}")
+            self._multi_gpu_enabled = False
     
     def _prepare_and_compile_model(self):
         """Prepare and compile model with comprehensive optimizations."""
@@ -1387,13 +1430,22 @@ class InferenceEngine:
         return self._model_pool[worker_id % len(self._model_pool)]
     
     async def start(self) -> None:
-        """Start the enhanced inference engine with ultra-fast optimizations."""
+        """Start the enhanced inference engine with ultra-fast optimizations and multi-GPU support."""
         if self._running:
             self.logger.warning("Engine already running")
             return
         
         # Start enhanced engine with integrated optimizations
         self._running = True
+        
+        # Setup multi-GPU strategy if enabled
+        if self._multi_gpu_enabled and self._multi_gpu_strategy:
+            try:
+                await self._multi_gpu_strategy.setup(self.model)
+                self.logger.info("Multi-GPU strategy setup completed")
+            except Exception as e:
+                self.logger.error(f"Multi-GPU strategy setup failed: {e}")
+                self._multi_gpu_enabled = False
         
         # ROI Optimization 0: Model warmup to amortize kernel selection and allocator effects
         await self._warmup_model()
@@ -1404,7 +1456,8 @@ class InferenceEngine:
             worker_task = asyncio.create_task(self._worker_loop(worker_id=i))
             self._worker_tasks.append(worker_task)
         
-        self.logger.info(f"Standard inference engine started with {self._num_workers} workers and model warmup completed")
+        engine_type = "Multi-GPU enabled" if self._multi_gpu_enabled else "Standard"
+        self.logger.info(f"{engine_type} inference engine started with {self._num_workers} workers and model warmup completed")
     
     async def _warmup_model(self) -> None:
         """ROI Optimization 0: Warm up the model with dummy forwards to amortize kernel selection."""
@@ -1497,6 +1550,22 @@ class InferenceEngine:
         
         self._running = False
         
+        # Cleanup multi-GPU strategy
+        if self._multi_gpu_enabled and self._multi_gpu_strategy:
+            try:
+                await self._multi_gpu_strategy.cleanup()
+                self.logger.info("Multi-GPU strategy cleanup completed")
+            except Exception as e:
+                self.logger.warning(f"Multi-GPU strategy cleanup failed: {e}")
+        
+        # Cleanup multi-GPU manager
+        if self._multi_gpu_manager:
+            try:
+                self._multi_gpu_manager.cleanup()
+                self.logger.info("Multi-GPU manager cleanup completed")
+            except Exception as e:
+                self.logger.warning(f"Multi-GPU manager cleanup failed: {e}")
+        
         # Cancel all worker tasks
         for worker_task in self._worker_tasks:
             worker_task.cancel()
@@ -1544,6 +1613,20 @@ class InferenceEngine:
         # System resource usage
         stats["memory_usage"] = self._get_memory_usage()
         
+        # Multi-GPU statistics
+        if self._multi_gpu_enabled and self._multi_gpu_manager:
+            stats["multi_gpu_stats"] = {
+                "enabled": True,
+                "strategy": self._multi_gpu_manager.config.strategy,
+                "device_count": self._multi_gpu_manager.stats.total_devices,
+                "active_devices": self._multi_gpu_manager.stats.active_devices,
+                "load_balancing": self._multi_gpu_manager.config.load_balancing,
+                "fault_tolerance": self._multi_gpu_manager.config.fault_tolerance,
+                "detailed_stats": self._multi_gpu_manager.get_detailed_stats()
+            }
+        else:
+            stats["multi_gpu_stats"] = {"enabled": False}
+        
         # Engine configuration summary
         stats["engine_config"] = {
             "workers": self._num_workers,
@@ -1553,6 +1636,7 @@ class InferenceEngine:
             "channels_last": self.engine_config.use_channels_last,
             "continuous_batching": self.engine_config.continuous_batching,
             "request_coalescing": self.engine_config.request_coalescing,
+            "multi_gpu_enabled": self._multi_gpu_enabled,
         }
         
         # Convert numpy types to native Python types for JSON serialization
@@ -1907,8 +1991,21 @@ class InferenceEngine:
             return False
     
     async def _tensor_batch_inference(self, inputs: List[Any], worker_id: int = 0) -> List[Any]:
-        """Perform true tensor batching for maximum efficiency."""
+        """Perform true tensor batching for maximum efficiency with multi-GPU support."""
         try:
+            # Multi-GPU batch inference path
+            if self._multi_gpu_enabled and self._multi_gpu_strategy and len(inputs) > 1:
+                try:
+                    # Use multi-GPU strategy for batch processing
+                    batch_results = []
+                    for inp in inputs:
+                        result = await self._multi_gpu_strategy.forward(inp)
+                        batch_results.append(result)
+                    return batch_results
+                except Exception as e:
+                    self.logger.warning(f"Multi-GPU batch inference failed, falling back to single GPU: {e}")
+                    # Continue to single GPU path
+            
             worker_model = self._get_model_for_worker(worker_id)
             
             # Create batch tensor with optimal memory transfer
@@ -1987,8 +2084,16 @@ class InferenceEngine:
             return results
     
     async def _ultra_optimized_inference(self, inputs: Any, model) -> Any:
-        """Ultra-optimized inference with all performance enhancements."""
+        """Ultra-optimized inference with all performance enhancements and multi-GPU support."""
         try:
+            # Multi-GPU inference path
+            if self._multi_gpu_enabled and self._multi_gpu_strategy:
+                try:
+                    return await self._multi_gpu_strategy.forward(inputs)
+                except Exception as e:
+                    self.logger.warning(f"Multi-GPU inference failed, falling back to single GPU: {e}")
+                    # Continue to single GPU path
+            
             # Check tensor pool for reusable tensors
             preprocessed = None
             
@@ -2689,6 +2794,48 @@ def create_ultra_fast_inference_engine(model: BaseModel, config: Optional[Infere
         parallel_workers=8
     )
     return create_inference_engine(model, config, "standard", engine_config)
+
+
+def create_multi_gpu_inference_engine(model: BaseModel, config: Optional[InferenceConfig] = None,
+                                     multi_gpu_config: Optional[MultiGPUConfig] = None) -> InferenceEngine:
+    """Create an inference engine with multi-GPU support."""
+    if multi_gpu_config and not hasattr(config.device, 'multi_gpu'):
+        # Add multi-GPU config to device config
+        config.device.multi_gpu = multi_gpu_config
+    
+    engine_config = EngineConfig(
+        cache_enabled=True,
+        max_cache_size=2000,  # Larger cache for multi-GPU
+        model_compilation_enabled=True,
+        tensor_cache_enabled=True,
+        parallel_workers=16,  # More workers for multi-GPU
+        use_mixed_precision=True,
+        continuous_batching=True,
+        request_coalescing=True
+    )
+    
+    return create_inference_engine(model, config, "standard", engine_config)
+
+
+def create_hybrid_inference_engine(model: BaseModel, config: Optional[InferenceConfig] = None) -> InferenceEngine:
+    """Create a hybrid inference engine that automatically detects and uses multi-GPU if available."""
+    # Check if multi-GPU is available and configured
+    multi_gpu_available = False
+    
+    try:
+        import torch
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            # Check if multi-GPU is configured
+            multi_gpu_config = getattr(config.device, 'multi_gpu', None)
+            if multi_gpu_config and multi_gpu_config.enabled:
+                multi_gpu_available = True
+    except Exception:
+        pass
+    
+    if multi_gpu_available:
+        return create_multi_gpu_inference_engine(model, config)
+    else:
+        return create_ultra_fast_inference_engine(model, config)
 
 
 def create_hybrid_inference_engine(model: BaseModel, config: Optional[InferenceConfig] = None,
