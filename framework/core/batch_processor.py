@@ -1,5 +1,5 @@
 """
-High-Performance Batch Processor for PyTorch Inference
+High-Performance Batch Processor for PyTorch Inference with Multi-GPU Support
 
 This module provides optimized batch processing capabilities:
 - Dynamic batch sizing with adaptive algorithms
@@ -10,6 +10,7 @@ This module provides optimized batch processing capabilities:
 - GPU memory management
 - Performance monitoring and optimization
 - Numba JIT acceleration for numerical operations
+- Multi-GPU batch distribution and load balancing
 """
 
 import asyncio
@@ -17,7 +18,7 @@ import time
 import logging
 import threading
 import numpy as np
-from typing import Any, Dict, List, Optional, Union, Callable, Tuple
+from typing import Any, Dict, List, Optional, Union, Callable, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,6 +28,11 @@ import torch.nn.functional as F
 from enum import Enum
 import weakref
 import psutil
+
+# Multi-GPU imports
+if TYPE_CHECKING:
+    from .multi_gpu_manager import MultiGPUManager
+    from .multi_gpu_strategies import MultiGPUStrategy
 
 # Import Numba optimizer for JIT acceleration
 try:
@@ -539,9 +545,9 @@ class MemoryManager:
 
 
 class BatchProcessor:
-    """Main high-performance batch processor"""
+    """Main high-performance batch processor with multi-GPU support"""
     
-    def __init__(self, config: BatchConfig = None):
+    def __init__(self, config: BatchConfig = None, multi_gpu_manager: Optional['MultiGPUManager'] = None):
         self.config = config or BatchConfig()
         self.logger = logging.getLogger(f"{__name__}.BatchProcessor")
         
@@ -549,6 +555,14 @@ class BatchProcessor:
         self.batch_queue = BatchQueue(self.config)
         self.batch_sizer = AdaptiveBatchSizer(self.config)
         self.memory_manager = MemoryManager(self.config)
+        
+        # Multi-GPU support
+        self._multi_gpu_manager = multi_gpu_manager
+        self._multi_gpu_enabled = multi_gpu_manager is not None
+        self._multi_gpu_strategy: Optional['MultiGPUStrategy'] = None
+        
+        if self._multi_gpu_enabled:
+            self._setup_multi_gpu_strategy()
         
         # Initialize Numba optimizer for JIT acceleration
         self.numba_optimizer = None
@@ -572,10 +586,17 @@ class BatchProcessor:
             thread_name_prefix="batch-processor"
         )
         
-        # Pipeline stages
-        self._preprocessing_workers = 2
-        self._inference_workers = 1
-        self._postprocessing_workers = 2
+        # Pipeline stages (adjusted for multi-GPU)
+        if self._multi_gpu_enabled:
+            # More workers for multi-GPU scenarios
+            device_count = max(1, self._multi_gpu_manager.stats.total_devices)  # Ensure at least 1
+            self._preprocessing_workers = min(8, device_count * 2)
+            self._inference_workers = device_count
+            self._postprocessing_workers = min(8, device_count * 2)
+        else:
+            self._preprocessing_workers = 2
+            self._inference_workers = 1
+            self._postprocessing_workers = 2
         
         # Background tasks
         self._processing_task: Optional[asyncio.Task] = None
@@ -591,7 +612,9 @@ class BatchProcessor:
             'avg_batch_size': 0.0,
             'avg_processing_time': 0.0,
             'throughput': 0.0,
-            'errors': 0
+            'errors': 0,
+            'multi_gpu_enabled': self._multi_gpu_enabled,
+            'multi_gpu_devices': self._multi_gpu_manager.stats.total_devices if self._multi_gpu_enabled else 0
         }
         
         # Stage timers
@@ -599,13 +622,44 @@ class BatchProcessor:
             stage: deque(maxlen=100) for stage in ProcessingStage
         }
     
+    def _setup_multi_gpu_strategy(self):
+        """Setup multi-GPU strategy for batch processing."""
+        if not self._multi_gpu_enabled:
+            return
+        
+        try:
+            from .multi_gpu_strategies import MultiGPUStrategyFactory
+            
+            # Create strategy based on multi-GPU manager configuration
+            strategy_name = self._multi_gpu_manager.config.strategy
+            self._multi_gpu_strategy = MultiGPUStrategyFactory.create_strategy(
+                strategy_name, self._multi_gpu_manager
+            )
+            
+            self.logger.info(f"Multi-GPU strategy '{strategy_name}' setup completed for batch processing")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to setup multi-GPU strategy: {e}")
+            self._multi_gpu_enabled = False
+    
     async def start(self):
-        """Start the batch processor"""
+        """Start the batch processor with multi-GPU support"""
         if self._running:
             return
         
         self._running = True
         self._started = True
+        
+        # Setup multi-GPU strategy if enabled
+        if self._multi_gpu_enabled and self._multi_gpu_strategy:
+            try:
+                # Initialize multi-GPU strategy for batch processing
+                # Note: We pass None as model since batch processor handles tensor operations directly
+                await self._multi_gpu_strategy.setup(None)
+                self.logger.info("Multi-GPU strategy setup completed for batch processor")
+            except Exception as e:
+                self.logger.warning(f"Multi-GPU strategy setup failed, falling back to single device: {e}")
+                self._multi_gpu_enabled = False
         
         # Start processing task
         self._processing_task = asyncio.create_task(self._processing_loop())
@@ -614,14 +668,23 @@ class BatchProcessor:
         if self.config.performance_monitoring:
             self._monitoring_task = asyncio.create_task(self._monitoring_loop())
         
-        self.logger.info("Batch processor started")
+        processor_type = "Multi-GPU enabled" if self._multi_gpu_enabled else "Standard"
+        self.logger.info(f"{processor_type} batch processor started")
     
     async def stop(self):
-        """Stop the batch processor"""
+        """Stop the batch processor with multi-GPU cleanup"""
         if not self._running:
             return
         
         self._running = False
+        
+        # Cleanup multi-GPU strategy
+        if self._multi_gpu_enabled and self._multi_gpu_strategy:
+            try:
+                await self._multi_gpu_strategy.cleanup()
+                self.logger.info("Multi-GPU strategy cleanup completed for batch processor")
+            except Exception as e:
+                self.logger.warning(f"Multi-GPU strategy cleanup failed: {e}")
         
         # Cancel tasks
         if self._processing_task:
@@ -896,10 +959,42 @@ class BatchProcessor:
         return results
     
     async def _inference_batch(self, tensors: List[torch.Tensor]) -> List[torch.Tensor]:
-        """Perform inference on batch"""
-        # For now, this is a placeholder - in real implementation,
-        # this would call the actual model
+        """Perform inference on batch with multi-GPU support"""
         
+        # Multi-GPU inference path
+        if self._multi_gpu_enabled and self._multi_gpu_strategy and len(tensors) > 1:
+            try:
+                # Distribute batch across multiple GPUs
+                device_count = self._multi_gpu_manager.stats.active_devices
+                
+                if device_count > 1 and len(tensors) >= device_count:
+                    # Split batch across devices
+                    chunk_size = len(tensors) // device_count
+                    chunks = [tensors[i:i + chunk_size] for i in range(0, len(tensors), chunk_size)]
+                    
+                    # Process chunks in parallel across devices
+                    chunk_tasks = []
+                    for chunk in chunks:
+                        if chunk:  # Skip empty chunks
+                            chunk_task = self._process_chunk_on_device(chunk)
+                            chunk_tasks.append(chunk_task)
+                    
+                    # Gather results from all devices
+                    chunk_results = await asyncio.gather(*chunk_tasks)
+                    
+                    # Flatten results
+                    results = []
+                    for chunk_result in chunk_results:
+                        results.extend(chunk_result)
+                    
+                    self.logger.debug(f"Multi-GPU batch inference completed across {device_count} devices")
+                    return results
+                
+            except Exception as e:
+                self.logger.warning(f"Multi-GPU batch inference failed, falling back to single device: {e}")
+                # Continue to single device fallback
+        
+        # Single device inference (fallback or default)
         def dummy_inference(tensor_batch: torch.Tensor) -> torch.Tensor:
             # Placeholder: just return the input transformed
             with torch.no_grad():
@@ -936,6 +1031,52 @@ class BatchProcessor:
             
             results = await asyncio.gather(*tasks)
             return [result.squeeze(0) for result in results]
+    
+    async def _process_chunk_on_device(self, tensor_chunk: List[torch.Tensor]) -> List[torch.Tensor]:
+        """Process a chunk of tensors on an optimal device"""
+        try:
+            # Get optimal device from multi-GPU manager
+            optimal_device = self._multi_gpu_manager.get_optimal_device()
+            
+            # Move tensors to optimal device
+            device_tensors = [tensor.to(optimal_device, non_blocking=True) for tensor in tensor_chunk]
+            
+            # Stack and process on device
+            stacked_tensors = torch.stack(device_tensors)
+            
+            # Dummy inference (in real implementation, this would use the actual model)
+            with torch.no_grad():
+                result = torch.nn.functional.relu(stacked_tensors.sum(dim=-1, keepdim=True))
+            
+            # Split results back and move to CPU
+            results = [result[i].cpu() for i in range(len(tensor_chunk))]
+            
+            # Update device statistics
+            self._multi_gpu_manager.update_device_stats(
+                optimal_device, 
+                utilization=0.8,  # Dummy utilization
+                memory_available=1000,  # Dummy memory
+                active_batches=1
+            )
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Device chunk processing failed: {e}")
+            # Fallback to CPU processing
+            return await self._process_chunk_cpu(tensor_chunk)
+    
+    async def _process_chunk_cpu(self, tensor_chunk: List[torch.Tensor]) -> List[torch.Tensor]:
+        """Fallback CPU processing for a chunk of tensors"""
+        def cpu_inference(tensor_batch: torch.Tensor) -> torch.Tensor:
+            with torch.no_grad():
+                return torch.nn.functional.relu(tensor_batch.sum(dim=-1, keepdim=True))
+        
+        stacked_tensors = torch.stack(tensor_chunk)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(self._executor, cpu_inference, stacked_tensors)
+        
+        return [result[i] for i in range(len(tensor_chunk))]
     
     async def _postprocess_batch(self, inference_results: List[torch.Tensor], 
                                 batch: List[BatchItem]) -> List[Any]:
@@ -1321,3 +1462,44 @@ class BatchScheduler:
         stats['pending_batches'] = len(self._priority_queue)
         stats['resource_usage'] = dict(self._resource_usage)
         return stats
+
+
+# Factory functions for batch processors
+
+def create_batch_processor(config: Optional[BatchConfig] = None) -> BatchProcessor:
+    """Create a standard batch processor."""
+    return BatchProcessor(config)
+
+
+def create_multi_gpu_batch_processor(config: Optional[BatchConfig] = None, 
+                                   multi_gpu_manager: Optional['MultiGPUManager'] = None) -> BatchProcessor:
+    """Create a batch processor with multi-GPU support."""
+    if config is None:
+        config = BatchConfig(
+            max_batch_size=16,  # Larger batches for multi-GPU
+            batch_timeout_ms=25,  # Faster batching
+            enable_adaptive_batching=True,
+            enable_memory_management=True,
+            enable_pipeline_processing=True
+        )
+    
+    return BatchProcessor(config, multi_gpu_manager)
+
+
+def create_adaptive_batch_processor(config: Optional[BatchConfig] = None,
+                                   multi_gpu_manager: Optional['MultiGPUManager'] = None) -> BatchProcessor:
+    """Create an adaptive batch processor that auto-detects multi-GPU capability."""
+    # Detect multi-GPU availability
+    multi_gpu_available = False
+    
+    try:
+        import torch
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            multi_gpu_available = True
+    except Exception:
+        pass
+    
+    if multi_gpu_available and multi_gpu_manager:
+        return create_multi_gpu_batch_processor(config, multi_gpu_manager)
+    else:
+        return create_batch_processor(config)
