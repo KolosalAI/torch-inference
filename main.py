@@ -18,7 +18,7 @@ import asyncio
 import time
 import uuid
 import multiprocessing as mp
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -712,6 +712,42 @@ class STTResponse(PydanticBaseModel):
     model_info: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
+class SecureImageProcessResponse(PydanticBaseModel):
+    """Response model for secure image processing."""
+    success: bool
+    processed_image: Optional[str] = Field(default=None, description="Base64 encoded processed image")
+    image_format: Optional[str] = None
+    image_size: Optional[Tuple[int, int]] = None
+    security_level: Optional[str] = None
+    threats_detected: Optional[List[str]] = Field(default_factory=list)
+    threats_mitigated: Optional[List[str]] = Field(default_factory=list)
+    confidence_scores: Optional[Dict[str, float]] = Field(default_factory=dict)
+    processing_time: Optional[float] = None
+    model_info: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+class ImageValidationResponse(PydanticBaseModel):
+    """Response model for image validation."""
+    success: bool
+    is_safe: bool
+    threats_detected: Optional[List[str]] = Field(default_factory=list)
+    confidence_scores: Optional[Dict[str, float]] = Field(default_factory=dict)
+    recommendations: Optional[List[str]] = Field(default_factory=list)
+    file_info: Optional[Dict[str, Any]] = None
+    processing_time: Optional[float] = None
+    error: Optional[str] = None
+
+class ImageSecurityStatsResponse(PydanticBaseModel):
+    """Response model for image security statistics."""
+    success: bool
+    total_images_processed: int
+    threats_by_type: Optional[Dict[str, int]] = Field(default_factory=dict)
+    security_level_distribution: Optional[Dict[str, int]] = Field(default_factory=dict)
+    average_processing_time: Optional[float] = None
+    recent_threats: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    system_health: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
 # Simple example model for demonstration
 class ExampleModel(BaseModel):
     """Example model implementation for demonstration."""
@@ -1031,6 +1067,28 @@ async def initialize_inference_engine():
     try:
         # Get configuration from config manager
         config = config_manager.get_inference_config()
+        
+        # Initialize model configuration manager
+        logger.info("Initializing model configuration from models.json...")
+        try:
+            from framework.core.model_config import get_model_config_manager
+            model_config_manager = get_model_config_manager()
+            
+            available_models = model_config_manager.get_available_models()
+            auto_load_models = model_config_manager.get_auto_load_models()
+            tts_models = model_config_manager.get_tts_models()
+            
+            logger.info(f"Model configuration loaded successfully:")
+            logger.info(f"  Available models: {len(available_models)} - {available_models}")
+            logger.info(f"  Auto-load models: {auto_load_models}")
+            logger.info(f"  TTS models: {tts_models}")
+            
+            # Store reference for later use
+            model_manager._model_config_manager = model_config_manager
+            
+        except Exception as e:
+            logger.warning(f"Failed to load model configuration: {e}")
+            logger.warning("Continuing with default model setup...")
         
         # Initialize JIT integration for performance optimization
         if framework_available:
@@ -1376,7 +1434,7 @@ async def predict(request: InferenceRequest, current_user = Depends(get_auth_dep
     
     This endpoint handles:
     - Single and batch inference
-    - Model selection via model_name parameter
+    - Model selection via model_name parameter (checked against models.json)
     - Token-based authentication (optional, falls back to middleware auth)
     - Optimized processing paths
     """
@@ -1387,6 +1445,40 @@ async def predict(request: InferenceRequest, current_user = Depends(get_auth_dep
     logger.info(f"[ENDPOINT] Predict endpoint accessed - Model: {request.model_name}, "
                f"User: {getattr(effective_user, 'username', 'anonymous') if effective_user else 'anonymous'}, "
                f"Auth via: {'token' if token_user else 'middleware' if current_user else 'none'}")
+    
+    # Check if inference services are available first
+    if not autoscaler and not inference_engine:
+        logger.error("[ENDPOINT] No inference services available")
+        raise HTTPException(status_code=503, detail="Inference services not available")
+    
+    # Check model availability using models.json configuration
+    try:
+        from framework.core.model_config import is_model_available, get_model_info
+        
+        if not is_model_available(request.model_name):
+            # Try to get model info to provide better error message
+            model_info = get_model_info(request.model_name)
+            if model_info and not model_info.get("enabled", True):
+                error_msg = f"Model '{request.model_name}' is disabled in configuration"
+            else:
+                error_msg = f"Model '{request.model_name}' is not available. Check models.json configuration."
+            
+            logger.warning(f"[ENDPOINT] Model availability check failed: {error_msg}")
+            return InferenceResponse(
+                success=False,
+                error=error_msg,
+                model_info={"model": request.model_name, "available": False}
+            )
+        
+        # Log model configuration info
+        model_info = get_model_info(request.model_name)
+        if model_info:
+            logger.debug(f"[ENDPOINT] Using model configuration: {model_info['display_name']} "
+                        f"({model_info['task']}, {model_info['category']})")
+    
+    except Exception as e:
+        logger.warning(f"[ENDPOINT] Model configuration check failed: {e}")
+        # Continue with fallback behavior
     
     # Determine if this is a batch request or single request
     is_batch_input = isinstance(request.inputs, list) and len(request.inputs) > 1
@@ -1401,10 +1493,6 @@ async def predict(request: InferenceRequest, current_user = Depends(get_auth_dep
         if model_name != "example":
             logger.debug(f"[ENDPOINT] Model '{model_name}' not found, using 'example'")
             model_name = "example"
-    
-    if not autoscaler and not inference_engine:
-        logger.error("[ENDPOINT] No inference services available")
-        raise HTTPException(status_code=503, detail="Inference services not available")
     
     try:
         start_time = time.perf_counter()
@@ -1581,6 +1669,75 @@ async def health_check() -> HealthResponse:
             timestamp=time.time(),
             autoscaler=autoscaler_info
         )
+
+@app.get("/models")
+async def list_available_models():
+    """Get list of available models from models.json configuration."""
+    logger.info("[ENDPOINT] Available models requested")
+    
+    try:
+        from framework.core.model_config import get_model_config_manager, get_available_models, get_model_info
+        
+        model_config_manager = get_model_config_manager()
+        available_models = get_available_models()
+        
+        # Get detailed information for each model
+        models_info = {}
+        for model_name in available_models:
+            model_info = get_model_info(model_name)
+            if model_info:
+                models_info[model_name] = model_info
+        
+        # Get model groups
+        model_groups = model_config_manager.get_model_groups()
+        groups_info = {}
+        for group_name, group in model_groups.items():
+            if group.enabled:
+                groups_info[group_name] = {
+                    "name": group.name,
+                    "description": group.description,
+                    "models": group.models,
+                    "default_model": group.default_model
+                }
+        
+        # Get TTS and STT models
+        tts_models = model_config_manager.get_tts_models()
+        stt_models = model_config_manager.get_stt_models()
+        
+        response = {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "total_models": len(available_models),
+            "available_models": available_models,
+            "models_info": models_info,
+            "model_groups": groups_info,
+            "specialized_models": {
+                "tts_models": tts_models,
+                "stt_models": stt_models,
+                "image_classification": model_config_manager.get_models_by_task("image-classification"),
+                "text_classification": model_config_manager.get_models_by_task("text-classification"),
+                "feature_extraction": model_config_manager.get_models_by_task("feature-extraction")
+            },
+            "deployment_info": {
+                "auto_load_models": model_config_manager.get_auto_load_models(),
+                "high_priority_models": model_config_manager.get_models_by_priority()[:3]
+            }
+        }
+        
+        logger.info(f"[ENDPOINT] Available models response - Total: {len(available_models)}, "
+                   f"TTS: {len(tts_models)}, STT: {len(stt_models)}")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to get available models: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+            "total_models": 0,
+            "available_models": []
+        }
 
 @app.get("/info")
 async def get_system_info():
@@ -3289,6 +3446,39 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
                f"Text length: {len(request.inputs)}, "
                f"Auth via: {'token' if token_user else 'none'}")
     
+    # Validate model availability and TTS capabilities
+    try:
+        from framework.core.model_config import is_model_available, get_model_info, get_model_config_manager
+        
+        if not is_model_available(request.model_name):
+            logger.warning(f"[ENDPOINT] TTS model '{request.model_name}' is not available")
+            return TTSResponse(
+                success=False,
+                error=f"TTS model '{request.model_name}' is not available. Check models.json configuration."
+            )
+        
+        # Check if model supports TTS
+        model_config_manager = get_model_config_manager()
+        tts_models = model_config_manager.get_tts_models()
+        
+        if request.model_name not in tts_models:
+            available_tts = ", ".join(tts_models) if tts_models else "none"
+            logger.warning(f"[ENDPOINT] Model '{request.model_name}' does not support TTS")
+            return TTSResponse(
+                success=False,
+                error=f"Model '{request.model_name}' does not support Text-to-Speech. Available TTS models: {available_tts}"
+            )
+        
+        # Get model configuration for validation
+        model_info = get_model_info(request.model_name)
+        if model_info and model_info.get("tts_enabled"):
+            logger.debug(f"[ENDPOINT] Using TTS model: {model_info['display_name']} "
+                        f"({model_info.get('metadata', {}).get('framework', 'unknown')})")
+    
+    except Exception as e:
+        logger.warning(f"[ENDPOINT] TTS model configuration check failed: {e}")
+        # Continue with fallback behavior
+    
     try:
         start_time = time.perf_counter()
         
@@ -3743,6 +3933,518 @@ async def audio_health_check():
         health_status["audio_available"] = True
     except ImportError as e:
         health_status["errors"].append(f"Audio modules: {str(e)}")
+    
+    return health_status
+
+
+# Image Processing Endpoints
+
+@app.post("/image/process/secure", response_model=SecureImageProcessResponse)
+async def secure_image_processing(
+    file: UploadFile = File(..., description="Image file to process securely"),
+    model_name: str = Form(default="default"),
+    security_level: str = Form(default="medium"),
+    enable_sanitization: bool = Form(default=True),
+    enable_adversarial_detection: bool = Form(default=True),
+    return_confidence_scores: bool = Form(default=True),
+    token: Optional[str] = Form(default=None)
+) -> SecureImageProcessResponse:
+    """
+    Secure image processing endpoint with comprehensive attack prevention.
+    
+    Processes uploaded image file through secure preprocessing, model inference,
+    and postprocessing with threat detection and mitigation capabilities.
+    """
+    # Validate token if provided
+    token_user = validate_token(token) if token else None
+    
+    logger.info(f"[ENDPOINT] Secure image processing requested - Model: {model_name}, "
+               f"Security Level: {security_level}, File: {file.filename}, "
+               f"Auth via: {'token' if token_user else 'none'}")
+    
+    try:
+        start_time = time.perf_counter()
+        
+        # Import image processing modules dynamically
+        try:
+            from framework.processors.image import SecureImagePreprocessor, SecurityLevel
+            from framework.models.secure_image_model import SecureImageModel
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Secure image modules not available: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Secure image processing not available. Install required dependencies."
+            )
+        
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Check file extension
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"]
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported image format: {file_ext}. Supported: {allowed_extensions}"
+            )
+        
+        # Check file size (max 50MB for images)
+        max_size_mb = 50
+        if hasattr(file, 'size') and file.size > max_size_mb * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size: {max_size_mb}MB"
+            )
+        
+        # Read image file
+        try:
+            image_data = await file.read()
+            if len(image_data) == 0:
+                raise HTTPException(status_code=400, detail="Empty file")
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to read image file: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to read image: {str(e)}")
+        
+        # Parse security level
+        try:
+            sec_level = SecurityLevel[security_level.upper()]
+        except KeyError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid security level: {security_level}. Valid options: low, medium, high, maximum"
+            )
+        
+        # Get or create secure image model
+        secure_model_name = f"secure_{model_name}"
+        try:
+            if secure_model_name not in model_manager.list_models():
+                logger.info(f"[ENDPOINT] Creating secure image model: {secure_model_name}")
+                config = config_manager.get_inference_config()
+                
+                secure_model = SecureImageModel(
+                    base_model_name=model_name,
+                    security_level=sec_level,
+                    config=config
+                )
+                
+                logger.info(f"[ENDPOINT] Secure image model created successfully: {secure_model_name}")
+                model_manager.register_model(secure_model_name, secure_model)
+            else:
+                secure_model = model_manager.get_model(secure_model_name)
+                logger.debug(f"[ENDPOINT] Using existing secure image model: {secure_model_name}")
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to create secure image model {secure_model_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create secure image model: {str(e)}"
+            )
+        
+        # Process image securely
+        try:
+            # Create processing options
+            processing_options = {
+                "enable_sanitization": enable_sanitization,
+                "enable_adversarial_detection": enable_adversarial_detection,
+                "return_confidence_scores": return_confidence_scores,
+                "security_level": sec_level
+            }
+            
+            # Process the image
+            result = secure_model.process_image_secure(image_data, **processing_options)
+            
+            # Convert processed image to base64 if successful
+            processed_image_b64 = None
+            if result.get("processed_image") is not None:
+                import base64
+                processed_image_b64 = base64.b64encode(result["processed_image"]).decode('utf-8')
+            
+            processing_time = time.perf_counter() - start_time
+            
+            logger.info(f"[ENDPOINT] Secure image processing completed - "
+                       f"Threats detected: {len(result.get('threats_detected', []))}, "
+                       f"Processing time: {processing_time:.3f}s")
+            
+            return SecureImageProcessResponse(
+                success=True,
+                processed_image=processed_image_b64,
+                image_format=result.get("image_format", file_ext[1:]),
+                image_size=result.get("image_size"),
+                security_level=security_level,
+                threats_detected=result.get("threats_detected", []),
+                threats_mitigated=result.get("threats_mitigated", []),
+                confidence_scores=result.get("confidence_scores", {}),
+                processing_time=processing_time,
+                model_info={
+                    "model_name": secure_model_name,
+                    "base_model": model_name,
+                    "security_level": security_level,
+                    "sanitization_enabled": enable_sanitization,
+                    "adversarial_detection_enabled": enable_adversarial_detection
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Secure image processing failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Secure image processing failed: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Secure image processing endpoint failed with unexpected error: {e}")
+        return SecureImageProcessResponse(
+            success=False,
+            error=str(e),
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
+
+
+@app.post("/image/validate/security", response_model=ImageValidationResponse)
+async def validate_image_security(
+    file: UploadFile = File(..., description="Image file to validate for security threats"),
+    security_level: str = Form(default="medium"),
+    detailed_analysis: bool = Form(default=True),
+    token: Optional[str] = Form(default=None)
+) -> ImageValidationResponse:
+    """
+    Image security validation endpoint.
+    
+    Validates uploaded image file for various security threats without processing.
+    Returns detailed threat analysis and safety recommendations.
+    """
+    # Validate token if provided
+    token_user = validate_token(token) if token else None
+    
+    logger.info(f"[ENDPOINT] Image security validation requested - "
+               f"Security Level: {security_level}, File: {file.filename}, "
+               f"Auth via: {'token' if token_user else 'none'}")
+    
+    try:
+        start_time = time.perf_counter()
+        
+        # Import validation modules
+        try:
+            from framework.processors.image import SecureImageValidator, SecurityLevel
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Image validation modules not available: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Image validation not available. Install required dependencies."
+            )
+        
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Read image file
+        try:
+            image_data = await file.read()
+            if len(image_data) == 0:
+                raise HTTPException(status_code=400, detail="Empty file")
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to read image file: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to read image: {str(e)}")
+        
+        # Parse security level
+        try:
+            sec_level = SecurityLevel[security_level.upper()]
+        except KeyError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid security level: {security_level}. Valid options: low, medium, high, maximum"
+            )
+        
+        # Create validator
+        validator = SecureImageValidator(security_level=sec_level)
+        
+        # Validate image security
+        try:
+            validation_result = validator.validate_image_security(
+                image_data, 
+                detailed_analysis=detailed_analysis
+            )
+            
+            processing_time = time.perf_counter() - start_time
+            
+            # Extract file information
+            file_info = {
+                "filename": file.filename,
+                "size_bytes": len(image_data),
+                "format": Path(file.filename).suffix.lower()[1:] if file.filename else "unknown"
+            }
+            
+            logger.info(f"[ENDPOINT] Image security validation completed - "
+                       f"Safe: {validation_result['is_safe']}, "
+                       f"Threats: {len(validation_result.get('threats_detected', []))}, "
+                       f"Processing time: {processing_time:.3f}s")
+            
+            return ImageValidationResponse(
+                success=True,
+                is_safe=validation_result["is_safe"],
+                threats_detected=validation_result.get("threats_detected", []),
+                confidence_scores=validation_result.get("confidence_scores", {}),
+                recommendations=validation_result.get("recommendations", []),
+                file_info=file_info,
+                processing_time=processing_time
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Image validation failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Image validation failed: {str(e)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Image validation endpoint failed with unexpected error: {e}")
+        return ImageValidationResponse(
+            success=False,
+            is_safe=False,
+            error=str(e),
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
+
+
+@app.get("/image/security/stats", response_model=ImageSecurityStatsResponse)
+async def get_image_security_stats(
+    token: Optional[str] = None
+) -> ImageSecurityStatsResponse:
+    """
+    Get image security processing statistics.
+    
+    Returns comprehensive statistics about image security processing,
+    including threat detection rates, processing times, and system health.
+    """
+    # Validate token if provided
+    token_user = validate_token(token) if token else None
+    
+    logger.info(f"[ENDPOINT] Image security stats requested - "
+               f"Auth via: {'token' if token_user else 'none'}")
+    
+    try:
+        # Import security modules
+        try:
+            from framework.processors.image import SecureImagePreprocessor
+            from framework.security.security import SecurityManager
+        except ImportError as e:
+            logger.error(f"[ENDPOINT] Security stats modules not available: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="Security statistics not available. Install required dependencies."
+            )
+        
+        # Get security statistics
+        try:
+            # Get global security manager stats
+            security_stats = SecurityManager.get_global_stats()
+            
+            # Filter for image-related statistics
+            image_stats = {
+                "total_images_processed": security_stats.get("total_image_operations", 0),
+                "threats_by_type": security_stats.get("image_threats_by_type", {}),
+                "security_level_distribution": security_stats.get("image_security_levels", {}),
+                "average_processing_time": security_stats.get("avg_image_processing_time", 0.0),
+                "recent_threats": security_stats.get("recent_image_threats", []),
+                "system_health": {
+                    "threat_detection_accuracy": security_stats.get("threat_detection_accuracy", 0.0),
+                    "false_positive_rate": security_stats.get("false_positive_rate", 0.0),
+                    "system_load": security_stats.get("system_load", 0.0),
+                    "last_updated": security_stats.get("last_updated", "unknown")
+                }
+            }
+            
+            logger.info(f"[ENDPOINT] Image security stats retrieved - "
+                       f"Total processed: {image_stats['total_images_processed']}")
+            
+            return ImageSecurityStatsResponse(
+                success=True,
+                **image_stats
+            )
+            
+        except Exception as e:
+            logger.error(f"[ENDPOINT] Failed to get security stats: {e}")
+            # Return empty stats if no data available
+            return ImageSecurityStatsResponse(
+                success=True,
+                total_images_processed=0,
+                threats_by_type={},
+                security_level_distribution={},
+                average_processing_time=0.0,
+                recent_threats=[],
+                system_health={
+                    "threat_detection_accuracy": 0.0,
+                    "false_positive_rate": 0.0,
+                    "system_load": 0.0,
+                    "last_updated": "no_data"
+                }
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Image security stats endpoint failed with unexpected error: {e}")
+        return ImageSecurityStatsResponse(
+            success=False,
+            total_images_processed=0,
+            error=str(e)
+        )
+
+
+@app.get("/image/models")
+async def list_image_models():
+    """List available image models and secure processing capabilities."""
+    logger.info("[ENDPOINT] Image models list requested")
+    
+    try:
+        from framework.processors.image import SecureImagePreprocessor, SecurityLevel
+        from framework.models.secure_image_model import SecureImageModel
+        
+        # Get currently loaded image models
+        loaded_models = [name for name in model_manager.list_models() 
+                        if any(image_type in name.lower() for image_type in ['image', 'vision', 'resnet', 'efficientnet', 'vit', 'secure'])]
+        
+        # Available security levels
+        security_levels = {
+            level.name.lower(): {
+                "description": f"{level.name.title()} security level",
+                "threat_detection": level.value >= SecurityLevel.MEDIUM.value,
+                "sanitization": level.value >= SecurityLevel.HIGH.value,
+                "adversarial_detection": level.value >= SecurityLevel.MAXIMUM.value
+            }
+            for level in SecurityLevel
+        }
+        
+        # Supported image formats
+        supported_formats = [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"]
+        
+        # Processing capabilities
+        capabilities = {
+            "threat_detection": [
+                "Adversarial examples detection",
+                "Malicious payload detection",
+                "Steganography detection",
+                "Format validation",
+                "Size validation",
+                "Content analysis"
+            ],
+            "sanitization": [
+                "Metadata removal",
+                "Noise injection",
+                "Compression",
+                "Format normalization",
+                "Size normalization"
+            ],
+            "security_features": [
+                "Multi-level threat assessment",
+                "Confidence scoring",
+                "Audit logging",
+                "Real-time monitoring",
+                "Statistical analysis"
+            ]
+        }
+        
+        logger.info(f"[ENDPOINT] Image models listed - Loaded: {len(loaded_models)}, "
+                   f"Security levels: {len(security_levels)}")
+        
+        return {
+            "loaded_models": loaded_models,
+            "security_levels": security_levels,
+            "supported_formats": supported_formats,
+            "capabilities": capabilities,
+            "examples": {
+                "secure_processing": {
+                    "endpoint": "/image/process/secure",
+                    "parameters": {
+                        "security_level": "medium",
+                        "enable_sanitization": True,
+                        "enable_adversarial_detection": True
+                    }
+                },
+                "validation": {
+                    "endpoint": "/image/validate/security",
+                    "parameters": {
+                        "security_level": "high",
+                        "detailed_analysis": True
+                    }
+                }
+            }
+        }
+        
+    except ImportError as e:
+        logger.error(f"[ENDPOINT] Image processing modules import error: {e}")
+        return {
+            "loaded_models": [],
+            "security_levels": {
+                "low": {"description": "Basic validation"},
+                "medium": {"description": "Standard threat detection"},
+                "high": {"description": "Advanced security with sanitization"},
+                "maximum": {"description": "Maximum security with all features"}
+            },
+            "supported_formats": [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"],
+            "capabilities": {
+                "note": "Image processing framework not fully available"
+            },
+            "error": "Image processing framework not fully available, showing fallback information"
+        }
+    except Exception as e:
+        logger.error(f"[ENDPOINT] Failed to list image models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/image/health")
+async def image_health_check():
+    """Check image processing health and security capabilities."""
+    logger.info("[ENDPOINT] Image processing health check requested")
+    
+    health_status = {
+        "image_processing_available": False,
+        "secure_processing_available": False,
+        "threat_detection_available": False,
+        "dependencies": {},
+        "errors": []
+    }
+    
+    # Check image processing dependencies
+    dependencies_to_check = [
+        ("PIL", "Python Imaging Library"),
+        ("cv2", "OpenCV"),
+        ("numpy", "Numerical computing"),
+        ("torch", "PyTorch"),
+        ("torchvision", "PyTorch vision"),
+        ("sklearn", "Scikit-learn for ML"),
+    ]
+    
+    for dep_name, dep_desc in dependencies_to_check:
+        try:
+            if dep_name == "PIL":
+                from PIL import Image
+            elif dep_name == "cv2":
+                import cv2
+            else:
+                __import__(dep_name)
+            health_status["dependencies"][dep_name] = {"available": True, "description": dep_desc}
+        except ImportError as e:
+            health_status["dependencies"][dep_name] = {
+                "available": False, 
+                "description": dep_desc,
+                "error": str(e)
+            }
+            health_status["errors"].append(f"{dep_name}: {str(e)}")
+    
+    # Check if image processing modules can be imported
+    try:
+        from framework.processors.image import SecureImagePreprocessor, SecureImageValidator
+        from framework.models.secure_image_model import SecureImageModel
+        health_status["image_processing_available"] = True
+        health_status["secure_processing_available"] = True
+        health_status["threat_detection_available"] = True
+    except ImportError as e:
+        health_status["errors"].append(f"Image processing modules: {str(e)}")
     
     return health_status
 

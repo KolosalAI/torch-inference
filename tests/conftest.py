@@ -6,10 +6,15 @@ import torch
 import pytest
 import numpy as np
 import asyncio
+import io
+import json
+import time
+import gc
 from pathlib import Path
 from typing import Dict, Any, Optional
 from unittest.mock import Mock, MagicMock, AsyncMock
 import warnings
+from PIL import Image, ImageDraw, ImageFont
 
 # Add project root to path
 import sys
@@ -27,6 +32,17 @@ try:
 except ImportError:
     REAL_MODELS_AVAILABLE = False
     warnings.warn("Real models not available. Run 'python tests/models/create_test_models.py' to download them.")
+
+# Secure image components availability check
+try:
+    from framework.processors.image.secure_image_processor import (
+        SecurityLevel, SecurityConfig, SecureImageValidator, 
+        SecureImageSanitizer, SecureImagePreprocessor
+    )
+    from framework.models.secure_image_model import SecureImageModel
+    SECURE_IMAGE_COMPONENTS_AVAILABLE = True
+except ImportError:
+    SECURE_IMAGE_COMPONENTS_AVAILABLE = False
 
 
 @pytest.fixture
@@ -854,6 +870,426 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "integration: mark test as integration test"
     )
+    config.addinivalue_line(
+        "markers", "security: mark test as security-focused test"
+    )
+
+
+# ============================================================================
+# Secure Image Processing Test Fixtures and Utilities
+# ============================================================================
+
+class TestImageGenerator:
+    """Utility class for generating test images with specific characteristics."""
+    
+    @staticmethod
+    def create_normal_image(width=224, height=224, format='PNG'):
+        """Create a normal, natural-looking image."""
+        # Create gradient background
+        img_array = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        for y in range(height):
+            for x in range(width):
+                # Create a natural-looking pattern
+                r = int(128 + 64 * np.sin(x / 20) * np.cos(y / 20))
+                g = int(128 + 32 * np.sin(x / 15 + 1) * np.cos(y / 15 + 1))
+                b = int(128 + 16 * np.sin(x / 25 + 2) * np.cos(y / 25 + 2))
+                
+                img_array[y, x] = [
+                    max(0, min(255, r)),
+                    max(0, min(255, g)),
+                    max(0, min(255, b))
+                ]
+        
+        img = Image.fromarray(img_array)
+        buffer = io.BytesIO()
+        img.save(buffer, format=format)
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def create_high_entropy_image(width=224, height=224, format='PNG'):
+        """Create an image with high entropy (random noise)."""
+        img_array = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
+        img = Image.fromarray(img_array)
+        buffer = io.BytesIO()
+        img.save(buffer, format=format)
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def create_low_entropy_image(width=224, height=224, format='PNG'):
+        """Create an image with low entropy (uniform patterns)."""
+        img_array = np.full((height, width, 3), [128, 128, 128], dtype=np.uint8)
+        
+        # Add some minimal variation
+        for i in range(0, height, 50):
+            for j in range(0, width, 50):
+                img_array[i:i+25, j:j+25] = [100, 100, 100]
+        
+        img = Image.fromarray(img_array)
+        buffer = io.BytesIO()
+        img.save(buffer, format=format)
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def create_adversarial_pattern_image(width=224, height=224, format='PNG'):
+        """Create an image with adversarial-like patterns."""
+        # Start with normal image
+        base = np.random.randint(100, 156, (height, width, 3), dtype=np.uint8)
+        
+        # Add high-frequency adversarial-like noise
+        noise_strength = 30
+        for y in range(height):
+            for x in range(width):
+                # High-frequency pattern
+                noise = noise_strength * np.sin(x * 0.8) * np.cos(y * 0.8)
+                base[y, x] = np.clip(base[y, x] + noise, 0, 255)
+        
+        img = Image.fromarray(base.astype(np.uint8))
+        buffer = io.BytesIO()
+        img.save(buffer, format=format)
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def create_steganography_pattern_image(width=224, height=224, format='PNG'):
+        """Create an image with steganography-like LSB patterns."""
+        img_array = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
+        
+        # Modify LSBs in a pattern
+        for y in range(0, height, 2):
+            for x in range(0, width, 2):
+                # Set LSB to encode hidden data pattern
+                img_array[y, x, :] = (img_array[y, x, :] & 0xFE) | ((x + y) % 2)
+        
+        img = Image.fromarray(img_array)
+        buffer = io.BytesIO()
+        img.save(buffer, format=format)
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def create_text_image(text="TEST", width=224, height=224, format='PNG'):
+        """Create an image with text content."""
+        img = Image.new('RGB', (width, height), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Try to use a font, fall back to default if not available
+        try:
+            font = ImageFont.truetype("arial.ttf", 36)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
+        
+        # Calculate text position to center it
+        text_bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        
+        x = (width - text_width) // 2
+        y = (height - text_height) // 2
+        
+        draw.text((x, y), text, fill='black', font=font)
+        
+        buffer = io.BytesIO()
+        img.save(buffer, format=format)
+        buffer.seek(0)
+        return buffer
+
+
+class TestDataManager:
+    """Manager for test data and temporary files."""
+    
+    def __init__(self):
+        self.temp_dir = None
+        self.temp_files = []
+    
+    def setup(self):
+        """Set up temporary directory for test data."""
+        self.temp_dir = tempfile.mkdtemp(prefix="secure_image_test_")
+        return self.temp_dir
+    
+    def cleanup(self):
+        """Clean up temporary files and directory."""
+        import shutil
+        if self.temp_dir and Path(self.temp_dir).exists():
+            shutil.rmtree(self.temp_dir)
+        self.temp_files.clear()
+    
+    def save_test_image(self, image_buffer, filename):
+        """Save test image to temporary directory."""
+        if not self.temp_dir:
+            self.setup()
+        
+        filepath = Path(self.temp_dir) / filename
+        with open(filepath, 'wb') as f:
+            f.write(image_buffer.getvalue())
+        
+        self.temp_files.append(filepath)
+        return filepath
+
+
+class PerformanceTracker:
+    """Helper class to track performance metrics."""
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all metrics."""
+        self.start_time = None
+        self.end_time = None
+        self.memory_start = None
+        self.memory_peak = None
+        self.memory_end = None
+    
+    def start(self):
+        """Start performance tracking."""
+        gc.collect()  # Clean up before measurement
+        self.start_time = time.time()
+        try:
+            import psutil
+            self.memory_start = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            self.memory_peak = self.memory_start
+        except ImportError:
+            self.memory_start = None
+            self.memory_peak = None
+    
+    def update_peak_memory(self):
+        """Update peak memory usage."""
+        try:
+            import psutil
+            current_memory = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            if current_memory > self.memory_peak:
+                self.memory_peak = current_memory
+        except ImportError:
+            pass
+    
+    def stop(self):
+        """Stop performance tracking."""
+        self.end_time = time.time()
+        try:
+            import psutil
+            self.memory_end = psutil.Process().memory_info().rss / 1024 / 1024  # MB
+            self.update_peak_memory()
+        except ImportError:
+            self.memory_end = None
+    
+    @property
+    def duration(self):
+        """Get execution duration in seconds."""
+        if self.start_time and self.end_time:
+            return self.end_time - self.start_time
+        return None
+    
+    @property
+    def memory_delta(self):
+        """Get memory usage delta in MB."""
+        if self.memory_start and self.memory_end:
+            return self.memory_end - self.memory_start
+        return None
+    
+    @property
+    def peak_memory_delta(self):
+        """Get peak memory usage delta in MB."""
+        if self.memory_start and self.memory_peak:
+            return self.memory_peak - self.memory_start
+        return None
+
+
+# Secure Image Testing Fixtures
+
+@pytest.fixture(scope="session")
+def test_image_generator():
+    """Provide test image generator for the session."""
+    return TestImageGenerator()
+
+
+@pytest.fixture(scope="session")
+def test_data_manager():
+    """Provide test data manager for the session."""
+    manager = TestDataManager()
+    manager.setup()
+    yield manager
+    manager.cleanup()
+
+
+@pytest.fixture
+def performance_tracker():
+    """Provide performance tracker for tests."""
+    return PerformanceTracker()
+
+
+@pytest.fixture
+def secure_image_test_config():
+    """Provide test configuration for secure image processing."""
+    return {
+        "security_test_timeout": 30.0,
+        "performance_test_timeout": 60.0,
+        "max_memory_usage_mb": 500,
+        "max_processing_time_seconds": 10.0,
+        "concurrent_test_workers": 4,
+        "batch_test_size": 20
+    }
+
+
+@pytest.fixture
+def mock_security_manager():
+    """Provide mock security manager for testing."""
+    mock_manager = Mock()
+    mock_manager.log_security_event.return_value = None
+    mock_manager.check_threat_level.return_value = "low"
+    mock_manager.get_audit_trail.return_value = []
+    mock_manager.validate_permissions.return_value = True
+    return mock_manager
+
+
+@pytest.fixture
+def sample_images(test_image_generator):
+    """Provide sample images for testing."""
+    return {
+        'normal': test_image_generator.create_normal_image(),
+        'high_entropy': test_image_generator.create_high_entropy_image(),
+        'low_entropy': test_image_generator.create_low_entropy_image(),
+        'adversarial': test_image_generator.create_adversarial_pattern_image(),
+        'steganography': test_image_generator.create_steganography_pattern_image(),
+        'text': test_image_generator.create_text_image("SECURITY TEST")
+    }
+
+
+@pytest.fixture
+def performance_test_images(test_image_generator):
+    """Provide images specifically for performance testing."""
+    sizes = [(128, 128), (256, 256), (512, 512)]
+    images = {}
+    
+    for width, height in sizes:
+        images[f"normal_{width}x{height}"] = test_image_generator.create_normal_image(width, height)
+        images[f"random_{width}x{height}"] = test_image_generator.create_high_entropy_image(width, height)
+    
+    return images
+
+
+@pytest.fixture
+def api_test_client():
+    """Provide FastAPI test client."""
+    try:
+        from fastapi.testclient import TestClient
+        from main import app
+        return TestClient(app)
+    except ImportError:
+        pytest.skip("FastAPI application not available")
+
+
+@pytest.fixture
+def mock_secure_image_processor():
+    """Provide mock secure image processor."""
+    processor = Mock()
+    processor.validate_image.return_value = {
+        "is_safe": True,
+        "threats_detected": [],
+        "confidence_scores": {"entropy": 0.5}
+    }
+    processor.sanitize_image.return_value = Mock()  # Mock PIL Image
+    processor.process_image_data.return_value = {
+        "success": True,
+        "processed_image": b"mock_processed_data",
+        "threats_detected": [],
+        "threats_mitigated": []
+    }
+    return processor
+
+
+@pytest.fixture
+def mock_secure_image_model():
+    """Provide mock secure image model."""
+    model = Mock()
+    model.process_image.return_value = {
+        "success": True,
+        "processed_image": b"mock_processed_data",
+        "security_analysis": {"threats_detected": []}
+    }
+    model.get_security_statistics.return_value = {
+        "total_images_processed": 0,
+        "threats_detected": 0,
+        "threats_mitigated": 0
+    }
+    model.set_security_level.return_value = None
+    return model
+
+
+# Utility functions for secure image tests
+def assert_valid_security_response(response_data):
+    """Assert that a security response has valid structure."""
+    assert isinstance(response_data, dict)
+    assert "success" in response_data
+    assert "is_safe" in response_data
+    assert "threats_detected" in response_data
+    assert isinstance(response_data["threats_detected"], list)
+    
+    if "confidence_scores" in response_data:
+        assert isinstance(response_data["confidence_scores"], dict)
+    
+    if "recommendations" in response_data:
+        assert isinstance(response_data["recommendations"], list)
+
+
+def assert_valid_processing_response(response_data):
+    """Assert that a processing response has valid structure."""
+    assert isinstance(response_data, dict)
+    assert "success" in response_data
+    
+    if response_data["success"]:
+        assert "processed_image" in response_data
+        assert "threats_detected" in response_data
+        assert "threats_mitigated" in response_data
+        assert isinstance(response_data["threats_detected"], list)
+        assert isinstance(response_data["threats_mitigated"], list)
+    else:
+        assert "error" in response_data
+
+
+def assert_performance_metrics(duration, memory_delta=None, max_duration=10.0, max_memory_mb=100):
+    """Assert that performance metrics are within acceptable ranges."""
+    assert duration is not None
+    assert duration >= 0
+    assert duration < max_duration, f"Operation too slow: {duration}s > {max_duration}s"
+    
+    if memory_delta is not None:
+        assert memory_delta < max_memory_mb, f"Memory usage too high: {memory_delta}MB > {max_memory_mb}MB"
+
+
+def create_mock_image_data(width=224, height=224, format='PNG'):
+    """Create mock image data for testing."""
+    img_array = np.random.randint(0, 256, (height, width, 3), dtype=np.uint8)
+    img = Image.fromarray(img_array)
+    buffer = io.BytesIO()
+    img.save(buffer, format=format)
+    return buffer.getvalue()
+
+
+def skip_if_secure_components_unavailable():
+    """Skip test if secure image components are not available."""
+    return not SECURE_IMAGE_COMPONENTS_AVAILABLE
+
+
+# Test data constants for secure image processing
+TEST_IMAGE_FORMATS = ['PNG', 'JPEG', 'BMP', 'TIFF']
+TEST_SECURITY_LEVELS = ['low', 'medium', 'high', 'maximum']
+TEST_IMAGE_SIZES = [(64, 64), (128, 128), (224, 224), (512, 512)]
+TEST_THREAT_TYPES = [
+    'adversarial_pattern',
+    'steganography',
+    'malware_signature',
+    'suspicious_metadata',
+    'format_exploit'
+]
+
+
+# ============================================================================
+# End of Secure Image Processing Test Fixtures
+# ============================================================================
 
 
 def pytest_collection_modifyitems(config, items):
