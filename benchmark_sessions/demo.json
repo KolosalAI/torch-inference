@@ -1,0 +1,696 @@
+{
+  "session_id": "demo",
+  "timestamp": "20250907_182831",
+  "config": {
+    "concurrency_levels": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "iterations_per_level": 5,
+    "warmup_requests": 3,
+    "timeout_seconds": 30.0,
+    "sample_rate": 22050,
+    "bit_depth": 16,
+    "min_text_length": 50,
+    "max_text_length": 200,
+    "text_variations": 25,
+    "output_dir": "benchmark_sessions\\demo",
+    "save_raw_data": true,
+    "generate_plots": true
+  },
+  "server_config": null,
+  "results": {
+    "demo": {
+      "1": {
+        "metrics": {
+          "asps": 108.71686048481062,
+          "rtf_mean": 0.009368483937661341,
+          "rtf_median": 0.00881054285751556,
+          "rps": 31.88177726827291,
+          "cps": 2320.993385130268,
+          "tokens_per_sec": 382.58132721927495,
+          "ttfa_p50": 0.03140809999968042,
+          "ttfa_p95": 0.031870400001935195,
+          "ttfa_p99": 0.031870400001935195,
+          "ttfa_mean": 0.031359160001011334,
+          "total_wall_time": 0.15682940000260714,
+          "min_request_start": 22800.9079884,
+          "max_request_end": 22801.0648178,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 1,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_0",
+            "t_start": 22800.9079884,
+            "t_first_audio": 22800.9398588,
+            "t_end": 22800.9398596,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22800.9398674,
+            "t_first_audio": 22800.9710803,
+            "t_end": 22800.971081,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_2",
+            "t_start": 22800.9710876,
+            "t_first_audio": 22801.002556,
+            "t_end": 22801.0025566,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_3",
+            "t_start": 22801.0025641,
+            "t_first_audio": 22801.0339722,
+            "t_end": 22801.0339729,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_4",
+            "t_start": 22801.0339809,
+            "t_first_audio": 22801.0648169,
+            "t_end": 22801.0648178,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 1,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      },
+      "2": {
+        "metrics": {
+          "asps": 187.13560691078828,
+          "rtf_mean": 0.009055786786394486,
+          "rtf_median": 0.008669314285465848,
+          "rps": 54.87847709993792,
+          "cps": 3995.15313287548,
+          "tokens_per_sec": 658.541725199255,
+          "ttfa_p50": 0.0303423000004841,
+          "ttfa_p95": 0.031691599997429876,
+          "ttfa_p99": 0.031691599997429876,
+          "ttfa_mean": 0.03029843999975128,
+          "total_wall_time": 0.09111040000061621,
+          "min_request_start": 22801.1578657,
+          "max_request_end": 22801.2489761,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 2,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_0",
+            "t_start": 22801.1578657,
+            "t_first_audio": 22801.1869079,
+            "t_end": 22801.1869084,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22801.1581019,
+            "t_first_audio": 22801.1870407,
+            "t_end": 22801.1870411,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_3",
+            "t_start": 22801.1870674,
+            "t_first_audio": 22801.2185447,
+            "t_end": 22801.2185459,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_2",
+            "t_start": 22801.1869699,
+            "t_first_audio": 22801.2186615,
+            "t_end": 22801.2186626,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_4",
+            "t_start": 22801.2186335,
+            "t_first_audio": 22801.2489758,
+            "t_end": 22801.2489761,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 2,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      },
+      "4": {
+        "metrics": {
+          "asps": 270.7165653171025,
+          "rtf_mean": 0.009259329748771144,
+          "rtf_median": 0.009064999999411936,
+          "rps": 79.38902208712682,
+          "cps": 5779.520807942832,
+          "tokens_per_sec": 952.6682650455218,
+          "ttfa_p50": 0.031116199999814853,
+          "ttfa_p95": 0.03172669999912614,
+          "ttfa_p99": 0.03172669999912614,
+          "ttfa_mean": 0.031006619999971008,
+          "total_wall_time": 0.06298099999912665,
+          "min_request_start": 22801.3437166,
+          "max_request_end": 22801.4066976,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 4,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_3",
+            "t_start": 22801.3447204,
+            "t_first_audio": 22801.3748906,
+            "t_end": 22801.3748917,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_0",
+            "t_start": 22801.3437166,
+            "t_first_audio": 22801.3750054,
+            "t_end": 22801.3750061,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22801.3439338,
+            "t_first_audio": 22801.37505,
+            "t_end": 22801.3750505,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_2",
+            "t_start": 22801.3443708,
+            "t_first_audio": 22801.375102,
+            "t_end": 22801.3751023,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_4",
+            "t_start": 22801.3749701,
+            "t_first_audio": 22801.4066968,
+            "t_end": 22801.4066976,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 4,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      },
+      "8": {
+        "metrics": {
+          "asps": 559.884673661657,
+          "rtf_mean": 0.008922754210649277,
+          "rtf_median": 0.008371228571507214,
+          "rps": 164.18905385972343,
+          "cps": 11952.963120987866,
+          "tokens_per_sec": 1970.268646316681,
+          "ttfa_p50": 0.02989749999687774,
+          "ttfa_p95": 0.03036659999997937,
+          "ttfa_p99": 0.03036659999997937,
+          "ttfa_mean": 0.02986073999927612,
+          "total_wall_time": 0.030452699997113086,
+          "min_request_start": 22801.4995057,
+          "max_request_end": 22801.5299584,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 8,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_4",
+            "t_start": 22801.5004296,
+            "t_first_audio": 22801.5297282,
+            "t_end": 22801.5297289,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_3",
+            "t_start": 22801.5001915,
+            "t_first_audio": 22801.529809,
+            "t_end": 22801.5298095,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_0",
+            "t_start": 22801.4995057,
+            "t_first_audio": 22801.5298723,
+            "t_end": 22801.529873,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_2",
+            "t_start": 22801.5000246,
+            "t_first_audio": 22801.5299221,
+            "t_end": 22801.5299226,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22801.4998347,
+            "t_first_audio": 22801.5299582,
+            "t_end": 22801.5299584,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 8,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      },
+      "16": {
+        "metrics": {
+          "asps": 541.5380314947611,
+          "rtf_mean": 0.00919893295346881,
+          "rtf_median": 0.008561457143514417,
+          "rps": 158.80880688995924,
+          "cps": 11561.281141589032,
+          "tokens_per_sec": 1905.7056826795108,
+          "ttfa_p50": 0.030775299997912953,
+          "ttfa_p95": 0.031435000000783475,
+          "ttfa_p99": 0.031435000000783475,
+          "ttfa_mean": 0.030780460000096356,
+          "total_wall_time": 0.03148440000222763,
+          "min_request_start": 22801.624319,
+          "max_request_end": 22801.6558034,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 16,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_4",
+            "t_start": 22801.6253735,
+            "t_first_audio": 22801.6553373,
+            "t_end": 22801.6553386,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_3",
+            "t_start": 22801.6250915,
+            "t_first_audio": 22801.6555524,
+            "t_end": 22801.655553,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_2",
+            "t_start": 22801.6249137,
+            "t_first_audio": 22801.655689,
+            "t_end": 22801.6556906,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_0",
+            "t_start": 22801.624319,
+            "t_first_audio": 22801.655754,
+            "t_end": 22801.6557546,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22801.6245356,
+            "t_first_audio": 22801.6558029,
+            "t_end": 22801.6558034,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 16,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      },
+      "32": {
+        "metrics": {
+          "asps": 550.1774766179225,
+          "rtf_mean": 0.009098007822317759,
+          "rtf_median": 0.008633799999578124,
+          "rps": 161.3423685096547,
+          "cps": 11745.724427502862,
+          "tokens_per_sec": 1936.1084221158562,
+          "ttfa_p50": 0.030367300001671538,
+          "ttfa_p95": 0.030888599998434074,
+          "ttfa_p99": 0.030888599998434074,
+          "ttfa_mean": 0.03044278000088525,
+          "total_wall_time": 0.030989999999292195,
+          "min_request_start": 22801.7463312,
+          "max_request_end": 22801.7773212,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 32,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_2",
+            "t_start": 22801.7468484,
+            "t_first_audio": 22801.7770662,
+            "t_end": 22801.7770674,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22801.7466392,
+            "t_first_audio": 22801.7771619,
+            "t_end": 22801.7771627,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_0",
+            "t_start": 22801.7463312,
+            "t_first_audio": 22801.7772198,
+            "t_end": 22801.7772202,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_4",
+            "t_start": 22801.7470551,
+            "t_first_audio": 22801.7772726,
+            "t_end": 22801.7772734,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_3",
+            "t_start": 22801.7469535,
+            "t_first_audio": 22801.7773208,
+            "t_end": 22801.7773212,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 32,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      },
+      "64": {
+        "metrics": {
+          "asps": 562.9719636209754,
+          "rtf_mean": 0.008925553672514602,
+          "rtf_median": 0.00841939999996352,
+          "rps": 165.09441748415702,
+          "cps": 12018.87359284663,
+          "tokens_per_sec": 1981.1330098098842,
+          "ttfa_p50": 0.029852199997549178,
+          "ttfa_p95": 0.030198700002074474,
+          "ttfa_p99": 0.030198700002074474,
+          "ttfa_mean": 0.029863620000105583,
+          "total_wall_time": 0.030285700002423255,
+          "min_request_start": 22801.86986,
+          "max_request_end": 22801.9001457,
+          "total_requests": 5,
+          "successful_requests": 5,
+          "failed_requests": 0,
+          "total_audio_duration": 17.05,
+          "total_text_chars": 364,
+          "total_tokens": 60,
+          "concurrency_level": 64,
+          "sample_rate": 22050,
+          "bit_depth": 16
+        },
+        "request_metrics": [
+          {
+            "request_id": "req_4",
+            "t_start": 22801.8705218,
+            "t_first_audio": 22801.8999888,
+            "t_end": 22801.8999897,
+            "text_len_chars": 70,
+            "text_len_tokens": 9,
+            "audio_duration_sec": 3.5,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_0",
+            "t_start": 22801.86986,
+            "t_first_audio": 22801.9000587,
+            "t_end": 22801.9000592,
+            "text_len_chars": 103,
+            "text_len_tokens": 20,
+            "audio_duration_sec": 4.0,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_2",
+            "t_start": 22801.870243,
+            "t_first_audio": 22801.9000952,
+            "t_end": 22801.9000955,
+            "text_len_chars": 76,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 3.8000000000000003,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_1",
+            "t_start": 22801.8700845,
+            "t_first_audio": 22801.9001219,
+            "t_end": 22801.9001222,
+            "text_len_chars": 57,
+            "text_len_tokens": 10,
+            "audio_duration_sec": 2.85,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          },
+          {
+            "request_id": "req_3",
+            "t_start": 22801.8703827,
+            "t_first_audio": 22801.9001455,
+            "t_end": 22801.9001457,
+            "text_len_chars": 58,
+            "text_len_tokens": 11,
+            "audio_duration_sec": 2.9000000000000004,
+            "sample_rate": 22050,
+            "bit_depth": 16,
+            "error": null
+          }
+        ],
+        "config": {
+          "concurrency": 64,
+          "iterations": 5,
+          "test_texts_count": 25,
+          "tts_kwargs": {}
+        }
+      }
+    }
+  },
+  "metadata": {
+    "start_time": 1757244511.0904229,
+    "python_version": "3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]",
+    "platform": "win32",
+    "end_time": 1757244513.6480477,
+    "duration": 2.5576248168945312
+  }
+}

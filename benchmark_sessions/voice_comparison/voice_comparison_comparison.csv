@@ -1,0 +1,7 @@
+Benchmark,ASPS_C1,RTF_C1,RPS_C1,TTFA_p95_ms_C1
+speecht5_tts,1.3526,0.7647,0.31,4470.9
+bark_tts,2.0502,0.5097,0.53,2384.8
+
+Best Performance Summary
+Metric,Concurrency,Best_Benchmark,Best_Value
+ASPS_C1,1,bark_tts,2.0502

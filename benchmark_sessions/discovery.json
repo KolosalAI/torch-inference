@@ -1,0 +1,32 @@
+{
+  "session_id": "discovery",
+  "timestamp": "20250907_180550",
+  "config": {
+    "concurrency_levels": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "iterations_per_level": 10,
+    "warmup_requests": 3,
+    "timeout_seconds": 30.0,
+    "sample_rate": 22050,
+    "bit_depth": 16,
+    "min_text_length": 50,
+    "max_text_length": 200,
+    "text_variations": 20,
+    "output_dir": "benchmark_results",
+    "save_raw_data": true,
+    "generate_plots": true
+  },
+  "server_config": null,
+  "results": null,
+  "metadata": {
+    "start_time": 1757243150.70906,
+    "python_version": "3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]",
+    "platform": "win32",
+    "end_time": 1757243152.5626934,
+    "duration": 1.8536334037780762
+  }
+}
