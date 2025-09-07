@@ -1,0 +1,22 @@
+Concurrency,ASPS,RTF_Mean,RTF_Median,RPS,CPS,Tokens_Per_Sec,TTFA_p50_ms,TTFA_p95_ms,TTFA_p99_ms,TTFA_Mean_ms,Total_Requests,Success_Rate_%,Failed_Requests,Total_Wall_Time_s,Total_Audio_Duration_s,Avg_Text_Length_chars,Avg_Audio_Duration_s,Sample_Rate,Bit_Depth
+1,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+2,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+4,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+8,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+16,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+32,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+64,0.0000,0.0000,0.0000,0.00,0.0,0.0,0.0,0.0,0.0,0.0,100,0.0,100,0.00,0.00,0,0.00,22050,16
+
+Summary Statistics
+Metric,Min,Max,Range,Best_Concurrency
+ASPS,0.0000,0.0000,0.0000,1
+RTF_Median,0.0000,0.0000,0.0000,1
+RPS,0.00,0.00,0.00,1
+TTFA_p95_ms,0.0,0.0,0.0,1
+
+Test Configuration
+Test_Texts_Count,25
+Min_Text_Length,57
+Max_Text_Length,165
+Avg_Text_Length,100.52
+Median_Text_Length,86

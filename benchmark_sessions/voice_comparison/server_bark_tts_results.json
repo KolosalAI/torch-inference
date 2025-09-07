@@ -1,0 +1,60 @@
+{
+  "1": {
+    "metrics": {
+      "asps": 2.050178432217361,
+      "rtf_mean": 0.509654873580506,
+      "rtf_median": 0.509654873580506,
+      "rps": 0.5251481639901027,
+      "cps": 42.01185311920821,
+      "tokens_per_sec": 7.87722245985154,
+      "ttfa_p50": 2.3848304000021017,
+      "ttfa_p95": 2.3848304000021017,
+      "ttfa_p99": 2.3848304000021017,
+      "ttfa_mean": 1.9042217000005621,
+      "total_wall_time": 3.8084490000001097,
+      "min_request_start": 21770.5576461,
+      "max_request_end": 21774.3660951,
+      "total_requests": 2,
+      "successful_requests": 2,
+      "failed_requests": 0,
+      "total_audio_duration": 7.808,
+      "total_text_chars": 160,
+      "total_tokens": 30,
+      "concurrency_level": 1,
+      "sample_rate": 16000,
+      "bit_depth": 16
+    },
+    "request_metrics": [
+      {
+        "request_id": "req_0",
+        "t_start": 21770.5576461,
+        "t_first_audio": 21772.9424765,
+        "t_end": 21772.9424775,
+        "text_len_chars": 103,
+        "text_len_tokens": 20,
+        "audio_duration_sec": 5.312,
+        "sample_rate": 16000,
+        "bit_depth": 16,
+        "error": null
+      },
+      {
+        "request_id": "req_1",
+        "t_start": 21772.9424814,
+        "t_first_audio": 21774.3660944,
+        "t_end": 21774.3660951,
+        "text_len_chars": 57,
+        "text_len_tokens": 10,
+        "audio_duration_sec": 2.496,
+        "sample_rate": 16000,
+        "bit_depth": 16,
+        "error": null
+      }
+    ],
+    "config": {
+      "concurrency": 1,
+      "iterations": 2,
+      "test_texts_count": 25,
+      "tts_kwargs": {}
+    }
+  }
+}
