@@ -1,0 +1,473 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Model availability configuration for PyTorch Inference Framework",
+    "last_updated": "2025-09-07T00:00:00Z",
+    "categories": ["text-classification", "text-generation", "image-classification", "feature-extraction", "text-to-speech", "speech-to-text", "computer-vision", "nlp", "audio"]
+  },
+  "available_models": {
+    "example": {
+      "name": "example",
+      "display_name": "Example Model",
+      "description": "Default example model for testing and demonstrations",
+      "source": "builtin",
+      "model_type": "simple_neural_network",
+      "task": "general",
+      "category": "demo",
+      "enabled": true,
+      "auto_load": true,
+      "priority": 1,
+      "hardware_requirements": {
+        "min_memory_mb": 100,
+        "recommended_memory_mb": 512,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 0
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 8,
+        "timeout_seconds": 30,
+        "warmup_iterations": 3
+      },
+      "metadata": {
+        "parameters": 10000,
+        "size_mb": 0.1,
+        "architecture": "Linear",
+        "framework": "pytorch",
+        "version": "1.0.0"
+      }
+    },
+    "distilbert_sentiment": {
+      "name": "distilbert_sentiment",
+      "display_name": "DistilBERT Sentiment Analysis",
+      "description": "Fine-tuned DistilBERT model for sentiment classification",
+      "source": "huggingface",
+      "model_id": "distilbert-base-uncased-finetuned-sst-2-english",
+      "model_type": "transformer",
+      "task": "text-classification",
+      "category": "nlp",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 3,
+      "hardware_requirements": {
+        "min_memory_mb": 512,
+        "recommended_memory_mb": 1024,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 512
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 16,
+        "timeout_seconds": 60,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 66362880,
+        "size_mb": 255.5,
+        "architecture": "DistilBertForSequenceClassification",
+        "framework": "transformers",
+        "version": "1.0.0",
+        "languages": ["en"],
+        "accuracy": 0.91
+      }
+    },
+    "speecht5_tts": {
+      "name": "speecht5_tts",
+      "display_name": "SpeechT5 Text-to-Speech",
+      "description": "Microsoft SpeechT5 model for high-quality text-to-speech synthesis",
+      "source": "huggingface",
+      "model_id": "microsoft/speecht5_tts",
+      "model_type": "tts",
+      "task": "text-to-speech",
+      "category": "audio",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 2,
+      "hardware_requirements": {
+        "min_memory_mb": 2048,
+        "recommended_memory_mb": 4096,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 2048
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 4,
+        "timeout_seconds": 120,
+        "warmup_iterations": 3
+      },
+      "metadata": {
+        "parameters": 144000000,
+        "size_mb": 2500,
+        "architecture": "SpeechT5",
+        "framework": "transformers",
+        "version": "1.0.0",
+        "languages": ["en"],
+        "sample_rate": 16000,
+        "vocoder": "microsoft/speecht5_hifigan"
+      },
+      "tts_features": {
+        "supports_tts": true,
+        "quality": "high",
+        "speed": "medium",
+        "supports_voice_cloning": false,
+        "supports_emotions": false,
+        "max_text_length": 1000
+      }
+    },
+    "bark_tts": {
+      "name": "bark_tts",
+      "display_name": "Bark Text-to-Speech",
+      "description": "Suno Bark model for voice cloning and emotional speech synthesis",
+      "source": "huggingface",
+      "model_id": "suno/bark",
+      "model_type": "tts",
+      "task": "text-to-speech",
+      "category": "audio",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 4,
+      "hardware_requirements": {
+        "min_memory_mb": 3072,
+        "recommended_memory_mb": 6144,
+        "gpu_required": true,
+        "min_gpu_memory_mb": 4096
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 2,
+        "timeout_seconds": 180,
+        "warmup_iterations": 2
+      },
+      "metadata": {
+        "parameters": 890000000,
+        "size_mb": 4000,
+        "architecture": "Bark",
+        "framework": "transformers",
+        "version": "1.0.0",
+        "languages": ["en", "es", "fr", "de", "it", "pt", "pl", "tr", "ru", "nl", "cs", "ar", "zh", "ja", "hu", "ko"],
+        "sample_rate": 24000
+      },
+      "tts_features": {
+        "supports_tts": true,
+        "quality": "very_high",
+        "speed": "slow",
+        "supports_voice_cloning": true,
+        "supports_emotions": true,
+        "max_text_length": 250,
+        "supports_music": true,
+        "supports_sound_effects": true
+      }
+    },
+    "resnet18": {
+      "name": "resnet18",
+      "display_name": "ResNet-18",
+      "description": "18-layer residual network for image classification",
+      "source": "torchvision",
+      "model_id": "resnet18",
+      "model_type": "cnn",
+      "task": "image-classification",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 3,
+      "hardware_requirements": {
+        "min_memory_mb": 256,
+        "recommended_memory_mb": 1024,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 512
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 32,
+        "timeout_seconds": 30,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 11689512,
+        "size_mb": 44.7,
+        "architecture": "ResNet",
+        "framework": "torchvision",
+        "version": "1.0.0",
+        "input_size": [224, 224],
+        "num_classes": 1000,
+        "pretrained": true,
+        "accuracy_top1": 0.6976,
+        "accuracy_top5": 0.8914
+      }
+    },
+    "mobilenet_v2": {
+      "name": "mobilenet_v2",
+      "display_name": "MobileNet V2",
+      "description": "Efficient mobile-optimized convolutional neural network",
+      "source": "torchvision",
+      "model_id": "mobilenet_v2",
+      "model_type": "cnn",
+      "task": "image-classification",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 3,
+      "hardware_requirements": {
+        "min_memory_mb": 128,
+        "recommended_memory_mb": 512,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 256
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 64,
+        "timeout_seconds": 30,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 3504872,
+        "size_mb": 13.6,
+        "architecture": "MobileNetV2",
+        "framework": "torchvision",
+        "version": "1.0.0",
+        "input_size": [224, 224],
+        "num_classes": 1000,
+        "pretrained": true,
+        "accuracy_top1": 0.718,
+        "accuracy_top5": 0.901
+      }
+    },
+    "vit_base": {
+      "name": "vit_base",
+      "display_name": "Vision Transformer Base",
+      "description": "Vision Transformer model for image classification",
+      "source": "huggingface",
+      "model_id": "google/vit-base-patch16-224",
+      "model_type": "transformer",
+      "task": "image-classification",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 4,
+      "hardware_requirements": {
+        "min_memory_mb": 1024,
+        "recommended_memory_mb": 2048,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 1024
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 16,
+        "timeout_seconds": 60,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 86567656,
+        "size_mb": 330.3,
+        "architecture": "ViTForImageClassification",
+        "framework": "transformers",
+        "version": "1.0.0",
+        "input_size": [224, 224],
+        "num_classes": 1000,
+        "accuracy_top1": 0.8074
+      }
+    },
+    "sentence_transformer": {
+      "name": "sentence_transformer",
+      "display_name": "Sentence Transformer",
+      "description": "All-MiniLM-L6-v2 model for sentence embeddings",
+      "source": "huggingface",
+      "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+      "model_type": "transformer",
+      "task": "feature-extraction",
+      "category": "nlp",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 3,
+      "hardware_requirements": {
+        "min_memory_mb": 256,
+        "recommended_memory_mb": 512,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 512
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 32,
+        "timeout_seconds": 60,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 22713216,
+        "size_mb": 86.7,
+        "architecture": "BertModel",
+        "framework": "sentence-transformers",
+        "version": "1.0.0",
+        "max_sequence_length": 256,
+        "embedding_dimension": 384
+      }
+    },
+    "whisper_base": {
+      "name": "whisper_base",
+      "display_name": "Whisper Base",
+      "description": "OpenAI Whisper base model for speech recognition",
+      "source": "huggingface",
+      "model_id": "openai/whisper-base",
+      "model_type": "speech",
+      "task": "speech-to-text",
+      "category": "audio",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 3,
+      "hardware_requirements": {
+        "min_memory_mb": 512,
+        "recommended_memory_mb": 1024,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 512
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 4,
+        "timeout_seconds": 120,
+        "warmup_iterations": 3
+      },
+      "metadata": {
+        "parameters": 74000000,
+        "size_mb": 290,
+        "architecture": "Whisper",
+        "framework": "transformers",
+        "version": "1.0.0",
+        "languages": ["multilingual"],
+        "sample_rate": 16000
+      },
+      "stt_features": {
+        "supports_stt": true,
+        "quality": "high",
+        "speed": "medium",
+        "supports_timestamps": true,
+        "supports_language_detection": true,
+        "max_audio_length_seconds": 3600
+      }
+    }
+  },
+  "model_groups": {
+    "text_to_speech": {
+      "name": "Text-to-Speech Models",
+      "description": "Models for converting text to speech",
+      "models": ["speecht5_tts", "bark_tts"],
+      "default_model": "speecht5_tts",
+      "enabled": true
+    },
+    "speech_to_text": {
+      "name": "Speech-to-Text Models", 
+      "description": "Models for converting speech to text",
+      "models": ["whisper_base"],
+      "default_model": "whisper_base",
+      "enabled": true
+    },
+    "image_classification": {
+      "name": "Image Classification Models",
+      "description": "Models for classifying images",
+      "models": ["resnet18", "mobilenet_v2", "vit_base"],
+      "default_model": "resnet18",
+      "enabled": true
+    },
+    "text_classification": {
+      "name": "Text Classification Models",
+      "description": "Models for classifying text",
+      "models": ["distilbert_sentiment"],
+      "default_model": "distilbert_sentiment", 
+      "enabled": true
+    },
+    "feature_extraction": {
+      "name": "Feature Extraction Models",
+      "description": "Models for extracting features from text or images",
+      "models": ["sentence_transformer"],
+      "default_model": "sentence_transformer",
+      "enabled": true
+    }
+  },
+  "deployment_profiles": {
+    "development": {
+      "name": "Development Profile",
+      "description": "Lightweight models for development and testing",
+      "auto_load_models": ["example"],
+      "preload_models": [],
+      "max_models_in_memory": 3,
+      "prefer_cpu": true,
+      "enable_model_caching": true
+    },
+    "production": {
+      "name": "Production Profile", 
+      "description": "Optimized models for production workloads",
+      "auto_load_models": ["example"],
+      "preload_models": ["speecht5_tts", "resnet18"],
+      "max_models_in_memory": 5,
+      "prefer_cpu": false,
+      "enable_model_caching": true,
+      "enable_gpu_optimization": true
+    },
+    "demo": {
+      "name": "Demo Profile",
+      "description": "Selected models for demonstrations", 
+      "auto_load_models": ["example", "speecht5_tts", "resnet18"],
+      "preload_models": ["speecht5_tts"],
+      "max_models_in_memory": 4,
+      "prefer_cpu": false,
+      "enable_model_caching": true
+    }
+  },
+  "hardware_profiles": {
+    "cpu_only": {
+      "name": "CPU Only",
+      "description": "Profile for CPU-only inference",
+      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "whisper_base"],
+      "blocked_models": ["bark_tts"],
+      "max_memory_usage_mb": 8192,
+      "optimization_level": "medium"
+    },
+    "gpu_basic": {
+      "name": "Basic GPU",
+      "description": "Profile for systems with basic GPU (2-4GB VRAM)",
+      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "speecht5_tts", "whisper_base"],
+      "blocked_models": ["bark_tts"],
+      "max_memory_usage_mb": 16384,
+      "max_gpu_memory_mb": 3072,
+      "optimization_level": "high"
+    },
+    "gpu_advanced": {
+      "name": "Advanced GPU",
+      "description": "Profile for systems with high-end GPU (8GB+ VRAM)",
+      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "vit_base", "speecht5_tts", "bark_tts", "whisper_base"],
+      "blocked_models": [],
+      "max_memory_usage_mb": 32768,
+      "max_gpu_memory_mb": 16384,
+      "optimization_level": "maximum"
+    }
+  },
+  "load_balancing": {
+    "strategies": {
+      "round_robin": {
+        "name": "Round Robin",
+        "description": "Distribute requests evenly across model instances"
+      },
+      "least_connections": {
+        "name": "Least Connections", 
+        "description": "Route to instance with fewest active connections"
+      },
+      "least_response_time": {
+        "name": "Least Response Time",
+        "description": "Route to instance with fastest average response time"
+      }
+    },
+    "default_strategy": "least_connections"
+  },
+  "auto_scaling": {
+    "enabled": true,
+    "scale_up_threshold": 0.8,
+    "scale_down_threshold": 0.3,
+    "cooldown_period_seconds": 300,
+    "max_instances_per_model": 3,
+    "min_instances_per_model": 0
+  },
+  "monitoring": {
+    "health_check_interval_seconds": 30,
+    "performance_tracking": true,
+    "error_tracking": true,
+    "usage_analytics": true
+  }
+}
