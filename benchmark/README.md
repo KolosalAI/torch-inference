@@ -180,9 +180,21 @@ results = asyncio.run(harness.run_benchmark(
 
 ## Output and Reports
 
-### CSV Reports
+### Enhanced CSV Reports
 
-Each benchmark run generates a comprehensive CSV report:
+The benchmark system now generates multiple types of CSV reports for comprehensive analysis:
+
+#### 1. Detailed CSV Report (`*_detailed.csv`)
+Contains individual request/iteration data with all benchmark variables:
+
+```csv
+Concurrency_Level,Request_ID,Iteration,Text_Input,Text_Length_Chars,Text_Length_Tokens,Start_Time_Sec,First_Audio_Time_Sec,End_Time_Sec,Wall_Time_Sec,TTFA_Sec,Audio_Duration_Sec,RTF,Sample_Rate,Bit_Depth,Success,Error_Message
+1,req_0,0,"The quick brown fox jumps over the lazy dog.",43,9,1234567890.123456,1234567890.145678,1234567890.234567,0.111111,0.022222,1.500000,0.074074,22050,16,True,
+1,req_1,1,"Hello world, this is a test...",28,7,1234567890.250000,1234567890.268000,1234567890.320000,0.070000,0.018000,1.200000,0.058333,22050,16,True,
+```
+
+#### 2. Summary CSV Report (`*_summary.csv`)
+Contains aggregated statistics and performance metrics:
 
 ```csv
 Concurrency,ASPS,RTF_Mean,RTF_Median,RPS,CPS,TTFA_p95_ms,Success_Rate_%
@@ -190,6 +202,20 @@ Concurrency,ASPS,RTF_Mean,RTF_Median,RPS,CPS,TTFA_p95_ms,Success_Rate_%
 2,4.320,0.462,0.462,22.1,1547.8,52.1,100.0
 4,7.890,0.507,0.507,38.9,2724.1,58.7,100.0
 8,12.450,0.643,0.643,58.2,4074.8,67.3,98.8
+```
+
+#### 3. Legacy CSV Report (`*.csv`)
+Backward-compatible format for existing analysis tools.
+
+#### Configuration Options
+Control CSV generation through `BenchmarkConfig`:
+
+```python
+config = BenchmarkConfig(
+    generate_detailed_csv=True,    # Individual request data
+    generate_summary_csv=True,     # Aggregated statistics
+    save_raw_data=True            # Enable detailed comparison CSVs
+)
 ```
 
 ### Performance Plots

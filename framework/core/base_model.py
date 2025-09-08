@@ -257,7 +257,8 @@ class BaseModel(ABC):
     def _get_inference_context(self):
         """Get optimal inference context based on configuration."""
         if self.device.type == 'cuda' and self.config.device.use_fp16:
-            dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            # Use float16 for better compatibility - BFloat16 can cause issues with some operations
+            dtype = torch.float16
             return torch.amp.autocast('cuda', dtype=dtype)
         else:
             return torch.inference_mode()
@@ -309,10 +310,27 @@ class BaseModel(ABC):
                                 "Dynamo failed"
                             ]
                             
+                            # Handle BFloat16 compatibility issues
+                            bfloat16_errors = [
+                                "Got unsupported ScalarType BFloat16",
+                                "BFloat16",
+                                "bfloat16",
+                                "BFLOAT16"
+                            ]
+                            
                             if any(error in error_msg for error in compilation_errors) and self._compiled_model is not None:
                                 self.logger.warning(f"Torch compilation failed ({error_msg[:100]}...), falling back to non-compiled model")
                                 self.config.device.use_torch_compile = False
                                 self._compiled_model = None
+                                raw_outputs = self.forward(preprocessed_inputs)
+                            elif any(error in error_msg for error in bfloat16_errors):
+                                self.logger.warning(f"BFloat16 compatibility issue detected ({error_msg[:100]}...), converting to float16/float32")
+                                # Convert input to float16 or float32
+                                if preprocessed_inputs.dtype == torch.bfloat16:
+                                    if self.device.type == 'cuda':
+                                        preprocessed_inputs = preprocessed_inputs.to(torch.float16)
+                                    else:
+                                        preprocessed_inputs = preprocessed_inputs.to(torch.float32)
                                 raw_outputs = self.forward(preprocessed_inputs)
                             else:
                                 raise
@@ -860,8 +878,8 @@ class BaseModel(ABC):
                 if (hasattr(self.config, 'device') and 
                     getattr(self.config.device, 'use_fp16', False) and 
                     self.device.type == 'cuda'):
-                    # Use bfloat16 if supported, otherwise float16
-                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 for input tensors
+                    target_dtype = torch.float16
         
         # Try to infer from model structure if possible
         if hasattr(self, 'model') and self.model is not None:

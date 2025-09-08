@@ -44,7 +44,7 @@ models:
 
 # Device Configuration - ULTRA-HIGH PERFORMANCE OPTIMIZATIONS
 device:
-  type: "auto"  # auto, cpu, cuda, mps
+  type: "cuda"  # Force CUDA usage instead of auto-detection
   id: 0  # GPU ID if using CUDA
   use_fp16: true  # Enable FP16 for maximum speed on modern GPUs
   use_torch_compile: true  # Enable torch.compile for acceleration
