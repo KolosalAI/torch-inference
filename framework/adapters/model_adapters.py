@@ -175,35 +175,68 @@ class PyTorchModelAdapter(BaseModel):
         """Run forward pass through PyTorch model."""
         if not self._is_loaded:
             raise ModelLoadError("Model not loaded")
-        
+
         model = self.get_model_for_inference()
-        
+
         # Ensure inputs are on the correct device
         inputs = inputs.to(self.device)
-        
+
+        # Check for quantized model and handle device compatibility
+        is_quantized_model = self._is_quantized_model(model)
+        if is_quantized_model and self.device.type == 'cuda':
+            self.logger.warning("Quantized model detected on CUDA device. Moving model to CPU for compatibility.")
+            # Move model to CPU for quantized operations
+            model = model.cpu()
+            inputs = inputs.cpu()
+            
         # Only convert dtype for floating point tensors to avoid breaking embeddings
         # Embedding layers expect integer (long) tensors, not float
         if inputs.dtype in (torch.float32, torch.float16, torch.float64):
             # Check if model uses half precision by looking at model parameters
             # For transformers, we need to check all parameters, not just the first
             model_dtype = self._detect_model_dtype(model)
-            if model_dtype == torch.float16:
+            if model_dtype == torch.float16 and not is_quantized_model:
                 inputs = inputs.half()
             elif model_dtype == torch.float32:
                 inputs = inputs.float()
-        
+
         # Handle different model types
-        if hasattr(model, 'predict') and callable(model.predict):
-            # YOLO-style model
-            outputs = model.predict(inputs)
-        elif isinstance(model, torch.jit.ScriptModule):
-            # TorchScript model
-            outputs = model(inputs)
-        else:
-            # Standard PyTorch model
-            outputs = model(inputs)
-        
-        return outputs
+        try:
+            if hasattr(model, 'predict') and callable(model.predict):
+                # YOLO-style model
+                outputs = model.predict(inputs)
+            elif isinstance(model, torch.jit.ScriptModule):
+                # TorchScript model
+                outputs = model(inputs)
+            else:
+                # Standard PyTorch model
+                outputs = model(inputs)
+            
+            # Move outputs back to original device if we moved to CPU for quantization
+            if is_quantized_model and self.device.type == 'cuda':
+                outputs = outputs.to(self.device)
+                
+            return outputs
+            
+        except RuntimeError as e:
+            if 'quantized' in str(e).lower() and 'cuda' in str(e).lower():
+                self.logger.warning(f"Quantized operation failed on CUDA, retrying on CPU: {e}")
+                # Force CPU execution for quantized operations
+                model = model.cpu()
+                inputs = inputs.cpu()
+                
+                if hasattr(model, 'predict') and callable(model.predict):
+                    outputs = model.predict(inputs)
+                elif isinstance(model, torch.jit.ScriptModule):
+                    outputs = model(inputs)
+                else:
+                    outputs = model(inputs)
+                
+                # Move outputs back to original device
+                outputs = outputs.to(self.device)
+                return outputs
+            else:
+                raise
     
     def _detect_model_dtype(self, model):
         """Detect the primary dtype used by the model."""
@@ -227,6 +260,35 @@ class PyTorchModelAdapter(BaseModel):
         else:
             # Default to float32 if we can't determine
             return torch.float32
+            
+    def _is_quantized_model(self, model) -> bool:
+        """Check if the model contains quantized operations."""
+        try:
+            # Check for quantized modules or layers
+            for module in model.modules():
+                module_type = type(module).__name__
+                if any(quant_indicator in module_type.lower() for quant_indicator in [
+                    'quantized', 'quant', 'int8', 'qlinear', 'qdepthwise', 'qconv'
+                ]):
+                    return True
+                
+                # Check for quantized parameters
+                for param_name, param in module.named_parameters():
+                    if hasattr(param, 'qscheme') or 'quantized' in param_name.lower():
+                        return True
+                        
+            # Check for quantized state in the model's state dict
+            if hasattr(model, 'state_dict'):
+                for key in model.state_dict().keys():
+                    if any(quant_indicator in key.lower() for quant_indicator in [
+                        'quantized', '_scale', '_zero_point', 'quant'
+                    ]):
+                        return True
+                        
+            return False
+        except Exception as e:
+            self.logger.debug(f"Could not determine if model is quantized: {e}")
+            return False
     
     def postprocess(self, outputs: torch.Tensor) -> Any:
         """Postprocess PyTorch model outputs."""

@@ -1473,7 +1473,8 @@ class InferenceEngine:
                 # Determine the appropriate dtype based on model configuration
                 target_dtype = torch.float32
                 if self._mixed_precision_enabled and self.device.type == 'cuda':
-                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 for input tensors
+                    target_dtype = torch.float16
                 elif hasattr(self.model.model, 'parameters'):
                     try:
                         # Try to get dtype from the first parameter of the model
@@ -1504,7 +1505,8 @@ class InferenceEngine:
                 # Determine the appropriate dtype for fallback inputs
                 target_dtype = torch.float32
                 if self._mixed_precision_enabled and self.device.type == 'cuda':
-                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 for input tensors
+                    target_dtype = torch.float16
                 
                 # Fallback dummy inputs
                 dummy_inputs = [
@@ -1519,7 +1521,8 @@ class InferenceEngine:
                         # Use the same optimized inference path for warmup
                         with torch.inference_mode():
                             if self._mixed_precision_enabled and self.device.type == 'cuda':
-                                dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                                # Use float16 for better compatibility - avoid BFloat16 autocast
+                                dtype = torch.float16
                                 with torch.amp.autocast('cuda', dtype=dtype):
                                     if hasattr(self.model, 'model'):
                                         _ = self.model.model(dummy_input)
@@ -2048,8 +2051,8 @@ class InferenceEngine:
             # ROI Optimization 0&1: Batch inference with optimized context and mixed precision
             with torch.inference_mode():  # More efficient than no_grad()
                 if self._mixed_precision_enabled and self.device.type == 'cuda':
-                    # Use optimal dtype based on GPU capabilities
-                    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 autocast
+                    dtype = torch.float16
                     with torch.amp.autocast('cuda', dtype=dtype):
                         batch_output = worker_model.model(batch_tensor)
                 else:
@@ -2165,8 +2168,8 @@ class InferenceEngine:
             with torch.inference_mode():  # More efficient than no_grad() for inference
                 if self._mixed_precision_enabled and self.device.type == 'cuda':
                     # ROI Optimization 1: Mixed precision inference with optimal dtype
-                    # Use bfloat16 for better numerical stability, fp16 as fallback
-                    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 autocast
+                    dtype = torch.float16
                     with torch.amp.autocast('cuda', dtype=dtype):
                         if hasattr(model, 'get_active_model'):
                             model_instance = model.get_active_model()

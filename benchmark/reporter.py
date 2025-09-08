@@ -35,7 +35,10 @@ class TTSBenchmarkReporter:
         test_texts: Optional[List[str]] = None
     ) -> str:
         """
-        Generate a CSV report with comprehensive TTS benchmark metrics.
+        Generate a CSV report with comprehensive TTS benchmark metrics (DEPRECATED).
+        
+        This method is kept for backward compatibility but is now deprecated.
+        Use generate_summary_csv_report() for summary statistics.
         
         Args:
             results: Dictionary mapping concurrency levels to benchmark results
@@ -43,6 +46,121 @@ class TTSBenchmarkReporter:
             
         Returns:
             CSV content as string
+        """
+        logger.warning("generate_csv_report() is deprecated. Use generate_summary_csv_report() instead.")
+        return self.generate_summary_csv_report(results, test_texts)
+    
+    def generate_detailed_csv_report(
+        self,
+        results: Dict[int, TTSBenchmarkResult],
+        test_texts: Optional[List[str]] = None
+    ) -> str:
+        """
+        Generate a detailed CSV report with individual request/iteration data.
+        
+        Args:
+            results: Dictionary mapping concurrency levels to benchmark results
+            test_texts: Optional list of test texts used in benchmark
+            
+        Returns:
+            CSV content as string with individual request metrics
+        """
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header for detailed data
+        writer.writerow([
+            "Concurrency_Level",
+            "Request_ID",
+            "Iteration",
+            "Text_Input",
+            "Text_Length_Chars",
+            "Text_Length_Tokens",
+            "Start_Time_Sec",
+            "First_Audio_Time_Sec",
+            "End_Time_Sec",
+            "Wall_Time_Sec",
+            "TTFA_Sec",
+            "Audio_Duration_Sec",
+            "RTF",
+            "Sample_Rate",
+            "Bit_Depth",
+            "Success",
+            "Error_Message"
+        ])
+        
+        # Extract test texts lookup if available
+        test_texts_lookup = {}
+        if test_texts:
+            for i, text in enumerate(test_texts):
+                test_texts_lookup[i] = text
+        
+        # Data rows for each request
+        for concurrency in sorted(results.keys()):
+            result = results[concurrency]
+            request_metrics = result.request_metrics
+            
+            for idx, request in enumerate(request_metrics):
+                # Extract iteration number from request_id (assumes format "req_N")
+                iteration = idx
+                if hasattr(request, 'request_id') and request.request_id:
+                    try:
+                        if request.request_id.startswith('req_'):
+                            iteration = int(request.request_id.split('_')[1])
+                    except (ValueError, IndexError):
+                        pass
+                
+                # Get text input (cycle through test texts based on iteration)
+                text_input = ""
+                if test_texts:
+                    text_idx = iteration % len(test_texts)
+                    text_input = test_texts[text_idx]
+                
+                # Calculate derived metrics
+                wall_time = request.wall_time if request.wall_time is not None else 0.0
+                ttfa = request.ttfa if request.ttfa is not None else 0.0
+                rtf = request.rtf if request.rtf is not None else 0.0
+                
+                # Success status
+                success = "True" if request.error is None else "False"
+                error_msg = request.error if request.error else ""
+                
+                writer.writerow([
+                    concurrency,
+                    request.request_id,
+                    iteration,
+                    text_input,
+                    request.text_len_chars,
+                    request.text_len_tokens,
+                    f"{request.t_start:.6f}",
+                    f"{request.t_first_audio:.6f}" if request.t_first_audio is not None else "",
+                    f"{request.t_end:.6f}" if request.t_end is not None else "",
+                    f"{wall_time:.6f}",
+                    f"{ttfa:.6f}",
+                    f"{request.audio_duration_sec:.6f}",
+                    f"{rtf:.6f}",
+                    request.sample_rate,
+                    request.bit_depth,
+                    success,
+                    error_msg
+                ])
+        
+        return output.getvalue()
+    
+    def generate_summary_csv_report(
+        self,
+        results: Dict[int, TTSBenchmarkResult],
+        test_texts: Optional[List[str]] = None
+    ) -> str:
+        """
+        Generate a summary CSV report with aggregated statistics only.
+        
+        Args:
+            results: Dictionary mapping concurrency levels to benchmark results
+            test_texts: Optional list of test texts used in benchmark
+            
+        Returns:
+            CSV content as string with summary statistics
         """
         output = io.StringIO()
         writer = csv.writer(output)
@@ -206,6 +324,90 @@ class TTSBenchmarkReporter:
             if asps_values:
                 best_asps = max(asps_values, key=lambda x: x[1])
                 writer.writerow([f"ASPS_C{concurrency}", concurrency, best_asps[0], f"{best_asps[1]:.4f}"])
+        
+        return output.getvalue()
+    
+    def generate_detailed_comparison_csv(
+        self,
+        benchmark_results: Dict[str, Dict[int, TTSBenchmarkResult]]
+    ) -> str:
+        """
+        Generate a detailed comparison CSV with individual request data from multiple benchmarks.
+        
+        Args:
+            benchmark_results: Dictionary mapping benchmark names to results
+            
+        Returns:
+            Detailed comparison CSV content as string
+        """
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header for detailed comparison
+        writer.writerow([
+            "Benchmark_Name",
+            "Concurrency_Level",
+            "Request_ID",
+            "Iteration",
+            "Text_Length_Chars",
+            "Text_Length_Tokens",
+            "Start_Time_Sec",
+            "First_Audio_Time_Sec",
+            "End_Time_Sec",
+            "Wall_Time_Sec",
+            "TTFA_Sec",
+            "Audio_Duration_Sec",
+            "RTF",
+            "Sample_Rate",
+            "Bit_Depth",
+            "Success",
+            "Error_Message"
+        ])
+        
+        # Data rows for each benchmark and request
+        for benchmark_name, results in benchmark_results.items():
+            for concurrency in sorted(results.keys()):
+                result = results[concurrency]
+                request_metrics = result.request_metrics
+                
+                for idx, request in enumerate(request_metrics):
+                    # Extract iteration number from request_id (assumes format "req_N")
+                    iteration = idx
+                    if hasattr(request, 'request_id') and request.request_id:
+                        try:
+                            if request.request_id.startswith('req_'):
+                                iteration = int(request.request_id.split('_')[1])
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    # Calculate derived metrics
+                    wall_time = request.wall_time if request.wall_time is not None else 0.0
+                    ttfa = request.ttfa if request.ttfa is not None else 0.0
+                    rtf = request.rtf if request.rtf is not None else 0.0
+                    
+                    # Success status
+                    success = "True" if request.error is None else "False"
+                    error_msg = request.error if request.error else ""
+                    
+                    writer.writerow([
+                        benchmark_name,
+                        concurrency,
+                        request.request_id,
+                        iteration,
+                        request.text_len_chars,
+                        request.text_len_tokens,
+                        f"{request.t_start:.6f}",
+                        f"{request.t_first_audio:.6f}" if request.t_first_audio is not None else "",
+                        f"{request.t_end:.6f}" if request.t_end is not None else "",
+                        f"{wall_time:.6f}",
+                        f"{ttfa:.6f}",
+                        f"{request.audio_duration_sec:.6f}",
+                        f"{rtf:.6f}",
+                        request.sample_rate,
+                        request.bit_depth,
+                        success,
+                        error_msg
+                    ])
         
         return output.getvalue()
     

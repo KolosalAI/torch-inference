@@ -32,7 +32,106 @@ from datetime import datetime
 # Add benchmark module to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+
+def validate_gpu_environment() -> bool:
+    """Validate that GPU environment is properly set up and warn about CPU fallback."""
+    print("=" * 60)
+    print("GPU ENVIRONMENT VALIDATION")
+    print("=" * 60)
+    
+    try:
+        import torch
+        
+        # Check CUDA availability
+        if not torch.cuda.is_available():
+            print("❌ CUDA is not available!")
+            print("   Please ensure you have:")
+            print("   1. NVIDIA GPU installed")
+            print("   2. CUDA drivers installed") 
+            print("   3. PyTorch with CUDA support installed")
+            print("   ⚠️  All benchmarks will use CPU fallback with SIGNIFICANTLY degraded performance")
+            print("   ⚠️  For accurate GPU performance benchmarks, please install CUDA support")
+            return False
+        
+        # Check GPU count
+        gpu_count = torch.cuda.device_count()
+        if gpu_count == 0:
+            print("❌ No CUDA devices found!")
+            print("   ⚠️  All benchmarks will use CPU fallback with SIGNIFICANTLY degraded performance")
+            return False
+        
+        print(f"✅ CUDA is available with {gpu_count} GPU(s)")
+        
+        # Check current GPU
+        current_device = torch.cuda.current_device()
+        gpu_name = torch.cuda.get_device_name(current_device)
+        print(f"✅ Current GPU: {gpu_name} (Device {current_device})")
+        
+        # Check GPU memory
+        total_memory = torch.cuda.get_device_properties(current_device).total_memory / (1024**3)
+        allocated_memory = torch.cuda.memory_allocated(current_device) / (1024**3)
+        
+        print(f"✅ GPU Memory: {allocated_memory:.2f}GB / {total_memory:.2f}GB total")
+        
+        if total_memory < 4.0:
+            print(f"⚠️  Warning: GPU has only {total_memory:.1f}GB memory. Some models may not fit.")
+        
+        # Check compute capability
+        props = torch.cuda.get_device_properties(current_device)
+        compute_cap = f"{props.major}.{props.minor}"
+        print(f"✅ Compute Capability: {compute_cap}")
+        
+        if props.major < 6:
+            print(f"⚠️  Warning: Compute capability {compute_cap} is quite old. Performance may be limited.")
+        
+        print("=" * 60)
+        print("🚀 GPU environment validated - ready for high-performance benchmarks!")
+        print("=" * 60)
+        return True
+        
+    except ImportError:
+        print("❌ PyTorch not available!")
+        print("   ⚠️  All benchmarks will use CPU fallback with SIGNIFICANTLY degraded performance")
+        return False
+    except Exception as e:
+        print(f"❌ GPU validation error: {e}")
+        print("   ⚠️  All benchmarks will use CPU fallback with SIGNIFICANTLY degraded performance")
+        return False
+
+
+def setup_gpu_optimizations():
+    """Set up GPU optimizations for maximum performance."""
+    try:
+        import torch
+        
+        if not torch.cuda.is_available():
+            print("⚠️  GPU optimizations disabled - CUDA not available")
+            return
+        
+        print("🚀 Setting up GPU optimizations...")
+        
+        # Set float32 matmul precision for better performance
+        torch.set_float32_matmul_precision('high')
+        
+        # Enable TF32 on Ampere GPUs
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        
+        # Enable cuDNN benchmark for better performance
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+        
+        # Clear GPU cache
+        torch.cuda.empty_cache()
+        
+        print("✅ GPU optimizations configured")
+        
+    except Exception as e:
+        print(f"⚠️  GPU optimization setup failed: {e}")
+        print("   Continuing with default settings")
+
 try:
+    # TTS Benchmarking
     from benchmark.harness import TTSBenchmarkHarness, BenchmarkConfig, create_demo_tts_function
     from benchmark.http_client import (
         create_torch_inference_tts_function, 
@@ -43,6 +142,20 @@ try:
     from benchmark.reporter import TTSBenchmarkReporter
     from benchmark.metrics import validate_metrics_consistency, TTSMetrics
     from benchmark.tts_benchmark import TTSBenchmarkResult
+    
+    # Image Benchmarking
+    from benchmark.harness import ImageBenchmarkHarness, generate_image_prompts, demo_image_model
+    from benchmark.gpu_demo_model import gpu_demo_image_model
+    from benchmark.image_benchmark import ImageBenchmarkResult
+    from benchmark.image_reporter import ImageBenchmarkReporter
+    from benchmark.image_metrics import ImageMetrics, validate_image_metrics_consistency
+    
+    # ResNet Image Classification Benchmarking
+    from benchmark.resnet_image_benchmark import (
+        ResNetImageBenchmarker, 
+        create_resnet_classification_function,
+        create_demo_resnet_function
+    )
 except ImportError as e:
     print(f"❌ Failed to import benchmark modules: {e}")
     print("Make sure you're running from the torch-inference directory")
@@ -56,7 +169,7 @@ class BenchmarkSession:
     timestamp: str
     config: BenchmarkConfig
     server_config: Optional[Dict[str, Any]] = None
-    results: Dict[str, Dict[int, TTSBenchmarkResult]] = None
+    results: Dict[str, Dict[int, Union[TTSBenchmarkResult, ImageBenchmarkResult]]] = None
     metadata: Dict[str, Any] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -81,9 +194,10 @@ class BenchmarkSession:
 
 class EndToEndBenchmarkRunner:
     """
-    Complete end-to-end TTS benchmark runner.
+    Complete end-to-end TTS and Image benchmark runner.
     
-    Provides automated testing, configuration management, and comprehensive reporting.
+    Provides automated testing, configuration management, and comprehensive reporting
+    for both TTS and Image generation models.
     """
     
     def __init__(self, output_dir: str = "benchmark_sessions"):
@@ -91,7 +205,8 @@ class EndToEndBenchmarkRunner:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.logger = self._setup_logging()
-        self.reporter = TTSBenchmarkReporter()
+        self.tts_reporter = TTSBenchmarkReporter()
+        self.image_reporter = ImageBenchmarkReporter()
         self.session: Optional[BenchmarkSession] = None
         
     def _setup_logging(self) -> logging.Logger:
@@ -142,28 +257,46 @@ class EndToEndBenchmarkRunner:
     
     def configure_benchmark(
         self,
+        model_type: str = "tts",
         concurrency_levels: Optional[List[int]] = None,
         iterations: int = 20,
         timeout: float = 30.0,
         sample_rate: int = 22050,
         text_variations: int = 25,
-        output_plots: bool = True
+        output_plots: bool = True,
+        # Image-specific parameters
+        image_width: int = 512,
+        image_height: int = 512,
+        num_images: int = 1,
+        num_inference_steps: int = 50,
+        guidance_scale: float = 7.5
     ) -> None:
-        """Configure benchmark parameters."""
+        """Configure benchmark parameters for TTS or Image models."""
         if not self.session:
             raise RuntimeError("No active session. Call start_session() first.")
         
         self.session.config = BenchmarkConfig(
+            model_type=model_type,
             concurrency_levels=concurrency_levels or [1, 2, 4, 8, 16, 32, 64],
             iterations_per_level=iterations,
             timeout_seconds=timeout,
             sample_rate=sample_rate,
             text_variations=text_variations,
             generate_plots=output_plots,
-            output_dir=str(self.output_dir / self.session.session_id)
+            output_dir=str(self.output_dir / self.session.session_id),
+            # Image parameters
+            image_width=image_width,
+            image_height=image_height,
+            num_images=num_images,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale
         )
         
-        self.logger.info(f"Configured benchmark: "
+        model_info = f"{model_type.upper()} model"
+        if model_type == "image":
+            model_info += f" ({image_width}x{image_height}, {num_inference_steps} steps)"
+        
+        self.logger.info(f"Configured benchmark for {model_info}: "
                         f"concurrency={self.session.config.concurrency_levels}, "
                         f"iterations={iterations}, timeout={timeout}s")
     
@@ -196,6 +329,240 @@ class EndToEndBenchmarkRunner:
         
         self._print_benchmark_summary("Demo Benchmark", results)
         return results
+    
+    def run_demo_image_benchmark(self) -> Dict[int, ImageBenchmarkResult]:
+        """Run demo benchmark with synthetic image generation."""
+        self.logger.info("Running demo image benchmark with synthetic model")
+        
+        if not self.session:
+            self.start_session("demo_image_benchmark")
+            self.configure_benchmark(model_type="image")
+        
+        # Use the GPU-aware demo image model
+        demo_image_func = gpu_demo_image_model
+        
+        # Run benchmark
+        harness = ImageBenchmarkHarness(self.session.config)
+        results = harness.run_benchmark(
+            demo_image_func,
+            benchmark_name="demo_synthetic_image"
+        )
+        
+        if not self.session.results:
+            self.session.results = {}
+        self.session.results["demo_image"] = results
+        
+        self._print_image_benchmark_summary("Demo Image Benchmark", results)
+        return results
+    
+    def run_demo_resnet_benchmark(self) -> Dict[int, ImageBenchmarkResult]:
+        """Run demo benchmark with synthetic ResNet classification."""
+        self.logger.info("Running demo ResNet benchmark with synthetic model")
+        
+        if not self.session:
+            self.start_session("demo_resnet_benchmark")
+            self.configure_benchmark(model_type="image_classification")
+        
+        # Create demo ResNet classification function
+        demo_resnet_func = create_demo_resnet_function()
+        
+        # Create ResNet benchmarker
+        benchmarker = ResNetImageBenchmarker(
+            default_width=224,
+            default_height=224,
+            warmup_requests=3
+        )
+        
+        # Run benchmark
+        results = benchmarker.benchmark_resnet_model(
+            classification_function=demo_resnet_func,
+            concurrency_levels=self.session.config.concurrency_levels,
+            iterations_per_level=self.session.config.iterations_per_level
+        )
+        
+        if not self.session.results:
+            self.session.results = {}
+        self.session.results["demo_resnet"] = results
+        
+        self._print_image_benchmark_summary("Demo ResNet Benchmark", results)
+        return results
+    
+    async def run_resnet_server_benchmark(
+        self,
+        model_name: str = "resnet18",
+        server_url: str = "http://localhost:8000",
+        auth_token: Optional[str] = None,
+        test_images_dir: Optional[str] = None,
+        top_k: int = 5
+    ) -> Dict[int, ImageBenchmarkResult]:
+        """Run ResNet classification benchmark against a server."""
+        self.logger.info(f"Running ResNet server benchmark: {model_name}")
+        
+        if not self.session:
+            self.start_session(f"resnet_benchmark_{model_name}")
+            self.configure_benchmark(model_type="image_classification")
+        
+        # Check model availability first
+        self.logger.info(f"Checking model availability: {model_name}")
+        from benchmark.resnet_image_benchmark import check_model_availability
+        
+        is_available, message = check_model_availability(model_name, server_url, auth_token, auto_load=True)
+        if not is_available:
+            self.logger.error(f"Model availability check failed: {message}")
+            raise RuntimeError(f"Cannot proceed with benchmark - {message}")
+        
+        self.logger.info(f"Model availability confirmed: {message}")
+        
+        # Store server configuration
+        self.session.server_config = {
+            "url": server_url,
+            "model_name": model_name,
+            "model_type": "image_classification",
+            "auth_token": bool(auth_token),
+            "top_k": top_k
+        }
+        
+        # Create ResNet classification function with availability check disabled
+        # (we already checked above)
+        resnet_function = create_resnet_classification_function(
+            model_name=model_name,
+            base_url=server_url,
+            auth_token=auth_token,
+            top_k=top_k,
+            check_availability=False,  # Skip check since we already did it
+            auto_load=False  # Don't auto-load since we already handled it
+        )
+        
+        # Create ResNet benchmarker
+        benchmarker = ResNetImageBenchmarker(
+            default_width=224,
+            default_height=224,
+            warmup_requests=5,
+            test_images_dir=test_images_dir
+        )
+        
+        # Run benchmark
+        results = benchmarker.benchmark_resnet_model(
+            classification_function=resnet_function,
+            concurrency_levels=self.session.config.concurrency_levels,
+            iterations_per_level=self.session.config.iterations_per_level
+        )
+        
+        if not self.session.results:
+            self.session.results = {}
+        self.session.results[f"resnet_{model_name}"] = results
+        
+        self._print_image_benchmark_summary(f"ResNet Server Benchmark ({model_name})", results)
+        return results
+    
+    async def run_image_model_benchmark(
+        self,
+        image_model_func,
+        model_name: str = "custom_image_model",
+        custom_prompts: Optional[List[str]] = None,
+        image_params: Optional[Dict[str, Any]] = None
+    ) -> Dict[int, ImageBenchmarkResult]:
+        """Run benchmark on a custom image generation model."""
+        self.logger.info(f"Running image model benchmark: {model_name}")
+        
+        if not self.session:
+            self.start_session(f"image_benchmark_{model_name}")
+            self.configure_benchmark(model_type="image")
+        
+        # Store model configuration
+        self.session.server_config = {
+            "model_name": model_name,
+            "model_type": "image",
+            "custom_prompts": bool(custom_prompts),
+            "custom_params": bool(image_params)
+        }
+        
+        # Run benchmark
+        harness = ImageBenchmarkHarness(self.session.config)
+        
+        results = harness.run_benchmark(
+            image_model_func,
+            benchmark_name=f"image_{model_name}",
+            test_prompts=custom_prompts,
+            image_params=image_params
+        )
+        
+        if not self.session.results:
+            self.session.results = {}
+        self.session.results[model_name] = results
+        
+        self._print_image_benchmark_summary(f"Image Model Benchmark ({model_name})", results)
+        return results
+    
+    async def run_image_resolution_comparison(
+        self,
+        image_model_func,
+        resolutions: List[tuple] = None,
+        model_name: str = "resolution_test"
+    ) -> Dict[str, Dict[int, ImageBenchmarkResult]]:
+        """Run comparison benchmark across multiple image resolutions."""
+        self.logger.info(f"Running image resolution comparison: {model_name}")
+        
+        if not self.session:
+            self.start_session("image_resolution_comparison")
+            self.configure_benchmark(model_type="image")
+        
+        if not resolutions:
+            resolutions = [(256, 256), (512, 512), (768, 768), (1024, 1024)]
+        
+        all_results = {}
+        
+        for width, height in resolutions:
+            resolution_name = f"{width}x{height}"
+            self.logger.info(f"Benchmarking resolution: {resolution_name}")
+            
+            try:
+                # Create temporary session config with specific resolution
+                temp_config = BenchmarkConfig(
+                    model_type="image",
+                    concurrency_levels=self.session.config.concurrency_levels,
+                    iterations_per_level=self.session.config.iterations_per_level,
+                    timeout_seconds=self.session.config.timeout_seconds,
+                    text_variations=self.session.config.text_variations,
+                    output_dir=self.session.config.output_dir,
+                    image_width=width,
+                    image_height=height,
+                    num_images=self.session.config.num_images,
+                    num_inference_steps=self.session.config.num_inference_steps,
+                    guidance_scale=self.session.config.guidance_scale
+                )
+                
+                harness = ImageBenchmarkHarness(temp_config)
+                results = harness.run_benchmark(
+                    image_model_func,
+                    benchmark_name=f"{model_name}_{resolution_name}",
+                    image_params={
+                        'width': width,
+                        'height': height,
+                        'num_images': self.session.config.num_images,
+                        'num_inference_steps': self.session.config.num_inference_steps,
+                        'guidance_scale': self.session.config.guidance_scale
+                    }
+                )
+                all_results[resolution_name] = results
+                
+            except Exception as e:
+                self.logger.error(f"Failed to benchmark resolution {resolution_name}: {e}")
+                continue
+        
+        if len(all_results) > 1:
+            # Generate comparison
+            harness = ImageBenchmarkHarness(self.session.config)
+            self.image_reporter.generate_comparison_csv(all_results)
+            
+            # Print comparison summary
+            self._print_image_resolution_comparison(all_results)
+        
+        if not self.session.results:
+            self.session.results = {}
+        self.session.results.update(all_results)
+        
+        return all_results
     
     async def discover_server_endpoints(self, base_url: str) -> Dict[str, bool]:
         """Discover and test available TTS server endpoints."""
@@ -479,12 +846,12 @@ class EndToEndBenchmarkRunner:
         return session
     
     def _print_benchmark_summary(self, title: str, results: Dict[int, TTSBenchmarkResult]):
-        """Print formatted benchmark summary."""
+        """Print formatted TTS benchmark summary."""
         print(f"\n{'='*80}")
         print(f"{title} - Results Summary")
         print(f"{'='*80}")
         
-        self.reporter.print_summary_table(results, title)
+        self.tts_reporter.print_summary_table(results, title)
         
         # Validation warnings
         for concurrency, result in results.items():
@@ -493,6 +860,64 @@ class EndToEndBenchmarkRunner:
                 print(f"\nValidation issues for concurrency {concurrency}:")
                 for warning in warnings:
                     print(f"   - {warning}")
+    
+    def _print_image_benchmark_summary(self, title: str, results: Dict[int, ImageBenchmarkResult]):
+        """Print formatted Image benchmark summary."""
+        print(f"\n{'='*80}")
+        print(f"{title} - Results Summary")
+        print(f"{'='*80}")
+        
+        self.image_reporter.print_summary_table(results, title)
+        
+        # Validation warnings for image metrics
+        for concurrency, result in results.items():
+            warnings = validate_image_metrics_consistency(result.metrics)
+            if warnings:
+                print(f"\nValidation issues for concurrency {concurrency}:")
+                for warning in warnings:
+                    print(f"   - {warning}")
+    
+    def _print_image_resolution_comparison(self, all_results: Dict[str, Dict[int, ImageBenchmarkResult]]):
+        """Print image resolution comparison summary."""
+        print(f"\n{'='*80}")
+        print("IMAGE RESOLUTION COMPARISON SUMMARY")
+        print(f"{'='*80}")
+        
+        # Show results for all concurrency levels
+        all_concurrencies = set()
+        for results in all_results.values():
+            all_concurrencies.update(results.keys())
+        concurrencies = sorted(all_concurrencies)
+        
+        for concurrency in concurrencies:
+            print(f"\nPerformance at Concurrency {concurrency}:")
+            print(f"{'Resolution':<12} {'IPS':<10} {'PPS':<12} {'RPS':<10} {'TTFI p95':<12} {'Memory MB':<12} {'Success%':<10}")
+            print("-" * 90)
+            
+            for resolution, results in all_results.items():
+                if concurrency in results:
+                    metrics = results[concurrency].metrics
+                    print(f"{resolution:<12} "
+                          f"{metrics.ips:<10.3f} "
+                          f"{metrics.pps:<12.0f} "
+                          f"{metrics.rps:<10.1f} "
+                          f"{metrics.ttfi_p95*1000:<12.1f} "
+                          f"{metrics.avg_memory_peak_mb:<12.1f} "
+                          f"{metrics.success_rate:<10.1f}")
+                else:
+                    print(f"{resolution:<12} {'N/A':<10} {'N/A':<12} {'N/A':<10} {'N/A':<12} {'N/A':<12} {'N/A':<10}")
+        
+        # Print best performance summary
+        print(f"\n{'Best Performance Summary:'}")
+        print("-" * 50)
+        best_ips = max((max(results.values(), key=lambda r: r.metrics.ips) for results in all_results.values()), 
+                       key=lambda r: r.metrics.ips)
+        best_resolution = next(res for res, results in all_results.items() 
+                              if any(r.metrics.ips == best_ips.metrics.ips for r in results.values()))
+        best_concurrency = next(conc for conc, r in all_results[best_resolution].items() 
+                               if r.metrics.ips == best_ips.metrics.ips)
+        print(f"Highest IPS: {best_ips.metrics.ips:.3f} at {best_resolution} with concurrency {best_concurrency}")
+        print(f"Highest PPS: {best_ips.metrics.pps:.0f} at {best_resolution} with concurrency {best_concurrency}")
     
     def _print_voice_comparison(self, all_results: Dict[str, Dict[int, TTSBenchmarkResult]]):
         """Print voice comparison summary."""
@@ -551,15 +976,24 @@ class EndToEndBenchmarkRunner:
 async def main():
     """Main CLI interface for end-to-end benchmarking."""
     parser = argparse.ArgumentParser(
-        description="End-to-End TTS Benchmark Runner",
+        description="End-to-End TTS and Image Benchmark Runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python benchmark.py demo                                    # Run demo benchmark
+  # TTS Benchmarks
+  python benchmark.py demo                                    # Run demo TTS benchmark
   python benchmark.py server --url http://localhost:8000     # Basic server benchmark
   python benchmark.py voices --url http://localhost:8000 --voices default premium
   python benchmark.py comprehensive --url http://localhost:8000 --voices default premium
   python benchmark.py discover --url http://localhost:8000   # Discover endpoints only
+  
+  # Image Benchmarks
+  python benchmark.py image-demo                              # Run demo image benchmark
+  python benchmark.py image-resolution --model mymodel       # Test different resolutions
+  
+  # ResNet Classification Benchmarks
+  python benchmark.py resnet-demo                             # Run demo ResNet benchmark
+  python benchmark.py resnet-server --model resnet18  # Benchmark ResNet server
         """
     )
     
@@ -604,12 +1038,45 @@ Examples:
     discover_parser = subparsers.add_parser("discover", help="Discover available TTS endpoints")
     discover_parser.add_argument("--url", required=True, help="TTS server base URL")
     
+    # Image benchmark commands
+    image_demo_parser = subparsers.add_parser("image-demo", help="Run demo image benchmark")
+    image_demo_parser.add_argument("--iterations", type=int, default=20, help="Iterations per concurrency level")
+    image_demo_parser.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4, 8], help="Concurrency levels")
+    image_demo_parser.add_argument("--width", type=int, default=512, help="Image width")
+    image_demo_parser.add_argument("--height", type=int, default=512, help="Image height")
+    image_demo_parser.add_argument("--steps", type=int, default=20, help="Inference steps")
+    
+    # Image resolution comparison
+    image_resolution_parser = subparsers.add_parser("image-resolution", help="Compare image generation at different resolutions")
+    image_resolution_parser.add_argument("--model", default="demo", help="Model name for testing")
+    image_resolution_parser.add_argument("--resolutions", nargs="+", default=["256x256", "512x512", "768x768"], help="Resolutions to test (format: WIDTHxHEIGHT)")
+    image_resolution_parser.add_argument("--iterations", type=int, default=15, help="Iterations per resolution")
+    image_resolution_parser.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4], help="Concurrency levels")
+    image_resolution_parser.add_argument("--steps", type=int, default=20, help="Inference steps")
+    
+    # ResNet benchmark commands
+    resnet_demo_parser = subparsers.add_parser("resnet-demo", help="Run demo ResNet classification benchmark")
+    resnet_demo_parser.add_argument("--iterations", type=int, default=50, help="Iterations per concurrency level")
+    resnet_demo_parser.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4, 8, 16], help="Concurrency levels")
+    
+    resnet_server_parser = subparsers.add_parser("resnet-server", help="Benchmark ResNet classification against a server")
+    resnet_server_parser.add_argument("--url", default="http://localhost:8000", help="Server URL")
+    resnet_server_parser.add_argument("--model", default="resnet18", help="ResNet model name")
+    resnet_server_parser.add_argument("--auth-token", help="Authentication token")
+    resnet_server_parser.add_argument("--test-images-dir", help="Directory containing test images")
+    resnet_server_parser.add_argument("--top-k", type=int, default=5, help="Number of top predictions to return")
+    resnet_server_parser.add_argument("--iterations", type=int, default=100, help="Iterations per concurrency level")
+    resnet_server_parser.add_argument("--concurrency", nargs="+", type=int, default=[1, 2, 4, 8, 16], help="Concurrency levels")
+    resnet_server_parser.add_argument("--enforce-gpu", action="store_true", help="Enforce GPU usage and validate GPU performance")
+    resnet_server_parser.add_argument("--gpu-validation", action="store_true", help="Validate GPU setup before running benchmark")
+    
     args = parser.parse_args()
     
     # Setup logging
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
-        format='%(asctime)s - %(levelname)s - %(message)s'
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        force=True  # This will remove existing handlers and reconfigure
     )
     
     # Create runner
@@ -672,6 +1139,115 @@ Examples:
             
             working_count = sum(1 for works in discovered.values() if works)
             print(f"\nSummary: {working_count}/{len(discovered)} endpoints are working")
+            
+        elif args.command == "image-demo":
+            # Automatic GPU validation for image benchmarks
+            print("🔍 Validating GPU environment for image generation benchmark...")
+            gpu_available = validate_gpu_environment()
+            
+            if gpu_available:
+                setup_gpu_optimizations()
+                print("🚀 GPU detected - enabling performance optimizations")
+            
+            if not runner.session:
+                runner.start_session(args.session_name or "image_demo")
+                runner.configure_benchmark(
+                    model_type="image",
+                    concurrency_levels=args.concurrency,
+                    iterations=args.iterations,
+                    image_width=args.width,
+                    image_height=args.height,
+                    num_inference_steps=args.steps
+                )
+            results = runner.run_demo_image_benchmark()
+            
+        elif args.command == "image-resolution":
+            if not runner.session:
+                runner.start_session(args.session_name or "image_resolution_test")
+                runner.configure_benchmark(
+                    model_type="image",
+                    concurrency_levels=args.concurrency,
+                    iterations=args.iterations,
+                    num_inference_steps=args.steps
+                )
+            
+            # Parse resolutions
+            resolutions = []
+            for res_str in args.resolutions:
+                try:
+                    width, height = map(int, res_str.split('x'))
+                    resolutions.append((width, height))
+                except ValueError:
+                    print(f"Invalid resolution format: {res_str}. Use WIDTHxHEIGHT (e.g., 512x512)")
+                    return
+            
+            if args.model == "demo":
+                # Use demo model
+                results = await runner.run_image_resolution_comparison(
+                    gpu_demo_image_model,
+                    resolutions=resolutions,
+                    model_name="demo_resolution_test"
+                )
+            else:
+                print(f"Custom model '{args.model}' not implemented in CLI. Use demo model or implement custom model loading.")
+                return
+            
+        elif args.command == "resnet-demo":
+            # Automatic GPU validation for ResNet demo benchmark
+            print("🔍 Validating GPU environment for ResNet demo benchmark...")
+            gpu_available = validate_gpu_environment()
+            
+            if gpu_available:
+                setup_gpu_optimizations()
+                print("🚀 GPU detected - enabling performance optimizations")
+            
+            if not runner.session:
+                runner.start_session(args.session_name or "resnet_demo")
+                runner.configure_benchmark(
+                    model_type="image_classification",
+                    concurrency_levels=args.concurrency,
+                    iterations=args.iterations
+                )
+            results = runner.run_demo_resnet_benchmark()
+            
+        elif args.command == "resnet-server":
+            # Automatic GPU validation for ResNet server benchmarks
+            print("🔍 Validating GPU environment for ResNet server benchmark...")
+            gpu_available = validate_gpu_environment()
+            
+            # GPU validation and enforcement
+            if hasattr(args, 'gpu_validation') and args.gpu_validation:
+                if not gpu_available:
+                    print("❌ GPU validation failed!")
+                    return
+                else:
+                    print("✅ GPU validation passed!")
+            
+            if hasattr(args, 'enforce_gpu') and args.enforce_gpu:
+                if not gpu_available:
+                    print("❌ GPU enforcement enabled but GPU validation failed!")
+                    return
+                setup_gpu_optimizations()
+                print("🚀 GPU enforcement enabled - maximum performance mode")
+            elif gpu_available:
+                # Setup GPU optimizations automatically if GPU is available
+                setup_gpu_optimizations()
+                print("🚀 GPU detected - enabling performance optimizations")
+            
+            if not runner.session:
+                runner.start_session(args.session_name or f"resnet_server_{args.model}")
+                runner.configure_benchmark(
+                    model_type="image_classification",
+                    concurrency_levels=args.concurrency,
+                    iterations=args.iterations
+                )
+            results = await runner.run_resnet_server_benchmark(
+                model_name=args.model,
+                server_url=args.url,
+                auth_token=args.auth_token,
+                test_images_dir=args.test_images_dir,
+                top_k=args.top_k
+            )
             
         else:
             parser.print_help()

@@ -117,6 +117,69 @@ if torch.cuda.is_available():
     # Enable cuDNN deterministic mode and benchmark for better performance
     torch.backends.cudnn.benchmark = True
 
+def validate_gpu_configuration():
+    """Validate GPU configuration if CUDA device is forced in config."""
+    try:
+        # Try to load config to check if GPU is forced
+        import yaml
+        from pathlib import Path
+        
+        # Try to find and load config file
+        config_file = Path("config.yaml")
+        if not config_file.exists():
+            config_file = Path("config_gpu_forced.yaml")
+        
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config_data = yaml.safe_load(f)
+            
+            device_type = config_data.get('device', {}).get('type', 'auto')
+            
+            if device_type == 'cuda':
+                print("\n🔍 GPU VALIDATION (Required by configuration)")
+                print("-" * 40)
+                
+                if not torch.cuda.is_available():
+                    print("❌ FATAL: CUDA device required by config but CUDA not available!")
+                    print("   Configuration requires CUDA but:")
+                    print("   - CUDA is not available in PyTorch")
+                    print("   - GPU drivers may not be installed")
+                    print("   - PyTorch may not have CUDA support")
+                    print("\n   Fix options:")
+                    print("   1. Install CUDA-enabled PyTorch")
+                    print("   2. Update GPU drivers")
+                    print("   3. Change config device type from 'cuda' to 'auto'")
+                    raise RuntimeError("CUDA required by configuration but not available")
+                
+                device_id = config_data.get('device', {}).get('id', 0)
+                if device_id >= torch.cuda.device_count():
+                    print(f"❌ FATAL: GPU device {device_id} required but only {torch.cuda.device_count()} GPU(s) available!")
+                    raise RuntimeError(f"GPU device {device_id} not available")
+                
+                gpu_name = torch.cuda.get_device_name(device_id)
+                memory_gb = torch.cuda.get_device_properties(device_id).total_memory / (1024**3)
+                
+                print(f"✅ Required GPU validated: {gpu_name}")
+                print(f"✅ GPU memory: {memory_gb:.1f}GB")
+                print(f"✅ CUDA version: {torch.version.cuda}")
+                
+                # Set the device for consistency
+                torch.cuda.set_device(device_id)
+                
+                print("🚀 GPU enforcement mode: ACTIVE")
+        
+    except Exception as e:
+        if "CUDA required" in str(e) or "GPU device" in str(e):
+            print(f"\n💥 STARTUP FAILED: {e}")
+            import sys
+            sys.exit(1)
+        else:
+            # Non-critical validation error, continue with warning
+            print(f"⚠️  GPU validation warning: {e}")
+
+# Validate GPU configuration early
+validate_gpu_configuration()
+
 if torch.cuda.is_available():
     current_device = torch.cuda.current_device()
     gpu_name = torch.cuda.get_device_name(current_device)
@@ -766,10 +829,19 @@ class ExampleModel(BaseModel):
             torch.nn.ReLU(),
             torch.nn.Linear(32, 1)
         )
-        self.model.to(self.device)
+        
+        # Ensure model uses compatible dtype - avoid BFloat16 for model parameters
+        target_dtype = torch.float32
+        if (hasattr(self.config, 'device') and 
+            getattr(self.config.device, 'use_fp16', False) and 
+            self.device.type == 'cuda'):
+            # Use float16 for better compatibility
+            target_dtype = torch.float16
+            
+        self.model = self.model.to(device=self.device, dtype=target_dtype)
         self.model.eval()
         self._is_loaded = True
-        self.logger.info(f"Loaded example model on device: {self.device}")
+        self.logger.info(f"Loaded example model on device: {self.device} with dtype: {target_dtype}")
         
         # Log device information for debugging
         if self.device.type == 'cuda':
@@ -797,8 +869,8 @@ class ExampleModel(BaseModel):
                 if (hasattr(self.config, 'device') and 
                     getattr(self.config.device, 'use_fp16', False) and 
                     self.device.type == 'cuda'):
-                    # Use bfloat16 if supported, otherwise float16
-                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 for input tensors
+                    target_dtype = torch.float16
         
         if isinstance(inputs, list) and all(isinstance(x, (int, float)) for x in inputs):
             # List of numbers - pad or truncate to size 10
@@ -847,7 +919,21 @@ class ExampleModel(BaseModel):
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Forward pass through the model."""
         model = self.get_model_for_inference()
-        return model(inputs)
+        try:
+            return model(inputs)
+        except RuntimeError as e:
+            # Handle BFloat16 compatibility issues
+            if "Got unsupported ScalarType BFloat16" in str(e) or "BFloat16" in str(e):
+                self.logger.warning(f"BFloat16 compatibility issue in forward pass, converting input dtype: {e}")
+                # Convert input to compatible dtype
+                if inputs.dtype == torch.bfloat16:
+                    if self.device.type == 'cuda':
+                        inputs = inputs.to(torch.float16)
+                    else:
+                        inputs = inputs.to(torch.float32)
+                return model(inputs)
+            else:
+                raise
     
     def postprocess(self, outputs: torch.Tensor) -> Any:
         """Postprocess model outputs."""
@@ -872,8 +958,8 @@ class ExampleModel(BaseModel):
                 if (hasattr(self.config, 'device') and 
                     getattr(self.config.device, 'use_fp16', False) and 
                     self.device.type == 'cuda'):
-                    # Use bfloat16 if supported, otherwise float16
-                    target_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 for input tensors
+                    target_dtype = torch.float16
         
         return torch.randn(1, 10, device=self.device, dtype=target_dtype)
 
@@ -2390,8 +2476,7 @@ async def download_model_endpoint(
         
         # Enhanced download with additional parameters
         download_kwargs = {
-            "task": request.task,
-            "pretrained": True
+            "task": request.task
         }
         
         # Add TTS-specific parameters
@@ -2406,6 +2491,14 @@ async def download_model_endpoint(
         # Add custom settings if provided
         if request.custom_settings:
             download_kwargs.update(request.custom_settings)
+        
+        # Add config if provided
+        if request.config:
+            download_kwargs.update(request.config)
+        
+        # Set default pretrained to True if not specified
+        if "pretrained" not in download_kwargs:
+            download_kwargs["pretrained"] = True
         
         # Start download (background or synchronous)
         if background_tasks:
@@ -3307,11 +3400,15 @@ async def _enhanced_model_download_task(
         include_vocoder = kwargs.get("include_vocoder", False)
         
         # Use model manager for download
+        # Extract pretrained from kwargs to avoid duplicate argument
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['task', 'auto_convert_tts', 'include_vocoder']}
+        pretrained = filtered_kwargs.pop('pretrained', True)  # Default to True if not specified
+        
         model_manager.download_and_load_model(
             source, model_id, name, None, 
             task=task, 
-            pretrained=True,
-            **{k: v for k, v in kwargs.items() if k not in ['task', 'auto_convert_tts', 'include_vocoder']}
+            pretrained=pretrained,
+            **filtered_kwargs
         )
         
         # If this is a TTS model, perform additional setup
