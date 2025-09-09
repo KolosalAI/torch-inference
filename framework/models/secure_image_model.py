@@ -60,6 +60,9 @@ class SecureImageModel:
         self.config = config or InferenceConfig()
         self.model_name = f"SecureImageModel_{base_model_name}"
         
+        # Initialize logger first, before other methods that might use it
+        self.logger = logging.getLogger(f"{__name__}.SecureImageModel")
+        
         # Configure device from config or detect best available
         self.device = self._configure_device()
         self._is_loaded = False
@@ -74,7 +77,6 @@ class SecureImageModel:
             'sanitizations_applied': 0
         }
         
-        self.logger = logging.getLogger(f"{__name__}.SecureImageModel")
         self.logger.info(f"SecureImageModel initialized with security level: {security_level.name}")
         self.logger.info(f"SecureImageModel using device: {self.device}")
     

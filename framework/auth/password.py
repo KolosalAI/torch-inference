@@ -21,8 +21,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Password context for hashing
+
+# Allow fast hash for tests
+import os
 pwd_context = None
-if PASSLIB_AVAILABLE:
+if os.environ.get("TEST_FAST_HASH") == "1":
+    pwd_context = None  # Use simple hash for tests
+    logger.info("Password hashing: TEST_FAST_HASH enabled, using simple hash for tests")
+elif PASSLIB_AVAILABLE:
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     logger.info("Password hashing initialized with bcrypt")
 else:

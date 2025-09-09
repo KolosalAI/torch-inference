@@ -271,12 +271,14 @@ class ServerConfig(BaseModel):
 class InferenceConfig(BaseModel):
     """Main inference configuration."""
     model_path: Optional[str] = None
+    fallback_model: Optional[str] = None  # Fallback model for inference service
     device: DeviceConfig = Field(default_factory=DeviceConfig)
     batch: BatchConfig = Field(default_factory=BatchConfig)
     optimization: OptimizationConfig = Field(default_factory=OptimizationConfig)
     autoscaling: AutoscalingConfig = Field(default_factory=AutoscalingConfig)
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     max_memory_usage: Optional[int] = None  # MB
+    default_timeout: Optional[float] = 30.0  # Default timeout in seconds
     
     @validator('model_path')
     def validate_model_path(cls, v):

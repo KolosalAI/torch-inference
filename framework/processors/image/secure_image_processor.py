@@ -355,17 +355,23 @@ class SecureImagePreprocessor:
     - Sanitization and defensive transformations
     """
     
-    def __init__(self, security_level: SecurityLevel = SecurityLevel.MEDIUM,
+    def __init__(self, security_level: Union[SecurityLevel, SecurityConfig] = SecurityLevel.MEDIUM,
                  config: Optional[SecurityConfig] = None):
-        self.security_level = security_level
-        self.config = config or SecurityConfig(security_level=security_level)
+        # Handle case where SecurityConfig is passed as first argument (for backward compatibility)
+        if isinstance(security_level, SecurityConfig):
+            self.config = security_level
+            self.security_level = security_level.security_level
+        else:
+            self.security_level = security_level
+            self.config = config or SecurityConfig(security_level=security_level)
+        
         self.logger = logging.getLogger(f"{__name__}.SecureImagePreprocessor")
         
         # Initialize components
-        self.validator = SecureImageValidator(security_level)
+        self.validator = SecureImageValidator(self.security_level)
         self.sanitizer = SecureImageSanitizer(self.config)
         
-        self.logger.info(f"SecureImagePreprocessor initialized with security level: {security_level.name}")
+        self.logger.info(f"SecureImagePreprocessor initialized with security level: {self.security_level.name}")
     
     def process_image_secure(self, image_data: Union[bytes, np.ndarray], 
                            filename: Optional[str] = None,

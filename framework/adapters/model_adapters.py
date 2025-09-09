@@ -184,21 +184,26 @@ class PyTorchModelAdapter(BaseModel):
         # Check for quantized model and handle device compatibility
         is_quantized_model = self._is_quantized_model(model)
         if is_quantized_model and self.device.type == 'cuda':
-            self.logger.warning("Quantized model detected on CUDA device. Moving model to CPU for compatibility.")
+            self.logger.warning("Quantized model detected on CUDA device. Moving model to CPU for compatibility. Preserving input dtype for embeddings.")
             # Move model to CPU for quantized operations
             model = model.cpu()
-            inputs = inputs.cpu()
-            
-        # Only convert dtype for floating point tensors to avoid breaking embeddings
-        # Embedding layers expect integer (long) tensors, not float
-        if inputs.dtype in (torch.float32, torch.float16, torch.float64):
-            # Check if model uses half precision by looking at model parameters
-            # For transformers, we need to check all parameters, not just the first
+            # Convert all parameters and buffers to float32 to avoid dtype mismatch
+            for param in model.parameters():
+                if param.dtype == torch.float16 or param.dtype == torch.half:
+                    param.data = param.data.float()
+            for buffer_name, buffer in model.named_buffers():
+                if buffer.dtype == torch.float16 or buffer.dtype == torch.half:
+                    setattr(model, buffer_name, buffer.float())
+            # Only cast to float if input is floating type; preserve integer types for embeddings
+            if inputs.dtype in (torch.long, torch.int64, torch.int32, torch.int16, torch.int8):
+                inputs = inputs.cpu()
+            else:
+                inputs = inputs.cpu().float()
+            model_dtype = torch.float32
+        else:
+            # Handle dtype conversion carefully to avoid mismatches
             model_dtype = self._detect_model_dtype(model)
-            if model_dtype == torch.float16 and not is_quantized_model:
-                inputs = inputs.half()
-            elif model_dtype == torch.float32:
-                inputs = inputs.float()
+            inputs = self._match_input_dtype_to_model(inputs, model, model_dtype, is_quantized_model)
 
         # Handle different model types
         try:
@@ -214,7 +219,7 @@ class PyTorchModelAdapter(BaseModel):
             
             # Move outputs back to original device if we moved to CPU for quantization
             if is_quantized_model and self.device.type == 'cuda':
-                outputs = outputs.to(self.device)
+                outputs = self._move_outputs_to_device(outputs, self.device)
                 
             return outputs
             
@@ -233,7 +238,7 @@ class PyTorchModelAdapter(BaseModel):
                     outputs = model(inputs)
                 
                 # Move outputs back to original device
-                outputs = outputs.to(self.device)
+                outputs = self._move_outputs_to_device(outputs, self.device)
                 return outputs
             else:
                 raise
@@ -289,6 +294,70 @@ class PyTorchModelAdapter(BaseModel):
         except Exception as e:
             self.logger.debug(f"Could not determine if model is quantized: {e}")
             return False
+    
+    def _match_input_dtype_to_model(self, inputs: torch.Tensor, model, model_dtype: torch.dtype, is_quantized_model: bool) -> torch.Tensor:
+        """Match input dtype to model dtype to prevent dtype mismatches."""
+        try:
+            # For embedding layers, preserve integer dtypes
+            if inputs.dtype in (torch.long, torch.int64, torch.int32, torch.int16, torch.int8):
+                # Don't convert integer tensors that are likely for embeddings
+                return inputs
+            
+            # For floating point tensors, match to model dtype
+            if inputs.dtype in (torch.float32, torch.float16, torch.float64, torch.bfloat16):
+                # If model is quantized, use float32 to avoid issues
+                if is_quantized_model:
+                    return inputs.float()
+                
+                # Match model dtype
+                if model_dtype == torch.float16:
+                    return inputs.half()
+                elif model_dtype == torch.float32:
+                    return inputs.float()
+                else:
+                    return inputs.float()  # Default to float32
+            
+            # Return unchanged for other dtypes
+            return inputs
+            
+        except Exception as e:
+            self.logger.debug(f"Failed to match input dtype: {e}, using original")
+            return inputs
+    
+    def _move_outputs_to_device(self, outputs, device: torch.device):
+        """Move outputs to device, handling different output types."""
+        try:
+            if isinstance(outputs, torch.Tensor):
+                return outputs.to(device)
+            elif hasattr(outputs, 'to') and callable(outputs.to):
+                # Some objects like ModelOutput have a 'to' method
+                return outputs.to(device)
+            elif hasattr(outputs, 'last_hidden_state') and isinstance(outputs.last_hidden_state, torch.Tensor):
+                # Handle transformer outputs by moving individual tensor fields
+                for attr_name in dir(outputs):
+                    if not attr_name.startswith('_'):
+                        attr_value = getattr(outputs, attr_name)
+                        if isinstance(attr_value, torch.Tensor):
+                            setattr(outputs, attr_name, attr_value.to(device))
+                return outputs
+            elif isinstance(outputs, (list, tuple)):
+                # Handle list/tuple of tensors
+                moved_outputs = []
+                for output in outputs:
+                    moved_outputs.append(self._move_outputs_to_device(output, device))
+                return type(outputs)(moved_outputs)
+            elif isinstance(outputs, dict):
+                # Handle dictionary of tensors
+                moved_dict = {}
+                for key, value in outputs.items():
+                    moved_dict[key] = self._move_outputs_to_device(value, device)
+                return moved_dict
+            else:
+                # Can't move to device, return as is
+                return outputs
+        except Exception as e:
+            self.logger.debug(f"Failed to move outputs to device: {e}, returning original")
+            return outputs
     
     def postprocess(self, outputs: torch.Tensor) -> Any:
         """Postprocess PyTorch model outputs."""
