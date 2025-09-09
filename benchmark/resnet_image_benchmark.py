@@ -176,10 +176,112 @@ class ResNetImageBenchmarker(ImageBenchmarker):
             
             logger.info(f"Concurrency {concurrency}: "
                        f"Classifications/sec={metrics.ips:.3f}, "
-                       f"RPS={metrics.rps:.1f}, "
-                       f"Avg latency={metrics.ttfi_p50*1000:.1f}ms")
+                       f"RPS={metrics.rps:.1f}")
         
         return results
+    
+    def benchmark_single_concurrency_classification(
+        self,
+        classification_function: Callable[[bytes], Dict[str, Any]],
+        concurrency: int,
+        iterations: int,
+        test_images: Optional[List[bytes]] = None,
+        **kwargs
+    ) -> ImageBenchmarkResult:
+        """
+        Benchmark ResNet classification at a single concurrency level.
+        
+        Args:
+            classification_function: Function that takes image bytes and returns classification results
+            concurrency: Number of concurrent requests
+            iterations: Number of iterations to run
+            test_images: List of test images as bytes. If None, generates synthetic images
+            **kwargs: Additional keyword arguments for classification function
+            
+        Returns:
+            ImageBenchmarkResult containing metrics for this concurrency level
+        """
+        # Prepare test images
+        if test_images is None:
+            test_images = self._generate_test_images(min(iterations, 10))
+        
+        logger.info(f"Running ResNet benchmark: concurrency={concurrency}, iterations={iterations}")
+        
+        request_metrics = []
+        requests = []
+        
+        # Prepare requests (cycle through test images)
+        for i in range(iterations):
+            image_data = test_images[i % len(test_images)]
+            requests.append((f"req_{i}", image_data))
+        
+        if concurrency == 1:
+            # Sequential execution
+            for req_id, image_data in requests:
+                start_time = time.perf_counter()
+                try:
+                    result = classification_function(image_data, **kwargs)
+                    end_time = time.perf_counter()
+                    
+                    # Create simplified metrics
+                    metrics = ImageRequestMetrics(
+                        request_id=req_id,
+                        t_start=start_time,
+                        t_first_image=end_time,
+                        t_end=end_time,
+                        prompt_len_chars=len(image_data),
+                        width=224,
+                        height=224,
+                        num_images=1
+                    )
+                    request_metrics.append(metrics)
+                except Exception as e:
+                    logger.error(f"Request {req_id} failed: {e}")
+                    metrics = ImageRequestMetrics(
+                        request_id=req_id,
+                        t_start=start_time,
+                        error=str(e)
+                    )
+                    request_metrics.append(metrics)
+        else:
+            # Concurrent execution
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                future_to_req = {}
+                for req_id, image_data in requests:
+                    future = executor.submit(self._execute_classification_request, req_id, classification_function, image_data, **kwargs)
+                    future_to_req[future] = req_id
+                
+                for future in as_completed(future_to_req, timeout=self.timeout_seconds * len(requests)):
+                    try:
+                        metrics = future.result()
+                        request_metrics.append(metrics)
+                    except Exception as e:
+                        req_id = future_to_req[future]
+                        metrics = ImageRequestMetrics(
+                            request_id=req_id,
+                            t_start=time.perf_counter(),
+                            error=str(e)
+                        )
+                        request_metrics.append(metrics)
+        
+        # Aggregate metrics
+        metrics = aggregate_image_metrics(request_metrics, concurrency)
+        
+        result = ImageBenchmarkResult(
+            metrics=metrics,
+            request_metrics=request_metrics,
+            config={
+                'concurrency': concurrency,
+                'iterations': iterations,
+                'test_images_count': len(test_images),
+                'classification_kwargs': kwargs,
+                'model_type': 'image_classification'
+            }
+        )
+        
+        return result
     
     def _execute_classification_request(
         self,
@@ -244,6 +346,281 @@ class ResNetImageBenchmarker(ImageBenchmarker):
         
         logger.info(f"Generated {count} synthetic test images for benchmarking")
         return test_images
+    
+    def stress_test_resnet_model(
+        self,
+        classification_function: Callable[[bytes], Dict[str, Any]],
+        duration_minutes: int = 5,
+        max_concurrency: int = 64,
+        ramp_up_seconds: int = 30,
+        test_images: Optional[List[bytes]] = None,
+        monitor_memory: bool = True,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Perform stress testing on ResNet model with gradually increasing load.
+        
+        This function simulates real-world stress conditions by:
+        1. Gradually ramping up concurrency over time
+        2. Maintaining high load for extended periods
+        3. Monitoring system resources and error rates
+        4. Testing recovery and stability under stress
+        
+        Args:
+            classification_function: Function that takes image bytes and returns classification results
+            duration_minutes: Total duration of stress test in minutes
+            max_concurrency: Maximum concurrent requests to reach
+            ramp_up_seconds: Time to gradually ramp up to max concurrency
+            test_images: List of test images as bytes. If None, generates synthetic images
+            monitor_memory: Whether to monitor memory usage during test
+            **kwargs: Additional keyword arguments for classification function
+            
+        Returns:
+            Dictionary containing stress test results and metrics
+        """
+        import threading
+        import psutil
+        from collections import defaultdict
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        logger.info(f"Starting ResNet stress test: {duration_minutes}min duration, max concurrency {max_concurrency}")
+        
+        # Prepare test images
+        if test_images is None:
+            # Generate more diverse images for stress testing
+            test_images = self._generate_test_images(20)
+        
+        start_time = time.perf_counter()
+        end_time = start_time + (duration_minutes * 60)
+        ramp_end_time = start_time + ramp_up_seconds
+        
+        # Metrics collection
+        results_lock = threading.Lock()
+        stress_metrics = {
+            'total_requests': 0,
+            'successful_requests': 0,
+            'failed_requests': 0,
+            'error_types': defaultdict(int),
+            'response_times': [],
+            'memory_snapshots': [],
+            'concurrency_levels': [],
+            'requests_per_second': [],
+            'timestamps': []
+        }
+        
+        # Memory monitoring setup
+        process = psutil.Process() if monitor_memory else None
+        
+        def collect_system_metrics(timestamp, current_concurrency):
+            """Collect system metrics at regular intervals."""
+            if not monitor_memory:
+                return
+            
+            try:
+                cpu_percent = psutil.cpu_percent()
+                memory_info = process.memory_info()
+                memory_mb = memory_info.rss / (1024 * 1024)
+                
+                with results_lock:
+                    stress_metrics['memory_snapshots'].append({
+                        'timestamp': timestamp,
+                        'memory_mb': memory_mb,
+                        'cpu_percent': cpu_percent,
+                        'concurrency': current_concurrency
+                    })
+            except Exception as e:
+                logger.warning(f"Failed to collect system metrics: {e}")
+        
+        def worker_function(worker_id: int):
+            """Worker function for stress testing."""
+            local_request_count = 0
+            local_success_count = 0
+            local_error_count = 0
+            local_response_times = []
+            local_errors = defaultdict(int)
+            
+            while time.perf_counter() < end_time:
+                current_time = time.perf_counter()
+                
+                # Calculate current target concurrency based on ramp-up
+                if current_time < ramp_end_time:
+                    # Ramp up phase
+                    progress = (current_time - start_time) / ramp_up_seconds
+                    target_concurrency = int(progress * max_concurrency)
+                else:
+                    # Full load phase
+                    target_concurrency = max_concurrency
+                
+                # Only proceed if this worker should be active
+                if worker_id >= target_concurrency:
+                    time.sleep(0.1)
+                    continue
+                
+                # Select random test image
+                image_data = test_images[local_request_count % len(test_images)]
+                req_id = f"stress_req_{worker_id}_{local_request_count}"
+                
+                request_start = time.perf_counter()
+                local_request_count += 1
+                
+                try:
+                    # Execute classification request
+                    result = classification_function(image_data, **kwargs)
+                    request_end = time.perf_counter()
+                    response_time = request_end - request_start
+                    
+                    local_response_times.append(response_time)
+                    
+                    if result.get('success', False):
+                        local_success_count += 1
+                    else:
+                        local_error_count += 1
+                        error_msg = result.get('error', 'Unknown error')
+                        local_errors[error_msg] += 1
+                        
+                except Exception as e:
+                    local_error_count += 1
+                    local_errors[str(e)] += 1
+                    local_response_times.append(time.perf_counter() - request_start)
+                
+                # Brief pause to prevent overwhelming the system
+                time.sleep(0.001)
+            
+            # Aggregate worker results
+            with results_lock:
+                stress_metrics['total_requests'] += local_request_count
+                stress_metrics['successful_requests'] += local_success_count
+                stress_metrics['failed_requests'] += local_error_count
+                stress_metrics['response_times'].extend(local_response_times)
+                
+                for error_type, count in local_errors.items():
+                    stress_metrics['error_types'][error_type] += count
+        
+        # Start stress test workers
+        logger.info("Starting stress test workers...")
+        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+            # Submit worker tasks
+            futures = []
+            for worker_id in range(max_concurrency):
+                future = executor.submit(worker_function, worker_id)
+                futures.append(future)
+            
+            # Monitor progress and collect metrics
+            metrics_interval = 10  # Collect metrics every 10 seconds
+            last_metrics_time = start_time
+            last_request_count = 0
+            
+            while time.perf_counter() < end_time:
+                current_time = time.perf_counter()
+                
+                # Collect periodic metrics
+                if current_time - last_metrics_time >= metrics_interval:
+                    with results_lock:
+                        current_requests = stress_metrics['total_requests']
+                        requests_delta = current_requests - last_request_count
+                        rps = requests_delta / metrics_interval
+                        
+                        # Calculate current concurrency
+                        if current_time < ramp_end_time:
+                            progress = (current_time - start_time) / ramp_up_seconds
+                            current_concurrency = int(progress * max_concurrency)
+                        else:
+                            current_concurrency = max_concurrency
+                        
+                        stress_metrics['requests_per_second'].append(rps)
+                        stress_metrics['concurrency_levels'].append(current_concurrency)
+                        stress_metrics['timestamps'].append(current_time)
+                        
+                        last_request_count = current_requests
+                        last_metrics_time = current_time
+                    
+                    # Collect system metrics
+                    collect_system_metrics(current_time, current_concurrency)
+                    
+                    # Log progress
+                    logger.info(f"Stress test progress: {(current_time - start_time) / 60:.1f}min, "
+                               f"RPS: {rps:.1f}, Concurrency: {current_concurrency}, "
+                               f"Success rate: {(stress_metrics['successful_requests'] / max(stress_metrics['total_requests'], 1)) * 100:.1f}%")
+                
+                time.sleep(1)
+            
+            # Wait for all workers to complete
+            for future in as_completed(futures, timeout=30):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.warning(f"Worker finished with exception: {e}")
+        
+        # Calculate final metrics
+        total_duration = time.perf_counter() - start_time
+        
+        # Calculate statistics for response times
+        response_times = stress_metrics['response_times']
+        if response_times:
+            response_times.sort()
+            n = len(response_times)
+            avg_response_time = sum(response_times) / n
+            p50_response_time = response_times[int(0.5 * n)]
+            p95_response_time = response_times[int(0.95 * n)]
+            p99_response_time = response_times[int(0.99 * n)]
+        else:
+            avg_response_time = p50_response_time = p95_response_time = p99_response_time = 0.0
+        
+        # Calculate overall throughput
+        overall_rps = stress_metrics['total_requests'] / total_duration if total_duration > 0 else 0
+        success_rate = (stress_metrics['successful_requests'] / max(stress_metrics['total_requests'], 1)) * 100
+        
+        # Memory usage analysis
+        memory_analysis = {}
+        if stress_metrics['memory_snapshots']:
+            memory_values = [s['memory_mb'] for s in stress_metrics['memory_snapshots']]
+            cpu_values = [s['cpu_percent'] for s in stress_metrics['memory_snapshots']]
+            
+            memory_analysis = {
+                'peak_memory_mb': max(memory_values),
+                'avg_memory_mb': sum(memory_values) / len(memory_values),
+                'memory_growth_mb': max(memory_values) - min(memory_values),
+                'peak_cpu_percent': max(cpu_values),
+                'avg_cpu_percent': sum(cpu_values) / len(cpu_values)
+            }
+        
+        # Compile final results
+        stress_results = {
+            'test_configuration': {
+                'duration_minutes': duration_minutes,
+                'max_concurrency': max_concurrency,
+                'ramp_up_seconds': ramp_up_seconds,
+                'test_images_count': len(test_images),
+                'actual_duration_seconds': total_duration
+            },
+            'performance_metrics': {
+                'total_requests': stress_metrics['total_requests'],
+                'successful_requests': stress_metrics['successful_requests'],
+                'failed_requests': stress_metrics['failed_requests'],
+                'success_rate_percent': success_rate,
+                'overall_rps': overall_rps,
+                'avg_response_time_ms': avg_response_time * 1000,
+                'p50_response_time_ms': p50_response_time * 1000,
+                'p95_response_time_ms': p95_response_time * 1000,
+                'p99_response_time_ms': p99_response_time * 1000
+            },
+            'error_analysis': {
+                'error_types': dict(stress_metrics['error_types']),
+                'error_rate_percent': (stress_metrics['failed_requests'] / max(stress_metrics['total_requests'], 1)) * 100
+            },
+            'system_metrics': memory_analysis,
+            'time_series_data': {
+                'timestamps': stress_metrics['timestamps'],
+                'requests_per_second': stress_metrics['requests_per_second'],
+                'concurrency_levels': stress_metrics['concurrency_levels'],
+                'memory_snapshots': stress_metrics['memory_snapshots']
+            }
+        }
+        
+        logger.info(f"Stress test completed: {stress_metrics['total_requests']} total requests, "
+                   f"{success_rate:.1f}% success rate, {overall_rps:.1f} RPS average")
+        
+        return stress_results
 
 
 def check_model_availability(
@@ -605,3 +982,76 @@ def create_demo_resnet_function() -> Callable[[bytes], Dict[str, Any]]:
         }
     
     return demo_classify_image
+
+
+def quick_resnet_test():
+    """Quick test to verify ResNet benchmark functionality."""
+    print("Quick ResNet Benchmark Test")
+    print("-" * 30)
+    
+    benchmarker = ResNetImageBenchmarker(warmup_requests=1)
+    demo_classifier = create_demo_resnet_function()
+    
+    # Quick single-concurrency test
+    result = benchmarker.benchmark_single_concurrency_classification(
+        classification_function=demo_classifier,
+        concurrency=1,
+        iterations=5
+    )
+    
+    metrics = result.metrics
+    print(f"✓ ResNet benchmark working!")
+    print(f"  Classifications/sec: {metrics.ips:.2f}")
+    print(f"  Average latency: {metrics.ttfi_p50*1000:.1f}ms")
+    print(f"  Success rate: {metrics.success_rate:.1f}%")
+    
+    return result
+
+
+def quick_stress_test():
+    """Run a quick 30-second stress test for initial validation."""
+    print("=" * 60)
+    print("Quick ResNet Stress Test (30 seconds)")
+    print("=" * 60)
+    
+    # Create benchmarker
+    benchmarker = ResNetImageBenchmarker(
+        default_width=224,
+        default_height=224,
+        warmup_requests=2,
+        monitor_memory=True
+    )
+    
+    # Use demo classifier
+    demo_classifier = create_demo_resnet_function()
+    
+    print("Running quick stress test...")
+    print("  Duration: 0.5 minutes (30 seconds)")
+    print("  Max Concurrency: 16")
+    print("  Ramp-up: 10 seconds")
+    print()
+    
+    # Run stress test
+    results = benchmarker.stress_test_resnet_model(
+        classification_function=demo_classifier,
+        duration_minutes=0.5,  # 30 seconds
+        max_concurrency=16,
+        ramp_up_seconds=10,
+        monitor_memory=True
+    )
+    
+    # Print summary
+    perf = results['performance_metrics']
+    print(f"\nQuick Stress Test Results:")
+    print(f"  Total Requests: {perf['total_requests']:,}")
+    print(f"  Success Rate: {perf['success_rate_percent']:.1f}%")
+    print(f"  Average Throughput: {perf['overall_rps']:.1f} RPS")
+    print(f"  Average Latency: {perf['avg_response_time_ms']:.1f}ms")
+    print(f"  95th Percentile Latency: {perf['p95_response_time_ms']:.1f}ms")
+    
+    if perf['success_rate_percent'] >= 95:
+        print("✅ Quick stress test PASSED - System stable under load")
+    else:
+        print("❌ Quick stress test FAILED - System experienced issues under load")
+    
+    return results

@@ -110,7 +110,7 @@ def test_csv_generation():
     print("✅ CSV generation works correctly")
 
 
-async def test_http_client_mock():
+def test_http_client_mock():
     """Test HTTP client with mock server (simulation)."""
     print("Testing HTTP client structure...")
     
@@ -165,16 +165,15 @@ def run_all_tests():
         test_demo_tts_function()
         test_metrics_calculation()
         test_csv_generation()
-        asyncio.run(test_http_client_mock())
+        test_http_client_mock()
         test_benchmark_validation()
         
         print("\n" + "=" * 50)
         print("🎉 All tests passed! The TTS benchmark system is working correctly.")
         print("\nYou can now:")
-        print("1. Run demo benchmark: python -m benchmark.examples demo")
-        print("2. Test HTTP server: python -m benchmark.examples http --url YOUR_SERVER_URL")
-        print("3. Compare voices: python -m benchmark.examples voices --voices voice1 voice2")
-        print("4. Use the API directly in your code")
+        print("1. Use the API directly in your code for benchmarking")
+        print("2. Import benchmark classes and functions as needed")
+        print("3. Run quick tests using the integrated quick test functions")
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")

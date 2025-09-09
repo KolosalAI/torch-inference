@@ -1,110 +1,156 @@
-# TTS Benchmark Suite for torch-inference
+# Benchmark Suite for torch-inference
 
-A comprehensive benchmarking system for Text-to-Speech (TTS) models implementing industry-standard metrics including **ASPS (Audio Seconds Per Second)**, the primary throughput metric for TTS systems.
+A comprehensive benchmarking system for AI models including Text-to-Speech (TTS) and Image Classification models. The system implements industry-standard metrics and provides high-precision performance measurement capabilities.
 
 ## Overview
 
 This benchmark suite provides:
-- **Industry-standard metrics**: ASPS, RTF, RPS, CPS, and TTFA
+- **Multi-model support**: TTS, Image Classification (ResNet), and other AI models
+- **Industry-standard metrics**: ASPS, RTF, RPS, CPS, TTFA (TTS) / IPS, Classifications/sec (Image)
 - **Multiple concurrency levels**: Test scalability from 1 to N concurrent requests
-- **HTTP client support**: Benchmark remote TTS servers via REST API
-- **Streaming support**: Measure streaming vs non-streaming performance
+- **HTTP client support**: Benchmark remote AI model servers via REST API
+- **Streaming support**: Measure streaming vs non-streaming performance (TTS)
 - **Comprehensive reporting**: CSV outputs, comparison tables, and plots
+- **Quick testing functions**: Built-in validation and stress testing
 - **Statistical rigor**: Proper warmup, timing, and percentile analysis
 
 ## Core Metrics
 
-### Primary Metric: ASPS (Audio Seconds Per Second)
+### TTS Metrics
 
+#### Primary Metric: ASPS (Audio Seconds Per Second)
 **ASPS** is the cleanest throughput metric for TTS:
-
 ```
 ASPS = sum(audio_duration_i) / T_wall
 ```
-
-Where:
-- `audio_duration_i` = length of the i-th synthesized waveform (in seconds)
-- `T_wall` = wall-clock time from first request start to last audio sample produced
 - **Higher ASPS is better**
 - **Relation to RTF**: `ASPS = 1/RTF`
 
-### Supportive Metrics
-
+#### Supporting TTS Metrics
 - **RTF (Real Time Factor)**: `T_synthesis / audio_duration` (lower is better)
 - **RPS (Requests/sec)**: `N / T_wall` (report with median input length)
 - **CPS (Characters/sec)**: `sum(chars) / T_wall` (normalizes for varying prompt length)
 - **TTFA (Time To First Audio)**: Latency metric; essential for streaming UX (p50/p95/p99)
 
+### Image Classification Metrics
+
+#### Primary Metric: IPS (Images Per Second)
+**IPS** is the primary throughput metric for image classification:
+```
+IPS = N_images / T_wall
+```
+- **Higher IPS is better**
+
+#### Supporting Image Metrics
+- **Classifications/sec**: Similar to IPS for classification tasks
+- **RPS (Requests/sec)**: Request throughput
+- **Latency (TTFI)**: Time to First Image result (p50/p95/p99)
+- **Success Rate**: Percentage of successful classifications
+
 ## Quick Start
 
-### 1. Demo Benchmark (Synthetic TTS)
+### 1. Quick Testing Functions
 
-```python
-from benchmark.examples import run_demo_benchmark
+The benchmark system includes built-in quick test functions for immediate validation:
 
-# Run demo with synthetic TTS function
-results = run_demo_benchmark()
-```
-
-Or via CLI:
 ```bash
-python benchmark/examples.py demo
+# Quick ResNet classification test (5 iterations)
+python -c "from benchmark.resnet_image_benchmark import quick_resnet_test; quick_resnet_test()"
+
+# Quick stress test (30-second load test)
+python -c "from benchmark.resnet_image_benchmark import quick_stress_test; quick_stress_test()"
 ```
 
-### 2. HTTP Server Benchmark
+### 2. Image Classification Benchmark
 
 ```python
-import asyncio
-from benchmark.examples import run_http_server_benchmark
+from benchmark.resnet_image_benchmark import ResNetImageBenchmarker, create_demo_resnet_function
 
-# Benchmark your TTS server
-results = asyncio.run(run_http_server_benchmark(
-    server_url="http://localhost:8000",
-    voice="default",
+# Create benchmarker
+benchmarker = ResNetImageBenchmarker(
+    default_width=224,
+    default_height=224,
+    warmup_requests=5
+)
+
+# Create demo classification function (or use your own)
+demo_classifier = create_demo_resnet_function()
+
+# Run benchmark
+results = benchmarker.benchmark_resnet_model(
+    classification_function=demo_classifier,
+    concurrency_levels=[1, 2, 4, 8],
+    iterations_per_level=50
+)
+```
+
+### 3. TTS Benchmark
+
+```python
+# Example TTS HTTP benchmark setup
+from benchmark.http_client import create_torch_inference_tts_function
+from benchmark.harness import TTSBenchmarkHarness, BenchmarkConfig
+
+config = BenchmarkConfig(
+    concurrency_levels=[1, 2, 4],
+    iterations_per_level=50,
+    output_dir="my_benchmark_results"
+)
+
+tts_function = create_torch_inference_tts_function(
+    base_url="http://your-tts-server:8000",
+    voice="premium_voice",
     streaming=False
-))
+)
+
+harness = TTSBenchmarkHarness(config)
+results = harness.run_benchmark(tts_function)
 ```
 
-Or via CLI:
-```bash
-# Basic benchmark
-python benchmark/examples.py http --url http://localhost:8000
-
-# With custom settings
-python benchmark/examples.py http \
-    --url http://your-tts-server:8000 \
-    --voice "premium_voice" \
-    --streaming \
-    --concurrency 1 2 4 8 16 \
-    --iterations 20
-```
-
-### 3. Voice Model Comparison
+### 4. HTTP Server Benchmark (ResNet)
 
 ```python
-import asyncio
-from benchmark.examples import run_voice_comparison_benchmark
+from benchmark.resnet_image_benchmark import create_resnet_classification_function, ResNetImageBenchmarker
 
-results = asyncio.run(run_voice_comparison_benchmark(
-    server_url="http://localhost:8000",
-    voices=["default", "premium", "fast"]
-))
+# Create classification function that calls your server
+resnet_function = create_resnet_classification_function(
+    model_name="resnet18",
+    base_url="http://localhost:8000",
+    top_k=5
+)
+
+# Run benchmark
+benchmarker = ResNetImageBenchmarker()
+results = benchmarker.benchmark_resnet_model(
+    classification_function=resnet_function,
+    concurrency_levels=[1, 2, 4, 8, 16],
+    iterations_per_level=50
+)
 ```
 
-Or via CLI:
-```bash
-python benchmark/examples.py voices \
-    --url http://localhost:8000 \
-    --voices default premium fast
+### 5. Stress Testing
+
+```python
+from benchmark.resnet_image_benchmark import ResNetImageBenchmarker, create_demo_resnet_function
+
+benchmarker = ResNetImageBenchmarker(monitor_memory=True)
+demo_classifier = create_demo_resnet_function()
+
+# Run comprehensive stress test
+stress_results = benchmarker.stress_test_resnet_model(
+    classification_function=demo_classifier,
+    duration_minutes=5,
+    max_concurrency=64,
+    ramp_up_seconds=30
+)
 ```
 
 ## API Usage
 
-### Basic Benchmarking
+### TTS Benchmarking
 
 ```python
-from benchmark import TTSBenchmarker, BenchmarkConfig
-from benchmark.harness import TTSBenchmarkHarness
+from benchmark.harness import TTSBenchmarkHarness, BenchmarkConfig
 
 # Configure benchmark
 config = BenchmarkConfig(
@@ -136,6 +182,42 @@ reporter = TTSBenchmarkReporter()
 reporter.print_summary_table(results)
 ```
 
+### Image Classification Benchmarking
+
+```python
+from benchmark.resnet_image_benchmark import ResNetImageBenchmarker
+
+# Create benchmarker
+benchmarker = ResNetImageBenchmarker(
+    default_width=224,
+    default_height=224,
+    warmup_requests=5,
+    monitor_memory=True
+)
+
+# Define your classification function
+def my_classifier(image_data: bytes, **kwargs) -> dict:
+    # Your classification implementation
+    predictions = classify_image(image_data)
+    return {
+        'success': True,
+        'predictions': predictions,
+        'processing_time': time.time() - start_time
+    }
+
+# Run benchmark
+results = benchmarker.benchmark_resnet_model(
+    classification_function=my_classifier,
+    concurrency_levels=[1, 2, 4, 8],
+    iterations_per_level=50
+)
+
+# Print results
+for concurrency, result in results.items():
+    metrics = result.metrics
+    print(f"Concurrency {concurrency}: {metrics.ips:.2f} classifications/sec")
+```
+
 ### Async TTS Functions
 
 ```python
@@ -157,12 +239,13 @@ results = asyncio.run(harness.run_benchmark(
 ))
 ```
 
-### HTTP TTS Servers
+### HTTP Servers (TTS and Image)
 
 ```python
 from benchmark.http_client import create_torch_inference_tts_function
+from benchmark.resnet_image_benchmark import create_resnet_classification_function
 
-# Create TTS function for your server
+# TTS HTTP server
 tts_function = create_torch_inference_tts_function(
     base_url="http://localhost:8000",
     voice="default",
@@ -170,12 +253,27 @@ tts_function = create_torch_inference_tts_function(
     auth_token="your-token"  # if needed
 )
 
-# Benchmark it
-results = asyncio.run(harness.run_benchmark(
+# Image classification HTTP server
+classifier_function = create_resnet_classification_function(
+    model_name="resnet18",
+    base_url="http://localhost:8000",
+    top_k=5,
+    auth_token="your-token"  # if needed
+)
+
+# Benchmark them
+import asyncio
+tts_results = asyncio.run(harness.run_benchmark(
     tts_function,
     benchmark_name="http_tts",
     is_async=True
 ))
+
+image_results = benchmarker.benchmark_resnet_model(
+    classification_function=classifier_function,
+    concurrency_levels=[1, 2, 4, 8],
+    iterations_per_level=50
+)
 ```
 
 ## Output and Reports
@@ -246,9 +344,11 @@ Best Performance:
 
 ## Configuration
 
-### BenchmarkConfig Options
+### TTS BenchmarkConfig Options
 
 ```python
+from benchmark.harness import BenchmarkConfig
+
 config = BenchmarkConfig(
     # Test configuration
     concurrency_levels=[1, 2, 4, 8, 16, 32, 64],  # Concurrency levels to test
@@ -256,7 +356,7 @@ config = BenchmarkConfig(
     warmup_requests=5,                     # Warmup requests
     timeout_seconds=30.0,                  # Request timeout
     
-    # Audio configuration
+    # Audio configuration (TTS)
     sample_rate=22050,                     # Expected sample rate
     bit_depth=16,                          # Expected bit depth
     
@@ -269,6 +369,21 @@ config = BenchmarkConfig(
     output_dir="benchmark_results",        # Output directory
     save_raw_data=True,                    # Save detailed JSON
     generate_plots=True                    # Generate matplotlib plots
+)
+```
+
+### ResNet Image Benchmarker Options
+
+```python
+from benchmark.resnet_image_benchmark import ResNetImageBenchmarker
+
+benchmarker = ResNetImageBenchmarker(
+    default_width=224,                     # Default image width
+    default_height=224,                    # Default image height
+    warmup_requests=5,                     # Warmup requests
+    timeout_seconds=30.0,                  # Request timeout
+    monitor_memory=True,                   # Monitor memory usage
+    test_images_dir=None                   # Optional: directory with test images
 )
 ```
 
@@ -350,12 +465,33 @@ Your TTS function should return a dictionary with:
 }
 ```
 
+### For Image Classification Function Authors
+
+Your classification function should return a dictionary with:
+
+```python
+{
+    'success': True,            # Required: whether classification succeeded
+    'predictions': [            # Required: list of predictions
+        {
+            'class': 'golden_retriever',
+            'confidence': 0.95,
+            'class_id': 207
+        }
+    ],
+    'processing_time': 0.05,    # Optional: processing time in seconds
+    'model_name': 'resnet18'    # Optional: model identifier
+}
+```
+
 ### Error Handling
 
 The benchmark system gracefully handles:
 - Request timeouts
 - Network errors  
 - TTS synthesis failures
+- Image classification failures
+- Model loading errors
 - Partial failures in concurrent tests
 
 Failed requests are tracked and reported in success rate metrics.
@@ -388,37 +524,112 @@ pip install aiohttp
 pip install aiohttp matplotlib numpy
 ```
 
-## Examples Directory
+## Available Benchmarkers
 
-The `examples.py` script provides ready-to-use benchmark scenarios:
+### Core Benchmarkers
 
-1. **Demo Benchmark**: Synthetic TTS for testing the system
-2. **HTTP Server**: Benchmark any REST API TTS server
-3. **Voice Comparison**: Compare multiple voice models
-4. **Streaming vs Non-Streaming**: Performance comparison
+1. **TTSBenchmarkHarness**: Main TTS benchmarking system
+   - Location: `benchmark.harness.TTSBenchmarkHarness`
+   - Supports: Async/sync TTS functions, streaming, HTTP clients
 
-Run any example:
+2. **ImageBenchmarker**: General image model benchmarking
+   - Location: `benchmark.image_benchmark.ImageBenchmarker`
+   - Supports: Image generation models, diffusion models
+
+3. **ResNetImageBenchmarker**: Specialized for image classification
+   - Location: `benchmark.resnet_image_benchmark.ResNetImageBenchmarker`
+   - Supports: Classification models, ResNet variants, stress testing
+   - Includes: Built-in quick test functions
+
+### Quick Test Functions
+
+The ResNet benchmarker includes built-in validation functions:
+
+```python
+from benchmark.resnet_image_benchmark import quick_resnet_test, quick_stress_test
+
+# Fast validation (5 iterations)
+quick_resnet_test()
+
+# Stress test (30 seconds, up to 16 concurrent requests)
+quick_stress_test()
+```
+
+Command line usage:
 ```bash
-python benchmark/examples.py <command> --help
+# Quick ResNet benchmark test
+python -c "from benchmark.resnet_image_benchmark import quick_resnet_test; quick_resnet_test()"
+
+# Quick stress test
+python -c "from benchmark.resnet_image_benchmark import quick_stress_test; quick_stress_test()"
 ```
 
 ## Best Practices
 
+### General
+1. **Use sufficient iterations** (≥10) for statistical significance
+2. **Warm up your models** before timing measurements
+3. **Monitor resource usage** during high-concurrency tests
+4. **Compare steady-state performance** after initial startup costs
+5. **Run across multiple concurrency levels** to find optimal throughput
+
+### TTS Specific
 1. **Keep audio settings consistent** across tests (sample rate, bit depth)
-2. **Run across multiple concurrency levels** to find optimal throughput
-3. **Report ASPS as primary metric** with RTF and latency as supporting metrics
-4. **Use sufficient iterations** (≥10) for statistical significance
-5. **Warm up your models** before timing measurements
-6. **Monitor resource usage** during high-concurrency tests
-7. **Compare steady-state performance** after initial startup costs
+2. **Report ASPS as primary metric** with RTF and latency as supporting metrics
+3. **Test both streaming and non-streaming** modes when available
+
+### Image Classification Specific
+1. **Use consistent image dimensions** across tests (e.g., 224x224 for ResNet)
+2. **Report IPS (Images Per Second) as primary metric**
+3. **Test with diverse image content** to avoid overfitting to specific patterns
+4. **Use quick test functions** for initial validation before full benchmarks
+
+### Stress Testing
+1. **Start with quick stress tests** (30 seconds) before longer runs
+2. **Monitor memory usage** to detect memory leaks
+3. **Gradually increase load** with proper ramp-up periods
+4. **Validate system stability** under sustained load
+
+## Module Overview
+
+### Core Modules
+
+- **`harness.py`**: Main TTS benchmark harness and configuration
+- **`tts_benchmark.py`**: TTS-specific benchmarking utilities
+- **`image_benchmark.py`**: General image model benchmarking
+- **`resnet_image_benchmark.py`**: ResNet classification benchmarking with quick tests
+- **`http_client.py`**: HTTP client for remote model servers
+
+### Metrics and Reporting
+
+- **`metrics.py`**: TTS metrics calculation and validation
+- **`image_metrics.py`**: Image benchmarking metrics
+- **`reporter.py`**: TTS benchmark reporting
+- **`image_reporter.py`**: Image benchmark reporting
+
+### Testing
+
+- **`test_benchmark.py`**: TTS benchmark system tests
+- **`test_image_benchmark.py`**: Image benchmark system tests
 
 ## Contributing
 
 To extend this benchmark suite:
 
-1. **New metrics**: Add to `metrics.py` and update aggregation
-2. **New clients**: Implement in style of `http_client.py`
-3. **New reports**: Extend `reporter.py` with additional visualizations
-4. **New scenarios**: Add to `examples.py` or create new example scripts
+1. **New metrics**: Add to appropriate metrics modules (`metrics.py`, `image_metrics.py`)
+2. **New model types**: Create new benchmarker classes following existing patterns
+3. **New clients**: Implement in style of `http_client.py`
+4. **New reports**: Extend reporting modules with additional visualizations
+5. **New quick tests**: Add to existing benchmarker classes or create new ones
 
-The modular design makes it easy to add support for new TTS systems, metrics, or analysis approaches.
+The modular design makes it easy to add support for new AI model types, metrics, or analysis approaches.
+
+### Adding New Model Types
+
+To add support for a new model type (e.g., LLM benchmarking):
+
+1. Create a new benchmarker class (e.g., `LLMBenchmarker`)
+2. Define appropriate metrics for your model type
+3. Implement model-specific test functions
+4. Add quick test functions for validation
+5. Create appropriate reporter classes for visualization

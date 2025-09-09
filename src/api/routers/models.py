@@ -60,9 +60,30 @@ async def list_models(
     try:
         logger.debug("[MODELS] Getting model list...")
         
-        models = await model_service.list_models(include_details=include_details)
-        
-        return ModelListResponse(models=models)
+        model_names = model_service.list_models()
+        if hasattr(model_names, 'models'):
+            model_names = model_names.models
+
+        if include_details:
+            model_info = {}
+            for model_name in model_names:
+                try:
+                    info = model_service.get_model_info(model_name)
+                    # If info is not a ModelInfo, convert if needed
+                    if hasattr(info, 'dict'):
+                        model_info[model_name] = info
+                    else:
+                        model_info[model_name] = info  # fallback
+                except Exception as e:
+                    logger.warning(f"Failed to get details for model {model_name}: {e}")
+            models = list(model_info.keys())
+        else:
+            models = model_names
+            model_info = {name: None for name in models}
+
+        total_models = len(models)
+        # If no models, ensure empty dict/list
+        return ModelListResponse(models=models, model_info=model_info, total_models=total_models)
         
     except Exception as e:
         logger.error(f"[MODELS] Failed to list models: {e}")

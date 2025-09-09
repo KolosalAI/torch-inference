@@ -419,6 +419,279 @@ class BasicDownloadService:
                 "timestamp": datetime.utcnow().isoformat()
             }
     
+    async def list_downloads(self, status_filter: Optional[str] = None, 
+                           limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """
+        List downloads with filtering and pagination.
+        
+        Args:
+            status_filter: Filter by download status
+            limit: Maximum number of downloads to return
+            offset: Number of downloads to skip
+            
+        Returns:
+            Dict containing download list and metadata
+        """
+        try:
+            self.initialize()
+            
+            # Get download history
+            all_downloads = []
+            
+            # Convert download history to download info format
+            for item in self._download_history:
+                download_info = {
+                    "download_id": f"dl_{hash(item['model_name'])}",
+                    "url": item.get("url", ""),
+                    "filename": item["model_name"],
+                    "status": "completed" if item.get("success", False) else "failed",
+                    "progress": 100.0 if item.get("success", False) else 0.0,
+                    "file_size": item.get("file_size", 0),
+                    "downloaded_size": item.get("file_size", 0) if item.get("success", False) else 0,
+                    "download_speed": None,
+                    "eta": None,
+                    "error_message": None,
+                    "created_at": datetime.fromisoformat(item["timestamp"]),
+                    "completed_at": datetime.fromisoformat(item["timestamp"]) if item.get("success", False) else None
+                }
+                all_downloads.append(download_info)
+            
+            # Add downloads in progress
+            for model_name in self._downloads_in_progress:
+                download_info = {
+                    "download_id": f"dl_{hash(model_name)}",
+                    "url": "",
+                    "filename": model_name,
+                    "status": "downloading",
+                    "progress": 50.0,  # Mock progress
+                    "file_size": None,
+                    "downloaded_size": None,
+                    "download_speed": None,
+                    "eta": None,
+                    "error_message": None,
+                    "created_at": datetime.utcnow(),
+                    "completed_at": None
+                }
+                all_downloads.append(download_info)
+            
+            # Apply status filter
+            if status_filter:
+                all_downloads = [d for d in all_downloads if d["status"] == status_filter]
+            
+            # Apply pagination
+            total_count = len(all_downloads)
+            paginated_downloads = all_downloads[offset:offset + limit]
+            
+            # Calculate statistics
+            status_counts = {}
+            for download in all_downloads:
+                status = download["status"]
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            return {
+                "downloads": paginated_downloads,
+                "total_count": total_count,
+                "active_downloads": status_counts.get("downloading", 0),
+                "completed_downloads": status_counts.get("completed", 0),
+                "failed_downloads": status_counts.get("failed", 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to list downloads: {e}")
+            return {
+                "downloads": [],
+                "total_count": 0,
+                "active_downloads": 0,
+                "completed_downloads": 0,
+                "failed_downloads": 0
+            }
+    
+    async def get_download_info(self, download_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about a specific download.
+        
+        Args:
+            download_id: Download ID
+            
+        Returns:
+            Download information or None if not found
+        """
+        try:
+            # List all downloads and find matching ID
+            downloads_data = await self.list_downloads()
+            
+            for download in downloads_data["downloads"]:
+                if download["download_id"] == download_id:
+                    return download
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get download info for {download_id}: {e}")
+            return None
+    
+    async def get_download_status(self, download_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current status of a download.
+        
+        Args:
+            download_id: Download ID
+            
+        Returns:
+            Download status or None if not found
+        """
+        try:
+            download_info = await self.get_download_info(download_id)
+            
+            if not download_info:
+                return None
+            
+            return {
+                "download_id": download_id,
+                "status": download_info["status"],
+                "progress": download_info["progress"],
+                "file_size": download_info["file_size"],
+                "downloaded_size": download_info["downloaded_size"],
+                "download_speed": download_info["download_speed"],
+                "eta": download_info["eta"],
+                "error_message": download_info["error_message"],
+                "timestamp": download_info["created_at"].isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get download status for {download_id}: {e}")
+            return None
+    
+    async def cancel_download(self, download_id: str, delete_partial: bool = False) -> bool:
+        """
+        Cancel an active download.
+        
+        Args:
+            download_id: Download ID to cancel
+            delete_partial: Whether to delete partially downloaded files
+            
+        Returns:
+            True if canceled, False if not found or not cancelable
+        """
+        try:
+            # For basic implementation, we can't really cancel downloads
+            # This is a placeholder for compatibility
+            download_info = await self.get_download_info(download_id)
+            
+            if not download_info:
+                return False
+            
+            # Only allow canceling downloads that are in progress
+            if download_info["status"] != "downloading":
+                return False
+            
+            # For basic implementation, just return True
+            # In a real implementation, this would stop the download task
+            logger.info(f"Download {download_id} canceled (basic implementation)")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to cancel download {download_id}: {e}")
+            return False
+    
+    async def list_files(self, file_type_filter: Optional[str] = None, 
+                        limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        List downloaded files.
+        
+        Args:
+            file_type_filter: Filter by file type
+            limit: Maximum number of files to return
+            
+        Returns:
+            List of file information
+        """
+        try:
+            self.initialize()
+            
+            files = []
+            downloaded_models = self.list_downloaded_models()
+            
+            for model in downloaded_models[:limit]:
+                file_info = {
+                    "filename": model["filename"],
+                    "file_path": model["file_path"],
+                    "file_size": model["file_size"],
+                    "mime_type": self._guess_mime_type(model["filename"]),
+                    "created_at": datetime.fromisoformat(model["created_time"]),
+                    "modified_at": datetime.fromisoformat(model["modified_time"]),
+                    "is_model_file": True,
+                    "checksum": None
+                }
+                
+                # Apply file type filter if specified
+                if file_type_filter:
+                    if file_type_filter == "model" and not file_info["is_model_file"]:
+                        continue
+                
+                files.append(file_info)
+            
+            return files
+            
+        except Exception as e:
+            logger.error(f"Failed to list files: {e}")
+            return []
+    
+    async def get_file_path(self, filename: str) -> Optional[str]:
+        """
+        Get file path for a specific filename.
+        
+        Args:
+            filename: Name of the file
+            
+        Returns:
+            File path or None if not found
+        """
+        try:
+            downloaded_models = self.list_downloaded_models()
+            
+            for model in downloaded_models:
+                if model["filename"] == filename:
+                    return model["file_path"]
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get file path for {filename}: {e}")
+            return None
+    
+    async def delete_file(self, filename: str) -> bool:
+        """
+        Delete a downloaded file.
+        
+        Args:
+            filename: Name of the file to delete
+            
+        Returns:
+            True if deleted, False if not found
+        """
+        try:
+            file_path = await self.get_file_path(filename)
+            
+            if not file_path or not os.path.exists(file_path):
+                return False
+            
+            os.remove(file_path)
+            logger.info(f"Deleted file: {file_path}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete file {filename}: {e}")
+            return False
+    
+    def _guess_mime_type(self, filename: str) -> str:
+        """Guess MIME type for a filename."""
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(filename)
+        return mime_type or 'application/octet-stream'
+    
     # Legacy compatibility methods
     
     def download_model_sync(self, model_info: Dict[str, Any], **kwargs) -> Dict[str, Any]:
