@@ -1397,9 +1397,9 @@ send2trash==1.8.3 ; sys_platform == 'win32' \
     # via
     #   jupyter-server
     #   torch-inference-optimized
-setuptools==73.0.1 ; sys_platform == 'win32' \
-    --hash=sha256:b208925fcb9f7af924ed2dc04708ea89791e24bde0d3020b27df0e116088b34e \
-    --hash=sha256:d59a3e788ab7e012ab2c4baed1b376da6366883ee20d7a5fc426816e3d7b1193
+setuptools==80.9.0 ; sys_platform == 'win32' \
+    --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922 \
+    --hash=sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c
     # via
     #   jupyterlab
     #   opentelemetry-api

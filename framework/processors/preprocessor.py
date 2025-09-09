@@ -995,7 +995,11 @@ class ImagePreprocessor(BasePreprocessor):
         """Load image from various input formats."""
         try:
             if isinstance(inputs, str):
-                return self._load_image_from_path(inputs)
+                # Check if this is a base64 encoded image
+                if self._is_base64_string(inputs):
+                    return self._load_image_from_base64(inputs)
+                else:
+                    return self._load_image_from_path(inputs)
             elif isinstance(inputs, list):
                 # Handle nested lists that represent images (e.g., [C, H, W] format)
                 image_array = np.array(inputs, dtype=np.float32)
@@ -1021,6 +1025,62 @@ class ImagePreprocessor(BasePreprocessor):
             self.logger.error(f"Failed to load image from input: {e}")
             # Re-raise with more context
             raise ValueError(f"Failed to load image from {type(inputs)}: {e}") from e
+            
+    def _is_base64_string(self, s: str) -> bool:
+        """Check if a string is a valid base64 encoded image."""
+        try:
+            # Check for base64 padding and reasonable length
+            if len(s) < 100:  # Too short to be a meaningful image
+                return False
+            
+            # Try to decode as base64
+            import base64
+            decoded = base64.b64decode(s, validate=True)
+            
+            # Check for common image file signatures
+            image_signatures = [
+                b'\xff\xd8\xff',  # JPEG
+                b'\x89PNG\r\n\x1a\n',  # PNG
+                b'GIF87a',  # GIF87a
+                b'GIF89a',  # GIF89a
+                b'BM',  # BMP
+                b'RIFF',  # WEBP (starts with RIFF)
+            ]
+            
+            return any(decoded.startswith(sig) for sig in image_signatures)
+        except Exception:
+            return False
+            
+    def _load_image_from_base64(self, base64_string: str) -> np.ndarray:
+        """Load image from base64 encoded string."""
+        try:
+            import base64
+            from io import BytesIO
+            from PIL import Image
+            
+            # Decode base64 string
+            image_bytes = base64.b64decode(base64_string)
+            
+            # Validate that we got reasonable image data
+            if len(image_bytes) < 100:
+                raise ValueError(f"Decoded image data too small: {len(image_bytes)} bytes")
+            
+            # Load image from bytes
+            image = Image.open(BytesIO(image_bytes)).convert('RGB')
+            image_array = np.array(image)
+            
+            # Validate image dimensions
+            if image_array.shape[0] < 1 or image_array.shape[1] < 1:
+                raise ValueError(f"Invalid image dimensions: {image_array.shape}")
+            
+            self.logger.debug(f"Successfully loaded base64 image: {image_array.shape}")
+            return image_array
+            
+        except ImportError as e:
+            raise ValueError("PIL is required to load base64 images") from e
+        except Exception as e:
+            self.logger.error(f"Failed to load base64 image: {e}")
+            raise ValueError(f"Failed to decode base64 image: {e}") from e
     
     def _load_image_from_path(self, path: str) -> np.ndarray:
         """Load image from file path or URL."""
@@ -1086,14 +1146,26 @@ class ImagePreprocessor(BasePreprocessor):
                     
         if image.ndim == 2:  # Grayscale [H, W]
             h, w = image.shape
-            # Handle degenerate cases
+            # Critical fix: Handle degenerate cases that would cause conv2d errors
             if h <= 2 or w <= 2:
-                self.logger.warning(f"Very small image dimensions {image.shape}, padding to minimum size")
-                # Pad to minimum size
-                min_size = 32
+                self.logger.warning(f"Very small image dimensions {image.shape}, creating minimum viable image")
+                # Create minimum viable image for conv2d operations
+                min_size = 224  # Standard input size for most models
                 padded = np.zeros((min_size, min_size), dtype=image.dtype)
-                padded[:min(h, min_size), :min(w, min_size)] = image[:min(h, min_size), :min(w, min_size)]
+                
+                # If original image has some data, preserve it in the corner
+                if image.size > 0:
+                    try:
+                        max_h = min(h, min_size)
+                        max_w = min(w, min_size)
+                        padded[:max_h, :max_w] = image[:max_h, :max_w]
+                    except Exception as e:
+                        self.logger.warning(f"Failed to preserve original image data: {e}")
+                        # Fill with the mean of the original image
+                        padded.fill(np.mean(image) if image.size > 0 else 0.5)
+                
                 image = padded
+                
             # Convert to RGB
             image = np.stack([image] * 3, axis=2)  # Convert to [H, W, 3]
             
@@ -1445,6 +1517,36 @@ class TensorPreprocessor(BasePreprocessor):
             
             # Move to device
             tensor = tensor.to(self.device)
+            
+            # Validate tensor dimensions and handle problematic cases
+            if tensor.numel() == 0:
+                raise ValueError("Empty tensor provided")
+            
+            # Critical fix: Handle degenerate [1,1] or very small tensors that cause conv2d errors
+            if tensor.shape == (1, 1) or (tensor.ndim == 2 and tensor.shape[0] <= 2 and tensor.shape[1] <= 2):
+                self.logger.warning(f"Detected degenerate tensor shape {tensor.shape}, creating fallback image tensor")
+                # Create a fallback image tensor with proper dimensions for conv2d
+                fallback_tensor = torch.zeros((1, 3, 224, 224), dtype=torch.float32, device=self.device)
+                # Fill with some meaningful data based on the original tensor
+                if tensor.numel() > 0:
+                    # Use the original tensor value(s) to create a simple pattern
+                    fill_value = tensor.flatten()[0].item() if tensor.numel() > 0 else 0.5
+                    # Normalize to [0, 1] range if needed
+                    if isinstance(fill_value, (int, float)):
+                        normalized_value = max(0.0, min(1.0, float(fill_value) / 255.0 if fill_value > 1.0 else float(fill_value)))
+                        fallback_tensor.fill_(normalized_value)
+                return PreprocessingResult(
+                    data=fallback_tensor,
+                    metadata={
+                        "input_type": "tensor_fallback",
+                        "original_shape": tuple(tensor.shape),
+                        "shape": tuple(fallback_tensor.shape),
+                        "dtype": str(fallback_tensor.dtype),
+                        "preprocessor": self.__class__.__name__,
+                        "fallback_reason": f"Degenerate input shape {tensor.shape}"
+                    },
+                    processing_time=time.time() - start_time
+                )
             
             # For tensors that already have a batch dimension, don't modify them
             # This is especially important for feature vectors that are already properly shaped
