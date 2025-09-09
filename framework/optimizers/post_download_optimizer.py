@@ -180,13 +180,23 @@ class PostDownloadOptimizer:
             example_inputs = self._generate_example_inputs(optimized_model)
         
         try:
+            # Check if target device is GPU to avoid quantization incompatibility
+            target_device = None
+            if self.inference_config and hasattr(self.inference_config, 'device'):
+                target_device = self.inference_config.device.get_torch_device()
+            
             # Apply optimizations in order of preference
             if self.config.auto_select_best_method:
                 optimized_model = self._auto_optimize(optimized_model, model_name, example_inputs, optimization_report)
             else:
                 # Apply individual optimizations based on configuration
                 if self.config.enable_quantization:
-                    optimized_model = self._apply_quantization(optimized_model, model_name, example_inputs, optimization_report)
+                    # Skip quantization for GPU devices as quantized ops don't support CUDA
+                    if target_device and target_device.type == 'cuda':
+                        self.logger.info(f"Skipping quantization for {model_name} - target device is GPU (CUDA)")
+                        optimization_report["errors"].append("Quantization skipped: not compatible with GPU inference")
+                    else:
+                        optimized_model = self._apply_quantization(optimized_model, model_name, example_inputs, optimization_report)
                 
                 if self.config.enable_low_rank_optimization or self.config.enable_tensor_factorization:
                     optimized_model = self._apply_tensor_optimization(optimized_model, model_name, optimization_report)
@@ -255,8 +265,11 @@ class PostDownloadOptimizer:
         # Try different optimization strategies and pick the best one
         optimization_candidates = []
         
+        # Check if target device is GPU - skip quantization if so
+        target_device = next(model.parameters()).device
+        
         # Test quantization
-        if self.config.enable_quantization:
+        if self.config.enable_quantization and target_device.type != 'cuda':
             try:
                 quantized_model, _ = self.quantization_optimizer.quantize_model(copy.deepcopy(model), method=self.config.quantization_method, example_inputs=example_inputs)
                 candidate_metrics = self._evaluate_optimization(model, quantized_model, example_inputs)
@@ -265,6 +278,8 @@ class PostDownloadOptimizer:
                 optimization_candidates.append(candidate_metrics)
             except Exception as e:
                 self.logger.warning(f"Quantization evaluation failed: {e}")
+        elif self.config.enable_quantization and target_device.type == 'cuda':
+            self.logger.info(f"Skipping quantization for {model_name} - target device is CUDA")
         
         # Test tensor factorization
         if self.config.enable_tensor_factorization and self.compression_suite:

@@ -484,9 +484,14 @@ class CustomPostprocessor(BasePostprocessor):
     
     def postprocess(self, outputs: torch.Tensor, **kwargs) -> Dict[str, Any]:
         """Simple postprocessing for custom outputs."""
+        # If outputs is a dict (e.g., {'logits': tensor}), extract the first tensor value
+        if isinstance(outputs, dict):
+            for v in outputs.values():
+                if hasattr(v, 'detach'):
+                    outputs = v
+                    break
         # Convert tensor to numpy for easier handling
         outputs_np = outputs.detach().cpu().numpy()
-        
         # For compatibility with old tests expecting dict, create a simple result
         return {
             "predictions": outputs_np.tolist(),
@@ -499,6 +504,24 @@ class CustomPostprocessor(BasePostprocessor):
                 "dtype": str(outputs.dtype)
             }
         }
+
+    def _optimize_tensor_for_postprocessing(self, outputs: torch.Tensor) -> torch.Tensor:
+        """Apply tensor optimizations before postprocessing (handle dict outputs)."""
+        # If outputs is a dict (e.g., {'logits': tensor}), extract the first tensor value
+        if isinstance(outputs, dict):
+            for v in outputs.values():
+                if hasattr(v, 'is_contiguous'):
+                    outputs = v
+                    break
+        if not getattr(self, '_enable_optimizations', True):
+            return outputs
+        # Ensure tensor is contiguous for better performance
+        if hasattr(outputs, 'is_contiguous') and not outputs.is_contiguous():
+            outputs = outputs.contiguous()
+        # Move to CPU if needed for postprocessing (most postprocessing is CPU-bound)
+        if hasattr(outputs, 'device') and outputs.device.type != 'cpu' and outputs.numel() < 10000:  # Small tensors
+            outputs = outputs.cpu()
+        return outputs
     
     def validate_outputs(self, outputs: torch.Tensor) -> bool:
         """Validate custom outputs (always accepts)."""

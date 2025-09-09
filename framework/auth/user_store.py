@@ -225,22 +225,25 @@ class UserStore:
         if not verify_password(password, user.hashed_password):
             # Increment failed attempts
             user.failed_attempts += 1
+            state_changed = False
             if user.failed_attempts >= 5:
                 # Lock user for 30 minutes
                 from datetime import timedelta
                 user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=30)
                 logger.warning(f"User locked due to too many failed attempts: {username}")
-            
-            self._save_users()
+                state_changed = True
+            if user.failed_attempts == 1 or state_changed:
+                self._save_users()
             logger.debug(f"Invalid password for user: {username}")
             return None
-        
-        # Reset failed attempts on successful login
-        user.failed_attempts = 0
-        user.locked_until = None
-        user.last_login = datetime.now(timezone.utc)
-        self._save_users()
-        
+        # Reset failed attempts on successful login if needed
+        if user.failed_attempts != 0 or user.locked_until is not None:
+            user.failed_attempts = 0
+            user.locked_until = None
+            user.last_login = datetime.now(timezone.utc)
+            self._save_users()
+        else:
+            user.last_login = datetime.now(timezone.utc)
         logger.info(f"User authenticated: {username}")
         return user
     

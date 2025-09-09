@@ -185,7 +185,8 @@ class PytorchBenchmarker:
         def inference_func():
             with torch.inference_mode():
                 if use_mixed_precision and self.device.type == 'cuda':
-                    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                    # Use float16 for better compatibility - avoid BFloat16 autocast
+                    dtype = torch.float16
                     with torch.amp.autocast('cuda', dtype=dtype):
                         return model(input_tensor)
                 else:
