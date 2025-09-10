@@ -73,22 +73,38 @@ class AudioExampleClient:
     async def list_audio_models(self):
         """List available audio models."""
         try:
-            async with self.session.get(f"{self.base_url}/audio/models") as response:
+            async with self.session.get(f"{self.base_url}/models") as response:
                 if response.status == 200:
                     models_data = await response.json()
                     print("\n📋 Available Audio Models:")
                     
-                    tts_models = models_data.get('tts_models', [])
+                    # Check both old structure and new audio_models section
+                    audio_models = models_data.get('audio_models', {})
+                    specialized_models = models_data.get('specialized_models', {})
+                    
+                    # TTS Models
+                    tts_models = (specialized_models.get('tts_models', []) or 
+                                 audio_models.get('tts_detailed', {}).keys() or 
+                                 models_data.get('tts_models', []))
                     if tts_models:
+                        if isinstance(tts_models, dict):
+                            tts_models = list(tts_models.keys())
                         print(f"  TTS Models: {', '.join(tts_models)}")
                     
-                    stt_models = models_data.get('stt_models', [])
+                    # STT Models  
+                    stt_models = (specialized_models.get('stt_models', []) or 
+                                 audio_models.get('stt_detailed', {}).keys() or 
+                                 models_data.get('stt_models', []))
                     if stt_models:
+                        if isinstance(stt_models, dict):
+                            stt_models = list(stt_models.keys())
                         print(f"  STT Models: {', '.join(stt_models)}")
                     
-                    loaded_models = models_data.get('loaded_models', [])
+                    # Loaded Audio Models
+                    loaded_models = (audio_models.get('loaded_audio_models', []) or 
+                                   models_data.get('loaded_models', []))
                     if loaded_models:
-                        print(f"  Loaded Models: {', '.join(loaded_models)}")
+                        print(f"  Loaded Audio Models: {', '.join(loaded_models)}")
                     
                     return models_data
                 else:
@@ -155,19 +171,23 @@ class AudioExampleClient:
         print(f"  Model: {model_name}")
         
         try:
-            # Prepare form data
-            data = aiohttp.FormData()
-            data.add_field('model_name', model_name)
-            for key, value in kwargs.items():
-                data.add_field(key, str(value))
+            import base64
             
-            # Add file
+            # Read and encode audio file as base64
             with open(audio_file, 'rb') as f:
-                data.add_field('file', f, filename=os.path.basename(audio_file))
-                
-                async with self.session.post(
-                    f"{self.base_url}/stt/transcribe",
-                    data=data
+                audio_data = f.read()
+                audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+            
+            # Prepare JSON request
+            request_data = {
+                "model_name": model_name,
+                "inputs": f"data:audio/wav;base64,{audio_b64}",
+                **kwargs
+            }
+            
+            async with self.session.post(
+                f"{self.base_url}/transcribe",
+                json=request_data
                 ) as response:
                     if response.status == 200:
                         result = await response.json()

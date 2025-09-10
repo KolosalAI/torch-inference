@@ -88,7 +88,7 @@ A comprehensive, production-ready PyTorch inference framework that delivers **2-
 - **Speech-to-Text (STT)**: Whisper (all sizes), Wav2Vec2, real-time transcription
 - **Audio Pipeline**: Complete preprocessing, feature extraction, augmentation
 - **Multi-format Support**: WAV, MP3, FLAC, M4A, OGG input/output
-- **RESTful Audio API**: `/synthesize`, `/stt/transcribe` with comprehensive options
+- **RESTful Audio API**: `/synthesize`, `/transcribe` with comprehensive options
 - **Language Support**: Multi-language TTS/STT with auto-detection
 
 ### 🔧 **Developer Experience**
@@ -180,19 +180,24 @@ async def tts_example():
 
 # Speech-to-Text Example  
 async def stt_example():
+    import base64
     async with aiohttp.ClientSession() as session:
-        data = aiohttp.FormData()
-        data.add_field('model_name', 'whisper-base')
-        data.add_field('language', 'auto')
-        
+        # Read and encode audio file
         with open('audio.wav', 'rb') as f:
-            data.add_field('file', f, filename='audio.wav')
+            audio_data = f.read()
+            audio_b64 = base64.b64encode(audio_data).decode('utf-8')
+        
+        data = {
+            "model_name": "whisper-base",
+            "inputs": f"data:audio/wav;base64,{audio_b64}",
+            "language": "auto"
+        }
             
-            async with session.post("http://localhost:8000/stt/transcribe", 
-                                  data=data) as response:
-                result = await response.json()
-                if result["success"]:
-                    print(f"Transcribed: {result['text']}")
+        async with session.post("http://localhost:8000/transcribe", 
+                              json=data) as response:
+            result = await response.json()
+            if result["success"]:
+                print(f"Transcribed: {result['text']}")
 
 # Run audio demos
 asyncio.run(tts_example())
