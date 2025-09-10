@@ -10,7 +10,17 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
-import jwt
+
+try:
+    import jwt
+    JWT_AVAILABLE = True
+except ImportError:
+    try:
+        from jose import jwt
+        JWT_AVAILABLE = True
+    except ImportError:
+        JWT_AVAILABLE = False
+        jwt = None
 
 logger = logging.getLogger(__name__)
 

@@ -280,7 +280,7 @@ async def synthesize_speech(
         )
 
 
-@router.post("/stt/transcribe", response_model=STTResponse, summary="Speech-to-Text Transcription")
+@router.post("/transcribe", response_model=STTResponse, summary="Speech-to-Text Transcription")
 async def transcribe_speech(
     request: STTRequest,
     background_tasks: BackgroundTasks,
@@ -317,16 +317,17 @@ async def transcribe_speech(
                 ]
             )
         
-        # Note: Audio data would typically be uploaded separately
-        # For this example, we'll assume it's passed in metadata
-        audio_data = request.metadata.get("audio_data")
-        if not audio_data:
+        # Process audio input from the inputs field
+        if not request.inputs:
             raise ValidationError(
-                field="audio_data",
+                field="inputs",
                 value=None,
                 expected="base64 encoded audio or file reference",
-                suggestions=["Upload audio file or provide audio data in metadata"]
+                suggestions=["Provide audio data in inputs field as base64 or file path"]
             )
+        
+        # The audio_data will be processed by the inference engine
+        audio_data = request.inputs
         
         # Prepare STT-specific inputs
         stt_inputs = {

@@ -348,7 +348,7 @@ The API will be available at `http://localhost:8000` with automatic documentatio
 
 **Audio Processing:**
 - `POST /tts/synthesize` - Text-to-speech
-- `POST /stt/transcribe` - Speech-to-text
+- `POST /transcribe` - Speech-to-text
 - `POST /audio/enhance` - Audio enhancement
 
 **Model Management:**

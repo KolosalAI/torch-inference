@@ -648,8 +648,8 @@ def print_api_endpoints():
         ("POST", "/models/manage", "Manage models (retry, optimize, etc.)"),
         # Enhanced audio processing endpoints
         ("POST", "/synthesize", "Enhanced Text-to-Speech synthesis"),
-        ("POST", "/stt/transcribe", "Speech-to-Text transcription"),
-        ("GET", "/audio/models", "List available audio models"),
+        ("POST", "/transcribe", "Speech-to-Text transcription"),
+
         ("GET", "/audio/health", "Audio processing health check"),
         ("GET", "/tts/health", "TTS service health check with voices"),
         ("POST", "/audio/validate", "Validate audio file integrity"),
@@ -745,7 +745,9 @@ class TTSRequest(PydanticBaseModel):
 
 class STTRequest(PydanticBaseModel):
     """Request model for Speech-to-Text transcription."""
-    model_name: str = Field(default="whisper-base", description="STT model to use")
+    model_name: str = Field(..., description="STT model to use for transcription")
+    inputs: str = Field(..., description="Audio data (base64 encoded or file path)")
+    token: Optional[str] = Field(default=None, description="Authentication token")
     language: str = Field(default="auto", description="Language code or 'auto' for detection")
     enable_timestamps: bool = Field(default=True, description="Include word-level timestamps")
     beam_size: int = Field(default=5, ge=1, le=10, description="Beam search size")
@@ -1254,22 +1256,66 @@ async def initialize_inference_engine():
         
         example_model.optimize_for_inference()
         
-        # Apply performance optimizations
-        if framework_available:
+        # Apply comprehensive performance optimizations based on next_steps analysis
+        # Temporarily disabled to prevent hanging during startup - quantization can cause timeouts
+        logger.info("Comprehensive optimization disabled during startup to prevent hanging")
+        if framework_available and False:  # Disabled for now
             try:
-                from framework.optimizers.performance_optimizer import optimize_for_inference
+                from framework.optimizers.comprehensive_optimizer import optimize_model_comprehensive
                 
-                # Apply comprehensive performance optimizations to the model
+                # Create example inputs for optimization
+                example_inputs = torch.randn(1, 10, device=example_model.device, dtype=torch.float32)
+                
+                # Apply comprehensive performance optimizations
                 try:
-                    optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
+                    optimized_model, optimization_report = optimize_model_comprehensive(
+                        example_model.model, 
+                        config, 
+                        example_inputs=example_inputs,
+                        optimization_level="balanced"  # Use balanced optimization for broad compatibility
+                    )
+                    
                     example_model.model = optimized_model
-                    example_model.device = optimized_device_config.get_torch_device()
-                    config.device = optimized_device_config
-                    logger.info("Comprehensive performance optimizations applied successfully")
+                    
+                    # Log optimization results
+                    logger.info("=== COMPREHENSIVE OPTIMIZATION RESULTS ===")
+                    logger.info(f"Optimizations applied: {', '.join(optimization_report['optimization_summary']['optimizations_applied'])}")
+                    logger.info(f"Expected performance impact:")
+                    for metric, value in optimization_report['performance_impact'].items():
+                        logger.info(f"  {metric}: {value}")
+                    
+                    # Log critical issues addressed
+                    issues_addressed = optimization_report['critical_issues_addressed']
+                    addressed_count = sum(issues_addressed.values())
+                    logger.info(f"Critical issues addressed: {addressed_count}/4")
+                    for issue, addressed in issues_addressed.items():
+                        status = "✓" if addressed else "✗"
+                        logger.info(f"  {status} {issue.replace('_', ' ').title()}")
+                    
+                    # Log next steps
+                    if optimization_report.get('next_steps'):
+                        logger.info("Recommended next steps:")
+                        for step in optimization_report['next_steps']:
+                            logger.info(f"  • {step}")
+                    
+                    logger.info("===========================================")
+                    
                 except Exception as e:
-                    logger.warning(f"Performance optimization failed, using default: {e}")
+                    logger.warning(f"Comprehensive optimization failed, applying fallback optimizations: {e}")
+                    
+                    # Fallback to standard performance optimizer
+                    try:
+                        from framework.optimizers.performance_optimizer import optimize_for_inference
+                        optimized_model, optimized_device_config = optimize_for_inference(example_model.model, config)
+                        example_model.model = optimized_model
+                        example_model.device = optimized_device_config.get_torch_device()
+                        config.device = optimized_device_config
+                        logger.info("Fallback performance optimizations applied successfully")
+                    except Exception as e2:
+                        logger.warning(f"Fallback optimization also failed: {e2}")
+                        
             except (ImportError, RuntimeError) as e:
-                logger.warning(f"Performance optimizer not available: {e}")
+                logger.warning(f"Optimization framework not available: {e}")
         
         # Register model
         model_manager.register_model("example", example_model)
@@ -1472,16 +1518,16 @@ async def root():
                 "metrics": "/metrics/server"
             },
             "audio": {
-                "transcribe": "/stt/transcribe",
-                "models": "/audio/models",
+                "transcribe": "/transcribe",
+                "models": "/models",
                 "health": "/audio/health",
                 "tts_health": "/tts/health",
                 "validate": "/audio/validate",
                 "metrics": "/metrics/tts"
             },
             "tts_audio": {
-                "transcribe": "/stt/transcribe",
-                "models": "/audio/models",
+                "transcribe": "/transcribe",
+                "models": "/models",
                 "health": "/audio/health",
                 "tts_health": "/tts/health",
                 "validate": "/audio/validate",
@@ -1790,6 +1836,70 @@ async def list_available_models():
         tts_models = model_config_manager.get_tts_models()
         stt_models = model_config_manager.get_stt_models()
         
+        # Get detailed audio model information
+        audio_models_info = {}
+        try:
+            from framework.models.audio import TTS_MODEL_REGISTRY, STT_MODEL_REGISTRY
+            
+            # Get all available models from registries
+            tts_registry = TTS_MODEL_REGISTRY
+            stt_registry = STT_MODEL_REGISTRY
+            
+            # Add the manual mapping for common model names
+            tts_model_aliases = {
+                "speecht5_tts": {
+                    "type": "huggingface",
+                    "model_name": "microsoft/speecht5_tts",
+                    "description": "Microsoft SpeechT5 TTS model (alias)"
+                },
+                "default": {
+                    "type": "huggingface",
+                    "model_name": "microsoft/speecht5_tts", 
+                    "description": "Default TTS model"
+                }
+            }
+            
+            # Merge with existing registry
+            all_tts_models = {**tts_registry, **tts_model_aliases}
+            
+            # Get currently loaded audio models
+            loaded_audio_models = [name for name in model_manager.list_models() 
+                            if any(audio_type in name.lower() for audio_type in ['tts', 'stt', 'whisper', 'tacotron', 'wav2vec', 'speecht5', 'bark'])]
+            
+            audio_models_info = {
+                "tts_detailed": all_tts_models,
+                "stt_detailed": stt_registry,
+                "loaded_audio_models": loaded_audio_models,
+                "supported_tts_types": ["huggingface", "torchaudio", "custom"],
+                "supported_stt_types": ["whisper", "wav2vec2", "custom"],
+                "examples": {
+                    "tts_request": {
+                        "model_name": "speecht5_tts",
+                        "alternatives": ["speecht5", "bark", "tacotron2", "default"]
+                    },
+                    "stt_request": {
+                        "model_name": "whisper-base",
+                        "alternatives": ["whisper-small", "whisper-medium", "wav2vec2"]
+                    }
+                }
+            }
+        except ImportError:
+            # Fallback audio model information
+            audio_models_info = {
+                "tts_detailed": {
+                    "speecht5_tts": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Microsoft SpeechT5 TTS model"},
+                    "bark": {"type": "huggingface", "model_name": "suno/bark", "description": "Suno Bark TTS model"},
+                    "tacotron2": {"type": "torchaudio", "model_name": "tacotron2", "description": "TorchAudio Tacotron2"},
+                    "default": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Default TTS model"}
+                },
+                "stt_detailed": {
+                    "whisper-base": {"type": "whisper", "model_size": "base", "description": "OpenAI Whisper Base model"},
+                    "whisper-small": {"type": "whisper", "model_size": "small", "description": "OpenAI Whisper Small model"}
+                },
+                "loaded_audio_models": [],
+                "error": "Audio framework not fully available, showing fallback models"
+            }
+        
         response = {
             "success": True,
             "timestamp": datetime.now().isoformat(),
@@ -1804,6 +1914,7 @@ async def list_available_models():
                 "text_classification": model_config_manager.get_models_by_task("text-classification"),
                 "feature_extraction": model_config_manager.get_models_by_task("feature-extraction")
             },
+            "audio_models": audio_models_info,
             "deployment_info": {
                 "auto_load_models": model_config_manager.get_auto_load_models(),
                 "high_priority_models": model_config_manager.get_models_by_priority()[:3]
@@ -3753,33 +3864,67 @@ async def text_to_speech(request: TTSRequest) -> TTSResponse:
         )
 
 
-@app.post("/stt/transcribe", response_model=STTResponse)
-async def speech_to_text(
-    file: UploadFile = File(..., description="Audio file to transcribe"),
-    model_name: str = Form(default="whisper-base"),
-    language: str = Form(default="auto"),
-    enable_timestamps: bool = Form(default=True),
-    beam_size: int = Form(default=5),
-    temperature: float = Form(default=0.0),
-    suppress_blank: bool = Form(default=True),
-    initial_prompt: Optional[str] = Form(default=None)
-) -> STTResponse:
+@app.post("/transcribe", response_model=STTResponse)
+async def speech_to_text(request: STTRequest) -> STTResponse:
     """
-    Speech-to-Text transcription endpoint.
+    Speech-to-Text transcription endpoint for STT models.
     
-    Transcribes uploaded audio file to text using the specified STT model.
-    Supports various audio formats and returns text with optional timestamps.
+    Converts audio input to text using the specified STT model.
+    Supports various audio formats and returns transcribed text with optional timestamps.
+    
+    Parameters:
+    - model_name: Name of the STT model to use
+    - inputs: Audio data (base64 encoded or file path)
+    - token: Optional authentication token
     """
-    logger.info(f"[ENDPOINT] STT transcription requested - Model: {model_name}, "
-               f"File: {file.filename}, Size: {file.size if hasattr(file, 'size') else 'unknown'}")
+    # Validate token if provided
+    token_user = validate_token(request.token) if request.token else None
+    
+    logger.info(f"[ENDPOINT] STT transcription requested - Model: {request.model_name}, "
+               f"Audio input type: {type(request.inputs).__name__}, "
+               f"User: {token_user.get('username') if token_user else 'anonymous'}")
+    
+    # Check model configuration availability first
+    try:
+        from framework.core.model_config import is_model_available, get_model_info, get_model_config_manager
+        
+        if not is_model_available(request.model_name):
+            logger.warning(f"[ENDPOINT] STT model '{request.model_name}' is not available")
+            return STTResponse(
+                success=False,
+                error=f"STT model '{request.model_name}' is not available. Check models.json configuration."
+            )
+        
+        # Check if model supports STT
+        model_config_manager = get_model_config_manager()
+        stt_models = model_config_manager.get_stt_models()
+        
+        if request.model_name not in stt_models:
+            available_stt = ", ".join(stt_models) if stt_models else "none"
+            logger.warning(f"[ENDPOINT] Model '{request.model_name}' does not support STT")
+            return STTResponse(
+                success=False,
+                error=f"Model '{request.model_name}' does not support Speech-to-Text. Available STT models: {available_stt}"
+            )
+        
+        # Get model configuration for validation
+        model_info = get_model_info(request.model_name)
+        if model_info and model_info.get("stt_enabled"):
+            logger.debug(f"[ENDPOINT] Using STT model: {model_info['display_name']} "
+                        f"({model_info.get('metadata', {}).get('framework', 'unknown')})")
+    
+    except Exception as e:
+        logger.warning(f"[ENDPOINT] STT model configuration check failed: {e}")
+        # Continue with fallback behavior
     
     try:
         start_time = time.perf_counter()
         
         # Import audio modules dynamically
         try:
-            from framework.models.audio import create_stt_model
+            from framework.models.audio import create_stt_model, AudioModelError
             from framework.processors.audio import ComprehensiveAudioPreprocessor as AudioPreprocessor
+            import base64
         except ImportError as e:
             logger.error(f"[ENDPOINT] Audio modules not available: {e}")
             raise HTTPException(
@@ -3787,80 +3932,133 @@ async def speech_to_text(
                 detail="Audio processing not available. Install audio dependencies."
             )
         
-        # Validate file
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
-        
-        # Check file extension
-        allowed_extensions = config_manager.get_config().get("security", {}).get("allowed_extensions", [])
-        audio_extensions = [".wav", ".mp3", ".flac", ".m4a", ".ogg"]
-        
-        file_ext = Path(file.filename).suffix.lower()
-        if file_ext not in audio_extensions:
+        # Validate audio input
+        if not request.inputs:
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported audio format: {file_ext}. Supported: {audio_extensions}"
+                detail="No audio input provided"
             )
         
-        # Check file size
-        max_size_mb = config_manager.get_config().get("security", {}).get("max_file_size_mb", 100)
-        if hasattr(file, 'size') and file.size > max_size_mb * 1024 * 1024:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File too large. Maximum size: {max_size_mb}MB"
-            )
+        # Map model names to their types and configurations
+        stt_model_mapping = {
+            "whisper-base": {
+                "type": "whisper",
+                "model_name": "openai/whisper-base"
+            },
+            "whisper-small": {
+                "type": "whisper",
+                "model_name": "openai/whisper-small"
+            },
+            "whisper-medium": {
+                "type": "whisper", 
+                "model_name": "openai/whisper-medium"
+            },
+            "whisper-large": {
+                "type": "whisper",
+                "model_name": "openai/whisper-large"
+            },
+            "wav2vec2": {
+                "type": "wav2vec2",
+                "model_name": "facebook/wav2vec2-base-960h"
+            },
+            "default": {
+                "type": "whisper",
+                "model_name": "openai/whisper-base"
+            }
+        }
         
         # Get or create STT model
         try:
-            if model_name not in model_manager.list_models():
-                logger.info(f"[ENDPOINT] Loading STT model: {model_name}")
+            if request.model_name not in model_manager.list_models():
+                logger.info(f"[ENDPOINT] Loading STT model: {request.model_name}")
                 config = config_manager.get_inference_config()
-                stt_model = create_stt_model(model_name, config)
-                model_manager.register_model(model_name, stt_model)
+                
+                # Get model configuration
+                model_config = stt_model_mapping.get(request.model_name, stt_model_mapping["default"])
+                model_type = model_config["type"]
+                actual_model_name = model_config["model_name"]
+                
+                logger.debug(f"[ENDPOINT] Creating STT model - Type: {model_type}, Model: {actual_model_name}")
+                
+                stt_model = create_stt_model(
+                    model_type,
+                    config,
+                    model_name=actual_model_name
+                )
+                
+                # Load the model
+                logger.debug(f"[ENDPOINT] Loading STT model...")
+                stt_model.load_model("dummy_path")
+                
+                # Verify model is loaded
+                if not stt_model.is_loaded:
+                    raise AudioModelError(f"Failed to load STT model: model.is_loaded is False")
+                
+                logger.info(f"[ENDPOINT] STT model loaded successfully: {request.model_name}")
+                model_manager.register_model(request.model_name, stt_model)
             else:
-                stt_model = model_manager.get_model(model_name)
+                stt_model = model_manager.get_model(request.model_name)
+                logger.debug(f"[ENDPOINT] Using existing STT model: {request.model_name}")
         except Exception as e:
-            logger.error(f"[ENDPOINT] Failed to load STT model {model_name}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to load STT model: {str(e)}"
+            logger.error(f"[ENDPOINT] Failed to load STT model {request.model_name}: {e}")
+            logger.error(f"[ENDPOINT] Exception type: {type(e).__name__}")
+            if "OutOfMemoryError" in str(type(e).__name__) or "CUDA out of memory" in str(e):
+                error_msg = f"Insufficient GPU memory to load STT model '{request.model_name}'. Try a smaller model."
+            else:
+                error_msg = f"Failed to load STT model '{request.model_name}': {str(e)}"
+            
+            return STTResponse(
+                success=False,
+                error=error_msg
             )
         
-        # Read and preprocess audio
+        # Process audio input (handle base64 or file path)
         try:
-            # Read file content
-            audio_content = await file.read()
+            audio_data = None
+            sample_rate = None
             
-            # Save to temporary file for processing
-            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
-                temp_file.write(audio_content)
-                temp_file_path = temp_file.name
-            
-            # Load and preprocess audio
-            config = config_manager.get_inference_config()
-            audio_processor = AudioPreprocessor(config)
-            audio_data, sample_rate = audio_processor.load_audio(temp_file_path)
-            
-            # Clean up temp file
-            os.unlink(temp_file_path)
-            
+            if request.inputs.startswith("data:audio/"):
+                # Handle base64 encoded audio
+                header, encoded = request.inputs.split(',', 1)
+                audio_bytes = base64.b64decode(encoded)
+                
+                # Save to temporary file for processing
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                    temp_file.write(audio_bytes)
+                    temp_file_path = temp_file.name
+                
+                # Load and preprocess audio
+                config = config_manager.get_inference_config()
+                audio_processor = AudioPreprocessor(config)
+                audio_data, sample_rate = audio_processor.load_audio(temp_file_path)
+                
+                # Clean up temp file
+                os.unlink(temp_file_path)
+                
+            elif os.path.isfile(request.inputs):
+                # Handle file path
+                config = config_manager.get_inference_config()
+                audio_processor = AudioPreprocessor(config)
+                audio_data, sample_rate = audio_processor.load_audio(request.inputs)
+            else:
+                raise ValueError("Invalid audio input format")
+                
         except Exception as e:
             logger.error(f"[ENDPOINT] Audio preprocessing failed: {e}")
-            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to process audio file: {str(e)}"
+            return STTResponse(
+                success=False,
+                error=f"Failed to process audio input: {str(e)}"
             )
         
         # Prepare transcription parameters
         transcription_params = {
-            "language": language if language != "auto" else None,
-            "enable_timestamps": enable_timestamps,
-            "beam_size": beam_size,
-            "temperature": temperature,
-            "suppress_blank": suppress_blank,
-            "initial_prompt": initial_prompt
+            "language": request.language if request.language != "auto" else None,
+            "enable_timestamps": request.enable_timestamps,
+            "beam_size": request.beam_size,
+            "temperature": request.temperature,
+            "suppress_blank": request.suppress_blank,
+            "initial_prompt": request.initial_prompt
         }
         
         # Perform STT transcription
@@ -3885,26 +4083,32 @@ async def speech_to_text(
             return STTResponse(
                 success=True,
                 text=text,
-                segments=segments if enable_timestamps else None,
+                segments=segments if request.enable_timestamps else None,
                 language=detected_language,
                 confidence=confidence,
                 processing_time=processing_time,
                 model_info={
-                    "model_name": model_name,
-                    "language": detected_language or language,
-                    "file_name": file.filename
+                    "model_name": request.model_name,
+                    "language": detected_language or request.language,
+                    "input_type": "base64" if request.inputs.startswith("data:audio/") else "file"
                 }
             )
             
         except Exception as e:
             logger.error(f"[ENDPOINT] STT transcription failed: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"STT transcription failed: {str(e)}"
+            return STTResponse(
+                success=False,
+                error=f"STT transcription failed: {str(e)}",
+                processing_time=time.perf_counter() - start_time
             )
             
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        logger.error(f"[ENDPOINT] STT HTTP exception: {he.detail}")
+        return STTResponse(
+            success=False,
+            error=he.detail,
+            processing_time=time.perf_counter() - start_time if 'start_time' in locals() else None
+        )
     except Exception as e:
         logger.error(f"[ENDPOINT] STT endpoint failed with unexpected error: {e}")
         return STTResponse(
@@ -3914,79 +4118,7 @@ async def speech_to_text(
         )
 
 
-@app.get("/audio/models")
-async def list_audio_models():
-    """List available audio models (TTS and STT)."""
-    logger.info("[ENDPOINT] Audio models list requested")
-    
-    try:
-        from framework.models.audio import TTS_MODEL_REGISTRY, STT_MODEL_REGISTRY, list_available_models
-        
-        # Get all available models from registries
-        tts_models = TTS_MODEL_REGISTRY
-        stt_models = STT_MODEL_REGISTRY
-        
-        # Add the manual mapping for common model names
-        tts_model_aliases = {
-            "speecht5_tts": {
-                "type": "huggingface",
-                "model_name": "microsoft/speecht5_tts",
-                "description": "Microsoft SpeechT5 TTS model (alias)"
-            },
-            "default": {
-                "type": "huggingface",
-                "model_name": "microsoft/speecht5_tts", 
-                "description": "Default TTS model"
-            }
-        }
-        
-        # Merge with existing registry
-        all_tts_models = {**tts_models, **tts_model_aliases}
-        
-        # Get currently loaded audio models
-        loaded_models = [name for name in model_manager.list_models() 
-                        if any(audio_type in name.lower() for audio_type in ['tts', 'stt', 'whisper', 'tacotron', 'wav2vec', 'speecht5', 'bark'])]
-        
-        logger.info(f"[ENDPOINT] Audio models listed - TTS: {len(all_tts_models)}, STT: {len(stt_models)}, Loaded: {len(loaded_models)}")
-        
-        return {
-            "tts_models": all_tts_models,
-            "stt_models": stt_models,
-            "loaded_models": loaded_models,
-            "supported_tts_types": ["huggingface", "torchaudio", "custom"],
-            "supported_stt_types": ["whisper", "wav2vec2", "custom"],
-            "examples": {
-                "tts_request": {
-                    "model_name": "speecht5_tts",
-                    "alternatives": ["speecht5", "bark", "tacotron2", "default"]
-                },
-                "stt_request": {
-                    "model_name": "whisper-base",
-                    "alternatives": ["whisper-small", "whisper-medium", "wav2vec2"]
-                }
-            }
-        }
-        
-    except ImportError as e:
-        logger.error(f"[ENDPOINT] Audio models import error: {e}")
-        return {
-            "tts_models": {
-                "speecht5_tts": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Microsoft SpeechT5 TTS model"},
-                "speecht5": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Microsoft SpeechT5 TTS model"},
-                "bark": {"type": "huggingface", "model_name": "suno/bark", "description": "Suno Bark TTS model"},
-                "tacotron2": {"type": "torchaudio", "model_name": "tacotron2", "description": "TorchAudio Tacotron2"},
-                "default": {"type": "huggingface", "model_name": "microsoft/speecht5_tts", "description": "Default TTS model"}
-            },
-            "stt_models": {
-                "whisper-base": {"type": "whisper", "model_size": "base", "description": "OpenAI Whisper Base model"},
-                "whisper-small": {"type": "whisper", "model_size": "small", "description": "OpenAI Whisper Small model"}
-            },
-            "loaded_models": [],
-            "error": "Audio framework not fully available, showing fallback models"
-        }
-    except Exception as e:
-        logger.error(f"[ENDPOINT] Failed to list audio models: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/audio/health")

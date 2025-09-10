@@ -10,6 +10,7 @@ import io
 import json
 import time
 import gc
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
 from unittest.mock import Mock, MagicMock, AsyncMock
@@ -1310,3 +1311,81 @@ def pytest_addoption(parser):
         default=False,
         help="run performance tests"
     )
+
+
+# Removed async_cleanup fixture due to pytest compatibility issues
+
+
+@pytest.fixture(autouse=True)
+def resource_cleanup():
+    """Automatic resource cleanup to prevent accumulation."""
+    yield
+    
+    # Clean up CUDA memory if available
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        except RuntimeError:
+            pass
+    
+    # Clean up any remaining threads
+    active_threads = threading.active_count()
+    if active_threads > 10:  # Arbitrary threshold
+        warnings.warn(f"High thread count detected: {active_threads}")
+    
+    # Force garbage collection
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def test_timeout():
+    """Set a global timeout for individual tests."""
+    import signal
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutError("Test exceeded maximum time limit")
+    
+    # Set timeout only on Unix-like systems
+    if hasattr(signal, 'SIGALRM'):
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(60)  # 60 second timeout per test
+        
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    else:
+        # On Windows, just yield without signal-based timeout
+        yield
+
+
+# Hook to run after each test
+def pytest_runtest_teardown(item, nextitem):
+    """Clean up after each test."""
+    # Clean up asyncio tasks if there's an event loop
+    try:
+        loop = asyncio.get_running_loop()
+        tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        
+        if tasks:
+            for task in tasks:
+                if not task.cancelled():
+                    task.cancel()
+    except RuntimeError:
+        pass  # No event loop running
+    
+    # Force garbage collection
+    gc.collect()
+    
+    # Clear CUDA cache if available
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+        except RuntimeError:
+            pass
+
+
+# Hook to handle test failures and timeouts  
+# Removed pytest_runtest_call as it was causing validation errors
