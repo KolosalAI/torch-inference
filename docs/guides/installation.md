@@ -2,7 +2,73 @@
 
 Complete installation instructions for the PyTorch Inference Framework across different environments and use cases.
 
-## 🎯 Prerequisites
+## �️ Installation Flow Diagram
+
+```mermaid
+graph TD
+    Start([Start Installation]) --> CheckOS{Operating System?}
+    
+    CheckOS -->|Windows| WindowsPath[Windows Installation Path]
+    CheckOS -->|Linux| LinuxPath[Linux Installation Path] 
+    CheckOS -->|macOS| MacOSPath[macOS Installation Path]
+    
+    WindowsPath --> CheckPython{Python 3.10+?}
+    LinuxPath --> CheckPython
+    MacOSPath --> CheckPython
+    
+    CheckPython -->|No| InstallPython[Install Python 3.11+]
+    CheckPython -->|Yes| CheckGPU{GPU Available?}
+    
+    InstallPython --> CheckGPU
+    
+    CheckGPU -->|NVIDIA| NvidiaSetup[NVIDIA GPU Setup]
+    CheckGPU -->|AMD/Intel| CPUSetup[CPU-Only Setup]
+    CheckGPU -->|Apple Silicon| AppleSetup[Apple Silicon Setup]
+    CheckGPU -->|None| CPUSetup
+    
+    NvidiaSetup --> CheckCUDA{CUDA Installed?}
+    CheckCUDA -->|No| InstallCUDA[Install CUDA 12.4+]
+    CheckCUDA -->|Yes| InstallFramework[Install Framework]
+    
+    CPUSetup --> InstallFramework
+    AppleSetup --> InstallFramework
+    InstallCUDA --> InstallFramework
+    
+    InstallFramework --> PackageManager{Package Manager?}
+    PackageManager -->|uv Recommended| UVInstall[uv Installation]
+    PackageManager -->|pip Traditional| PipInstall[pip Installation]
+    
+    UVInstall --> Verify[Verify Installation]
+    PipInstall --> Verify
+    
+    Verify --> TestBasic[Run Basic Tests]
+    TestBasic --> TestGPU{Test GPU?}
+    
+    TestGPU -->|Yes| GPUTest[GPU Functionality Test]
+    TestGPU -->|No| Complete[✅ Installation Complete]
+    
+    GPUTest --> AudioTest{Install Audio?}
+    AudioTest -->|Yes| AudioSetup[Audio Dependencies]
+    AudioTest -->|No| Complete
+    
+    AudioSetup --> Complete
+    
+    Complete --> NextSteps[📚 Next Steps:<br/>- Quick Start Guide<br/>- Configuration<br/>- First Prediction]
+
+    classDef start fill:#e8f5e8
+    classDef decision fill:#fff3e0
+    classDef process fill:#e3f2fd
+    classDef gpu fill:#f3e5f5
+    classDef complete fill:#d4edda
+
+    class Start,Complete,NextSteps start
+    class CheckOS,CheckPython,CheckGPU,CheckCUDA,PackageManager,TestGPU,AudioTest decision
+    class WindowsPath,LinuxPath,MacOSPath,InstallPython,CPUSetup,AppleSetup,InstallFramework,UVInstall,PipInstall,Verify,TestBasic,AudioSetup process
+    class NvidiaSetup,InstallCUDA,GPUTest gpu
+    class Complete complete
+```
+
+## �🎯 Prerequisites
 
 ### System Requirements
 
