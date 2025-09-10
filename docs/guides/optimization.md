@@ -2,6 +2,142 @@
 
 Complete guide to optimizing the PyTorch Inference Framework for maximum performance, efficiency, and throughput.
 
+## 🏗️ Optimization Architecture
+
+```mermaid
+graph TB
+    subgraph "🎯 Optimization Layers"
+        Hardware[Hardware Layer]
+        Model[Model Layer]
+        Runtime[Runtime Layer]
+        System[System Layer]
+    end
+
+    subgraph "🔧 Hardware Optimizations"
+        GPU[GPU Optimizations]
+        CPU[CPU Optimizations]
+        Memory[Memory Management]
+        Storage[Storage I/O]
+    end
+
+    subgraph "🧠 Model Optimizations"
+        Compression[Model Compression]
+        Quantization[Quantization]
+        Pruning[Pruning]
+        Distillation[Knowledge Distillation]
+    end
+
+    subgraph "⚡ Runtime Optimizations"
+        JIT[JIT Compilation]
+        TensorRT[TensorRT]
+        ONNX[ONNX Runtime]
+        Batching[Dynamic Batching]
+    end
+
+    subgraph "🏛️ System Optimizations"
+        Caching[Intelligent Caching]
+        Scaling[Auto Scaling]
+        LoadBalancing[Load Balancing]
+        Monitoring[Performance Monitoring]
+    end
+
+    Hardware --> GPU
+    Hardware --> CPU
+    Hardware --> Memory
+    Hardware --> Storage
+
+    Model --> Compression
+    Model --> Quantization
+    Model --> Pruning
+    Model --> Distillation
+
+    Runtime --> JIT
+    Runtime --> TensorRT
+    Runtime --> ONNX
+    Runtime --> Batching
+
+    System --> Caching
+    System --> Scaling
+    System --> LoadBalancing
+    System --> Monitoring
+
+    classDef layer fill:#e3f2fd
+    classDef hardware fill:#e8f5e8
+    classDef model fill:#fff3e0
+    classDef runtime fill:#f3e5f5
+    classDef system fill:#fce4ec
+
+    class Hardware,Model,Runtime,System layer
+    class GPU,CPU,Memory,Storage hardware
+    class Compression,Quantization,Pruning,Distillation model
+    class JIT,TensorRT,ONNX,Batching runtime
+    class Caching,Scaling,LoadBalancing,Monitoring system
+```
+
+## 📊 Performance Optimization Flow
+
+```mermaid
+flowchart TD
+    Start([Model Input]) --> Detect{Hardware Detection}
+    
+    Detect -->|NVIDIA GPU| NvidiaPath[NVIDIA Optimization Path]
+    Detect -->|AMD GPU| AMDPath[AMD Optimization Path]
+    Detect -->|CPU Only| CPUPath[CPU Optimization Path]
+    
+    NvidiaPath --> TensorRTCheck{TensorRT Available?}
+    TensorRTCheck -->|Yes| TensorRTOpt[TensorRT Optimization]
+    TensorRTCheck -->|No| CUDAOpt[CUDA Optimization]
+    
+    AMDPath --> ROCmOpt[ROCm Optimization]
+    CPUPath --> IntelOpt{Intel CPU?}
+    IntelOpt -->|Yes| MKLOpt[Intel MKL-DNN]
+    IntelOpt -->|No| OpenMPOpt[OpenMP Optimization]
+    
+    TensorRTOpt --> PrecisionCheck{Precision Requirements?}
+    CUDAOpt --> PrecisionCheck
+    ROCmOpt --> PrecisionCheck
+    MKLOpt --> PrecisionCheck
+    OpenMPOpt --> PrecisionCheck
+    
+    PrecisionCheck -->|High Accuracy| FP32Mode[FP32 Mode]
+    PrecisionCheck -->|Balanced| FP16Mode[FP16 Mode]
+    PrecisionCheck -->|Speed Priority| INT8Mode[INT8 Quantization]
+    
+    FP32Mode --> ModelOpt[Model Optimization]
+    FP16Mode --> ModelOpt
+    INT8Mode --> ModelOpt
+    
+    ModelOpt --> JITComp{JIT Compile?}
+    JITComp -->|Yes| CompileModel[Compile Model]
+    JITComp -->|No| LoadModel[Load Model]
+    
+    CompileModel --> BatchOpt[Batch Optimization]
+    LoadModel --> BatchOpt
+    
+    BatchOpt --> MemoryOpt[Memory Optimization]
+    MemoryOpt --> CacheOpt[Cache Optimization]
+    CacheOpt --> Execute[Execute Inference]
+    
+    Execute --> Monitor[Performance Monitor]
+    Monitor --> Feedback{Performance OK?}
+    Feedback -->|No| TuneParams[Tune Parameters]
+    Feedback -->|Yes| Complete([Optimization Complete])
+    
+    TuneParams --> ModelOpt
+
+    classDef start fill:#e8f5e8
+    classDef decision fill:#fff3e0
+    classDef process fill:#e3f2fd
+    classDef optimization fill:#f3e5f5
+    classDef end fill:#fce4ec
+
+    class Start,Complete start
+    class Detect,TensorRTCheck,IntelOpt,PrecisionCheck,JITComp,Feedback decision
+    class NvidiaPath,AMDPath,CPUPath,TensorRTOpt,CUDAOpt,ROCmOpt,MKLOpt,OpenMPOpt process
+    class FP32Mode,FP16Mode,INT8Mode,ModelOpt,CompileModel,LoadModel,BatchOpt,MemoryOpt,CacheOpt optimization
+    class Execute,Monitor,TuneParams end
+```
+
 ## 📚 Overview
 
 This guide covers comprehensive optimization strategies:
