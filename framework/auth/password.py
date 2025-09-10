@@ -48,7 +48,10 @@ def hash_password(password: str) -> str:
     if not pwd_context:
         # Simple fallback for development (NOT SECURE for production)
         import hashlib
-        return f"simple:{hashlib.sha256(password.encode()).hexdigest()}"
+        # Add salt to prevent the same password from having the same hash
+        salt = secrets.token_hex(16)
+        hash_value = hashlib.sha256((password + salt).encode()).hexdigest()
+        return f"simple:{salt}:{hash_value}"
     
     try:
         hashed = pwd_context.hash(password)
@@ -74,8 +77,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         # Simple fallback verification
         if hashed_password.startswith("simple:"):
             import hashlib
-            expected_hash = f"simple:{hashlib.sha256(plain_password.encode()).hexdigest()}"
-            return expected_hash == hashed_password
+            # Handle both old format (simple:hash) and new format (simple:salt:hash)
+            parts = hashed_password.split(":")
+            if len(parts) == 3:  # New format with salt
+                _, salt, stored_hash = parts
+                expected_hash = hashlib.sha256((plain_password + salt).encode()).hexdigest()
+                return expected_hash == stored_hash
+            elif len(parts) == 2:  # Old format without salt (for backward compatibility)
+                _, stored_hash = parts
+                expected_hash = hashlib.sha256(plain_password.encode()).hexdigest()
+                return expected_hash == stored_hash
         return False
     
     try:

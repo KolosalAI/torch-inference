@@ -254,6 +254,37 @@ except ImportError as e:
     optimize_downloaded_model = None
     _unavailable_optimizers.extend(['PostDownloadOptimizer', 'create_post_download_optimizer', 'optimize_downloaded_model'])
 
+# Comprehensive optimizer suite (next_steps implementation)
+try:
+    from .comprehensive_optimizer import ComprehensiveOptimizationSuite, optimize_model_comprehensive
+    _available_optimizers.extend(['ComprehensiveOptimizationSuite', 'optimize_model_comprehensive'])
+except ImportError as e:
+    logger.info(f"Comprehensive optimizer suite not available: {e}")
+    ComprehensiveOptimizationSuite = None
+    optimize_model_comprehensive = None
+    _unavailable_optimizers.extend(['ComprehensiveOptimizationSuite', 'optimize_model_comprehensive'])
+
+# Attention optimizer (Flash Attention implementation)
+try:
+    from .attention_optimizer import FlashAttentionOptimizer, OptimizedMultiheadAttention, optimize_attention_layers, create_optimized_attention
+    _available_optimizers.extend(['FlashAttentionOptimizer', 'OptimizedMultiheadAttention', 'optimize_attention_layers', 'create_optimized_attention'])
+except ImportError as e:
+    logger.info(f"Attention optimizer not available: {e}")
+    FlashAttentionOptimizer = None
+    OptimizedMultiheadAttention = None
+    optimize_attention_layers = None
+    create_optimized_attention = None
+    _unavailable_optimizers.extend(['FlashAttentionOptimizer', 'OptimizedMultiheadAttention', 'optimize_attention_layers', 'create_optimized_attention'])
+
+# Universal optimization engine
+try:
+    from .performance_optimizer import UniversalOptimizationEngine
+    _available_optimizers.extend(['UniversalOptimizationEngine'])
+except ImportError as e:
+    logger.info(f"Universal optimization engine not available: {e}")
+    UniversalOptimizationEngine = None
+    _unavailable_optimizers.extend(['UniversalOptimizationEngine'])
+
 # Log availability summary
 if _available_optimizers:
     logger.info(f"Available optimizers: {', '.join(_available_optimizers)}")
@@ -264,6 +295,9 @@ def get_available_optimizers():
     """Get a dictionary of available optimizers and their status."""
     optimizers = {
         'performance': {'available': PerformanceOptimizer is not None, 'class': 'PerformanceOptimizer'},
+        'comprehensive': {'available': ComprehensiveOptimizationSuite is not None, 'class': 'ComprehensiveOptimizationSuite'},
+        'universal_engine': {'available': UniversalOptimizationEngine is not None, 'class': 'UniversalOptimizationEngine'},
+        'attention': {'available': FlashAttentionOptimizer is not None, 'class': 'FlashAttentionOptimizer'},
         'tensorrt': {'available': TensorRTOptimizer is not None, 'class': 'TensorRTOptimizer'},
         'onnx': {'available': ONNXOptimizer is not None, 'class': 'ONNXOptimizer'},
         'quantization': {'available': QuantizationOptimizer is not None, 'class': 'QuantizationOptimizer'},

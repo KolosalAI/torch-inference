@@ -38,7 +38,8 @@ class TTSResponse(BaseModel):
 
 class STTRequest(BaseModel):
     """Request model for Speech-to-Text transcription."""
-    model_name: str = Field(default="whisper-base", description="STT model to use")
+    model_name: str = Field(..., description="STT model to use")
+    inputs: str = Field(..., description="Audio data (base64 encoded or file path)")
     language: str = Field(default="auto", description="Language code or 'auto' for detection")
     enable_timestamps: bool = Field(default=True, description="Include word-level timestamps")
     beam_size: int = Field(default=5, ge=1, le=10, description="Beam search size")
