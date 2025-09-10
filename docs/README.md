@@ -1,15 +1,84 @@
-# PyTorch Inference Framework Documentation
+# PyTorch Inference Framework - Complete Documentation
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.8%2B-red)](https://pytorch.org/)
 [![CUDA](https://img.shields.io/badge/CUDA-12.4%2B-green)](https://developer.nvidia.com/cuda-toolkit)
 [![TensorRT](https://img.shields.io/badge/TensorRT-10.12%2B-orange)](https://developer.nvidia.com/tensorrt)
 
-> **Production-ready PyTorch inference framework delivering 2-10x performance improvements through advanced optimization techniques**
+> **Complete documentation covering all 960+ functions across 182 modules in the PyTorch Inference Framework**
 
-## 📚 Documentation Overview
+## 📚 Documentation Structure Overview
 
-This documentation provides comprehensive guides for using the PyTorch Inference Framework, from basic setup to advanced optimization techniques and production deployment.
+```mermaid
+graph TB
+    subgraph "📖 Documentation Architecture"
+        
+        subgraph "🚀 Getting Started"
+            QuickStart[Quick Start Guide]
+            Installation[Installation Guide]
+            BasicTutorials[Basic Tutorials]
+            FirstSteps[First Steps]
+        end
+        
+        subgraph "�️ System Architecture"
+            FrameworkArch[Framework Architecture]
+            AudioArch[Audio Architecture]
+            AutoscalingArch[Autoscaling Architecture]
+            SecurityArch[Security Architecture]
+        end
+        
+        subgraph "📖 API Documentation"
+            CoreAPI[Core API Reference]
+            OptimizersAPI[Optimizers API]
+            ProcessorsAPI[Processors API]
+            ServicesAPI[Services API]
+            RestAPI[REST API Reference]
+        end
+        
+        subgraph "🔧 Module Documentation"
+            CoreModules[Core Modules]
+            OptimizersModules[Optimizer Modules]
+            ProcessorsModules[Processor Modules]
+            UtilsModules[Utility Modules]
+            SecurityModules[Security Modules]
+        end
+        
+        subgraph "🎓 Advanced Guides"
+            Performance[Performance Tuning]
+            Production[Production Deployment]
+            CustomModels[Custom Models]
+            Monitoring[Monitoring & Observability]
+        end
+        
+        subgraph "💡 Examples & Use Cases"
+            CodeExamples[Code Examples]
+            UseCases[Use Case Scenarios]
+            BestPractices[Best Practices]
+            Troubleshooting[Troubleshooting]
+        end
+    end
+
+    QuickStart --> FrameworkArch
+    Installation --> CoreAPI
+    BasicTutorials --> CoreModules
+    FrameworkArch --> OptimizersAPI
+    CoreAPI --> Performance
+    CoreModules --> Production
+
+    classDef getting fill:#e8f5e8
+    classDef architecture fill:#f3e5f5
+    classDef api fill:#fff3e0
+    classDef modules fill:#e3f2fd
+    classDef advanced fill:#fce4ec
+    classDef examples fill:#f1f8e9
+
+    class QuickStart,Installation,BasicTutorials,FirstSteps getting
+    class FrameworkArch,AudioArch,AutoscalingArch,SecurityArch architecture
+    class CoreAPI,OptimizersAPI,ProcessorsAPI,ServicesAPI,RestAPI api
+    class CoreModules,OptimizersModules,ProcessorsModules,UtilsModules,SecurityModules modules
+    class Performance,Production,CustomModels,Monitoring advanced
+    class CodeExamples,UseCases,BestPractices,Troubleshooting examples
+```
 
 ### 🎯 Quick Navigation
 
@@ -218,6 +287,14 @@ This documentation provides **complete coverage** of the PyTorch Inference Frame
   - Model management (load, unload, optimize)
   - System monitoring (health, metrics, GPU info)
   - Autoscaling and server management
+
+#### 📦 Module Documentation (In Progress)
+- **[✅ Core Modules Overview](modules/README.md)** - Complete core framework documentation
+- **[✅ BaseModel](modules/core/base-model.md)** - Abstract model interface (25+ methods)
+- **[✅ InferenceEngine](modules/core/inference-engine.md)** - Core processing engine (32+ methods) 
+- **[✅ Configuration](modules/core/config.md)** - Configuration system (18+ methods)
+- **[🔄 GPU Manager](modules/core/gpu-manager.md)** - GPU resource management (28+ methods)
+- **[🔄 Additional Core Modules](modules/core/)** - 20+ additional core modules in progress
 
 #### ❓ Support Documentation (100% Complete)
 - **[✅ FAQ](FAQ.md)** - Comprehensive Q&A covering all major topics
