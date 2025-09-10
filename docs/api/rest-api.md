@@ -20,7 +20,7 @@ http://localhost:8000
 | **Stats** | `/stats` | GET | Performance statistics |
 | **Config** | `/config` | GET | Configuration info |
 | **Models** | `/models` | GET | List loaded models |
-| **Audio** | `/stt/transcribe` | POST | Speech-to-text |
+| **Audio** | `/transcribe` | POST | Speech-to-text |
 | **TTS** | `/tts/health` | GET | TTS service health check |
 
 ## Authentication
@@ -96,7 +96,7 @@ GET /
     },
     "audio": {
       "synthesize": "/tts/synthesize",
-      "transcribe": "/stt/transcribe"
+      "transcribe": "/transcribe"
     }
   }
 }
@@ -756,17 +756,18 @@ Transcribe audio to text using STT models.
 
 **Request:**
 ```http
-POST /stt/transcribe
-Content-Type: multipart/form-data
+POST /transcribe
+Content-Type: application/json
 
-form-data:
-- file: [audio file]
-- model_name: "whisper-base"
-- language: "auto"
-- enable_timestamps: true
-- beam_size: 5
-- temperature: 0.0
-- suppress_blank: true
+{
+  "model_name": "whisper-base",
+  "inputs": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10...",
+  "language": "auto",
+  "enable_timestamps": true,
+  "beam_size": 5,
+  "temperature": 0.0,
+  "suppress_blank": true
+}
 ```
 
 **Response:**

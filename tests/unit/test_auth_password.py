@@ -61,10 +61,16 @@ class TestPasswordHashing:
         assert hashed.startswith("simple:")
         assert len(hashed) > len(password)
         
-        # Verify the fallback hash works
-        import hashlib
-        expected = f"simple:{hashlib.sha256(password.encode()).hexdigest()}"
-        assert hashed == expected
+        # Verify the fallback hash format (simple:salt:hash)
+        parts = hashed.split(":")
+        assert len(parts) == 3  # simple, salt, hash
+        assert parts[0] == "simple"
+        assert len(parts[1]) == 32  # salt is 16 bytes hex = 32 chars
+        assert len(parts[2]) == 64  # sha256 hash = 64 chars hex
+        
+        # Verify the password can be verified
+        from framework.auth.password import verify_password
+        assert verify_password(password, hashed) is True
     
     def test_verify_password_correct(self):
         """Test password verification with correct password."""

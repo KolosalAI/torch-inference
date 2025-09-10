@@ -145,7 +145,8 @@ class TTSResponse(BaseResponse):
 
 class STTRequest(BaseRequest):
     """Request model for Speech-to-Text transcription."""
-    model_name: str = Field(default="whisper-base", description="STT model to use")
+    model_name: str = Field(..., description="STT model to use")
+    inputs: str = Field(..., description="Audio data (base64 encoded or file path)")
     language: str = Field(default="auto", description="Language code or 'auto' for detection")
     
     # Transcription options

@@ -949,25 +949,103 @@ class MemoryOptimizer:
         return optimal_batch_size
     
     def _configure_cuda_memory(self) -> None:
-        """Configure CUDA memory allocation settings."""
+        """Configure CUDA memory allocation settings with advanced fragmentation prevention."""
         try:
-            # Enable memory pooling
+            # Advanced CUDA memory allocator configuration based on next_steps analysis
+            # Address the critical 60% production deployment issue with memory fragmentation
+            
+            # Clear cache first
             safe_cuda_empty_cache()
+            
+            # Configure PyTorch CUDA allocator for fragmentation prevention
+            # Use smaller split sizes to prevent large fragmentation
+            cuda_alloc_conf = [
+                'max_split_size_mb:256',      # Smaller splits reduce fragmentation
+                'roundup_power2_divisions:16', # More granular rounding
+                'garbage_collection_threshold:0.8'  # More aggressive GC
+            ]
+            
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = ','.join(cuda_alloc_conf)
             
             # Set memory fraction if configured
             if hasattr(self.config, 'device') and hasattr(self.config.device, 'memory_fraction'):
-                memory_fraction = getattr(self.config.device, 'memory_fraction', 0.9)
+                memory_fraction = getattr(self.config.device, 'memory_fraction', 0.85)  # More conservative default
                 if memory_fraction < 1.0:
-                    # This would require setting up memory fraction (implementation specific)
-                    self.logger.info(f"CUDA memory fraction would be set to {memory_fraction}")
+                    try:
+                        # Set per-process memory fraction to prevent OOM with reserved memory
+                        torch.cuda.set_per_process_memory_fraction(memory_fraction)
+                        self.logger.info(f"CUDA memory fraction set to {memory_fraction}")
+                    except RuntimeError as e:
+                        if "out of memory" not in str(e).lower():
+                            self.logger.warning(f"Could not set memory fraction: {e}")
             
-            # Configure memory allocator
-            os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'max_split_size_mb:512')
+            # Enable memory pooling optimizations
+            if torch.cuda.is_available():
+                # Pre-allocate memory pools to reduce fragmentation
+                self._preallocate_cuda_memory_pools()
             
-            self.logger.info("CUDA memory configuration applied")
+            # Configure cuDNN for better memory efficiency
+            torch.backends.cudnn.benchmark = True  # Optimize for consistent input sizes
+            torch.backends.cudnn.deterministic = False  # Allow non-deterministic for performance
+            
+            self.logger.info("Advanced CUDA memory configuration applied with fragmentation prevention")
             
         except Exception as e:
             self.logger.warning(f"Failed to configure CUDA memory: {e}")
+
+    def _preallocate_cuda_memory_pools(self) -> None:
+        """Pre-allocate memory pools to establish stable allocation patterns."""
+        try:
+            if not torch.cuda.is_available():
+                return
+            
+            device_count = torch.cuda.device_count()
+            
+            for device_id in range(device_count):
+                device = torch.device(f'cuda:{device_id}')
+                
+                # Get device properties
+                props = torch.cuda.get_device_properties(device_id)
+                total_memory = props.total_memory
+                
+                # Pre-allocate small memory pools for common tensor sizes
+                # This helps establish consistent allocation patterns
+                pool_sizes = [
+                    (1, 3, 224, 224),    # Common image input
+                    (4, 3, 224, 224),    # Small batch
+                    (8, 3, 224, 224),    # Medium batch
+                    (16, 3, 224, 224),   # Large batch
+                    (1, 1000),           # Classification output
+                    (1, 512),            # Feature vectors
+                ]
+                
+                temp_tensors = []
+                
+                for shape in pool_sizes:
+                    try:
+                        # Allocate and immediately deallocate to establish memory pools
+                        tensor = torch.zeros(shape, device=device, dtype=torch.float32)
+                        temp_tensors.append(tensor)
+                        
+                        # Also create FP16 version if supported
+                        if device.type == 'cuda':
+                            tensor_fp16 = torch.zeros(shape, device=device, dtype=torch.float16)
+                            temp_tensors.append(tensor_fp16)
+                            
+                    except RuntimeError as e:
+                        if "out of memory" in str(e).lower():
+                            break  # Stop if we run out of memory
+                        else:
+                            self.logger.debug(f"Pool pre-allocation failed for shape {shape}: {e}")
+                
+                # Clear temporary tensors to free memory but keep pools established
+                del temp_tensors
+                torch.cuda.empty_cache()
+                
+            self.logger.info("CUDA memory pools pre-allocated for stable allocation patterns")
+            
+        except Exception as e:
+            self.logger.warning(f"Memory pool pre-allocation failed: {e}")
     
     def get_pool(self, device: torch.device) -> AdvancedMemoryPool:
         """

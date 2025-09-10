@@ -279,6 +279,7 @@ class TestAudioAPIMocking:
         # Test valid STT request
         request = STTRequest(
             model_name="whisper-base",
+            inputs="base64_encoded_audio_data_here",
             language="auto",
             enable_timestamps=True,
             beam_size=5,

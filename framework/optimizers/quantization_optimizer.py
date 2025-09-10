@@ -197,6 +197,7 @@ class QuantizationOptimizer:
                         model: nn.Module,
                         dtype: torch.dtype = torch.qint8,
                         qconfig_spec: Optional[Dict] = None,
+                        timeout: float = 30.0,
                         **kwargs) -> nn.Module:
         """
         Apply dynamic quantization to model.
@@ -208,6 +209,7 @@ class QuantizationOptimizer:
             model: PyTorch model to quantize
             dtype: Quantization data type
             qconfig_spec: Quantization configuration specification
+            timeout: Timeout in seconds for quantization process
             **kwargs: Additional arguments (ignored for compatibility)
             
         Returns:
@@ -215,6 +217,7 @@ class QuantizationOptimizer:
         """
         try:
             self.logger.info("Applying dynamic quantization")
+            start_time = time.time()
             
             # Default layers to quantize
             if qconfig_spec is None:
@@ -228,15 +231,36 @@ class QuantizationOptimizer:
             # Set model to evaluation mode
             model.eval()
             
-            # Apply dynamic quantization
-            quantized_model = torch.quantization.quantize_dynamic(
-                model,
-                qconfig_spec,
-                dtype=dtype
-            )
+            # Apply dynamic quantization with timeout check
+            import signal
             
-            self.logger.info("Dynamic quantization completed successfully")
-            return quantized_model
+            def timeout_handler(signum, frame):
+                raise TimeoutError(f"Dynamic quantization timed out after {timeout} seconds")
+            
+            # Set timeout for Unix-like systems
+            if hasattr(signal, 'alarm'):
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(int(timeout))
+            
+            try:
+                quantized_model = torch.quantization.quantize_dynamic(
+                    model,
+                    qconfig_spec,
+                    dtype=dtype
+                )
+                
+                if hasattr(signal, 'alarm'):
+                    signal.alarm(0)  # Cancel alarm
+                
+                elapsed_time = time.time() - start_time
+                self.logger.info(f"Dynamic quantization completed successfully in {elapsed_time:.2f}s")
+                return quantized_model
+                
+            except TimeoutError as e:
+                if hasattr(signal, 'alarm'):
+                    signal.alarm(0)  # Cancel alarm
+                self.logger.error(f"Dynamic quantization timed out: {e}")
+                return model
             
         except Exception as e:
             self.logger.error(f"Dynamic quantization failed: {e}")
