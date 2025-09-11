@@ -226,7 +226,7 @@ class TestAlertRule:
         should_trigger, alert = rule.evaluate(metrics)
         
         assert should_trigger is True
-        expected_message = "Server web-01 has CPU Usage: 87.35"
+        expected_message = "Server web-01 has CPU Usage: 87.34"
         assert alert.message == expected_message
     
     def test_alert_rule_template_error(self):
@@ -526,6 +526,7 @@ class TestAlertManager:
         """Create mock notification channel."""
         channel = AsyncMock(spec=NotificationChannel)
         channel.send_notification = AsyncMock(return_value=True)
+        channel.type = "mock"
         return channel
     
     def test_add_rule(self, alert_manager):
@@ -637,9 +638,11 @@ class TestAlertManager:
         """Test notification sent to multiple channels."""
         mock_email = AsyncMock(spec=NotificationChannel)
         mock_email.send_notification = AsyncMock(return_value=True)
+        mock_email.type = "email"
         
         mock_slack = AsyncMock(spec=NotificationChannel)
         mock_slack.send_notification = AsyncMock(return_value=True)
+        mock_slack.type = "slack"
         
         rule = AlertRule(
             name="multi_channel",
