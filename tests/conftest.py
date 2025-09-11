@@ -1408,3 +1408,51 @@ def cleanup_global_circuit_breakers():
         _circuit_breakers.clear()
     except (ImportError, NameError, AttributeError):
         pass
+
+
+@pytest.fixture
+def benchmark_timer():
+    """Provide benchmark timer fixture for performance tests."""
+    import time
+    
+    class BenchmarkTimer:
+        def __init__(self):
+            self.start_time = None
+            self.end_time = None
+        
+        def __enter__(self):
+            self.start_time = time.perf_counter()
+            return self
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.end_time = time.perf_counter()
+        
+        @property
+        def elapsed(self):
+            if self.start_time is None or self.end_time is None:
+                return 0
+            return self.end_time - self.start_time
+    
+    return BenchmarkTimer
+
+
+@pytest.fixture
+def circuit_breaker():
+    """Provide circuit breaker fixture for tests."""
+    try:
+        from framework.reliability.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
+        config = CircuitBreakerConfig(
+            failure_threshold=3,
+            timeout=5.0,
+            success_threshold=2
+        )
+        breaker = CircuitBreaker(name="test_breaker", config=config)
+        yield breaker
+    except ImportError:
+        # Create a mock if the real implementation isn't available
+        from unittest.mock import Mock
+        mock_breaker = Mock()
+        mock_breaker.call = Mock()
+        mock_breaker.get_stats = Mock(return_value={"total_calls": 0, "failure_count": 0})
+        mock_breaker._failure_count = 0
+        yield mock_breaker

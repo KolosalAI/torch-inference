@@ -1010,17 +1010,16 @@ class DataStateManager:
     - Data lineage tracking
     """
     
-    def __init__(self, storage_path: str = "models", cache_size_mb: int = 1024, cache_policy: Optional[CachePolicy] = None):
+    def __init__(self, storage_path: str = "models", cache_size_mb: int = 1024):
         # Initialize components
         self.storage = FileSystemModelStorage(storage_path)
         self.registry = ModelRegistry(self.storage)
-        if cache_policy is None:
-            cache_policy = CachePolicy(
-                strategy=CacheStrategy.LRU,
-                max_size_mb=cache_size_mb,
-                ttl_seconds=3600,
-                max_items=1000
-            )
+        cache_policy = CachePolicy(
+            strategy=CacheStrategy.LRU,
+            max_size_mb=cache_size_mb,
+            ttl_seconds=3600,
+            max_items=1000
+        )
         self.cache = IntelligentCache(cache_policy=cache_policy)
         
         # Data lineage tracking
@@ -1201,11 +1200,7 @@ class DataStateManager:
     
     async def cache_model_data(self, key: str, data: Any, size_mb: float) -> None:
         """Cache model data."""
-        # Use cache policy TTL if it's a TTL strategy
-        ttl = None
-        if self.cache.policy.strategy == CacheStrategy.TTL:
-            ttl = float(self.cache.policy.ttl_seconds)
-        await self.cache.put(key, data, size_mb=size_mb, ttl=ttl)
+        await self.cache.put(key, data, size_mb=size_mb)
     
     async def get_cached_model_data(self, key: str) -> Any:
         """Get cached model data."""

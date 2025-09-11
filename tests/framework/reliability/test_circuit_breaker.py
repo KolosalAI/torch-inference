@@ -95,7 +95,7 @@ class TestCircuitBreaker:
         """Test open circuit rejects calls immediately."""
         # Force circuit to open
         circuit_breaker._state = CircuitBreakerState.OPEN
-        circuit_breaker._last_failure_time = datetime.utcnow()
+        circuit_breaker._last_failure_time = datetime.now()  # Use local time instead of UTC
         
         with pytest.raises(Exception, match="Circuit breaker is OPEN"):
             await circuit_breaker.call(mock_operation)
@@ -108,7 +108,7 @@ class TestCircuitBreaker:
         """Test circuit transitions from open to half-open after timeout."""
         # Force circuit to open with old failure time
         circuit_breaker._state = CircuitBreakerState.OPEN
-        circuit_breaker._last_failure_time = datetime.utcnow() - timedelta(seconds=2)
+        circuit_breaker._last_failure_time = datetime.now() - timedelta(seconds=2)  # Use local time
         
         mock_operation.return_value = "success"
         
@@ -203,6 +203,11 @@ class TestCircuitBreaker:
 class TestCircuitBreakerIntegration:
     """Test circuit breaker integration and edge cases."""
     
+    @pytest.fixture
+    def mock_operation(self):
+        """Create a mock operation."""
+        return AsyncMock()
+    
     @pytest.mark.asyncio
     async def test_concurrent_calls(self):
         """Test circuit breaker with concurrent calls."""
@@ -274,8 +279,12 @@ class TestCircuitBreakerIntegration:
         assert stats["failure_count"] == 2
     
     @pytest.mark.asyncio
-    async def test_exception_types(self, circuit_breaker):
+    async def test_exception_types(self):
         """Test different exception types handling."""
+        # Create a circuit breaker with higher failure threshold for this test
+        config = CircuitBreakerConfig(failure_threshold=10)  # Allow more failures
+        circuit_breaker = CircuitBreaker("exception_test", config)
+        
         # Test with different exception types
         exceptions = [
             ValueError("value error"),

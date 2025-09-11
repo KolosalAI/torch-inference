@@ -373,14 +373,15 @@ class TestIntelligentCache:
             await cache.put(f"new_{i}", f"new_value_{i}", size_mb=2)
         
         # Frequently accessed items should be more likely to remain
-        frequent_remaining = sum(
-            1 for i in range(5) 
-            if await cache.contains(f"frequent_{i}")
-        )
-        infrequent_remaining = sum(
-            1 for i in range(5, 10) 
-            if await cache.contains(f"frequent_{i}")
-        )
+        frequent_results = []
+        for i in range(5):
+            frequent_results.append(await cache.contains(f"frequent_{i}"))
+        frequent_remaining = sum(1 for r in frequent_results if r)
+        
+        infrequent_results = []
+        for i in range(5, 10):
+            infrequent_results.append(await cache.contains(f"frequent_{i}"))
+        infrequent_remaining = sum(1 for r in infrequent_results if r)
         
         # More frequent items should remain in cache
         assert frequent_remaining >= infrequent_remaining
@@ -825,7 +826,8 @@ class TestStateManager:
         )
         ttl_state_manager = StateManager(
             storage_path=str(state_manager.storage.base_path),
-            cache_size_mb=ttl_policy.max_size_mb
+            cache_size_mb=ttl_policy.max_size_mb,
+            cache_policy=ttl_policy
         )
         
         # Add cache entries
