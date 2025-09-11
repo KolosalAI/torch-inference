@@ -1389,3 +1389,22 @@ def pytest_runtest_teardown(item, nextitem):
 
 # Hook to handle test failures and timeouts  
 # Removed pytest_runtest_call as it was causing validation errors
+
+
+@pytest.fixture
+def mock_factory():
+    """Provide fast mock factory."""
+    from tests.optimized_test_utils import FastMockFactory
+    return FastMockFactory
+
+
+@pytest.fixture
+def cleanup_global_circuit_breakers():
+    """Cleanup global circuit breakers after test."""
+    yield
+    # Clear any global circuit breaker registry if it exists
+    try:
+        from framework.reliability.circuit_breaker import _circuit_breakers
+        _circuit_breakers.clear()
+    except (ImportError, NameError, AttributeError):
+        pass
