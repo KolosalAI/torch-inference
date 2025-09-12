@@ -942,7 +942,9 @@ class AlertManager:
         with self._lock:
             self._channels[name] = channel
         
-        logger.info(f"Added notification channel: {name} ({channel.type})")
+        # Get channel type safely for logging
+        channel_type = getattr(channel, 'type', 'unknown')
+        logger.info(f"Added notification channel: {name} ({channel_type})")
     
     def remove_channel(self, name: str):
         """Remove a notification channel."""
@@ -1208,42 +1210,34 @@ class AlertManager:
                 if alert.status != AlertStatus.RESOLVED
             ]
     
-    def get_alert(self, alert_id: str) -> Optional[Dict[str, Any]]:
+    def get_alert(self, alert_id: str) -> Optional[Alert]:
         """Get alert by ID."""
         with self._lock:
             for alert in self._active_alerts.values():
                 if alert.id == alert_id:
-                    return {
-                        'id': alert.id,
-                        'title': alert.title,
-                        'description': alert.description,
-                        'severity': alert.severity.value,
-                        'status': alert.status.value,
-                        'source': alert.source,
-                        'labels': alert.labels,
-                        'annotations': alert.annotations,
-                        'created_at': alert.created_at.isoformat(),
-                        'updated_at': alert.updated_at.isoformat(),
-                        'fingerprint': alert.fingerprint
-                    }
+                    return alert
             return None
     
     def get_stats(self) -> Dict[str, Any]:
         """Get alerting statistics."""
         with self._lock:
-            active_alerts = [alert for alert in self._active_alerts.values() if not alert.resolved]
+            all_alerts = list(self._active_alerts.values())
+            active_alerts = [alert for alert in all_alerts if not alert.resolved]
+            resolved_alerts = [alert for alert in all_alerts if alert.resolved]
             
             stats = {
-                'total_active': len(active_alerts),
+                'total_alerts': len(all_alerts),
+                'active_alerts': len(active_alerts),
+                'resolved_alerts': len(resolved_alerts),
                 'total_rules': len(self._rules),
                 'total_channels': len(self._channels),
-                'by_severity': {}
+                'alerts_by_severity': {}
             }
             
-            # Count by severity
+            # Count by severity (for all alerts)
             for severity in AlertSeverity:
-                count = len([alert for alert in active_alerts if alert.severity == severity])
-                stats['by_severity'][severity.value] = count
+                count = len([alert for alert in all_alerts if alert.severity == severity])
+                stats['alerts_by_severity'][severity.value] = count
             
             return stats
     

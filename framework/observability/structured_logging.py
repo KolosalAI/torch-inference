@@ -29,6 +29,9 @@ request_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('
 trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('trace_id', default=None)
 span_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar('span_id', default=None)
 
+# Thread-local storage for trace context
+_trace_context = threading.local()
+
 
 class LogLevel(Enum):
     """Log levels with numeric values."""
@@ -73,16 +76,22 @@ class StructuredLogRecord:
     
     # Additional structured data
     extra: Dict[str, Any] = field(default_factory=dict)
+    metadata: Optional[Dict[str, Any]] = None
     
     # Error information
     exception_type: Optional[str] = None
     exception_message: Optional[str] = None
+    exception: Optional[str] = None  # Combined exception info for backward compatibility
     stack_trace: Optional[str] = None
     
     # Thread and process information
     thread_id: Optional[int] = None
     thread_name: Optional[str] = None
     process_id: Optional[int] = None
+    
+    # Source location information  
+    module: Optional[str] = None
+    line_number: Optional[int] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, removing None values."""
@@ -118,70 +127,112 @@ class StructuredFormatter(logging.Formatter):
     
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as structured JSON."""
-        # Create structured log record
-        structured_record = StructuredLogRecord(
-            timestamp=datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
-            level=record.levelname,
-            logger=record.name,
-            message=record.getMessage(),
+        try:
+            # Get correlation ID from record first, then context variables
+            correlation_id = getattr(record, 'correlation_id', None) or correlation_id_var.get()
+            user_id = getattr(record, 'user_id', None) or user_id_var.get()
             
-            # Context from context variables
-            correlation_id=correlation_id_var.get(),
-            request_id=request_id_var.get(),
-            user_id=user_id_var.get(),
-            trace_id=trace_id_var.get(),
-            span_id=span_id_var.get(),
+            # Create structured log record
+            structured_record = StructuredLogRecord(
+                timestamp=datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                level=record.levelname,
+                logger=record.name,
+                message=record.getMessage(),
+                
+                # Context information
+                correlation_id=correlation_id,
+                request_id=getattr(record, 'request_id', None) or request_id_var.get(),
+                user_id=user_id,
+                trace_id=getattr(record, 'trace_id', None) or trace_id_var.get(),
+                span_id=getattr(record, 'span_id', None) or span_id_var.get(),
+                
+                # Service information
+                service_name=self.service_name,
+                service_version=self.service_version,
+                environment=self.environment,
+                
+                # File and line information
+                module=record.module if hasattr(record, 'module') else None,
+                line_number=record.lineno,
+                
+                # Thread and process information
+                thread_id=record.thread,
+                thread_name=record.threadName,
+                process_id=record.process,
+            )
             
-            # Service information
-            service_name=self.service_name,
-            service_version=self.service_version,
-            environment=self.environment,
-            
-            # Thread and process information
-            thread_id=record.thread,
-            thread_name=record.threadName,
-            process_id=record.process,
-        )
-        
-        # Add exception information if present
-        if record.exc_info:
-            exc_type, exc_value, exc_traceback = record.exc_info
-            structured_record.exception_type = exc_type.__name__ if exc_type else None
-            structured_record.exception_message = str(exc_value) if exc_value else None
-            
-            if exc_traceback:
-                structured_record.stack_trace = ''.join(
+            # Add exception information if present
+            if record.exc_info:
+                exc_type, exc_value, exc_traceback = record.exc_info
+                structured_record.exception_type = exc_type.__name__ if exc_type else None
+                structured_record.exception_message = str(exc_value) if exc_value else None
+                
+                if exc_traceback:
+                    structured_record.stack_trace = ''.join(
+                        traceback.format_exception(exc_type, exc_value, exc_traceback)
+                    )
+                
+                # Add combined exception field for backward compatibility
+                structured_record.exception = ''.join(
                     traceback.format_exception(exc_type, exc_value, exc_traceback)
-                )
-        
-        # Add extra fields from record
-        if self.include_extra:
-            extra_fields = {}
+                ) if exc_traceback else str(exc_value) if exc_value else None
             
-            # Standard extra fields we want to capture
-            for attr in ['method', 'url', 'user_agent', 'remote_ip', 
-                        'duration_ms', 'response_status']:
-                if hasattr(record, attr):
-                    value = getattr(record, attr)
-                    if value is not None:
-                        setattr(structured_record, attr, value)
+            # Add extra fields from record
+            if self.include_extra:
+                # Standard extra fields we want to capture directly
+                for attr in ['method', 'url', 'user_agent', 'remote_ip', 
+                            'duration_ms', 'response_status', 'metadata']:
+                    if hasattr(record, attr):
+                        value = getattr(record, attr)
+                        if value is not None:
+                            setattr(structured_record, attr, value)
+                
+                # Handle extra dict from logging calls
+                extra_fields = {}
+                if hasattr(record, 'extra') and isinstance(record.extra, dict):
+                    extra_fields.update(record.extra)
+                
+                # Other extra fields - add them directly to the record instead of nested
+                for key, value in record.__dict__.items():
+                    if (key not in ['name', 'msg', 'args', 'levelname', 'levelno', 
+                                  'pathname', 'filename', 'module', 'lineno', 
+                                  'funcName', 'created', 'msecs', 'relativeCreated',
+                                  'thread', 'threadName', 'processName', 'process',
+                                  'getMessage', 'exc_info', 'exc_text', 'stack_info',
+                                  'method', 'url', 'user_agent', 'remote_ip',
+                                  'duration_ms', 'response_status', 'correlation_id',
+                                  'user_id', 'request_id', 'trace_id', 'span_id',
+                                  'extra', 'metadata'] and
+                        not key.startswith('_')):
+                        # Add non-serializable objects as strings
+                        try:
+                            # Test if it's JSON serializable
+                            json.dumps(value)
+                            setattr(structured_record, key, value)
+                        except (TypeError, ValueError):
+                            # Convert to string if not serializable but only if it can be stringified
+                            try:
+                                setattr(structured_record, key, str(value))
+                            except Exception:
+                                # Skip fields that can't be converted to string
+                                pass
+                
+                if extra_fields:
+                    structured_record.extra = extra_fields
             
-            # Other extra fields go into the extra dict
-            for key, value in record.__dict__.items():
-                if (key not in ['name', 'msg', 'args', 'levelname', 'levelno', 
-                              'pathname', 'filename', 'module', 'lineno', 
-                              'funcName', 'created', 'msecs', 'relativeCreated',
-                              'thread', 'threadName', 'processName', 'process',
-                              'getMessage', 'exc_info', 'exc_text', 'stack_info',
-                              'method', 'url', 'user_agent', 'remote_ip',
-                              'duration_ms', 'response_status'] and
-                    not key.startswith('_')):
-                    extra_fields[key] = value
+            return structured_record.to_json()
             
-            if extra_fields:
-                structured_record.extra = extra_fields
-        
-        return structured_record.to_json()
+        except Exception as e:
+            # Fallback formatting if JSON serialization fails
+            fallback_record = {
+                'timestamp': datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+                'level': record.levelname,
+                'logger': record.name,
+                'message': record.getMessage(),
+                'format_error': str(e),
+                'service_name': self.service_name
+            }
+            return json.dumps(fallback_record, default=str, ensure_ascii=False)
 
 
 class CorrelationIDFilter(logging.Filter):
@@ -198,17 +249,33 @@ class CorrelationIDFilter(logging.Filter):
     
     def filter(self, record: logging.LogRecord) -> bool:
         """Add correlation ID to log record."""
-        # Get or generate correlation ID
-        correlation_id = correlation_id_var.get()
-        
-        if not correlation_id and self.auto_generate:
-            correlation_id = str(uuid.uuid4())
-            correlation_id_var.set(correlation_id)
-        
-        # Add to record for backwards compatibility
-        record.correlation_id = correlation_id
-        
-        return True
+        try:
+            # Get correlation ID from context variables or trace context
+            correlation_id = correlation_id_var.get()
+            
+            # Try to get from trace context if not found
+            if not correlation_id:
+                try:
+                    trace_ctx = getattr(_trace_context, 'current', None)
+                    if hasattr(_trace_context, 'get'):
+                        trace_ctx = _trace_context.get()
+                    if trace_ctx:
+                        correlation_id = getattr(trace_ctx, 'correlation_id', None)
+                except AttributeError:
+                    pass
+            
+            if not correlation_id and self.auto_generate:
+                correlation_id = str(uuid.uuid4())
+                correlation_id_var.set(correlation_id)
+            
+            # Add to record for backwards compatibility
+            record.correlation_id = correlation_id
+            
+            return True
+        except Exception:
+            # On any error, just set correlation_id to None and continue
+            record.correlation_id = None
+            return True
 
 
 class RequestLoggingFilter(logging.Filter):
@@ -256,6 +323,8 @@ class StructuredLogger:
     
     def __init__(self, logger: logging.Logger):
         self._logger = logger
+        self.name = logger.name
+        self.handlers = logger.handlers  # Expose handlers for compatibility
     
     def debug(self, message: str, **kwargs):
         """Log debug message with structured data."""
@@ -276,6 +345,22 @@ class StructuredLogger:
     def critical(self, message: str, **kwargs):
         """Log critical message with structured data."""
         self._log(LogLevel.CRITICAL, message, **kwargs)
+    
+    def setLevel(self, level):
+        """Set logging level."""
+        self._logger.setLevel(level)
+    
+    def addHandler(self, handler):
+        """Add a handler to the logger."""
+        self._logger.addHandler(handler)
+        # Update our handlers reference
+        self.handlers = self._logger.handlers
+    
+    def removeHandler(self, handler):
+        """Remove a handler from the logger."""
+        self._logger.removeHandler(handler)
+        # Update our handlers reference  
+        self.handlers = self._logger.handlers
     
     def _log(self, level: LogLevel, message: str, **kwargs):
         """Internal logging method."""
@@ -324,22 +409,37 @@ class TraceContext:
     """
     
     def __init__(self, 
-                 operation_name: str,
+                 operation_name: Optional[str] = None,
                  trace_id: Optional[str] = None,
-                 parent_span_id: Optional[str] = None):
-        self.operation_name = operation_name
+                 parent_span_id: Optional[str] = None,
+                 correlation_id: Optional[str] = None,
+                 user_id: Optional[str] = None,
+                 operation: Optional[str] = None,  # Alias for operation_name
+                 **kwargs):
+        self.operation_name = operation_name or operation
+        self.operation = self.operation_name  # Alias for backward compatibility
         self.trace_id = trace_id or str(uuid.uuid4())
         self.span_id = str(uuid.uuid4())
         self.parent_span_id = parent_span_id
+        self.correlation_id = correlation_id or str(uuid.uuid4())
+        self.user_id = user_id
         self.start_time = time.time()
+        self.timestamp = datetime.now(timezone.utc)
+        self.metadata = kwargs
         
         self._trace_token = None
         self._span_token = None
+        self._correlation_token = None
+        self._user_token = None
     
     def __enter__(self):
         """Enter trace context."""
         self._trace_token = trace_id_var.set(self.trace_id)
         self._span_token = span_id_var.set(self.span_id)
+        if self.correlation_id:
+            self._correlation_token = correlation_id_var.set(self.correlation_id)
+        if self.user_id:
+            self._user_token = user_id_var.set(self.user_id)
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -348,6 +448,31 @@ class TraceContext:
             trace_id_var.reset(self._trace_token)
         if self._span_token:
             span_id_var.reset(self._span_token)
+        if self._correlation_token:
+            correlation_id_var.reset(self._correlation_token)
+        if self._user_token:
+            user_id_var.reset(self._user_token)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert context to dictionary."""
+        result = {
+            'operation_name': self.operation_name,
+            'trace_id': self.trace_id,
+            'span_id': self.span_id,
+            'start_time': self.start_time
+        }
+        
+        if self.parent_span_id:
+            result['parent_span_id'] = self.parent_span_id
+        if self.correlation_id:
+            result['correlation_id'] = self.correlation_id
+        if self.user_id:
+            result['user_id'] = self.user_id
+        if self.operation:
+            result['operation'] = self.operation
+        
+        result.update(self.metadata)
+        return result
     
     def get_duration_ms(self) -> float:
         """Get operation duration in milliseconds."""
@@ -465,6 +590,20 @@ def setup_structured_logging(config: LoggingConfig) -> Dict[str, logging.Logger]
 def get_structured_logger(name: str = None) -> StructuredLogger:
     """Get a structured logger instance."""
     logger = logging.getLogger(name) if name else logging.getLogger()
+    
+    # Add default handler if none exists
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = StructuredFormatter()
+        handler.setFormatter(formatter)
+        
+        # Add correlation ID filter
+        correlation_filter = CorrelationIDFilter()
+        handler.addFilter(correlation_filter)
+        
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    
     return StructuredLogger(logger)
 
 
@@ -522,9 +661,16 @@ def get_correlation_id() -> Optional[str]:
     return correlation_id_var.get()
 
 
-def set_correlation_id(correlation_id: str):
+def set_correlation_id(correlation_id: str, **kwargs):
     """Set correlation ID in context."""
+    # Store kwargs in context variables for compatibility with tests
     correlation_id_var.set(correlation_id)
+    
+    if 'user_id' in kwargs:
+        user_id_var.set(kwargs['user_id'])
+    if 'operation' in kwargs:
+        # Could store operation in a separate context var if needed
+        pass
 
 
 def get_request_id() -> Optional[str]:

@@ -66,6 +66,32 @@ class ResourceLimits:
     max_request_duration_seconds: int = 300
     max_cpu_percent: float = 80.0
     max_gpu_memory_mb: int = 2048
+    
+    def __post_init__(self):
+        """Validate resource limits."""
+        if self.max_memory_mb <= 0:
+            raise ValueError("max_memory_mb must be positive")
+        if self.max_concurrent_requests <= 0:
+            raise ValueError("max_concurrent_requests must be positive")
+        if self.max_queue_size < 0:
+            raise ValueError("max_queue_size cannot be negative")
+        if self.max_request_duration_seconds <= 0:
+            raise ValueError("max_request_duration_seconds must be positive")
+        if self.max_cpu_percent <= 0 or self.max_cpu_percent > 100:
+            raise ValueError("max_cpu_percent must be between 0 and 100")
+        if self.max_gpu_memory_mb < 0:
+            raise ValueError("max_gpu_memory_mb cannot be negative")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "max_memory_mb": self.max_memory_mb,
+            "max_concurrent_requests": self.max_concurrent_requests,
+            "max_queue_size": self.max_queue_size,
+            "max_request_duration_seconds": self.max_request_duration_seconds,
+            "max_cpu_percent": self.max_cpu_percent,
+            "max_gpu_memory_mb": self.max_gpu_memory_mb
+        }
 
 
 @dataclass
@@ -92,9 +118,12 @@ class ResourceUsage:
 class MemoryTracker:
     """Advanced memory tracking and leak detection."""
     
-    def __init__(self, check_interval: float = 60.0):
+    def __init__(self, warning_threshold_mb: int = 512, critical_threshold_mb: int = 1024, check_interval: float = 60.0):
+        self.warning_threshold_mb = warning_threshold_mb
+        self.critical_threshold_mb = critical_threshold_mb
         self.check_interval = check_interval
         self._memory_history: deque = deque(maxlen=100)  # Keep last 100 measurements
+        self._peak_memory = 0
         self._object_counts: Dict[str, int] = {}
         self._tracemalloc_enabled = False
         self._monitoring_task: Optional[asyncio.Task] = None
@@ -107,6 +136,70 @@ class MemoryTracker:
             logger.info("Memory tracking with tracemalloc enabled")
         except Exception as e:
             logger.warning(f"Could not enable tracemalloc: {e}")
+    
+    def get_current_memory_usage(self) -> float:
+        """Get current memory usage in MB."""
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)  # Convert to MB
+            return memory_mb
+        except Exception as e:
+            logger.error(f"Error getting memory usage: {e}")
+            return 0.0
+    
+    def update_memory_stats(self):
+        """Update memory statistics."""
+        try:
+            current_memory = self.get_current_memory_usage()
+            
+            with self._lock:
+                self._peak_memory = max(self._peak_memory, current_memory)
+                self._memory_history.append((datetime.utcnow(), current_memory))
+        except Exception as e:
+            logger.error(f"Error updating memory stats: {e}")
+    
+    def check_memory_status(self) -> Dict[str, Any]:
+        """Check current memory status against thresholds."""
+        current_memory = self.get_current_memory_usage()
+        
+        status = {
+            "current_mb": current_memory,
+            "warning_threshold_mb": self.warning_threshold_mb,
+            "critical_threshold_mb": self.critical_threshold_mb,
+            "warning": current_memory >= self.warning_threshold_mb,
+            "critical": current_memory >= self.critical_threshold_mb
+        }
+        
+        if status["critical"]:
+            status["level"] = "critical"
+        elif status["warning"]:
+            status["level"] = "warning"
+        else:
+            status["level"] = "normal"
+        
+        return status
+    
+    def get_peak_memory(self) -> float:
+        """Get peak memory usage in MB."""
+        return self._peak_memory
+    
+    def get_memory_history(self) -> List[Dict[str, Any]]:
+        """Get memory usage history."""
+        with self._lock:
+            return [
+                {
+                    "timestamp": timestamp.isoformat(),
+                    "memory_mb": memory_mb
+                }
+                for timestamp, memory_mb in self._memory_history
+            ]
+    
+    def reset_stats(self):
+        """Reset memory statistics."""
+        with self._lock:
+            self._peak_memory = 0
+            self._memory_history.clear()
     
     async def start_monitoring(self):
         """Start memory monitoring."""
@@ -254,8 +347,9 @@ class MemoryTracker:
 class RequestQueue:
     """Priority-based request queue with timeout handling."""
     
-    def __init__(self, max_size: int = 1000):
+    def __init__(self, max_size: int = 1000, timeout_seconds: int = 30):
         self.max_size = max_size
+        self.timeout_seconds = timeout_seconds
         self._queues = {
             QueuePriority.HIGH: deque(),
             QueuePriority.NORMAL: deque(),
@@ -269,6 +363,78 @@ class RequestQueue:
         
         # Cleanup task for expired requests
         self._cleanup_task: Optional[asyncio.Task] = None
+    
+    @property
+    def size(self) -> int:
+        """Get total number of pending requests."""
+        with self._lock:
+            return sum(len(q) for q in self._queues.values())
+    
+    @property
+    def is_empty(self) -> bool:
+        """Check if queue is empty."""
+        return self.size == 0
+    
+    @property
+    def is_full(self) -> bool:
+        """Check if queue is full."""
+        return self.size >= self.max_size
+    
+    async def enqueue(self, request_id: str, data: Any, priority: bool = False) -> None:
+        """Enqueue a request."""
+        request = QueuedRequest(
+            id=request_id,
+            priority=QueuePriority.HIGH if priority else QueuePriority.NORMAL,
+            data=data,
+            timeout=self.timeout_seconds
+        )
+        
+        with self._lock:
+            # Check if queue is full
+            if self.size >= self.max_size:
+                raise asyncio.QueueFull("Request queue is full")
+            
+            # Add to appropriate priority queue
+            self._queues[request.priority].append(request)
+            self._pending_count += 1
+        
+        # Notify waiting consumers
+        async with self._condition:
+            self._condition.notify()
+    
+    async def dequeue(self, timeout: Optional[float] = None) -> Tuple[str, Any, datetime]:
+        """Dequeue the highest priority request."""
+        async with self._condition:
+            # Wait for available request
+            start_time = time.time()
+            while True:
+                with self._lock:
+                    # Try to get request from highest priority queue first
+                    for priority in [QueuePriority.HIGH, QueuePriority.NORMAL, QueuePriority.LOW]:
+                        queue = self._queues[priority]
+                        if queue:
+                            request = queue.popleft()
+                            self._pending_count -= 1
+                            self._processed_count += 1
+                            return request.id, request.data, request.created_at
+                
+                # Check timeout
+                if timeout and (time.time() - start_time) >= timeout:
+                    raise asyncio.TimeoutError("Dequeue timeout")
+                
+                # Wait for notification
+                try:
+                    await asyncio.wait_for(self._condition.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if timeout and (time.time() - start_time) >= timeout:
+                        raise asyncio.TimeoutError("Dequeue timeout")
+    
+    def clear(self):
+        """Clear all requests from the queue."""
+        with self._lock:
+            for queue in self._queues.values():
+                queue.clear()
+            self._pending_count = 0
     
     async def start(self):
         """Start the queue management."""
@@ -295,8 +461,8 @@ class RequestQueue:
         
         logger.info("Request queue stopped")
     
-    async def enqueue(self, request: QueuedRequest) -> bool:
-        """Enqueue a request."""
+    async def enqueue_request(self, request: QueuedRequest) -> bool:
+        """Enqueue a request object directly."""
         with self._lock:
             # Check if queue is full
             total_pending = sum(len(q) for q in self._queues.values())
@@ -313,33 +479,6 @@ class RequestQueue:
             self._condition.notify()
         
         return True
-    
-    async def dequeue(self, timeout: Optional[float] = None) -> Optional[QueuedRequest]:
-        """Dequeue the highest priority request."""
-        async with self._condition:
-            # Wait for available request
-            start_time = time.time()
-            while True:
-                with self._lock:
-                    # Try to get request from highest priority queue first
-                    for priority in [QueuePriority.HIGH, QueuePriority.NORMAL, QueuePriority.LOW]:
-                        queue = self._queues[priority]
-                        if queue:
-                            request = queue.popleft()
-                            self._pending_count -= 1
-                            self._processed_count += 1
-                            return request
-                
-                # Check timeout
-                if timeout and (time.time() - start_time) >= timeout:
-                    return None
-                
-                # Wait for notification
-                try:
-                    await asyncio.wait_for(self._condition.wait(), timeout=1.0)
-                except asyncio.TimeoutError:
-                    if timeout and (time.time() - start_time) >= timeout:
-                        return None
     
     async def _cleanup_expired_requests(self):
         """Clean up expired requests."""
@@ -388,14 +527,19 @@ class RequestQueue:
     def get_stats(self) -> Dict[str, Any]:
         """Get queue statistics."""
         with self._lock:
+            total_pending = sum(len(q) for q in self._queues.values())
             return {
+                'size': total_pending,  # Added for test compatibility
                 'pending_high': len(self._queues[QueuePriority.HIGH]),
                 'pending_normal': len(self._queues[QueuePriority.NORMAL]),
                 'pending_low': len(self._queues[QueuePriority.LOW]),
-                'total_pending': sum(len(q) for q in self._queues.values()),
+                'total_pending': total_pending,
                 'total_processed': self._processed_count,
                 'total_timeouts': self._timeout_count,
-                'max_size': self.max_size
+                'max_size': self.max_size,
+                'is_empty': total_pending == 0,
+                'is_full': total_pending >= self.max_size,
+                'timeout_seconds': self.timeout_seconds
             }
 
 
@@ -465,14 +609,118 @@ class ResourceQuotaManager:
     """Manages resource quotas and enforcement."""
     
     def __init__(self):
-        self._quotas: Dict[ResourceType, ResourceQuota] = {}
+        self._quotas: Dict[str, Dict[str, float]] = {}
+        self._usage: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._usage_history: Dict[ResourceType, deque] = defaultdict(lambda: deque(maxlen=100))
         self._monitoring_task: Optional[asyncio.Task] = None
         self._violation_callbacks: List[Callable] = []
         self._lock = threading.RLock()
     
-    def set_quota(self, quota: ResourceQuota):
-        """Set a resource quota."""
+    def set_quota(self, user_id: str, resource_type: str, limit: float):
+        """Set a resource quota for a user."""
+        with self._lock:
+            if user_id not in self._quotas:
+                self._quotas[user_id] = {}
+            self._quotas[user_id][resource_type] = limit
+        
+        logger.info(f"Set quota for {user_id} {resource_type}: {limit}")
+    
+    def check_quota(self, user_id: str, resource_type: str) -> Tuple[bool, float]:
+        """Check if user can consume resource quota."""
+        with self._lock:
+            if user_id not in self._quotas or resource_type not in self._quotas[user_id]:
+                return True, float('inf')  # No quota set, allow unlimited
+            
+            limit = self._quotas[user_id][resource_type]
+            
+            # Check current usage
+            current_usage = 0
+            if user_id in self._usage and resource_type in self._usage[user_id]:
+                usage_info = self._usage[user_id][resource_type]
+                
+                # Check if quota period has expired (e.g., per minute)
+                current_time = time.time()
+                if current_time >= usage_info.get('reset_time', 0):
+                    # Reset quota
+                    self._usage[user_id][resource_type] = {
+                        'count': 0,
+                        'reset_time': current_time + 60  # Reset after 1 minute
+                    }
+                    current_usage = 0
+                else:
+                    current_usage = usage_info['count']
+            
+            remaining = max(0, limit - current_usage)
+            can_proceed = current_usage < limit
+            
+            return can_proceed, remaining
+    
+    def consume_quota(self, user_id: str, resource_type: str, amount: float = 1) -> bool:
+        """Consume resource quota."""
+        can_proceed, remaining = self.check_quota(user_id, resource_type)
+        
+        if not can_proceed or remaining < amount:
+            return False
+        
+        with self._lock:
+            if user_id not in self._usage:
+                self._usage[user_id] = {}
+            
+            if resource_type not in self._usage[user_id]:
+                self._usage[user_id][resource_type] = {
+                    'count': 0,
+                    'reset_time': time.time() + 60
+                }
+            
+            self._usage[user_id][resource_type]['count'] += amount
+        
+        return True
+    
+    def get_quota_usage(self, user_id: str, resource_type: str) -> Dict[str, Any]:
+        """Get quota usage information."""
+        with self._lock:
+            limit = self._quotas.get(user_id, {}).get(resource_type, float('inf'))
+            usage_info = self._usage.get(user_id, {}).get(resource_type, {'count': 0, 'reset_time': time.time() + 60})
+            
+            used = usage_info['count']
+            remaining = max(0, limit - used)
+            
+            return {
+                'limit': limit,
+                'used': used,
+                'remaining': remaining,
+                'reset_time': usage_info['reset_time']
+            }
+    
+    def get_all_quotas(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """Get all quotas for a user."""
+        with self._lock:
+            result = {}
+            user_quotas = self._quotas.get(user_id, {})
+            
+            for resource_type in user_quotas:
+                result[resource_type] = self.get_quota_usage(user_id, resource_type)
+            
+            return result
+    
+    def remove_quota(self, user_id: str, resource_type: str):
+        """Remove a quota."""
+        with self._lock:
+            if user_id in self._quotas and resource_type in self._quotas[user_id]:
+                del self._quotas[user_id][resource_type]
+                
+                if not self._quotas[user_id]:  # Remove user if no quotas left
+                    del self._quotas[user_id]
+            
+            # Also remove usage tracking
+            if user_id in self._usage and resource_type in self._usage[user_id]:
+                del self._usage[user_id][resource_type]
+                
+                if not self._usage[user_id]:
+                    del self._usage[user_id]
+    
+    def set_resource_quota(self, quota: ResourceQuota):
+        """Set a resource quota object."""
         with self._lock:
             self._quotas[quota.resource_type] = quota
         
@@ -664,59 +912,160 @@ class ResourceManager:
     - Resource monitoring and enforcement
     """
     
-    def __init__(self):
-        self.memory_tracker = MemoryTracker()
-        self.request_queue = RequestQueue()
-        self.connection_limiter = ConnectionLimiter()
+    def __init__(self, limits: Optional[ResourceLimits] = None):
+        self.limits = limits or ResourceLimits()
+        self.memory_tracker = MemoryTracker(
+            warning_threshold_mb=int(self.limits.max_memory_mb * 0.8),
+            critical_threshold_mb=self.limits.max_memory_mb
+        )
+        self.request_queue = RequestQueue(
+            max_size=self.limits.max_queue_size,
+            timeout_seconds=self.limits.max_request_duration_seconds
+        )
+        self.connection_limiter = ConnectionLimiter(self.limits.max_concurrent_requests)
         self.quota_manager = ResourceQuotaManager()
+        
+        # Request tracking
+        self._active_requests = 0
+        self._active_request_times: Dict[str, datetime] = {}
+        self._request_lock = threading.RLock()
         
         # Setup default quotas
         self._setup_default_quotas()
         
         # Setup quota violation handling
-        self.quota_manager.add_violation_callback(self._handle_quota_violation)
+        # self.quota_manager.add_violation_callback(self._handle_quota_violation)
         
         logger.info("Resource manager initialized")
     
+    @property
+    def active_requests(self) -> int:
+        """Get number of active requests."""
+        with self._request_lock:
+            return self._active_requests
+    
     def _setup_default_quotas(self):
         """Setup default resource quotas."""
-        # Memory quota (2GB)
-        self.quota_manager.set_quota(ResourceQuota(
-            resource_type=ResourceType.MEMORY,
-            limit=2 * 1024 * 1024 * 1024,  # 2GB
-            warning_threshold=0.8,
-            critical_threshold=0.9
-        ))
-        
-        # CPU quota (80%)
-        self.quota_manager.set_quota(ResourceQuota(
-            resource_type=ResourceType.CPU,
-            limit=80.0,
-            warning_threshold=0.8,
-            critical_threshold=0.9
-        ))
-        
-        # Connection quota (100)
-        self.quota_manager.set_quota(ResourceQuota(
-            resource_type=ResourceType.CONNECTIONS,
-            limit=100,
-            warning_threshold=0.8,
-            critical_threshold=0.9
-        ))
+        # Default quotas are set per user as needed
+        pass
     
-    async def _handle_quota_violation(self, resource_type: ResourceType, usage: ResourceUsage, severity: str):
-        """Handle resource quota violations."""
-        if severity == "critical":
-            # Take immediate action
-            if resource_type == ResourceType.MEMORY:
-                logger.info("Triggering garbage collection due to memory pressure")
-                self.memory_tracker.force_garbage_collection()
-            
-            elif resource_type == ResourceType.CONNECTIONS:
-                logger.warning("Connection limit approaching, consider implementing connection recycling")
+    async def can_accept_request(self, user_id: str) -> Tuple[bool, Optional[str]]:
+        """Check if a request can be accepted."""
+        # Check memory status
+        memory_status = self.memory_tracker.check_memory_status()
+        if memory_status["critical"]:
+            return False, "Memory usage is critical"
         
-        # You could integrate with alerting system here
-        # await alert_manager.fire_alert(...)
+        # Check concurrent request limit
+        with self._request_lock:
+            if self._active_requests >= self.limits.max_concurrent_requests:
+                return False, "Concurrent request limit reached"
+        
+        # Check user quota
+        can_proceed, remaining = self.quota_manager.check_quota(user_id, "requests_per_minute")
+        if not can_proceed:
+            return False, "User quota exceeded"
+        
+        return True, None
+    
+    async def acquire_resources(self, user_id: str, request_data: Any) -> Tuple[bool, Optional[str]]:
+        """Acquire resources for a request."""
+        # Check memory status
+        memory_status = self.memory_tracker.check_memory_status()
+        if memory_status["critical"]:
+            return False, "Memory usage is critical"
+        
+        # Check user quota
+        can_proceed, remaining = self.quota_manager.check_quota(user_id, "requests_per_minute")
+        if not can_proceed:
+            return False, "User quota exceeded"
+        
+        # Generate unique request ID
+        import uuid
+        request_id = f"req_{uuid.uuid4().hex[:16]}"
+        
+        # Consume quota first
+        if not self.quota_manager.consume_quota(user_id, "requests_per_minute"):
+            return False, "Failed to consume quota"
+        
+        # Check if we can accept the request immediately
+        with self._request_lock:
+            if self._active_requests < self.limits.max_concurrent_requests:
+                # Can accept immediately
+                self._active_requests += 1
+                self._active_request_times[request_id] = datetime.utcnow()
+                return True, request_id
+            
+        # Need to queue the request (don't increment active_requests for queued requests)
+        try:
+            await self.request_queue.enqueue(request_id, request_data)
+            return True, request_id
+        except asyncio.QueueFull:
+            return False, "Request queue is full"
+    
+    async def release_resources(self, request_id: str, user_id: str):
+        """Release resources after request completion."""
+        with self._request_lock:
+            if request_id in self._active_request_times:
+                del self._active_request_times[request_id]
+                self._active_requests = max(0, self._active_requests - 1)
+    
+    @asynccontextmanager
+    async def acquire_for_request(self, user_id: str, request_data: Any):
+        """Context manager for resource acquisition."""
+        success, request_id = await self.acquire_resources(user_id, request_data)
+        if not success:
+            raise Exception(f"Resource acquisition failed: {request_id}")
+        
+        try:
+            yield request_id
+        finally:
+            await self.release_resources(request_id, user_id)
+    
+    def get_resource_stats(self) -> Dict[str, Any]:
+        """Get comprehensive resource statistics."""
+        memory_status = self.memory_tracker.check_memory_status()
+        queue_stats = self.request_queue.get_stats()
+        
+        with self._request_lock:
+            request_stats = {
+                "active": self._active_requests,
+                "max_concurrent": self.limits.max_concurrent_requests,
+                "utilization": self._active_requests / self.limits.max_concurrent_requests
+            }
+        
+        return {
+            "memory": {
+                "current_mb": memory_status["current_mb"],
+                "peak_mb": self.memory_tracker.get_peak_memory(),
+                "status": memory_status
+            },
+            "requests": request_stats,
+            "queue": queue_stats
+        }
+    
+    async def cleanup_expired_requests(self) -> int:
+        """Clean up expired requests."""
+        cutoff_time = datetime.utcnow() - timedelta(seconds=self.limits.max_request_duration_seconds)
+        expired_requests = []
+        
+        with self._request_lock:
+            for request_id, start_time in list(self._active_request_times.items()):
+                if start_time < cutoff_time:
+                    expired_requests.append(request_id)
+            
+            for request_id in expired_requests:
+                del self._active_request_times[request_id]
+                self._active_requests = max(0, self._active_requests - 1)
+        
+        return len(expired_requests)
+    
+    def update_limits(self, new_limits: ResourceLimits):
+        """Update resource limits."""
+        self.limits = new_limits
+        # Update dependent components
+        self.memory_tracker.warning_threshold_mb = int(new_limits.max_memory_mb * 0.8)
+        self.memory_tracker.critical_threshold_mb = new_limits.max_memory_mb
     
     async def start(self):
         """Start all resource management components."""

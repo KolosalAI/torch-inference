@@ -485,9 +485,9 @@ class TestResourceManager:
         with patch.object(resource_manager.memory_tracker, 'check_memory_status') as mock_memory:
             mock_memory.return_value = {"level": "normal", "critical": False}
             
-            # Set user quota and exceed it
+            # Set user quota and consume it fully
             resource_manager.quota_manager.set_quota("user123", "requests_per_minute", 10)
-            resource_manager.quota_manager.consume_quota("user123", "requests_per_minute", 15)
+            resource_manager.quota_manager.consume_quota("user123", "requests_per_minute", 10)
             
             can_accept, reason = await resource_manager.can_accept_request("user123")
             

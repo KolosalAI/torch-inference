@@ -119,9 +119,10 @@ class TestSystemResourcesHealthCheck:
     def health_check(self):
         """Create system resources health check."""
         return SystemResourcesHealthCheck(
-            cpu_threshold=80.0,
-            memory_threshold=85.0,
-            disk_threshold=90.0
+            name="system_resources",
+            cpu_critical_threshold=0.8,
+            memory_critical_threshold=0.85,
+            disk_critical_threshold=0.9
         )
     
     @pytest.mark.asyncio
@@ -194,8 +195,8 @@ class TestGPUHealthCheck:
     def health_check(self):
         """Create GPU health check."""
         return GPUHealthCheck(
-            memory_threshold=85.0,
-            temperature_threshold=85
+            name="gpu_resources",
+            memory_critical_threshold=0.85
         )
     
     @pytest.mark.asyncio

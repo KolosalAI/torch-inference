@@ -9,8 +9,9 @@ import asyncio
 import time
 import logging
 import threading
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Callable, Union, Generic, TypeVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
@@ -90,6 +91,9 @@ class PoolMetrics:
     active_connections: int = 0
     idle_connections: int = 0
     broken_connections: int = 0
+    available_connections: int = 0
+    min_connections: int = 0
+    max_connections: int = 0
     
     total_borrowed: int = 0
     total_returned: int = 0
@@ -98,6 +102,19 @@ class PoolMetrics:
     
     borrow_wait_time_total: float = 0.0
     borrow_wait_count: int = 0
+    connection_errors: int = 0
+    validation_failures: int = 0
+    
+    @property
+    def average_borrow_wait_time(self) -> float:
+        """Calculate average borrow wait time."""
+        if self.borrow_wait_count == 0:
+            return 0.0
+        return self.borrow_wait_time_total / self.borrow_wait_count
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert metrics to dictionary."""
+        return asdict(self)
 
 
 # Alias for compatibility
@@ -109,7 +126,7 @@ class PoolConnection:
     
     def __init__(self, connection: Any):
         self.connection = connection
-        self.created_at = time.time()
+        self.created_at = datetime.now()
         self.last_used = self.created_at
         self.use_count = 0
         self.in_use = False
@@ -117,7 +134,7 @@ class PoolConnection:
     def checkout(self):
         """Checkout the connection for use."""
         self.in_use = True
-        self.last_used = time.time()
+        self.last_used = datetime.now()
         self.use_count += 1
     
     def checkin(self):
@@ -125,14 +142,14 @@ class PoolConnection:
         self.in_use = False
     
     @property
-    def age(self) -> float:
-        """Get connection age in seconds."""
-        return time.time() - self.created_at
+    def age(self) -> timedelta:
+        """Get connection age as timedelta."""
+        return datetime.now() - self.created_at
     
     @property
-    def idle_time(self) -> float:
-        """Get idle time since last use."""
-        return time.time() - self.last_used
+    def idle_time(self) -> timedelta:
+        """Get idle time since last use as timedelta."""
+        return datetime.now() - self.last_used
 
 
 class ConnectionFactory(ABC):
@@ -162,17 +179,24 @@ class RedisConnectionFactory(ConnectionFactory):
         self.port = port
         self.db = db
         self.connection_kwargs = kwargs
+        
+        # Check if redis is available
+        try:
+            import redis.asyncio
+            self._redis_available = True
+        except ImportError:
+            self._redis_available = False
     
     async def create_connection(self) -> Any:
         """Create Redis connection."""
-        try:
-            import aioredis
-            return await aioredis.from_url(
-                f"redis://{self.host}:{self.port}/{self.db}",
-                **self.connection_kwargs
-            )
-        except ImportError:
-            raise ImportError("aioredis required for Redis connections")
+        if not self._redis_available:
+            raise ImportError("redis required for Redis connections")
+        
+        import redis.asyncio
+        return await redis.asyncio.from_url(
+            f"redis://{self.host}:{self.port}/{self.db}",
+            **self.connection_kwargs
+        )
     
     async def validate_connection(self, connection: Any) -> bool:
         """Validate Redis connection."""
@@ -196,14 +220,21 @@ class DatabaseConnectionFactory(ConnectionFactory):
     def __init__(self, database_url: str, **kwargs):
         self.database_url = database_url
         self.connection_kwargs = kwargs
+        
+        # Check if asyncpg is available
+        try:
+            import asyncpg
+            self._asyncpg_available = True
+        except ImportError:
+            self._asyncpg_available = False
     
     async def create_connection(self) -> Any:
         """Create database connection."""
-        try:
-            import asyncpg
-            return await asyncpg.connect(self.database_url, **self.connection_kwargs)
-        except ImportError:
+        if not self._asyncpg_available:
             raise ImportError("asyncpg required for PostgreSQL connections")
+        
+        import asyncpg
+        return await asyncpg.connect(self.database_url, **self.connection_kwargs)
     
     async def validate_connection(self, connection: Any) -> bool:
         """Validate database connection."""
@@ -219,16 +250,6 @@ class DatabaseConnectionFactory(ConnectionFactory):
             await connection.close()
         except Exception:
             pass
-    
-    connection_errors: int = 0
-    validation_failures: int = 0
-    
-    @property
-    def average_borrow_wait_time(self) -> float:
-        """Calculate average borrow wait time."""
-        if self.borrow_wait_count == 0:
-            return 0.0
-        return self.borrow_wait_time_total / self.borrow_wait_count
 
 
 class ConnectionFactory(ABC, Generic[T]):
@@ -268,9 +289,17 @@ class AsyncConnectionPool(Generic[T]):
     
     def __init__(self, 
                  factory: ConnectionFactory[T], 
-                 config: Optional[PoolConfig] = None):
+                 config: Optional[PoolConfig] = None,
+                 min_connections: Optional[int] = None,
+                 max_connections: Optional[int] = None):
         self.factory = factory
         self.config = config or PoolConfig()
+        
+        # Override config with explicit parameters if provided
+        if min_connections is not None:
+            self.config.min_size = min_connections
+        if max_connections is not None:
+            self.config.max_size = max_connections
         
         # Connection management
         self._connections: Dict[int, ConnectionInfo] = {}
@@ -291,8 +320,22 @@ class AsyncConnectionPool(Generic[T]):
         # Thread safety
         self._lock = asyncio.Lock()
         
+        # Convenience properties for tests
+        self._max_connections = self.config.max_size
+        self._min_connections = self.config.min_size
+        self._max_idle_time = self.config.max_idle_time
+        self._max_lifetime = self.config.max_lifetime
+        
         logger.info(f"Connection pool created with config: min={self.config.min_size}, "
                    f"max={self.config.max_size}")
+    
+    async def initialize(self):
+        """Initialize the connection pool (alias for start)."""
+        await self.start()
+    
+    def acquire(self):
+        """Acquire a connection from the pool (context manager)."""
+        return self.get_connection()
     
     async def start(self):
         """Start the connection pool."""
@@ -303,7 +346,8 @@ class AsyncConnectionPool(Generic[T]):
             # Create minimum connections
             for _ in range(self.config.min_size):
                 try:
-                    await self._create_connection()
+                    conn_info = await self._create_connection()
+                    await self._available.put(conn_info)
                 except Exception as e:
                     logger.error(f"Failed to create initial connection: {e}")
             
@@ -464,8 +508,9 @@ class AsyncConnectionPool(Generic[T]):
                     except Exception as e:
                         logger.error(f"Failed to create new connection: {e}")
                         self.metrics.connection_errors += 1
+                        raise
                 
-                # Wait for a connection to become available
+                # Pool is full, wait for a connection to become available
                 waiter = asyncio.Future()
                 self._waiters.append(waiter)
                 
@@ -622,43 +667,28 @@ class AsyncConnectionPool(Generic[T]):
                     conn_info.state = ConnectionState.BROKEN
                     self.metrics.validation_failures += 1
     
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> PoolMetrics:
         """Get connection pool statistics."""
         # Update current metrics
-        self.metrics.active_connections = sum(
+        active_connections = sum(
             1 for c in self._connections.values() if c.state == ConnectionState.ACTIVE
         )
-        self.metrics.idle_connections = sum(
+        idle_connections = sum(
             1 for c in self._connections.values() if c.state == ConnectionState.IDLE
         )
-        self.metrics.broken_connections = sum(
+        broken_connections = sum(
             1 for c in self._connections.values() if c.state == ConnectionState.BROKEN
         )
         
-        return {
-            "pool_size": len(self._connections),
-            "available_connections": self._available.qsize(),
-            "active_connections": self.metrics.active_connections,
-            "idle_connections": self.metrics.idle_connections,
-            "broken_connections": self.metrics.broken_connections,
-            "waiting_requests": len(self._waiters),
-            "metrics": {
-                "total_borrowed": self.metrics.total_borrowed,
-                "total_returned": self.metrics.total_returned,
-                "total_created": self.metrics.total_created,
-                "total_destroyed": self.metrics.total_destroyed,
-                "connection_errors": self.metrics.connection_errors,
-                "validation_failures": self.metrics.validation_failures,
-                "average_borrow_wait_time_ms": self.metrics.average_borrow_wait_time * 1000
-            },
-            "config": {
-                "min_size": self.config.min_size,
-                "max_size": self.config.max_size,
-                "max_idle_time": self.config.max_idle_time,
-                "max_lifetime": self.config.max_lifetime
-            },
-            "closed": self._closed
-        }
+        self.metrics.total_connections = len(self._connections)
+        self.metrics.active_connections = active_connections
+        self.metrics.idle_connections = idle_connections
+        self.metrics.broken_connections = broken_connections
+        self.metrics.available_connections = idle_connections
+        self.metrics.min_connections = self.config.min_size
+        self.metrics.max_connections = self.config.max_size
+        
+        return self.metrics
 
 
 class ConnectionPoolManager:
@@ -743,77 +773,3 @@ def get_connection_pool_manager() -> ConnectionPoolManager:
     if _connection_pool_manager is None:
         _connection_pool_manager = ConnectionPoolManager()
     return _connection_pool_manager
-
-
-# Example connection factory implementations
-class RedisConnectionFactory(ConnectionFactory):
-    """Connection factory for Redis connections."""
-    
-    def __init__(self, url: str, **kwargs):
-        self.url = url
-        self.kwargs = kwargs
-    
-    async def create_connection(self):
-        """Create a Redis connection."""
-        try:
-            import aioredis
-            return await aioredis.from_url(self.url, **self.kwargs)
-        except ImportError:
-            raise ImportError("aioredis is required for Redis connection pooling")
-    
-    async def validate_connection(self, connection) -> bool:
-        """Validate Redis connection."""
-        try:
-            await connection.ping()
-            return True
-        except Exception:
-            return False
-    
-    async def close_connection(self, connection):
-        """Close Redis connection."""
-        try:
-            await connection.close()
-        except Exception:
-            pass
-    
-    def is_connection_error(self, error: Exception) -> bool:
-        """Check if error indicates connection problem."""
-        # This would need to be customized based on Redis error types
-        return True
-
-
-class DatabaseConnectionFactory(ConnectionFactory):
-    """Connection factory for database connections."""
-    
-    def __init__(self, connection_string: str, **kwargs):
-        self.connection_string = connection_string
-        self.kwargs = kwargs
-    
-    async def create_connection(self):
-        """Create a database connection."""
-        # This is a placeholder - actual implementation would depend on database type
-        # For example, with asyncpg for PostgreSQL:
-        # import asyncpg
-        # return await asyncpg.connect(self.connection_string, **self.kwargs)
-        raise NotImplementedError("Database connection factory needs specific implementation")
-    
-    async def validate_connection(self, connection) -> bool:
-        """Validate database connection."""
-        try:
-            # Example validation query
-            # await connection.fetchval("SELECT 1")
-            return True
-        except Exception:
-            return False
-    
-    async def close_connection(self, connection):
-        """Close database connection."""
-        try:
-            await connection.close()
-        except Exception:
-            pass
-    
-    def is_connection_error(self, error: Exception) -> bool:
-        """Check if error indicates connection problem."""
-        # This would need to be customized based on database error types
-        return True
