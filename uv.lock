@@ -207,6 +207,19 @@ wheels = [
 ]
 
 [[package]]
+name = "asyncpg"
+version = "0.30.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "async-timeout", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2f/4c/7c991e080e106d854809030d8584e15b2e996e26f16aee6d757e387bc17d/asyncpg-0.30.0.tar.gz", hash = "sha256:c551e9928ab6707602f44811817f82ba3c446e018bfe1d3abecc8ba5f3eac851", size = 957746, upload-time = "2024-10-20T00:30:41.127Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/00/814514eb9287614188a5179a8b6e588a3611ca47d41937af0f3a844b1b4b/asyncpg-0.30.0-cp310-cp310-win32.whl", hash = "sha256:aa403147d3e07a267ada2ae34dfc9324e67ccc4cdca35261c8c22792ba2b10cf", size = 568760, upload-time = "2024-10-20T00:29:22.769Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/28/869a7a279400f8b06dd237266fdd7220bc5f7c975348fea5d1e6909588e9/asyncpg-0.30.0-cp310-cp310-win_amd64.whl", hash = "sha256:fb622c94db4e13137c4c7f98834185049cc50ee01d8f657ef898b6407c7b9c50", size = 625764, upload-time = "2024-10-20T00:29:25.882Z" },
+]
+
+[[package]]
 name = "attrs"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3023,6 +3036,18 @@ wheels = [
 ]
 
 [[package]]
+name = "redis"
+version = "6.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "async-timeout", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0d/d6/e8b92798a5bd67d659d51a18170e91c16ac3b59738d91894651ee255ed49/redis-6.4.0.tar.gz", hash = "sha256:b01bc7282b8444e28ec36b261df5375183bb47a07eb9c603f284e89cbc5ef010", size = 4647399, upload-time = "2025-08-07T08:10:11.441Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/02/89e2ed7e85db6c93dfa9e8f691c5087df4e3551ab39081a4d7c6d1f90e05/redis-6.4.0-py3-none-any.whl", hash = "sha256:f0544fa9604264e9464cdf4814e7d4830f74b165d52f2a330a760a88dd248b7f", size = 279847, upload-time = "2025-08-07T08:10:09.84Z" },
+]
+
+[[package]]
 name = "referencing"
 version = "0.36.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3636,6 +3661,7 @@ dependencies = [
     { name = "asttokens", marker = "sys_platform == 'win32'" },
     { name = "async-lru", marker = "sys_platform == 'win32'" },
     { name = "async-timeout", marker = "sys_platform == 'win32'" },
+    { name = "asyncpg", marker = "sys_platform == 'win32'" },
     { name = "attrs", marker = "sys_platform == 'win32'" },
     { name = "authlib", marker = "sys_platform == 'win32'" },
     { name = "babel", marker = "sys_platform == 'win32'" },
@@ -3812,6 +3838,7 @@ dependencies = [
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "pyyaml", marker = "sys_platform == 'win32'" },
     { name = "pyzmq", marker = "sys_platform == 'win32'" },
+    { name = "redis", marker = "sys_platform == 'win32'" },
     { name = "referencing", marker = "sys_platform == 'win32'" },
     { name = "requests", marker = "sys_platform == 'win32'" },
     { name = "rfc3339-validator", marker = "sys_platform == 'win32'" },
@@ -3998,6 +4025,7 @@ requires-dist = [
     { name = "asttokens", specifier = "==3.0.0" },
     { name = "async-lru", specifier = "==2.0.5" },
     { name = "async-timeout", specifier = "==5.0.1" },
+    { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "attrs", specifier = "==25.3.0" },
     { name = "authlib", specifier = "==1.6.1" },
     { name = "babel", specifier = "==2.17.0" },
@@ -4194,6 +4222,7 @@ requires-dist = [
     { name = "pywinpty", specifier = "==3.0.0" },
     { name = "pyyaml", specifier = "==6.0.2" },
     { name = "pyzmq", specifier = "==27.0.2" },
+    { name = "redis", specifier = ">=6.4.0" },
     { name = "referencing", specifier = "==0.36.2" },
     { name = "requests", specifier = "==2.32.5" },
     { name = "rfc3339-validator", specifier = "==0.1.4" },

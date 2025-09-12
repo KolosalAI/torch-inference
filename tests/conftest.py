@@ -1318,24 +1318,138 @@ def pytest_addoption(parser):
 
 @pytest.fixture(autouse=True)
 def resource_cleanup():
-    """Automatic resource cleanup to prevent accumulation."""
+    """Enhanced automatic resource cleanup to prevent accumulation."""
+    import asyncio
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    
+    # Store initial state
+    initial_threads = threading.active_count()
+    
     yield
     
-    # Clean up CUDA memory if available
+    try:
+        # 1. Clean up async resources
+        _cleanup_async_resources()
+        
+        # 2. Clean up CUDA memory if available
+        _cleanup_cuda_resources()
+        
+        # 3. Clean up thread pools and executors
+        _cleanup_thread_resources()
+        
+        # 4. Force multiple garbage collection cycles
+        _force_garbage_collection()
+        
+        # 5. Monitor and warn about thread leaks
+        _monitor_thread_leaks(initial_threads)
+        
+        # 6. Short sleep to allow cleanup completion
+        time.sleep(0.01)
+        
+    except Exception as e:
+        warnings.warn(f"Resource cleanup failed: {e}")
+
+
+def _cleanup_async_resources():
+    """Clean up asyncio resources and event loops."""
+    try:
+        # Close any remaining event loops in the current thread
+        try:
+            loop = asyncio.get_event_loop()
+            if loop and not loop.is_closed():
+                # Cancel all pending tasks
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                
+                # Run any final cleanup tasks
+                if pending:
+                    try:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    except:
+                        pass
+        except RuntimeError:
+            # No event loop in current thread
+            pass
+            
+        # Force cleanup of asyncio resources
+        asyncio.set_event_loop(None)
+        
+    except Exception:
+        pass
+
+
+def _cleanup_cuda_resources():
+    """Clean up CUDA memory and resources."""
     if torch.cuda.is_available():
         try:
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+            # Clear all device caches
+            for device_id in range(torch.cuda.device_count()):
+                with torch.cuda.device(device_id):
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            
+            # Reset peak memory stats
+            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_accumulated_memory_stats()
+            
         except RuntimeError:
             pass
+
+
+def _cleanup_thread_resources():
+    """Clean up thread pools and executors."""
+    try:
+        # Clean up any thread pool executors
+        import concurrent.futures
+        from concurrent.futures import ThreadPoolExecutor
+        
+        # Force cleanup of default thread pool executor
+        if hasattr(concurrent.futures.thread, '_threads_queues'):
+            concurrent.futures.thread._threads_queues.clear()
+            
+        # Clean up any remaining ThreadPoolExecutor instances
+        for obj in gc.get_objects():
+            if isinstance(obj, ThreadPoolExecutor):
+                try:
+                    obj.shutdown(wait=False)
+                except:
+                    pass
+                    
+    except Exception:
+        pass
+
+
+def _force_garbage_collection():
+    """Force multiple garbage collection cycles."""
+    # Multiple GC cycles to ensure cleanup
+    for _ in range(3):
+        gc.collect()
+        
+    # Collect generation 0, 1, and 2 specifically
+    if hasattr(gc, 'collect'):
+        for gen in range(3):
+            try:
+                gc.collect(gen)
+            except:
+                pass
+
+
+def _monitor_thread_leaks(initial_threads):
+    """Monitor and warn about thread leaks."""
+    current_threads = threading.active_count()
+    thread_growth = current_threads - initial_threads
     
-    # Clean up any remaining threads
-    active_threads = threading.active_count()
-    if active_threads > 10:  # Arbitrary threshold
-        warnings.warn(f"High thread count detected: {active_threads}")
-    
-    # Force garbage collection
-    gc.collect()
+    # Lower threshold for thread warnings
+    if current_threads > 8:  # Reduced from 10
+        warnings.warn(f"High thread count detected: {current_threads} (growth: +{thread_growth})")
+        
+        # If thread count is extremely high, try to identify thread sources
+        if current_threads > 20:
+            thread_names = [t.name for t in threading.enumerate() if t.is_alive()]
+            warnings.warn(f"Active threads: {thread_names[:10]}")  # Show first 10 thread names
 
 
 @pytest.fixture(autouse=True)

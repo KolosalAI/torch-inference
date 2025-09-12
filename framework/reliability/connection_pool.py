@@ -502,26 +502,40 @@ class AsyncConnectionPool(Generic[T]):
             except asyncio.QueueEmpty:
                 # No available connections, try to create one
                 if len(self._connections) < self.config.max_size:
-                    try:
-                        conn_info = await self._create_connection()
-                        return conn_info
-                    except Exception as e:
-                        logger.error(f"Failed to create new connection: {e}")
-                        self.metrics.connection_errors += 1
-                        raise
+                    last_exception = None
+                    for attempt in range(self.config.retry_attempts):
+                        try:
+                            conn_info = await self._create_connection()
+                            
+                            # Validate new connection if configured
+                            if self.config.validate_on_borrow:
+                                try:
+                                    is_valid = await self.factory.validate_connection(conn_info.connection)
+                                except Exception as e:
+                                    logger.warning(f"New connection validation failed: {e}")
+                                    is_valid = False
+                                    self.metrics.validation_failures += 1
+                                
+                                if not is_valid:
+                                    conn_info.state = ConnectionState.BROKEN
+                                    await self._destroy_connection(conn_info)
+                                    continue  # Try creating another connection
+                            
+                            return conn_info
+                        except Exception as e:
+                            last_exception = e
+                            logger.warning(f"Connection creation attempt {attempt + 1} failed: {e}")
+                            if attempt < self.config.retry_attempts - 1:
+                                await asyncio.sleep(self.config.retry_delay)
+                            self.metrics.connection_errors += 1
+                    
+                    # All retry attempts failed
+                    logger.error(f"Failed to create connection after {self.config.retry_attempts} attempts")
+                    raise last_exception
                 
-                # Pool is full, wait for a connection to become available
-                waiter = asyncio.Future()
-                self._waiters.append(waiter)
-                
-                try:
-                    await waiter
-                    # Loop again to try getting a connection
-                except asyncio.CancelledError:
-                    raise
-                finally:
-                    if waiter in self._waiters:
-                        self._waiters.remove(waiter)
+                # Pool is full, can't create more connections
+                # Raise timeout error immediately since we can't wait indefinitely
+                raise asyncio.TimeoutError("Connection pool exhausted")
     
     async def _create_connection(self) -> ConnectionInfo:
         """Create a new connection."""

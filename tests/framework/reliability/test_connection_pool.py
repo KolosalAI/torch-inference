@@ -178,7 +178,7 @@ class TestAsyncConnectionPool:
     async def test_acquire_timeout(self, connection_pool, mock_factory):
         """Test acquire timeout when pool is exhausted."""
         # Set max connections to 1 for easy testing
-        connection_pool._max_connections = 1
+        connection_pool.config.max_size = 1
         
         mock_factory.create_connection.return_value = MockConnection("conn-1")
         
@@ -235,7 +235,8 @@ class TestAsyncConnectionPool:
     async def test_idle_connection_cleanup(self, connection_pool, mock_factory):
         """Test cleanup of idle connections."""
         # Set very short idle time for testing
-        connection_pool._max_idle_time = 0.01
+        connection_pool.config.max_idle_time = 0.01
+        connection_pool.config.min_size = 0  # Allow all connections to be cleaned up
         
         mock_conn = MockConnection("idle-conn")
         mock_factory.create_connection.return_value = mock_conn
@@ -256,13 +257,20 @@ class TestAsyncConnectionPool:
     @pytest.mark.asyncio
     async def test_connection_lifetime_cleanup(self, connection_pool, mock_factory):
         """Test cleanup of connections that exceed lifetime."""
-        # Set very short lifetime for testing
-        connection_pool._max_lifetime = 0.01
+        # Set very short lifetime for testing  
+        connection_pool.config.max_lifetime = 0.01
         
         mock_conn = MockConnection("old-conn")
         mock_factory.create_connection.return_value = mock_conn
         
+        # Initialize the pool (this will create min_size connections)
         await connection_pool.initialize()
+        
+        # Verify connection was created
+        assert len(connection_pool._connections) > 0
+        
+        # Now allow all connections to be cleaned up
+        connection_pool.config.min_size = 0
         
         # Wait for connection to exceed lifetime
         await asyncio.sleep(0.02)
@@ -337,14 +345,34 @@ class TestRedisConnectionFactory:
     @pytest.mark.asyncio
     async def test_create_redis_connection(self, redis_factory):
         """Test creating Redis connection."""
-        with patch('redis.asyncio.from_url') as mock_from_url:
-            mock_redis = AsyncMock()
-            mock_from_url.return_value = mock_redis
+        # Mock the redis.asyncio module at the import level
+        with patch('builtins.__import__') as mock_import:
+            # Create mock redis module
+            mock_redis_module = Mock()
+            mock_redis_asyncio = Mock()
+            mock_redis_module.asyncio = mock_redis_asyncio
+            
+            # Mock the import to return our mock
+            def side_effect(name, *args, **kwargs):
+                if name == 'redis.asyncio':
+                    return mock_redis_asyncio
+                return __import__(name, *args, **kwargs)
+            
+            mock_import.side_effect = side_effect
+            
+            # Set up the mock connection
+            mock_conn = AsyncMock()
+            mock_redis_asyncio.from_url.return_value = mock_conn
+            
+            # Make redis "available"
+            redis_factory._redis_available = True
             
             conn = await redis_factory.create_connection()
             
-            assert conn is mock_redis
-            mock_from_url.assert_called_once_with("redis://localhost:6379/0")
+            assert conn is mock_conn
+            mock_redis_asyncio.from_url.assert_called_once_with(
+                "redis://localhost:6379/0"
+            )
     
     @pytest.mark.asyncio
     async def test_validate_redis_connection(self, redis_factory):
@@ -388,14 +416,30 @@ class TestDatabaseConnectionFactory:
     @pytest.mark.asyncio
     async def test_create_database_connection(self, db_factory):
         """Test creating database connection."""
-        with patch('asyncpg.connect') as mock_connect:
+        # Mock the asyncpg module at the import level
+        with patch('builtins.__import__') as mock_import:
+            # Create mock asyncpg module
+            mock_asyncpg = Mock()
+            
+            # Mock the import to return our mock
+            def side_effect(name, *args, **kwargs):
+                if name == 'asyncpg':
+                    return mock_asyncpg
+                return __import__(name, *args, **kwargs)
+            
+            mock_import.side_effect = side_effect
+            
+            # Set up the mock connection
             mock_conn = AsyncMock()
-            mock_connect.return_value = mock_conn
+            mock_asyncpg.connect.return_value = mock_conn
+            
+            # Make asyncpg "available"
+            db_factory._asyncpg_available = True
             
             conn = await db_factory.create_connection()
             
             assert conn is mock_conn
-            mock_connect.assert_called_once_with("postgresql://user:pass@localhost/db")
+            mock_asyncpg.connect.assert_called_once_with("postgresql://user:pass@localhost/db")
     
     @pytest.mark.asyncio
     async def test_validate_database_connection(self, db_factory):
