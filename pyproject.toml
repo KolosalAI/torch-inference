@@ -289,6 +289,8 @@ dependencies = [
     "pyjwt>=2.10.1",
     "passlib[bcrypt]>=1.7.4",
     "transformers==4.55.4",
+    "redis>=6.4.0",
+    "asyncpg>=0.30.0",
 ]
 
 [project.optional-dependencies]

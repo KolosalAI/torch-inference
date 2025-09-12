@@ -540,7 +540,7 @@ class TestIntegrationScenarios:
         """Test complete retry -> DLQ flow."""
         retry_manager, dlq = integrated_system
         
-        async def failing_operation():
+        async def failing_operation(data=None):
             raise ConnectionError("Persistent failure")
         
         # Try operation with retry
@@ -576,8 +576,8 @@ class TestIntegrationScenarios:
             return "reprocessed successfully"
         
         # Reprocess with retry manager
-        async def reprocess_with_retry():
-            return await successful_reprocessor({"input": "test"})
+        async def reprocess_with_retry(operation_data):
+            return await successful_reprocessor(operation_data)
         
         success = await dlq.reprocess_operation("reprocess-op", reprocess_with_retry)
         

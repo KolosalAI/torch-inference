@@ -103,7 +103,22 @@ class StructuredLogRecord:
     
     def to_json(self) -> str:
         """Convert to JSON string."""
-        return json.dumps(self.to_dict(), default=str, ensure_ascii=False)
+        result_dict = self.to_dict()
+        # Include any additional attributes that were set dynamically
+        for key, value in self.__dict__.items():
+            if key not in result_dict and not key.startswith('_'):
+                try:
+                    # Test if it's JSON serializable
+                    json.dumps(value)
+                    result_dict[key] = value
+                except (TypeError, ValueError):
+                    # Convert to string if not serializable
+                    try:
+                        result_dict[key] = str(value)
+                    except Exception:
+                        # Skip fields that can't be converted
+                        pass
+        return json.dumps(result_dict, default=str, ensure_ascii=False)
 
 
 class StructuredFormatter(logging.Formatter):
@@ -250,8 +265,12 @@ class CorrelationIDFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         """Add correlation ID to log record."""
         try:
-            # Get correlation ID from context variables or trace context
-            correlation_id = correlation_id_var.get()
+            # Check if correlation ID is already set on the record
+            correlation_id = getattr(record, 'correlation_id', None)
+            
+            # Get correlation ID from context variables or trace context only if not already set
+            if correlation_id is None:
+                correlation_id = correlation_id_var.get()
             
             # Try to get from trace context if not found
             if not correlation_id:
@@ -264,6 +283,7 @@ class CorrelationIDFilter(logging.Filter):
                 except AttributeError:
                     pass
             
+            # Only auto-generate if enabled and no ID found anywhere
             if not correlation_id and self.auto_generate:
                 correlation_id = str(uuid.uuid4())
                 correlation_id_var.set(correlation_id)
@@ -459,7 +479,8 @@ class TraceContext:
             'operation_name': self.operation_name,
             'trace_id': self.trace_id,
             'span_id': self.span_id,
-            'start_time': self.start_time
+            'start_time': self.start_time,
+            'timestamp': self.timestamp.isoformat()
         }
         
         if self.parent_span_id:

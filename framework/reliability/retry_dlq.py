@@ -132,16 +132,34 @@ class FailureClassification:
             KeyError
         }
     
-    def is_retryable(self, error: Exception) -> bool:
+    @classmethod
+    def is_retryable(cls, error: Exception) -> bool:
         """Determine if an error is retryable."""
+        retryable_errors = {
+            TimeoutError,
+            ConnectionError,
+            OSError,
+            asyncio.TimeoutError
+        }
+        non_retryable_errors = {
+            ValueError,
+            TypeError,
+            KeyError,
+            AttributeError
+        }
+        
         error_type = type(error)
         
         # Check if explicitly non-retryable
-        if error_type in self._non_retryable_errors:
+        if error_type in non_retryable_errors:
             return False
         
         # Check if explicitly retryable
-        if error_type in self._retryable_errors:
+        if error_type in retryable_errors:
+            return True
+        
+        # Special case for RuntimeError with CUDA errors
+        if isinstance(error, RuntimeError) and "CUDA" in str(error):
             return True
         
         # HTTP status code based classification
@@ -157,33 +175,54 @@ class FailureClassification:
         # Default to not retryable
         return False
     
-    def classify_failure(self, error: Exception) -> FailureReason:
+    @classmethod
+    def classify_failure(cls, error: Exception) -> str:
         """Classify the type of failure."""
-        if isinstance(error, TimeoutError):
-            return FailureReason.TIMEOUT
-        elif isinstance(error, ConnectionError):
-            return FailureReason.CONNECTION_ERROR
-        elif hasattr(error, 'status_code'):
-            if error.status_code == 429:
-                return FailureReason.RATE_LIMIT
-            elif 500 <= error.status_code < 600:
-                return FailureReason.SERVER_ERROR
-            elif 400 <= error.status_code < 500:
-                return FailureReason.CLIENT_ERROR
-        
-        return FailureReason.UNKNOWN
+        if cls.is_retryable(error):
+            return "transient"
+        else:
+            return "permanent"
+    
+    @classmethod
+    def get_retry_delay(cls, error: Exception, attempt: int) -> float:
+        """Get appropriate retry delay for error types."""
+        if cls.is_retryable(error):
+            # Exponential backoff for retryable errors
+            base_delay = 1.0
+            return min(base_delay * (2 ** (attempt - 1)), 60.0)
+        else:
+            # No delay for permanent errors
+            return 0.0
 
 
 @dataclass  
 class ModelInferenceOperation:
     """Represents a model inference operation for retry/DLQ handling."""
     
-    operation_id: str
+    model: Any
     model_name: str
     input_data: Dict[str, Any]
+    operation_id: str = field(default_factory=lambda: f"op_{int(time.time() * 1000)}")
     created_at: datetime = field(default_factory=datetime.utcnow)
     attempts: int = 0
     last_error: Optional[str] = None
+    
+    async def execute(self) -> Any:
+        """Execute model inference operation."""
+        if hasattr(self.model, 'predict'):
+            # Model with predict method
+            if asyncio.iscoroutinefunction(self.model.predict):
+                return await self.model.predict(self.input_data)
+            else:
+                return self.model.predict(self.input_data)
+        elif callable(self.model):
+            # Direct callable model
+            if asyncio.iscoroutinefunction(self.model):
+                return await self.model(self.input_data)
+            else:
+                return self.model(self.input_data)
+        else:
+            raise ValueError(f"Model {self.model} is not callable or doesn't have predict method")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -263,52 +302,6 @@ class RetryableOperation(ABC):
     def classify_failure(self, exception: Exception) -> FailureReason:
         """Classify the failure reason."""
         pass
-
-
-class ModelInferenceOperation(RetryableOperation):
-    """Model inference retryable operation."""
-    
-    def __init__(self, model_callable: Callable, retry_config: RetryConfig):
-        self.model_callable = model_callable
-        self.retry_config = retry_config
-    
-    async def execute(self, data: Any) -> Any:
-        """Execute model inference."""
-        if asyncio.iscoroutinefunction(self.model_callable):
-            return await self.model_callable(data)
-        else:
-            # Run in thread pool for sync functions
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.model_callable, data)
-    
-    def should_retry(self, exception: Exception) -> bool:
-        """Determine if inference should be retried."""
-        # Check if exception type is in retry list
-        for retry_exception_type in self.retry_config.retry_on_exceptions:
-            if isinstance(exception, retry_exception_type):
-                return True
-        
-        # Check specific conditions
-        if isinstance(exception, (TimeoutError, ConnectionError)):
-            return True
-        
-        if isinstance(exception, OSError) and "CUDA" in str(exception):
-            return True  # CUDA memory errors might be transient
-        
-        return False
-    
-    def classify_failure(self, exception: Exception) -> FailureReason:
-        """Classify the failure reason."""
-        if isinstance(exception, TimeoutError):
-            return FailureReason.TIMEOUT
-        elif isinstance(exception, ConnectionError):
-            return FailureReason.CONNECTION_ERROR
-        elif "CUDA out of memory" in str(exception):
-            return FailureReason.RESOURCE_EXHAUSTED
-        elif "rate limit" in str(exception).lower():
-            return FailureReason.RATE_LIMIT
-        else:
-            return FailureReason.UNKNOWN
 
 
 class RetryManager:
