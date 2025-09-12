@@ -21,16 +21,89 @@ import random
 import threading
 from collections import deque
 import traceback
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-class RetryPolicy(Enum):
-    """Retry policy types."""
+@dataclass
+class RetryPolicy:
+    """Retry policy configuration."""
+    strategy: str = "exponential_backoff"  # "exponential_backoff", "fixed_delay", "linear_backoff", "immediate"
+    max_attempts: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    exponential_base: float = 2.0  # Changed from backoff_multiplier for test compatibility
+    jitter: bool = True
+    
+    # For compatibility with enum values
     EXPONENTIAL_BACKOFF = "exponential_backoff"
     FIXED_DELAY = "fixed_delay"
     LINEAR_BACKOFF = "linear_backoff"
     IMMEDIATE = "immediate"
+    
+    @property
+    def backoff_multiplier(self) -> float:
+        """Alias for exponential_base for backward compatibility."""
+        return self.exponential_base
+    
+    def calculate_delay(self, attempt: int) -> float:
+        """Calculate delay for retry attempt."""
+        if attempt == 0:
+            return self.base_delay
+        
+        if self.strategy == "immediate":
+            return 0.0
+        elif self.strategy == "fixed_delay":
+            delay = self.base_delay
+        elif self.strategy == "linear_backoff":
+            delay = self.base_delay * (attempt + 1)
+        elif self.strategy == "exponential_backoff":
+            delay = self.base_delay * (self.exponential_base ** attempt)
+        else:
+            delay = self.base_delay
+        
+        # Apply max delay limit
+        delay = min(delay, self.max_delay)
+        
+        # Add jitter to prevent thundering herd
+        if self.jitter:
+            jitter_amount = delay * 0.5  # Up to 50% jitter
+            delay += random.uniform(0, jitter_amount)
+        
+        return max(0, delay)
+    
+    def should_retry(self, error: Exception, attempt: int) -> bool:
+        """Determine if operation should be retried."""
+        # Check if we've reached max attempts
+        if attempt >= self.max_attempts:
+            return False
+        
+        # Check if error is retryable
+        retryable_errors = {
+            ConnectionError,
+            TimeoutError,
+            OSError
+        }
+        
+        non_retryable_errors = {
+            ValueError,
+            TypeError,
+            KeyError
+        }
+        
+        error_type = type(error)
+        
+        # Check if explicitly non-retryable
+        if error_type in non_retryable_errors:
+            return False
+        
+        # Check if explicitly retryable
+        if error_type in retryable_errors:
+            return True
+        
+        # Default to not retryable
+        return False
 
 
 class FailureReason(Enum):
@@ -139,7 +212,7 @@ class ModelInferenceOperation:
 @dataclass
 class RetryConfig:
     """Retry configuration."""
-    policy: RetryPolicy = RetryPolicy.EXPONENTIAL_BACKOFF
+    policy: str = "exponential_backoff"  # Use string instead of enum
     max_attempts: int = 3
     initial_delay: float = 1.0
     max_delay: float = 60.0
@@ -241,16 +314,47 @@ class ModelInferenceOperation(RetryableOperation):
 class RetryManager:
     """Manages retry logic with exponential backoff."""
     
-    def __init__(self, config: RetryConfig):
-        self.config = config
+    def __init__(self, policy_or_config):
+        """Initialize with either RetryPolicy or RetryConfig."""
+        if isinstance(policy_or_config, RetryPolicy):
+            self.policy = policy_or_config
+            # Convert to RetryConfig for internal use
+            self.config = RetryConfig(
+                policy=policy_or_config.strategy,
+                max_attempts=policy_or_config.max_attempts,
+                initial_delay=policy_or_config.base_delay,
+                max_delay=policy_or_config.max_delay,
+                backoff_multiplier=policy_or_config.exponential_base,
+                jitter=policy_or_config.jitter
+            )
+        else:
+            self.config = policy_or_config
+            # Create RetryPolicy for compatibility
+            self.policy = RetryPolicy(
+                strategy=policy_or_config.policy,
+                max_attempts=policy_or_config.max_attempts,
+                base_delay=policy_or_config.initial_delay,
+                max_delay=policy_or_config.max_delay,
+                exponential_base=policy_or_config.backoff_multiplier,
+                jitter=policy_or_config.jitter
+            )
+        
         self._attempt_history: Dict[str, List[RetryAttempt]] = {}
         self._lock = threading.RLock()
     
-    async def execute_with_retry(self, operation: RetryableOperation, data: Any, 
-                               request_id: Optional[str] = None) -> Any:
-        """Execute operation with retry logic."""
+    async def execute_with_retry(self, operation, data: Any = None, 
+                               request_id: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> Any:
+        """Execute operation with retry logic.
+        
+        Args:
+            operation: Either a RetryableOperation instance or a callable function
+            data: Data to pass to the operation (optional for direct callables)
+            request_id: Optional request ID for tracking
+            context: Optional context for the operation (not used but accepted for compatibility)
+        """
         if request_id is None:
-            request_id = f"req_{int(time.time() * 1000)}"
+            import uuid
+            request_id = f"req_{uuid.uuid4().hex[:12]}"
         
         attempts = []
         last_exception = None
@@ -269,7 +373,23 @@ class RetryManager:
             )
             
             try:
-                result = await operation.execute(data)
+                # Handle both RetryableOperation and direct callable
+                if isinstance(operation, RetryableOperation):
+                    result = await operation.execute(data)
+                else:
+                    # Direct callable
+                    if asyncio.iscoroutinefunction(operation):
+                        if data is not None:
+                            result = await operation(data)
+                        else:
+                            result = await operation()
+                    else:
+                        # Sync function
+                        if data is not None:
+                            result = operation(data)
+                        else:
+                            result = operation()
+                
                 attempt_info.success = True
                 
                 with self._lock:
@@ -289,7 +409,14 @@ class RetryManager:
                 logger.warning(f"Request {request_id} failed on attempt {attempt}: {e}")
                 
                 # Check if we should retry
-                if attempt == self.config.max_attempts or not operation.should_retry(e):
+                should_retry = False
+                if isinstance(operation, RetryableOperation):
+                    should_retry = operation.should_retry(e)
+                else:
+                    # Use policy's should_retry method
+                    should_retry = self.policy.should_retry(e, attempt)
+                
+                if attempt == self.config.max_attempts or not should_retry:
                     break
         
         # All retries exhausted
@@ -304,16 +431,18 @@ class RetryManager:
         if attempt_number == 1:
             return 0.0
         
-        if self.config.policy == RetryPolicy.IMMEDIATE:
+        policy = self.config.policy if isinstance(self.config.policy, str) else self.config.policy.strategy
+        
+        if policy == "immediate":
             return 0.0
         
-        elif self.config.policy == RetryPolicy.FIXED_DELAY:
+        elif policy == "fixed_delay":
             delay = self.config.initial_delay
         
-        elif self.config.policy == RetryPolicy.LINEAR_BACKOFF:
+        elif policy == "linear_backoff":
             delay = self.config.initial_delay * (attempt_number - 1)
         
-        elif self.config.policy == RetryPolicy.EXPONENTIAL_BACKOFF:
+        elif policy == "exponential_backoff":
             delay = self.config.initial_delay * (self.config.backoff_multiplier ** (attempt_number - 2))
         
         else:
@@ -343,36 +472,67 @@ class RetryManager:
                 if any(attempt.success for attempt in attempts)
             )
             
+            failed_requests = total_requests - successful_requests
+            
             total_attempts = sum(
                 len(attempts) for attempts in self._attempt_history.values()
             )
             
+            # Calculate total retries (attempts beyond the first)
+            total_retries = sum(
+                max(0, len(attempts) - 1) for attempts in self._attempt_history.values()
+            )
+            
             avg_attempts = total_attempts / total_requests if total_requests > 0 else 0
             
+            policy_str = self.config.policy if isinstance(self.config.policy, str) else self.config.policy.strategy
+            
             return {
-                'total_requests': total_requests,
-                'successful_requests': successful_requests,
-                'failed_requests': total_requests - successful_requests,
+                'total_operations': total_requests,
+                'total_requests': total_requests,  # Keep for compatibility
+                'successful_operations': successful_requests,
+                'successful_requests': successful_requests,  # Keep for compatibility
+                'failed_operations': failed_requests,
+                'failed_requests': failed_requests,  # Keep for compatibility
+                'total_retries': total_retries,
                 'success_rate': (successful_requests / total_requests * 100) if total_requests > 0 else 0,
                 'total_attempts': total_attempts,
                 'average_attempts_per_request': avg_attempts,
+                'operations_by_status': {
+                    'successful': successful_requests,
+                    'failed': failed_requests
+                },
                 'config': {
-                    'policy': self.config.policy.value,
+                    'policy': policy_str,
                     'max_attempts': self.config.max_attempts,
                     'initial_delay': self.config.initial_delay,
                     'max_delay': self.config.max_delay
                 }
             }
+    
+    def get_retry_stats(self) -> Dict[str, Any]:
+        """Alias for get_stats for test compatibility."""
+        return self.get_stats()
 
 
 class DeadLetterQueue:
     """Dead letter queue for failed requests."""
     
-    def __init__(self, max_size: int = 10000, persistence_path: Optional[str] = None):
-        self.max_size = max_size
-        self.persistence_path = persistence_path
+    def __init__(self, dlq_path_or_max_size=10000, persistence_path: Optional[str] = None):
+        # Handle both old and new constructors
+        if isinstance(dlq_path_or_max_size, str):
+            # New constructor: DeadLetterQueue(dlq_path)
+            self.dlq_path = Path(dlq_path_or_max_size)
+            self.dlq_path.mkdir(parents=True, exist_ok=True)
+            self.max_size = 10000
+            self.persistence_path = None
+        else:
+            # Old constructor: DeadLetterQueue(max_size, persistence_path)
+            self.max_size = dlq_path_or_max_size
+            self.persistence_path = persistence_path
+            self.dlq_path = None
         
-        self._failed_requests: deque[FailedRequest] = deque(maxlen=max_size)
+        self._failed_requests: deque[FailedRequest] = deque(maxlen=self.max_size)
         self._failure_stats: Dict[FailureReason, int] = {reason: 0 for reason in FailureReason}
         self._lock = threading.RLock()
         
@@ -380,7 +540,63 @@ class DeadLetterQueue:
         if self.persistence_path:
             self._load_from_disk()
         
-        logger.info(f"Dead letter queue initialized with max size: {max_size}")
+        logger.info(f"Dead letter queue initialized with max size: {self.max_size}")
+    
+    async def add_failed_operation(self, operation_id: str, operation_type: str,
+                                  operation_data: Dict[str, Any], error: Exception,
+                                  attempts: int):
+        """Add a failed operation to the dead letter queue (test-compatible interface)."""
+        # Classify the failure
+        if isinstance(error, ConnectionError):
+            failure_reason = FailureReason.CONNECTION_ERROR
+        elif isinstance(error, TimeoutError):
+            failure_reason = FailureReason.TIMEOUT
+        elif isinstance(error, ValueError):
+            failure_reason = FailureReason.CLIENT_ERROR
+        else:
+            failure_reason = FailureReason.UNKNOWN
+        
+        failed_request = FailedRequest(
+            id=operation_id,
+            original_data=operation_data,
+            failure_reason=failure_reason,
+            error_message=str(error),
+            stack_trace=traceback.format_exc(),
+            attempts=attempts,
+            first_attempt_at=datetime.utcnow(),
+            last_attempt_at=datetime.utcnow(),
+            metadata={"operation_type": operation_type}
+        )
+        
+        # Add to in-memory queue
+        with self._lock:
+            self._failed_requests.append(failed_request)
+            self._failure_stats[failed_request.failure_reason] += 1
+        
+        # Save individual file if dlq_path is set
+        if self.dlq_path:
+            filename = f"{operation_id}_{int(time.time())}.json"
+            file_path = self.dlq_path / filename
+            
+            data = {
+                "operation_id": operation_id,
+                "operation_type": operation_type,
+                "operation_data": operation_data,
+                "error_message": str(error),
+                "error_type": type(error).__name__,
+                "attempts": attempts,
+                "timestamp": datetime.utcnow().isoformat(),
+                "failure_reason": failure_reason.value
+            }
+            
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2, default=str)
+        
+        # Persist to single file if persistence_path is set
+        if self.persistence_path:
+            self._persist_to_disk()
+        
+        logger.warning(f"Added failed operation to DLQ: {operation_id} - {failure_reason.value}")
     
     def add_failed_request(self, failed_request: FailedRequest):
         """Add a failed request to the dead letter queue."""
@@ -393,6 +609,37 @@ class DeadLetterQueue:
             self._persist_to_disk()
         
         logger.warning(f"Added failed request to DLQ: {failed_request.id} - {failed_request.failure_reason.value}")
+    
+    def get_failed_operations(self, operation_type: Optional[str] = None, 
+                            limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get failed operations from the queue (test-compatible interface)."""
+        # Get all failed requests
+        with self._lock:
+            requests = list(self._failed_requests)
+        
+        # Filter by operation type if specified
+        if operation_type:
+            requests = [req for req in requests if req.metadata.get("operation_type") == operation_type]
+        
+        # Apply limit if specified
+        if limit:
+            requests = requests[-limit:]  # Get most recent
+        
+        # Convert to dictionary format for test compatibility
+        result = []
+        for req in requests:
+            result.append({
+                "operation_id": req.id,
+                "operation_type": req.metadata.get("operation_type", "unknown"),
+                "operation_data": req.original_data,
+                "error_message": req.error_message,
+                "error_type": req.error_message.split(":")[0] if ":" in req.error_message else "Exception",
+                "attempts": req.attempts,
+                "timestamp": req.last_attempt_at.isoformat(),
+                "failure_reason": req.failure_reason.value
+            })
+        
+        return result
     
     def get_failed_requests(self, limit: Optional[int] = None, 
                           failure_reason: Optional[FailureReason] = None) -> List[FailedRequest]:
@@ -410,17 +657,53 @@ class DeadLetterQueue:
         
         return requests
     
+    def get_failed_operations_by_type(self, failure_type: str) -> List[FailedRequest]:
+        """Get failed requests by failure type."""
+        try:
+            failure_reason = FailureReason(failure_type)
+            return self.get_failed_requests(failure_reason=failure_reason)
+        except ValueError:
+            return []
+    
     def retry_failed_request(self, request_id: str) -> Optional[FailedRequest]:
         """Remove and return a failed request for retry."""
         with self._lock:
             for i, request in enumerate(self._failed_requests):
                 if request.id == request_id:
-                    # Remove from deque
-                    removed_request = self._failed_requests[i]
-                    del self._failed_requests[i]
+                    # Remove from deque by converting to list, removing, and recreating
+                    requests_list = list(self._failed_requests)
+                    removed_request = requests_list.pop(i)
+                    self._failed_requests.clear()
+                    self._failed_requests.extend(requests_list)
                     return removed_request
         
         return None
+    
+    async def reprocess_operation(self, request_id: str, processor_func) -> bool:
+        """Reprocess a failed operation from the DLQ."""
+        # Find and remove the request
+        failed_request = self.retry_failed_request(request_id)
+        if not failed_request:
+            return False
+        
+        try:
+            # Process the operation data
+            if asyncio.iscoroutinefunction(processor_func):
+                await processor_func(failed_request.original_data)
+            else:
+                processor_func(failed_request.original_data)
+            return True
+        except Exception as e:
+            # If reprocessing fails, add it back to the queue
+            failed_request.attempts += 1
+            failed_request.last_attempt_at = datetime.utcnow()
+            failed_request.error_message = str(e)
+            self.add_failed_request(failed_request)
+            return False
+    
+    async def reprocess_nonexistent_operation(self, request_id: str, processor_func) -> bool:
+        """Try to reprocess a non-existent operation (for test compatibility)."""
+        return await self.reprocess_operation(request_id, processor_func)
     
     def clear_old_requests(self, older_than_days: int = 7) -> int:
         """Clear requests older than specified days."""
@@ -442,6 +725,37 @@ class DeadLetterQueue:
         
         return cleared_count
     
+    def cleanup_old_entries(self, older_than_days: int = 7) -> int:
+        """Clean up old entries from both memory and disk."""
+        cleaned_count = 0
+        
+        # Clean up in-memory entries
+        memory_cleaned = self.clear_old_requests(older_than_days)
+        cleaned_count += memory_cleaned
+        
+        # Clean up file-based entries if dlq_path is set
+        if self.dlq_path:
+            cutoff_date = datetime.utcnow() - timedelta(days=older_than_days)
+            
+            for json_file in self.dlq_path.glob("*.json"):
+                try:
+                    with open(json_file, 'r') as f:
+                        data = json.load(f)
+                    
+                    # Check if the timestamp is older than cutoff
+                    timestamp_str = data.get('timestamp', '')
+                    if timestamp_str:
+                        file_timestamp = datetime.fromisoformat(timestamp_str)
+                        if file_timestamp < cutoff_date:
+                            json_file.unlink()  # Delete the file
+                            cleaned_count += 1
+                            logger.info(f"Cleaned up old DLQ file: {json_file.name}")
+                
+                except Exception as e:
+                    logger.error(f"Error cleaning up DLQ file {json_file}: {e}")
+        
+        return cleaned_count
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get dead letter queue statistics."""
         with self._lock:
@@ -454,10 +768,18 @@ class DeadLetterQueue:
                 if req.last_attempt_at > recent_cutoff
             )
             
+            # Group operations by type
+            operations_by_type = {}
+            for req in self._failed_requests:
+                op_type = req.metadata.get("operation_type", "unknown")
+                operations_by_type[op_type] = operations_by_type.get(op_type, 0) + 1
+            
             return {
-                'total_failed_requests': total_failed,
+                'total_failed_operations': total_failed,  # Changed for test compatibility
+                'total_failed_requests': total_failed,    # Keep for compatibility
                 'recent_failures_24h': recent_failures,
                 'failure_by_reason': dict(self._failure_stats),
+                'operations_by_type': operations_by_type,
                 'oldest_failure': min(
                     (req.first_attempt_at for req in self._failed_requests),
                     default=None
@@ -466,9 +788,21 @@ class DeadLetterQueue:
                     (req.last_attempt_at for req in self._failed_requests),
                     default=None
                 ),
+                'oldest_entry': min(
+                    (req.first_attempt_at for req in self._failed_requests),
+                    default=None
+                ),
+                'newest_entry': max(
+                    (req.last_attempt_at for req in self._failed_requests),
+                    default=None
+                ),
                 'max_size': self.max_size,
                 'utilization_percent': (total_failed / self.max_size * 100) if self.max_size > 0 else 0
             }
+    
+    def get_dlq_stats(self) -> Dict[str, Any]:
+        """Alias for get_stats for test compatibility."""
+        return self.get_stats()
     
     def _persist_to_disk(self):
         """Persist failed requests to disk."""

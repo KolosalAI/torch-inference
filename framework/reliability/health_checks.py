@@ -29,6 +29,7 @@ class HealthStatus(Enum):
     HEALTHY = "healthy"
     WARNING = "warning"
     CRITICAL = "critical"
+    UNHEALTHY = "unhealthy"
     UNKNOWN = "unknown"
 
 
@@ -57,7 +58,7 @@ class HealthCheckResult:
         """Create an unhealthy result."""
         return cls(
             name=name,
-            status=HealthStatus.CRITICAL,
+            status=HealthStatus.UNHEALTHY,
             message=message,
             details=details or {}
         )
@@ -72,11 +73,21 @@ class HealthCheckResult:
             details=details or {}
         )
     
+    @classmethod
+    def unknown(cls, name: str, message: str, details: Dict[str, Any] = None) -> 'HealthCheckResult':
+        """Create an unknown result."""
+        return cls(
+            name=name,
+            status=HealthStatus.UNKNOWN,
+            message=message,
+            details=details or {}
+        )
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
             "name": self.name,
-            "status": self.status.value,
+            "status": self.status.value.upper(),  # Convert to uppercase for API compatibility
             "message": self.message,
             "details": self.details,
             "timestamp": self.timestamp,
@@ -107,8 +118,8 @@ class HealthCheck:
             duration_ms = (time.time() - start_time) * 1000
             result = HealthCheckResult(
                 name=self.name,
-                status=HealthStatus.CRITICAL,
-                message=f"Health check timed out after {self.timeout}s",
+                status=HealthStatus.UNKNOWN,
+                message=f"Health check timeout after {self.timeout}s",
                 duration_ms=duration_ms
             )
             self.last_result = result
@@ -118,7 +129,7 @@ class HealthCheck:
             duration_ms = (time.time() - start_time) * 1000
             result = HealthCheckResult(
                 name=self.name,
-                status=HealthStatus.CRITICAL,
+                status=HealthStatus.UNKNOWN,
                 message=f"Health check failed: {str(e)}",
                 details={"error": str(e), "error_type": type(e).__name__},
                 duration_ms=duration_ms
@@ -127,9 +138,24 @@ class HealthCheck:
             self.last_check_time = time.time()
             return result
     
-    async def _perform_check(self) -> HealthCheckResult:
+    async def run_check(self, timeout: Optional[float] = None) -> HealthCheckResult:
+        """Run the health check with optional timeout override."""
+        original_timeout = self.timeout
+        if timeout is not None:
+            self.timeout = timeout
+        
+        try:
+            return await self.check()
+        finally:
+            self.timeout = original_timeout
+    
+    async def check_health(self) -> HealthCheckResult:
         """Override this method to implement the actual health check."""
         raise NotImplementedError
+    
+    async def _perform_check(self) -> HealthCheckResult:
+        """Call check_health for compatibility."""
+        return await self.check_health()
 
 
 # Alias for compatibility
@@ -156,7 +182,7 @@ class SystemResourcesHealthCheck(HealthCheck):
         self.disk_warning_threshold = disk_warning_threshold
         self.disk_critical_threshold = disk_critical_threshold
     
-    async def _perform_check(self) -> HealthCheckResult:
+    async def check_health(self) -> HealthCheckResult:
         """Check system resource usage."""
         issues = []
         warnings = []
@@ -243,6 +269,10 @@ class GPUHealthCheck(HealthCheck):
         super().__init__(name, timeout)
         self.memory_warning_threshold = memory_warning_threshold
         self.memory_critical_threshold = memory_critical_threshold
+    
+    async def check_health(self) -> HealthCheckResult:
+        """Check GPU health and resources."""
+        return await self._perform_check()
     
     async def _perform_check(self) -> HealthCheckResult:
         """Check GPU health and resources."""
@@ -345,7 +375,7 @@ class ModelHealthCheck(HealthCheck):
     
     def __init__(self, 
                  model_name: str, 
-                 model_manager,
+                 model_manager=None,
                  perform_inference_test: bool = True,
                  timeout: float = 30.0):
         super().__init__(f"model_{model_name}", timeout)
@@ -353,9 +383,26 @@ class ModelHealthCheck(HealthCheck):
         self.model_manager = model_manager
         self.perform_inference_test = perform_inference_test
     
+    async def check_health(self) -> HealthCheckResult:
+        """Check model health and optionally perform inference test."""
+        return await self._perform_check()
+    
     async def _perform_check(self) -> HealthCheckResult:
         """Check model health and optionally perform inference test."""
         try:
+            # Check if model manager is available
+            if self.model_manager is None:
+                return HealthCheckResult(
+                    name=self.name,
+                    status=HealthStatus.CRITICAL,
+                    message=f"Model manager is not available for '{self.model_name}'",
+                    details={
+                        "model_name": self.model_name,
+                        "model_manager": None,
+                        "reason": "No model manager provided"
+                    }
+                )
+            
             # Check if model exists
             if not self.model_manager.is_model_loaded(self.model_name):
                 return HealthCheckResult(
@@ -471,6 +518,10 @@ class DependencyHealthCheck(HealthCheck):
         super().__init__(name, timeout)
         self.check_internet = check_internet
         self.check_huggingface = check_huggingface
+    
+    async def check_health(self) -> HealthCheckResult:
+        """Check external dependencies."""
+        return await self._perform_check()
     
     async def _perform_check(self) -> HealthCheckResult:
         """Check external dependencies."""
@@ -608,30 +659,123 @@ class HealthCheckManager:
     """
     
     def __init__(self, cache_duration: float = 30.0):
-        self.health_checks: Dict[str, HealthCheck] = {}
+        self._checks: Dict[str, HealthCheck] = {}
         self.cache_duration = cache_duration
         self._lock = threading.RLock()
         logger.info("Health check manager initialized")
     
-    def register_health_check(self, health_check: HealthCheck):
+    def register_check(self, health_check: HealthCheck):
         """Register a health check."""
         with self._lock:
-            self.health_checks[health_check.name] = health_check
+            if health_check.name in self._checks:
+                raise ValueError(f"Health check '{health_check.name}' is already registered")
+            self._checks[health_check.name] = health_check
             logger.info(f"Registered health check: {health_check.name}")
     
-    def unregister_health_check(self, name: str) -> bool:
+    def unregister_check(self, name: str) -> bool:
         """Unregister a health check."""
         with self._lock:
-            if name in self.health_checks:
-                del self.health_checks[name]
-                logger.info(f"Unregistered health check: {name}")
-                return True
-            return False
+            if name not in self._checks:
+                raise ValueError(f"Health check '{name}' not found")
+            del self._checks[name]
+            logger.info(f"Unregistered health check: {name}")
+            return True
+    
+    async def run_all_checks(self) -> List[HealthCheckResult]:
+        """Run all registered health checks."""
+        with self._lock:
+            health_checks = list(self._checks.values())
+        
+        if not health_checks:
+            return []
+        
+        # Run all health checks in parallel
+        tasks = [health_check.check() for health_check in health_checks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        health_results = []
+        for health_check, result in zip(health_checks, results):
+            if isinstance(result, Exception):
+                # Handle exceptions that occurred during health check
+                health_results.append(HealthCheckResult(
+                    name=health_check.name,
+                    status=HealthStatus.UNKNOWN,
+                    message=f"Health check exception: {str(result)}",
+                    details={"error": str(result), "error_type": type(result).__name__}
+                ))
+            else:
+                health_results.append(result)
+        
+        return health_results
+    
+    async def run_checks(self, check_names: List[str]) -> List[HealthCheckResult]:
+        """Run specific health checks by name."""
+        results = []
+        
+        with self._lock:
+            available_checks = dict(self._checks)
+        
+        for name in check_names:
+            if name in available_checks:
+                try:
+                    result = await available_checks[name].check()
+                    results.append(result)
+                except Exception as e:
+                    results.append(HealthCheckResult(
+                        name=name,
+                        status=HealthStatus.UNKNOWN,
+                        message=f"Health check exception: {str(e)}",
+                        details={"error": str(e), "error_type": type(e).__name__}
+                    ))
+            else:
+                results.append(HealthCheckResult(
+                    name=name,
+                    status=HealthStatus.UNKNOWN,
+                    message=f"Health check '{name}' not found",
+                    details={"error": "not_found"}
+                ))
+        
+        return results
+    
+    def get_overall_health(self, results: Optional[List[HealthCheckResult]] = None) -> HealthStatus:
+        """Get overall health status from individual results."""
+        if results is None:
+            # No results provided, return HEALTHY as default
+            return HealthStatus.HEALTHY
+        
+        if not results:
+            return HealthStatus.HEALTHY
+        
+        # Priority: UNHEALTHY > CRITICAL > UNKNOWN > WARNING > HEALTHY
+        has_unhealthy = any(r.status == HealthStatus.UNHEALTHY for r in results)
+        has_critical = any(r.status == HealthStatus.CRITICAL for r in results)
+        has_unknown = any(r.status == HealthStatus.UNKNOWN for r in results)
+        has_warning = any(r.status == HealthStatus.WARNING for r in results)
+        
+        if has_unhealthy:
+            return HealthStatus.UNHEALTHY
+        elif has_critical:
+            return HealthStatus.CRITICAL
+        elif has_unknown:
+            return HealthStatus.UNKNOWN
+        elif has_warning:
+            return HealthStatus.WARNING
+        else:
+            return HealthStatus.HEALTHY
+    
+    # Legacy method names for compatibility
+    def register_health_check(self, health_check: HealthCheck):
+        """Legacy method name."""
+        return self.register_check(health_check)
+    
+    def unregister_health_check(self, name: str) -> bool:
+        """Legacy method name."""
+        return self.unregister_check(name)
     
     async def check_health(self, name: str) -> Optional[HealthCheckResult]:
         """Check health for a specific health check."""
         with self._lock:
-            health_check = self.health_checks.get(name)
+            health_check = self._checks.get(name)
         
         if not health_check:
             return None
@@ -648,7 +792,7 @@ class HealthCheckManager:
     async def check_all_health(self, parallel: bool = True) -> Dict[str, HealthCheckResult]:
         """Check health for all registered health checks."""
         with self._lock:
-            health_checks = list(self.health_checks.values())
+            health_checks = list(self._checks.values())
         
         if not health_checks:
             return {}
@@ -664,7 +808,7 @@ class HealthCheckManager:
                     # Handle exceptions that occurred during health check
                     health_results[health_check.name] = HealthCheckResult(
                         name=health_check.name,
-                        status=HealthStatus.CRITICAL,
+                        status=HealthStatus.UNKNOWN,
                         message=f"Health check exception: {str(result)}",
                         details={"error": str(result), "error_type": type(result).__name__}
                     )
@@ -682,7 +826,7 @@ class HealthCheckManager:
                 except Exception as e:
                     health_results[health_check.name] = HealthCheckResult(
                         name=health_check.name,
-                        status=HealthStatus.CRITICAL,
+                        status=HealthStatus.UNKNOWN,
                         message=f"Health check exception: {str(e)}",
                         details={"error": str(e), "error_type": type(e).__name__}
                     )

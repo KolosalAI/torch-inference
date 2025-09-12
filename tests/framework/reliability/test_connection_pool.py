@@ -189,9 +189,10 @@ class TestAsyncConnectionPool:
         try:
             # Second acquire should timeout
             with pytest.raises(asyncio.TimeoutError):
-                async with asyncio.timeout(0.1):  # Short timeout for test
+                async def acquire_connection():
                     async with connection_pool.acquire():
                         pass
+                await asyncio.wait_for(acquire_connection(), timeout=0.1)
         finally:
             await conn1_ctx.__aexit__(None, None, None)
     
