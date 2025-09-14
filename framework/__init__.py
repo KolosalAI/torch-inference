@@ -3,6 +3,14 @@ Main framework interface for PyTorch inference.
 
 This module provides the main entry point for the inference framework,
 combining all components into an easy-to-use API.
+
+Production-Ready Components Added:
+- Reliability: Circuit breakers, health checks, graceful shutdown, retry/DLQ
+- Observability: Structured logging, metrics, alerting  
+- Configuration: Environment-based config, feature flags, secret management
+- Resource Management: Memory tracking, quotas, queue management
+- Data Management: Model versioning, registry, caching
+- Distributed Caching: Redis Cluster support
 """
 
 import asyncio
@@ -12,6 +20,7 @@ from pathlib import Path
 import time
 from contextlib import asynccontextmanager
 
+# Core framework components
 from .core.config import InferenceConfig, ModelType, ConfigFactory
 from .core.base_model import BaseModel, get_model_manager
 from .core.inference_engine import InferenceEngine, create_inference_engine
@@ -22,6 +31,85 @@ from .core.model_downloader import (
 )
 from .adapters.model_adapters import load_model
 from .utils.monitoring import get_performance_monitor, get_metrics_collector
+
+logger = logging.getLogger(__name__)
+
+# Production-ready components
+try:
+    # Reliability components
+    from .reliability.circuit_breaker import CircuitBreaker, CircuitBreakerState, get_circuit_breaker
+    from .reliability.health_checks import (
+        HealthCheckManager, SystemResourcesHealthCheck, GPUHealthCheck, 
+        ModelHealthCheck, DependencyHealthCheck, get_health_check_manager
+    )
+    from .reliability.graceful_shutdown import GracefulShutdown, get_graceful_shutdown
+    from .reliability.connection_pool import AsyncConnectionPool, ConnectionFactory, get_connection_pool
+    from .reliability.retry_dlq import (
+        RetryAndDLQManager, RetryConfig, RetryPolicy, ModelInferenceOperation,
+        get_retry_dlq_manager, create_model_inference_operation
+    )
+
+    # Observability components  
+    from .observability.structured_logging import (
+        StructuredFormatter, CorrelationIDFilter, TraceContext,
+        setup_structured_logging, get_correlation_id, set_correlation_id
+    )
+    from .observability.metrics import (
+        MetricsManager, Counter, Gauge, Histogram, SLATracker,
+        ResourceUtilizationTracker, get_metrics_manager
+    )
+    from .observability.alerting import (
+        AlertManager, Alert, AlertSeverity, AlertRule, NotificationChannel,
+        get_alert_manager, create_default_rules
+    )
+
+    # Configuration components
+    from .config.advanced_config import (
+        ConfigurationManager, FeatureFlagManager, SecretManager, 
+        FeatureFlag, SecretConfig, get_config_manager,
+        setup_default_configuration
+    )
+
+    # Resource management components
+    from .resource.resource_manager import (
+        ResourceManager, MemoryTracker, RequestQueue, ConnectionLimiter,
+        ResourceQuotaManager, QueuedRequest, QueuePriority, ResourceType,
+        get_resource_manager
+    )
+
+    # Data management components
+    from .data.state_manager import (
+        DataStateManager, ModelRegistry, IntelligentCache, ModelMetadata,
+        ModelStatus, CachePolicy, get_data_state_manager
+    )
+
+    # Distributed caching components
+    from .cache.distributed_cache import (
+        DistributedCacheManager, CacheConfig, CacheBackend, SerializationFormat,
+        CacheWarmingStrategy, get_distributed_cache_manager, create_cache_config
+    )
+    
+    # Production features available
+    PRODUCTION_FEATURES_AVAILABLE = True
+    logger.info("Production-ready components loaded successfully")
+
+except ImportError as e:
+    logger.warning(f"Production components not available: {e}")
+    # Create dummy references for missing components
+    CircuitBreaker = None
+    HealthCheckManager = None
+    GracefulShutdown = None
+    AsyncConnectionPool = None
+    RetryAndDLQManager = None
+    StructuredFormatter = None
+    MetricsManager = None
+    AlertManager = None
+    ConfigurationManager = None
+    ResourceManager = None
+    DataStateManager = None
+    DistributedCacheManager = None
+    
+    PRODUCTION_FEATURES_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -921,3 +1009,169 @@ def create_optimized_framework(config: Optional[InferenceConfig] = None) -> Torc
             self.logger.info(f"Successfully loaded optimized model: {model_name}")
     
     return OptimizedFramework(config)
+
+
+# Production Framework Integration
+
+def create_production_framework(config_dir: str = "config", 
+                              model_storage_path: str = "models",
+                              cache_size_mb: int = 1024,
+                              redis_cluster_nodes: Optional[List[Dict]] = None,
+                              inference_config: Optional[InferenceConfig] = None) -> Tuple[TorchInferenceFramework, Dict[str, Any]]:
+    """
+    Create a production-ready framework with all enterprise components.
+    
+    Args:
+        config_dir: Directory for configuration files
+        model_storage_path: Directory for model storage
+        cache_size_mb: Cache size in megabytes
+        redis_cluster_nodes: Redis cluster node configuration
+        inference_config: Base inference configuration
+    
+    Returns:
+        Tuple of (framework_instance, production_components)
+    """
+    if not PRODUCTION_FEATURES_AVAILABLE:
+        logger.warning("Production features not available, creating standard framework")
+        return TorchInferenceFramework(inference_config), {}
+    
+    # Initialize production components
+    components = {
+        'config': setup_default_configuration(config_dir),
+        'circuit_breaker': get_circuit_breaker(),
+        'health_checks': get_health_check_manager(), 
+        'graceful_shutdown': get_graceful_shutdown(),
+        'connection_pool': get_connection_pool(),
+        'retry_dlq': get_retry_dlq_manager(),
+        'metrics': get_metrics_manager(),
+        'alerting': get_alert_manager(),
+        'resource_manager': get_resource_manager(),
+        'data_state_manager': get_data_state_manager(),
+    }
+    
+    # Setup structured logging
+    components['structured_logging'] = setup_structured_logging(
+        level="INFO",
+        format_json=True,
+        include_trace_context=True
+    )
+    
+    # Setup distributed cache if Redis cluster nodes provided
+    if redis_cluster_nodes:
+        config, nodes = create_cache_config(
+            backend=CacheBackend.REDIS_CLUSTER,
+            cluster_nodes=redis_cluster_nodes
+        )
+        components['distributed_cache'] = DistributedCacheManager(config, nodes)
+    
+    # Create enhanced framework with production components
+    class ProductionTorchInferenceFramework(TorchInferenceFramework):
+        def __init__(self, config: Optional[InferenceConfig] = None):
+            super().__init__(config)
+            self.production_components = components
+            
+        async def start_production_services(self):
+            """Start all production services."""
+            startup_order = [
+                'config', 'metrics', 'resource_manager', 'data_state_manager', 
+                'distributed_cache', 'retry_dlq', 'health_checks', 'alerting'
+            ]
+            
+            for component_name in startup_order:
+                component = self.production_components.get(component_name)
+                if component and hasattr(component, 'start'):
+                    try:
+                        await component.start()
+                        logger.info(f"Started production component: {component_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to start {component_name}: {e}")
+                        raise
+        
+        async def stop_production_services(self):
+            """Stop all production services."""
+            shutdown_order = [
+                'alerting', 'health_checks', 'retry_dlq', 'distributed_cache',
+                'data_state_manager', 'resource_manager', 'metrics'
+            ]
+            
+            for component_name in shutdown_order:
+                component = self.production_components.get(component_name)
+                if component and hasattr(component, 'stop'):
+                    try:
+                        await component.stop()
+                        logger.info(f"Stopped production component: {component_name}")
+                    except Exception as e:
+                        logger.error(f"Error stopping {component_name}: {e}")
+        
+        def get_production_stats(self) -> Dict[str, Any]:
+            """Get comprehensive production statistics."""
+            stats = {}
+            
+            for name, component in self.production_components.items():
+                if hasattr(component, 'get_stats'):
+                    try:
+                        stats[name] = component.get_stats()
+                    except Exception as e:
+                        stats[name] = {'error': str(e)}
+                elif hasattr(component, 'get_system_status'):
+                    try:
+                        stats[name] = component.get_system_status()
+                    except Exception as e:
+                        stats[name] = {'error': str(e)}
+            
+            return stats
+        
+        async def production_health_check(self) -> Dict[str, Any]:
+            """Comprehensive production health check."""
+            health = await super().health_check()
+            
+            # Add production component health checks
+            production_health = {}
+            
+            for name, component in self.production_components.items():
+                if hasattr(component, 'health_check'):
+                    try:
+                        component_health = await component.health_check()
+                        production_health[name] = component_health
+                    except Exception as e:
+                        production_health[name] = {'healthy': False, 'error': str(e)}
+                        health['healthy'] = False
+                elif hasattr(component, 'get_stats'):
+                    try:
+                        # Use stats as basic health indicator
+                        stats = component.get_stats()
+                        production_health[name] = {'healthy': True, 'stats': stats}
+                    except Exception as e:
+                        production_health[name] = {'healthy': False, 'error': str(e)}
+                        health['healthy'] = False
+            
+            health['production_components'] = production_health
+            return health
+        
+        async def cleanup_async(self):
+            """Enhanced cleanup with production services."""
+            await self.stop_production_services()
+            await super().cleanup_async()
+    
+    framework = ProductionTorchInferenceFramework(inference_config)
+    return framework, components
+
+
+async def start_production_framework(framework_and_components: Tuple[TorchInferenceFramework, Dict[str, Any]]):
+    """Start production framework services."""
+    framework, components = framework_and_components
+    
+    if hasattr(framework, 'start_production_services'):
+        await framework.start_production_services()
+    else:
+        logger.warning("Framework does not support production services")
+
+
+async def stop_production_framework(framework_and_components: Tuple[TorchInferenceFramework, Dict[str, Any]]):
+    """Stop production framework services."""
+    framework, components = framework_and_components
+    
+    if hasattr(framework, 'stop_production_services'):
+        await framework.stop_production_services()
+    else:
+        logger.warning("Framework does not support production services")
