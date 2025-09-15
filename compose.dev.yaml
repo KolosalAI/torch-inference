@@ -1,0 +1,87 @@
+# Development Docker Compose override
+# Use with: docker compose -f compose.yaml -f compose.dev.yaml up
+
+services:
+  torch-inference:
+    build:
+      target: development
+      args:
+        - PYTORCH_VERSION=2.1.0
+        - CUDA_VERSION=cu121
+    environment:
+      - PYTHONPATH=/app
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+      - WORKERS=1
+      - RELOAD=true
+      - ENABLE_PROFILING=true
+    volumes:
+      # Mount source code for hot reload
+      - .:/app:cached
+      - model_cache:/app/models/cache
+      - calibration_cache:/app/calibration_cache
+      - kernel_cache:/app/kernel_cache
+      # Development tools
+      - ~/.cache/pip:/root/.cache/pip
+    ports:
+      - "8000:8000"
+      - "8001:8001"  # Debug port
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+  # Development database for testing
+  dev-postgres:
+    image: postgres:15-alpine
+    container_name: torch-inference-dev-db
+    environment:
+      - POSTGRES_DB=torch_inference_dev
+      - POSTGRES_USER=dev_user
+      - POSTGRES_PASSWORD=dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev_db_data:/var/lib/postgresql/data
+    networks:
+      - inference_network
+
+  # Development Redis with more debug info
+  redis:
+    command: redis-server --appendonly yes --maxmemory 1g --maxmemory-policy allkeys-lru --loglevel verbose
+    ports:
+      - "6379:6379"
+
+  # Jupyter notebook for development
+  notebook:
+    build:
+      context: .
+      target: development
+    container_name: torch-inference-notebook
+    ports:
+      - "8888:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=development
+    volumes:
+      - .:/app:cached
+      - model_cache:/app/models/cache
+      - notebook_data:/root/.jupyter
+    command: |
+      sh -c "
+        pip install jupyter jupyterlab ipywidgets &&
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --token=development
+      "
+    networks:
+      - inference_network
+    depends_on:
+      - torch-inference
+
+volumes:
+  dev_db_data:
+    driver: local
+  notebook_data:
+    driver: local
