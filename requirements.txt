@@ -187,8 +187,6 @@ python-jose==3.5.0
 python-json-logger==3.3.0
 python-multipart==0.0.20
 pytz==2025.2
-pywin32==311
-pywinpty==3.0.0
 pyyaml==6.0.2
 pyzmq==27.0.2
 redis==6.4.0
@@ -235,9 +233,6 @@ threadpoolctl==3.6.0
 tinycss2==1.4.0
 tokenizers==0.21.4
 tomli==2.2.1
-torch==2.8.0+cu126
--e file:///D:/Works/Genta/codes/torch-inference
-torchvision==0.23.0+cu126
 tornado==6.5.2
 tox==4.11.4
 tqdm==4.67.1
