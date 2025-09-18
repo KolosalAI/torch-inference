@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "description": "Model availability configuration for PyTorch Inference Framework",
     "last_updated": "2025-09-07T00:00:00Z",
-    "categories": ["text-classification", "text-generation", "image-classification", "feature-extraction", "text-to-speech", "speech-to-text", "computer-vision", "nlp", "audio"]
+    "categories": ["text-classification", "text-generation", "image-classification", "object-detection", "feature-extraction", "text-to-speech", "speech-to-text", "computer-vision", "nlp", "audio"]
   },
   "available_models": {
     "example": {
@@ -342,6 +342,276 @@
         "supports_language_detection": true,
         "max_audio_length_seconds": 3600
       }
+    },
+    "yolov8n": {
+      "name": "yolov8n",
+      "display_name": "YOLOv8 Nano",
+      "description": "YOLOv8 nano model for real-time object detection",
+      "source": "ultralytics",
+      "model_id": "yolov8n.pt",
+      "model_type": "yolo",
+      "task": "object-detection",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 2,
+      "hardware_requirements": {
+        "min_memory_mb": 256,
+        "recommended_memory_mb": 512,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 256
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 16,
+        "timeout_seconds": 30,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 3157200,
+        "size_mb": 6.2,
+        "architecture": "YOLOv8",
+        "framework": "ultralytics",
+        "version": "1.0.0",
+        "input_size": [640, 640],
+        "num_classes": 80,
+        "pretrained": true,
+        "map50": 0.375,
+        "map50_95": 0.231
+      },
+      "detection_features": {
+        "supports_detection": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "supports_batch_inference": true,
+        "real_time_capable": true
+      }
+    },
+    "yolov8s": {
+      "name": "yolov8s",
+      "display_name": "YOLOv8 Small",
+      "description": "YOLOv8 small model for balanced speed and accuracy",
+      "source": "ultralytics",
+      "model_id": "yolov8s.pt",
+      "model_type": "yolo",
+      "task": "object-detection",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 2,
+      "hardware_requirements": {
+        "min_memory_mb": 512,
+        "recommended_memory_mb": 1024,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 512
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 12,
+        "timeout_seconds": 30,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 11166560,
+        "size_mb": 22.5,
+        "architecture": "YOLOv8",
+        "framework": "ultralytics",
+        "version": "1.0.0",
+        "input_size": [640, 640],
+        "num_classes": 80,
+        "pretrained": true,
+        "map50": 0.445,
+        "map50_95": 0.280
+      },
+      "detection_features": {
+        "supports_detection": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "supports_batch_inference": true,
+        "real_time_capable": true
+      }
+    },
+    "yolov8m": {
+      "name": "yolov8m",
+      "display_name": "YOLOv8 Medium",
+      "description": "YOLOv8 medium model for high accuracy object detection",
+      "source": "ultralytics",
+      "model_id": "yolov8m.pt",
+      "model_type": "yolo",
+      "task": "object-detection",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 3,
+      "hardware_requirements": {
+        "min_memory_mb": 1024,
+        "recommended_memory_mb": 2048,
+        "gpu_required": true,
+        "min_gpu_memory_mb": 1024
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 8,
+        "timeout_seconds": 60,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 25902640,
+        "size_mb": 52.0,
+        "architecture": "YOLOv8",
+        "framework": "ultralytics",
+        "version": "1.0.0",
+        "input_size": [640, 640],
+        "num_classes": 80,
+        "pretrained": true,
+        "map50": 0.502,
+        "map50_95": 0.336
+      },
+      "detection_features": {
+        "supports_detection": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "supports_batch_inference": true,
+        "real_time_capable": false
+      }
+    },
+    "yolov8l": {
+      "name": "yolov8l",
+      "display_name": "YOLOv8 Large",
+      "description": "YOLOv8 large model for maximum accuracy object detection",
+      "source": "ultralytics",
+      "model_id": "yolov8l.pt",
+      "model_type": "yolo",
+      "task": "object-detection",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 4,
+      "hardware_requirements": {
+        "min_memory_mb": 2048,
+        "recommended_memory_mb": 4096,
+        "gpu_required": true,
+        "min_gpu_memory_mb": 2048
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 4,
+        "timeout_seconds": 90,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 43691520,
+        "size_mb": 87.7,
+        "architecture": "YOLOv8",
+        "framework": "ultralytics",
+        "version": "1.0.0",
+        "input_size": [640, 640],
+        "num_classes": 80,
+        "pretrained": true,
+        "map50": 0.529,
+        "map50_95": 0.365
+      },
+      "detection_features": {
+        "supports_detection": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "supports_batch_inference": true,
+        "real_time_capable": false
+      }
+    },
+    "yolov5n": {
+      "name": "yolov5n",
+      "display_name": "YOLOv5 Nano",
+      "description": "YOLOv5 nano model for ultra-fast object detection",
+      "source": "pytorch_hub",
+      "model_id": "ultralytics/yolov5:yolov5n",
+      "model_type": "yolo",
+      "task": "object-detection",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 2,
+      "hardware_requirements": {
+        "min_memory_mb": 128,
+        "recommended_memory_mb": 256,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 128
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 32,
+        "timeout_seconds": 30,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 1870000,
+        "size_mb": 3.9,
+        "architecture": "YOLOv5",
+        "framework": "pytorch",
+        "version": "1.0.0",
+        "input_size": [640, 640],
+        "num_classes": 80,
+        "pretrained": true,
+        "map50": 0.280,
+        "map50_95": 0.164
+      },
+      "detection_features": {
+        "supports_detection": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "supports_batch_inference": true,
+        "real_time_capable": true
+      }
+    },
+    "yolov5s": {
+      "name": "yolov5s",
+      "display_name": "YOLOv5 Small",
+      "description": "YOLOv5 small model for fast and accurate object detection",
+      "source": "pytorch_hub", 
+      "model_id": "ultralytics/yolov5:yolov5s",
+      "model_type": "yolo",
+      "task": "object-detection",
+      "category": "computer-vision",
+      "enabled": true,
+      "auto_load": false,
+      "priority": 2,
+      "hardware_requirements": {
+        "min_memory_mb": 256,
+        "recommended_memory_mb": 512,
+        "gpu_required": false,
+        "min_gpu_memory_mb": 256
+      },
+      "inference_config": {
+        "batch_size": 1,
+        "max_batch_size": 16,
+        "timeout_seconds": 30,
+        "warmup_iterations": 5
+      },
+      "metadata": {
+        "parameters": 7235389,
+        "size_mb": 14.1,
+        "architecture": "YOLOv5",
+        "framework": "pytorch",
+        "version": "1.0.0",
+        "input_size": [640, 640],
+        "num_classes": 80,
+        "pretrained": true,
+        "map50": 0.367,
+        "map50_95": 0.223
+      },
+      "detection_features": {
+        "supports_detection": true,
+        "confidence_threshold": 0.25,
+        "iou_threshold": 0.45,
+        "max_detections": 300,
+        "supports_batch_inference": true,
+        "real_time_capable": true
+      }
     }
   },
   "model_groups": {
@@ -364,6 +634,13 @@
       "description": "Models for classifying images",
       "models": ["resnet18", "mobilenet_v2", "vit_base"],
       "default_model": "resnet18",
+      "enabled": true
+    },
+    "object_detection": {
+      "name": "Object Detection Models",
+      "description": "Models for detecting and localizing objects in images",
+      "models": ["yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov5n", "yolov5s"],
+      "default_model": "yolov8n",
       "enabled": true
     },
     "text_classification": {
@@ -404,8 +681,8 @@
     "demo": {
       "name": "Demo Profile",
       "description": "Selected models for demonstrations", 
-      "auto_load_models": ["example", "speecht5_tts", "resnet18"],
-      "preload_models": ["speecht5_tts"],
+      "auto_load_models": ["example", "speecht5_tts", "resnet18", "yolov8n"],
+      "preload_models": ["speecht5_tts", "yolov8n"],
       "max_models_in_memory": 4,
       "prefer_cpu": false,
       "enable_model_caching": true
@@ -415,16 +692,16 @@
     "cpu_only": {
       "name": "CPU Only",
       "description": "Profile for CPU-only inference",
-      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "whisper_base"],
-      "blocked_models": ["bark_tts"],
+      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "whisper_base", "yolov8n", "yolov8s", "yolov5n", "yolov5s"],
+      "blocked_models": ["bark_tts", "yolov8m", "yolov8l"],
       "max_memory_usage_mb": 8192,
       "optimization_level": "medium"
     },
     "gpu_basic": {
       "name": "Basic GPU",
       "description": "Profile for systems with basic GPU (2-4GB VRAM)",
-      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "speecht5_tts", "whisper_base"],
-      "blocked_models": ["bark_tts"],
+      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "speecht5_tts", "whisper_base", "yolov8n", "yolov8s", "yolov5n", "yolov5s"],
+      "blocked_models": ["bark_tts", "yolov8l"],
       "max_memory_usage_mb": 16384,
       "max_gpu_memory_mb": 3072,
       "optimization_level": "high"
@@ -432,7 +709,7 @@
     "gpu_advanced": {
       "name": "Advanced GPU",
       "description": "Profile for systems with high-end GPU (8GB+ VRAM)",
-      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "vit_base", "speecht5_tts", "bark_tts", "whisper_base"],
+      "allowed_models": ["example", "distilbert_sentiment", "sentence_transformer", "resnet18", "mobilenet_v2", "vit_base", "speecht5_tts", "bark_tts", "whisper_base", "yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov5n", "yolov5s"],
       "blocked_models": [],
       "max_memory_usage_mb": 32768,
       "max_gpu_memory_mb": 16384,

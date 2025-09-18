@@ -9,6 +9,7 @@ from pathlib import Path
 
 from framework import TorchInferenceFramework, create_optimized_framework
 from framework.core.config import InferenceConfig, DeviceConfig, PerformanceConfig
+from tests.utils.disk_management import safe_torch_save, managed_temp_dir
 
 # Test imports for enhanced optimizers
 try:
@@ -70,10 +71,13 @@ class TestEnhancedOptimizationIntegration:
     
     @pytest.fixture
     def temp_model_path(self, classification_model, tmp_path):
-        """Save model to temporary path."""
+        """Save model to temporary path with disk space management."""
         model_path = tmp_path / "test_model.pt"
-        torch.save(classification_model, model_path)
-        return model_path
+        try:
+            safe_torch_save(classification_model, model_path, required_space_mb=300)
+            return model_path
+        except OSError as e:
+            pytest.skip(f"Insufficient disk space for model saving: {e}")
     
     @pytest.mark.skipif(not ENHANCED_OPTIMIZERS_AVAILABLE, reason="Enhanced optimizers not available")
     @pytest.mark.timeout(30)

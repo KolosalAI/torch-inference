@@ -10,6 +10,7 @@ from unittest.mock import patch, Mock
 from framework import TorchInferenceFramework
 from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig
 from framework.core.config_manager import ConfigManager
+from tests.utils.disk_management import safe_torch_save, DiskSpaceManager
 
 
 class TestFrameworkIntegrationWithRealModels:
