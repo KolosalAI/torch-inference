@@ -136,11 +136,11 @@ def validate_gpu_configuration():
             device_type = config_data.get('device', {}).get('type', 'auto')
             
             if device_type == 'cuda':
-                print("\n🔍 GPU VALIDATION (Required by configuration)")
+                print("\nGPU VALIDATION (Required by configuration)")
                 print("-" * 40)
                 
                 if not torch.cuda.is_available():
-                    print("❌ FATAL: CUDA device required by config but CUDA not available!")
+                    print("FATAL: CUDA device required by config but CUDA not available!")
                     print("   Configuration requires CUDA but:")
                     print("   - CUDA is not available in PyTorch")
                     print("   - GPU drivers may not be installed")
@@ -153,29 +153,29 @@ def validate_gpu_configuration():
                 
                 device_id = config_data.get('device', {}).get('id', 0)
                 if device_id >= torch.cuda.device_count():
-                    print(f"❌ FATAL: GPU device {device_id} required but only {torch.cuda.device_count()} GPU(s) available!")
+                    print(f"FATAL: GPU device {device_id} required but only {torch.cuda.device_count()} GPU(s) available!")
                     raise RuntimeError(f"GPU device {device_id} not available")
                 
                 gpu_name = torch.cuda.get_device_name(device_id)
                 memory_gb = torch.cuda.get_device_properties(device_id).total_memory / (1024**3)
                 
-                print(f"✅ Required GPU validated: {gpu_name}")
-                print(f"✅ GPU memory: {memory_gb:.1f}GB")
-                print(f"✅ CUDA version: {torch.version.cuda}")
+                print(f"Required GPU validated: {gpu_name}")
+                print(f"GPU memory: {memory_gb:.1f}GB")
+                print(f"CUDA version: {torch.version.cuda}")
                 
                 # Set the device for consistency
                 torch.cuda.set_device(device_id)
                 
-                print("🚀 GPU enforcement mode: ACTIVE")
+                print("GPU enforcement mode: ACTIVE")
         
     except Exception as e:
         if "CUDA required" in str(e) or "GPU device" in str(e):
-            print(f"\n💥 STARTUP FAILED: {e}")
+            print(f"\nSTARTUP FAILED: {e}")
             import sys
             sys.exit(1)
         else:
             # Non-critical validation error, continue with warning
-            print(f"⚠️  GPU validation warning: {e}")
+            print(f"GPU validation warning: {e}")
 
 # Validate GPU configuration early
 validate_gpu_configuration()
@@ -188,7 +188,7 @@ if torch.cuda.is_available():
     memory_allocated = torch.cuda.memory_allocated(current_device) / (1024**3)  # GB
     memory_reserved = torch.cuda.memory_reserved(current_device) / (1024**3)  # GB
     
-    print(f"✓ CUDA Available: Yes")
+    print(f"CUDA Available: Yes")
     print(f"  Current GPU: {gpu_name} (Device {current_device})")
     print(f"  Total GPUs: {gpu_count}")
     print(f"  GPU Memory: {memory_allocated:.2f}GB / {memory_total:.2f}GB (Reserved: {memory_reserved:.2f}GB)")
@@ -203,13 +203,13 @@ if torch.cuda.is_available():
             memory_total_i = torch.cuda.get_device_properties(i).total_memory / (1024**3)
             print(f"    GPU {i}: {gpu_name_i} ({memory_total_i:.1f}GB)")
 else:
-    print(f"✗ CUDA Available: No")
+    print(f"CUDA Available: No")
     # Check for other device types
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        print(f"✓ Apple MPS Available: Yes")
+        print(f"Apple MPS Available: Yes")
         print(f"  Running on Apple Silicon GPU")
     else:
-        print(f"✗ Apple MPS Available: No")
+        print(f"Apple MPS Available: No")
     
     print(f"  Running on CPU")
     print(f"  PyTorch Version: {torch.__version__}")
@@ -233,10 +233,10 @@ framework_available = False
 try:
     # Test basic framework import
     import framework
-    print("✓ Framework module imported successfully")
+    print("Framework module imported successfully")
     framework_available = True
 except ImportError as e:
-    print(f"✗ Failed to import framework module: {e}")
+    print(f"Failed to import framework module: {e}")
     framework_available = False
     
     # Try to fix the import by adding the project root again
@@ -244,13 +244,13 @@ except ImportError as e:
         sys.path.insert(0, project_root)
         try:
             import framework
-            print("✓ Framework module imported successfully after path fix")
+            print("Framework module imported successfully after path fix")
             framework_available = True
         except ImportError as e2:
-            print(f"✗ Still failed to import framework module: {e2}")
+            print(f"Still failed to import framework module: {e2}")
             framework_available = False
 except RuntimeError as e:
-    print(f"✗ Runtime error during framework import (likely TorchVision compatibility issue): {e}")
+    print(f"Runtime error during framework import (likely TorchVision compatibility issue): {e}")
     framework_available = False
 
 print(f"Framework availability: {framework_available}")
@@ -299,12 +299,12 @@ except Exception as e:
 if framework_available:
     try:
         from framework.core.config import InferenceConfig, DeviceConfig, BatchConfig, PerformanceConfig, DeviceType
-        print("✓ Config imports successful")
+        print("Config imports successful")
     except (ImportError, RuntimeError) as e:
-        print(f"✗ Config import failed: {e}")
+        print(f"Config import failed: {e}")
         framework_available = False
 else:
-    print("ℹ Using fallback imports due to framework unavailability")
+    print("Using fallback imports due to framework unavailability")
 
 if not framework_available:
     # Create minimal dummy classes
@@ -321,9 +321,9 @@ if not framework_available:
 if framework_available:
     try:
         from framework.core.config_manager import get_config_manager, ConfigManager
-        print("✓ Config manager imports successful")
+        print("Config manager imports successful")
     except (ImportError, RuntimeError) as e:
-        print(f"✗ Config manager import failed: {e}")
+        print(f"Config manager import failed: {e}")
         framework_available = False
 
 if not framework_available:
@@ -352,9 +352,9 @@ if not framework_available:
 if framework_available:
     try:
         from framework.core.base_model import BaseModel, ModelManager, get_model_manager
-        print("✓ Base model imports successful")
+        print("Base model imports successful")
     except (ImportError, RuntimeError) as e:
-        print(f"✗ Base model import failed: {e}")
+        print(f"Base model import failed: {e}")
         framework_available = False
 
 if not framework_available:
@@ -422,9 +422,9 @@ if not framework_available:
 if framework_available:
     try:
         from framework.core.inference_engine import InferenceEngine, create_inference_engine
-        print("✓ Inference engine imports successful")
+        print("Inference engine imports successful")
     except (ImportError, RuntimeError) as e:
-        print(f"✗ Inference engine import failed: {e}")
+        print(f"Inference engine import failed: {e}")
         framework_available = False
 
 if not framework_available:
@@ -471,17 +471,17 @@ if not framework_available:
 if framework_available:
     try:
         from framework.core.gpu_manager import GPUManager, auto_configure_device
-        print("✓ GPU manager imports successful")
+        print("GPU manager imports successful")
     except (ImportError, RuntimeError) as e:
-        print(f"✗ GPU manager import failed: {e}")
+        print(f"GPU manager import failed: {e}")
         # GPU manager failure is non-critical, we have GPU detection code already
 
 if framework_available:
     try:
         from framework.autoscaling import Autoscaler, AutoscalerConfig, ZeroScalingConfig, ModelLoaderConfig
-        print("✓ Autoscaling imports successful")
+        print("Autoscaling imports successful")
     except (ImportError, RuntimeError) as e:
-        print(f"✗ Autoscaling import failed: {e}")
+        print(f"Autoscaling import failed: {e}")
         framework_available = False
 
 if not framework_available:
@@ -592,7 +592,7 @@ try:
     # Initialize auth middleware
     auth_middleware = init_auth_middleware(jwt_handler, user_store)
     
-    logger.info(f"✓ Authentication system initialized successfully")
+    logger.info(f"Authentication system initialized successfully")
     logger.info(f"  Environment: {get_environment()}")
     logger.info(f"  JWT Algorithm: {auth_config.jwt_algorithm}")
     logger.info(f"  Access token expiry: {auth_config.access_token_expire_minutes} minutes")
@@ -604,7 +604,7 @@ try:
     logger.info("="*60)
     
 except Exception as e:
-    logger.error(f"✗ Failed to initialize authentication system: {e}")
+    logger.error(f"Failed to initialize authentication system: {e}")
     # Create dummy handlers for fallback
     jwt_handler = None
     user_store = None 
@@ -673,18 +673,18 @@ def print_api_endpoints():
     
     for category, category_endpoints in categories.items():
         if category_endpoints:
-            print(f"\n  📁 {category}:")
+            print(f"\n  {category}:")
             for method, endpoint, description in category_endpoints:
                 print(f"    {method:<7} {endpoint:<45} - {description}")
     
     print("\n" + "="*90)
-    print(f"  🎵 TTS Models Supported: BART, SpeechT5, Bark, VALL-E X, Tacotron2")
-    print(f"  🚀 Enhanced Features: Auto-download, TTS synthesis, Simplified endpoints")
-    print(f"  📊 Total Endpoints: {len(endpoints)}")
-    print(f"  📚 Documentation: http://localhost:8000/docs")
-    print(f"  💚 Health Check: http://localhost:8000/health")
-    print(f"  ℹ️  System Info: http://localhost:8000/info")
-    print(f"  🎤 TTS Health: http://localhost:8000/tts/health")
+    print(f"  TTS Models Supported: BART, SpeechT5, Bark, VALL-E X, Tacotron2")
+    print(f"  Enhanced Features: Auto-download, TTS synthesis, Simplified endpoints")
+    print(f"  Total Endpoints: {len(endpoints)}")
+    print(f"  Documentation: http://localhost:8000/docs")
+    print(f"  Health Check: http://localhost:8000/health")
+    print(f"  System Info: http://localhost:8000/info")
+    print(f"  TTS Health: http://localhost:8000/tts/health")
     print("="*90 + "\n")
 
 # Pydantic models for API
@@ -1079,11 +1079,11 @@ if jwt_handler and user_store and auth_middleware:
     try:
         auth_router = create_auth_router(jwt_handler, user_store, auth_middleware)
         app.include_router(auth_router)
-        logger.info("✓ Authentication routes added to API")
+        logger.info("Authentication routes added to API")
     except Exception as e:
-        logger.error(f"✗ Failed to add authentication routes: {e}")
+        logger.error(f"Failed to add authentication routes: {e}")
 else:
-    logger.warning("⚠ Authentication routes not added - auth system not available")
+    logger.warning("Authentication routes not added - auth system not available")
 
 # Helper function to conditionally add authentication
 def get_auth_dependency():
@@ -1289,7 +1289,7 @@ async def initialize_inference_engine():
                     addressed_count = sum(issues_addressed.values())
                     logger.info(f"Critical issues addressed: {addressed_count}/4")
                     for issue, addressed in issues_addressed.items():
-                        status = "✓" if addressed else "✗"
+                        status = "YES" if addressed else "NO"
                         logger.info(f"  {status} {issue.replace('_', ' ').title()}")
                     
                     # Log next steps
@@ -4844,13 +4844,13 @@ if __name__ == "__main__":
     logger.info("  - api_requests.log (API request/response logs)")
     
     # Print to console for immediate feedback
-    print(f"\n🚀 Starting PyTorch Inference Framework Server")
-    print(f"📁 Log files directory: {log_dir.absolute()}")
-    print(f"📄 Server logs: {log_dir / 'server.log'}")
-    print(f"🚨 Error logs: {log_dir / 'server_errors.log'}")
-    print(f"🌐 API logs: {log_dir / 'api_requests.log'}")
-    print(f"📊 Monitor logs at: http://localhost:{server_config['port']}/logs")
-    print(f"⚙️  Server config: http://localhost:{server_config['port']}/config")
+    print(f"\nStarting PyTorch Inference Framework Server")
+    print(f"Log files directory: {log_dir.absolute()}")
+    print(f"Server logs: {log_dir / 'server.log'}")
+    print(f"Error logs: {log_dir / 'server_errors.log'}")
+    print(f"API logs: {log_dir / 'api_requests.log'}")
+    print(f"Monitor logs at: http://localhost:{server_config['port']}/logs")
+    print(f"Server config: http://localhost:{server_config['port']}/config")
     
     # Start the FastAPI server with configuration
     logger.info("Starting server...")

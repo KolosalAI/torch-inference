@@ -1,119 +1,87 @@
-# Development Docker Compose configuration
-# Extends the main compose.yaml with development-specific services
+# Development Docker Compose override
+# Use with: docker compose -f compose.yaml -f compose.dev.yaml up
 
 services:
-  # Override the main server service for development
-  server:
+  torch-inference:
     build:
-      context: .
       target: development
-    volumes:
-      # Mount source code for hot reload
-      - ./:/app
-      - uv-cache:/tmp/uv-cache
+      args:
+        - PYTORCH_VERSION=2.1.0
+        - CUDA_VERSION=cu121
     environment:
       - PYTHONPATH=/app
-      - UV_CACHE_DIR=/tmp/uv-cache
       - ENVIRONMENT=development
-      - DEBUG=1
-    command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
-    depends_on:
-      - redis
-      - postgres
+      - LOG_LEVEL=DEBUG
+      - WORKERS=1
+      - RELOAD=true
+      - ENABLE_PROFILING=true
+    volumes:
+      # Mount source code for hot reload
+      - .:/app:cached
+      - model_cache:/app/models/cache
+      - calibration_cache:/app/calibration_cache
+      - kernel_cache:/app/kernel_cache
+      # Development tools
+      - ~/.cache/pip:/root/.cache/pip
+    ports:
+      - "8000:8000"
+      - "8001:8001"  # Debug port
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
 
-  # Development database
-  postgres:
-    image: postgres:15
-    restart: unless-stopped
+  # Development database for testing
+  dev-postgres:
+    image: postgres:15-alpine
+    container_name: torch-inference-dev-db
     environment:
       - POSTGRES_DB=torch_inference_dev
-      - POSTGRES_USER=dev
-      - POSTGRES_PASSWORD=dev123
-    volumes:
-      - postgres-dev-data:/var/lib/postgresql/data
+      - POSTGRES_USER=dev_user
+      - POSTGRES_PASSWORD=dev_password
     ports:
       - "5432:5432"
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "dev", "-d", "torch_inference_dev"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Development Redis cache
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
     volumes:
-      - redis-dev-data:/data
+      - dev_db_data:/var/lib/postgresql/data
+    networks:
+      - inference_network
+
+  # Development Redis with more debug info
+  redis:
+    command: redis-server --appendonly yes --maxmemory 1g --maxmemory-policy allkeys-lru --loglevel verbose
     ports:
       - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
-  # Jupyter notebook for development and experimentation
-  jupyter:
+  # Jupyter notebook for development
+  notebook:
     build:
       context: .
       target: development
+    container_name: torch-inference-notebook
     ports:
       - "8888:8888"
     environment:
-      - PYTHONPATH=/app
-      - UV_CACHE_DIR=/tmp/uv-cache
       - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=development
     volumes:
-      - ./:/app
-      - uv-cache:/tmp/uv-cache
-      - jupyter-data:/home/appuser/.jupyter
-    command: >
-      sh -c "uv run jupyter lab --ip=0.0.0.0 --port=8888 --no-browser 
-             --allow-root --NotebookApp.token='' --NotebookApp.password=''"
+      - .:/app:cached
+      - model_cache:/app/models/cache
+      - notebook_data:/root/.jupyter
+    command: |
+      sh -c "
+        pip install jupyter jupyterlab ipywidgets &&
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --token=development
+      "
+    networks:
+      - inference_network
     depends_on:
-      - redis
-      - postgres
-
-  # MLflow tracking server for experiment tracking
-  mlflow:
-    build:
-      context: .
-      target: development
-    ports:
-      - "5000:5000"
-    environment:
-      - MLFLOW_BACKEND_STORE_URI=postgresql://dev:dev123@postgres:5432/torch_inference_dev
-      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/app/mlruns
-    volumes:
-      - ./mlruns:/app/mlruns
-      - uv-cache:/tmp/uv-cache
-    command: >
-      sh -c "uv run mlflow server --host 0.0.0.0 --port 5000 
-             --backend-store-uri postgresql://dev:dev123@postgres:5432/torch_inference_dev 
-             --default-artifact-root /app/mlruns"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # TensorBoard for model visualization
-  tensorboard:
-    build:
-      context: .
-      target: development
-    ports:
-      - "6006:6006"
-    volumes:
-      - ./logs:/app/logs
-      - uv-cache:/tmp/uv-cache
-    command: ["uv", "run", "tensorboard", "--logdir=/app/logs", "--host=0.0.0.0", "--port=6006"]
+      - torch-inference
 
 volumes:
-  uv-cache:
+  dev_db_data:
     driver: local
-  postgres-dev-data:
-    driver: local
-  redis-dev-data:
-    driver: local
-  jupyter-data:
+  notebook_data:
     driver: local

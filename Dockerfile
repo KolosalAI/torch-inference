@@ -1,101 +1,152 @@
 # syntax=docker/dockerfile:1
 
-# Multi-stage Dockerfile for torch-inference framework
-# Uses uv for fast and reliable dependency management
+# Multi-stage Dockerfile for PyTorch Inference Framework
+# Optimized for size, performance, and security
 
-ARG PYTHON_VERSION=3.10.11
+# Build stage for dependencies
+FROM python:3.10.11-slim AS builder
 
-# Base stage with common setup
-FROM python:${PYTHON_VERSION}-slim as base
+# Build arguments
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG PYTORCH_VERSION=2.1.0
+ARG CUDA_VERSION=cu121
 
-# Prevents Python from writing pyc files.
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# Keeps Python from buffering stdout and stderr to avoid situations where
-# the application crashes without emitting any logs due to buffering.
-ENV PYTHONUNBUFFERED=1
-
-# Configure uv cache directory
-ENV UV_CACHE_DIR=/root/.cache/uv
-
-WORKDIR /app
-
-# Install uv for faster package management
-# Install curl and other dependencies for uv installation
-RUN apt-get update && apt-get install -y \
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv using the official installer
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+# Create virtual environment for better dependency isolation
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Create a non-privileged user that the app will run under.
+# Upgrade pip and install build tools
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy dependency files first for better layer caching
+COPY requirements.txt requirements-base.txt requirements-tensorrt.txt pyproject.toml ./
+
+# Install base Python dependencies first using pip for reliability
+# Split installation to avoid I/O errors with large packages
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=tmpfs,target=/tmp,size=4G \
+    pip install --no-cache-dir -r requirements-base.txt
+
+# Install TensorRT packages separately with fallback strategy
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=tmpfs,target=/tmp,size=4G \
+    pip install --no-cache-dir --retries 5 -r requirements-tensorrt.txt || \
+    (echo "TensorRT installation failed, continuing without TensorRT optimizations..." && \
+     echo "Application will run without TensorRT acceleration")
+
+# Install PyTorch with CUDA support (if needed) with robust error handling
+# Don't use tmpfs for PyTorch as packages are very large (2GB+)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ "$TARGETPLATFORM" != "linux/arm64" ]; then \
+        pip install --no-cache-dir --retries 5 \
+            torch==${PYTORCH_VERSION}+${CUDA_VERSION} \
+            torchvision \
+            torchaudio \
+            --index-url https://download.pytorch.org/whl/${CUDA_VERSION} || \
+        (echo "PyTorch CUDA installation failed, trying CPU version..." && \
+         pip install --no-cache-dir torch torchvision torchaudio); \
+    else \
+        pip install --no-cache-dir torch torchvision torchaudio; \
+    fi
+
+# Production stage
+FROM python:3.10.11-slim AS production
+
+# Set environment variables for Python optimization
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Essential runtime libraries
+    libc6 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    # Audio processing libraries for TTS
+    libsndfile1 \
+    ffmpeg \
+    # Network utilities
+    curl \
+    # Clean up in same layer to reduce image size
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && apt-get autoremove -y
+
+# Create non-root user for security
 ARG UID=10001
 RUN adduser \
     --disabled-password \
     --gecos "" \
-    --home "/nonexistent" \
+    --home "/app" \
     --shell "/sbin/nologin" \
-    --no-create-home \
     --uid "${UID}" \
     appuser
 
-# Development stage
-FROM base as development
+# Set working directory
+WORKDIR /app
 
-# Copy dependency files first for better Docker layer caching
-COPY pyproject.toml uv.lock README.md ./
+# Copy virtual environment from builder stage
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Install all dependencies including dev dependencies
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen
+# Copy application code with proper ownership
+COPY --chown=appuser:appuser . .
 
-# Copy source code
-COPY . .
+# Create necessary directories with proper permissions
+RUN mkdir -p logs models/cache calibration_cache kernel_cache \
+    && chown -R appuser:appuser /app
 
-# Create cache directory for the appuser and change ownership
-RUN mkdir -p /tmp/uv-cache && chown appuser:appuser /tmp/uv-cache
-
-# Switch to non-privileged user
+# Switch to non-root user
 USER appuser
 
-# Set environment variables for the app user
-ENV UV_CACHE_DIR=/tmp/uv-cache
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Expose development port
+# Expose port
 EXPOSE 8000
 
-# Development command with hot reload
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Use exec form for better signal handling
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
 
-# Production stage
-FROM base as production
+# Development stage (optional)
+FROM production AS development
 
-# Copy dependency files first for better Docker layer caching
-COPY pyproject.toml uv.lock README.md ./
+# Switch back to root to install dev dependencies
+USER root
 
-# Install only production dependencies
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+# Install development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    vim \
+    htop \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the source code into the container.
-COPY . .
+# Install development Python packages
+RUN pip install --no-cache-dir \
+    jupyter \
+    ipython \
+    pytest \
+    black \
+    ruff
 
-# Create cache directory for the appuser and change ownership
-RUN mkdir -p /tmp/uv-cache && chown appuser:appuser /tmp/uv-cache
-
-# Switch to the non-privileged user to run the application.
+# Switch back to appuser
 USER appuser
 
-# Set environment variables for the app user
-ENV UV_CACHE_DIR=/tmp/uv-cache
-
-# Expose the port that the application listens on.
-EXPOSE 8000
-
-# Run the application using uv
-CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-
-# Default to production stage
-FROM production
+# Override CMD for development
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]

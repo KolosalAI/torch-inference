@@ -200,6 +200,14 @@ sequenceDiagram
 - **Device Auto-Detection**: Automatic GPU/CPU optimization selection
 - **Graceful Fallbacks**: Robust error handling with optimization fallbacks
 
+### 🎯 **Object Detection**
+- **YOLO Support**: Complete YOLOv5, YOLOv8/v9/v10/v11 integration with real-time detection
+- **Multi-Model Support**: Automatic model detection and loading (Ultralytics, PyTorch Hub)
+- **Optimized Preprocessing**: Hardware-accelerated image preprocessing and resizing
+- **Batch Detection**: Efficient batch processing for multiple images
+- **NMS Integration**: Built-in Non-Maximum Suppression with configurable thresholds
+- **Custom Models**: Support for custom-trained YOLO models with class customization
+
 ### 🎵 **Audio Processing** 
 - **Text-to-Speech (TTS)**: HuggingFace SpeechT5, Tacotron2, multi-voice synthesis
 - **Speech-to-Text (STT)**: Whisper (all sizes), Wav2Vec2, real-time transcription

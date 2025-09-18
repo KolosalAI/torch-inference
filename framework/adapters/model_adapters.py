@@ -16,6 +16,7 @@ import numpy as np
 from ..core.base_model import BaseModel, ModelMetadata, ModelLoadError
 from ..core.config import InferenceConfig
 from ..processors.preprocessor import PreprocessingResult
+from .yolo_adapter import YOLOModelAdapter, YOLOv5Adapter, YOLOv8Adapter
 
 # Import security mitigations
 try:
@@ -71,13 +72,25 @@ class PyTorchModelAdapter(BaseModel):
             self.logger.info(f"Loading PyTorch model from {model_path}")
             self.logger.info(f"Target device: {self.device}")
             
+            # Check if file exists and is not empty
+            if not model_path.exists():
+                raise ModelLoadError(f"Model file does not exist: {model_path}")
+            
+            if model_path.stat().st_size == 0:
+                raise ModelLoadError(f"Model file is empty: {model_path}")
+            
             # Use security context for model loading
             pytorch_security = _get_pytorch_security()
             if pytorch_security:
                 with pytorch_security.secure_context():
                     # Load model
                     if model_path.suffix == '.pt' or model_path.suffix == '.pth':
-                        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                        try:
+                            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                        except EOFError:
+                            raise ModelLoadError(f"Corrupted model file - file appears to be truncated: {model_path}")
+                        except Exception as e:
+                            raise ModelLoadError(f"Failed to load model file: {e}")
                         
                         # Handle different save formats
                         if isinstance(checkpoint, nn.Module):
@@ -101,7 +114,12 @@ class PyTorchModelAdapter(BaseModel):
             else:
                 # Fallback without security context
                 if model_path.suffix == '.pt' or model_path.suffix == '.pth':
-                    checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                    try:
+                        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                    except EOFError:
+                        raise ModelLoadError(f"Corrupted model file - file appears to be truncated: {model_path}")
+                    except Exception as e:
+                        raise ModelLoadError(f"Failed to load model file: {e}")
                     
                     # Handle different save formats
                     if isinstance(checkpoint, nn.Module):
@@ -125,6 +143,9 @@ class PyTorchModelAdapter(BaseModel):
                     raise ModelLoadError(f"Unsupported file extension: {model_path.suffix}")
             
             # Ensure model is on the correct device
+            if self.model is None:
+                raise ModelLoadError("Model loading failed - model is None")
+            
             self.model = self.model.to(self.device)
             self.logger.info(f"Model moved to device: {self.device}")
             
@@ -782,6 +803,16 @@ class ModelAdapterFactory:
     @staticmethod
     def create_adapter(model_path: Union[str, Path], config: InferenceConfig) -> BaseModel:
         """Create appropriate model adapter based on file extension or model type."""
+        # Check for YOLO models first by name pattern (highest priority)
+        model_name_lower = str(model_path).lower()
+        if any(yolo_variant in model_name_lower for yolo_variant in ['yolo', 'yolov5', 'yolov8', 'yolov9', 'yolov10', 'yolo11']):
+            if 'yolov5' in model_name_lower:
+                return YOLOv5Adapter(config)
+            elif any(variant in model_name_lower for variant in ['yolov8', 'yolov9', 'yolov10', 'yolo11']):
+                return YOLOv8Adapter(config)
+            else:
+                return YOLOModelAdapter(config)
+        
         # Handle string identifiers vs file paths
         if isinstance(model_path, str):
             path_obj = Path(model_path)
@@ -820,7 +851,8 @@ class ModelAdapterFactory:
             '.pt', '.pth', '.torchscript',  # PyTorch
             '.onnx',  # ONNX
             '.trt', '.engine',  # TensorRT
-            'huggingface'  # Hugging Face
+            'huggingface',  # Hugging Face
+            'yolo', 'yolov5', 'yolov8'  # YOLO variants
         ]
 
 
