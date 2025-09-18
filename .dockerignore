@@ -82,6 +82,8 @@ compose.yml
 .dockerignore
 
 # Large model cache directories (these should be handled separately)
+models/
+tests/models/
 models/cache/
 calibration_cache/
 kernel_cache/

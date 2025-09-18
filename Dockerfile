@@ -25,39 +25,37 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Upgrade pip and install build tools
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel uv
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Copy dependency files first for better layer caching
 COPY requirements.txt requirements-base.txt requirements-tensorrt.txt pyproject.toml ./
 
-# Install base Python dependencies first using uv for faster installation
+# Install base Python dependencies first using pip for reliability
 # Split installation to avoid I/O errors with large packages
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=tmpfs,target=/tmp,size=4G \
-    uv pip install --no-cache-dir --retries 3 -r requirements-base.txt
+    pip install --no-cache-dir -r requirements-base.txt
 
 # Install TensorRT packages separately with fallback strategy
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=tmpfs,target=/tmp,size=4G \
-    (uv pip install --no-cache-dir --retries 5 -r requirements-tensorrt.txt) || \
-    (echo "TensorRT installation failed with uv, trying pip..." && \
-     pip install --no-cache-dir --retries 5 -r requirements-tensorrt.txt) || \
+    pip install --no-cache-dir --retries 5 -r requirements-tensorrt.txt || \
     (echo "TensorRT installation failed, continuing without TensorRT optimizations..." && \
      echo "Application will run without TensorRT acceleration")
 
 # Install PyTorch with CUDA support (if needed) with robust error handling
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=tmpfs,target=/tmp,size=2G \
+# Don't use tmpfs for PyTorch as packages are very large (2GB+)
+RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$TARGETPLATFORM" != "linux/arm64" ]; then \
-        (uv pip install --no-cache-dir --retries 5 \
+        pip install --no-cache-dir --retries 5 \
             torch==${PYTORCH_VERSION}+${CUDA_VERSION} \
             torchvision \
             torchaudio \
-            --index-url https://download.pytorch.org/whl/${CUDA_VERSION}) || \
+            --index-url https://download.pytorch.org/whl/${CUDA_VERSION} || \
         (echo "PyTorch CUDA installation failed, trying CPU version..." && \
-         uv pip install --no-cache-dir torch torchvision torchaudio); \
+         pip install --no-cache-dir torch torchvision torchaudio); \
     else \
-        uv pip install --no-cache-dir torch torchvision torchaudio; \
+        pip install --no-cache-dir torch torchvision torchaudio; \
     fi
 
 # Production stage
