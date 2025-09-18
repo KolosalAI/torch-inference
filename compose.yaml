@@ -1,99 +1,190 @@
-# Docker Compose configuration for torch-inference framework
-# Uses multi-stage Dockerfile with uv for dependency management
+# Docker Compose for PyTorch Inference Framework
+# Optimized for development and production deployments
 
 services:
-  # Production service
-  server:
+  # Main inference server
+  torch-inference:
     build:
       context: .
+      dockerfile: Dockerfile
       target: production
+      args:
+        - PYTORCH_VERSION=2.1.0
+        - CUDA_VERSION=cu121
+    container_name: torch-inference-server
+    restart: unless-stopped
     ports:
-      - 8000:8000
+      - "8000:8000"
     environment:
       - PYTHONPATH=/app
-      - UV_CACHE_DIR=/tmp/uv-cache
+      - ENVIRONMENT=production
+      - LOG_LEVEL=INFO
+      - WORKERS=1
+      - GPU_DEVICE_ID=0
     volumes:
-      # Mount cache directory for better performance
-      - uv-cache:/tmp/uv-cache
-    restart: unless-stopped
+      # Persistent model cache
+      - model_cache:/app/models/cache
+      - calibration_cache:/app/calibration_cache
+      - kernel_cache:/app/kernel_cache
+      # Logs (create directory if it doesn't exist)
+      - ./logs:/app/logs
+      # Configuration (optional, only if config dir exists)
+      # - ./config:/app/config:ro
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+          # GPU support commented out for compatibility
+          # devices:
+          #   - driver: nvidia
+          #     count: 1
+          #     capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
+    networks:
+      - inference_network
+    # depends_on:
+    #   - redis
+    #   - monitoring
 
-  # Development service with hot reload
-  server-dev:
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: torch-inference-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - inference_network
+
+  # Nginx reverse proxy and load balancer
+  nginx:
+    image: nginx:alpine
+    container_name: torch-inference-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - torch-inference
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - inference_network
+      - external
+
+  # Monitoring with Prometheus
+  monitoring:
+    image: prom/prometheus:latest
+    container_name: torch-inference-monitoring
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - inference_network
+
+  # Development notebook (profile: development)
+  dev-notebook:
+    profiles: [development]
     build:
       context: .
       target: development
+    container_name: torch-inference-notebook
     ports:
-      - 8001:8000
-    environment:
-      - PYTHONPATH=/app
-      - UV_CACHE_DIR=/tmp/uv-cache
-      - ENVIRONMENT=development
+      - "8888:8888"
     volumes:
-      # Mount source code for hot reload
-      - ./:/app
-      - uv-cache:/tmp/uv-cache
-    restart: unless-stopped
-    profiles:
-      - dev
+      - .:/app
+      - model_cache:/app/models/cache
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+    networks:
+      - inference_network
 
+  # Production monitoring with Grafana (profile: monitoring)
+  grafana:
+    profiles: [monitoring, production]
+    image: grafana/grafana:latest
+    container_name: torch-inference-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning:ro
+    depends_on:
+      - monitoring
+    networks:
+      - inference_network
+
+# Volume definitions
 volumes:
-  uv-cache:
+  model_cache:
+    driver: local
+  calibration_cache:
+    driver: local
+  kernel_cache:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  nginx_logs:
     driver: local
 
-# The commented out section below is an example of how to define a PostgreSQL
-# database that your application can use. `depends_on` tells Docker Compose to
-# start the database before your application. The `db-data` volume persists the
-# database data between container restarts. The `db-password` secret is used
-# to set the database password. You must create `db/password.txt` and add
-# a password of your choosing to it before running `docker compose up`.
+# Network definitions
+networks:
+  inference_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  external:
+    driver: bridge
+
+# Additional configuration examples for different environments:
 #
-#  db:
-#    image: postgres:15
-#    restart: always
-#    user: postgres
-#    secrets:
-#      - db-password
-#    volumes:
-#      - db-data:/var/lib/postgresql/data
-#    environment:
-#      - POSTGRES_DB=torch_inference
-#      - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
-#    expose:
-#      - 5432
-#    healthcheck:
-#      test: [ "CMD", "pg_isready" ]
-#      interval: 10s
-#      timeout: 5s
-#      retries: 5
-#    profiles:
-#      - database
+# Development mode:
+# docker compose --profile development up
 #
-#  redis:
-#    image: redis:7-alpine
-#    restart: always
-#    volumes:
-#      - redis-data:/data
-#    expose:
-#      - 6379
-#    healthcheck:
-#      test: ["CMD", "redis-cli", "ping"]
-#      interval: 10s
-#      timeout: 5s
-#      retries: 3
-#    profiles:
-#      - cache
+# Production with monitoring:
+# docker compose --profile monitoring up
 #
-#volumes:
-#  db-data:
-#  redis-data:
+# Scale the inference service:
+# docker compose up --scale torch-inference=3
 #
-#secrets:
-#  db-password:
-#    file: db/password.txt
+# GPU-specific deployment:
+# docker compose -f compose.yaml -f compose.gpu.yaml up
 

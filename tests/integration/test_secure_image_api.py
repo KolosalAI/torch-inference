@@ -14,11 +14,13 @@ import asyncio
 import aiohttp
 import io
 import tempfile
-import json
 from pathlib import Path
-from PIL import Image
 import numpy as np
+from PIL import Image
+import json
 from unittest.mock import Mock, patch, AsyncMock
+
+from tests.utils.disk_management import managed_temp_file, DiskSpaceManager
 
 # Add project root to path
 import sys
@@ -44,20 +46,32 @@ class TestSecureImageAPIEndpoints:
     
     @pytest.fixture
     def test_image_file(self):
-        """Create a test image file."""
-        # Create a small test image
-        img_array = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
-        img = Image.fromarray(img_array)
+        """Create a test image file with disk space management."""
+        disk_manager = DiskSpaceManager()
         
-        # Save to temporary file
-        temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        img.save(temp_file.name, format='PNG')
-        temp_file.close()
+        # Check if there's enough space for image creation
+        if not disk_manager.has_enough_space(required_mb=50):
+            pytest.skip("Insufficient disk space for image file creation")
         
-        yield temp_file.name
-        
-        # Cleanup
-        Path(temp_file.name).unlink(missing_ok=True)
+        try:
+            # Create a small test image
+            img_array = np.random.randint(0, 256, (100, 100, 3), dtype=np.uint8)
+            img = Image.fromarray(img_array)
+            
+            # Use managed temp file
+            with managed_temp_file(suffix='.png', required_space_mb=10, delete=False) as temp_file:
+                temp_file.close()  # Close before PIL writes to it
+                try:
+                    img.save(temp_file.name, format='PNG')
+                    yield temp_file.name
+                finally:
+                    # Cleanup
+                    Path(temp_file.name).unlink(missing_ok=True)
+        except OSError as e:
+            if "No space left on device" in str(e):
+                pytest.skip(f"Insufficient disk space for image creation: {e}")
+            else:
+                raise
     
     @pytest.fixture
     def test_image_bytes(self):
