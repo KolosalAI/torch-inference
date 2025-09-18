@@ -17,6 +17,8 @@ from unittest.mock import Mock, MagicMock, AsyncMock
 import warnings
 from PIL import Image, ImageDraw, ImageFont
 
+from tests.utils.disk_management import managed_temp_dir, DiskSpaceManager
+
 # Add project root to path
 import sys
 project_root = Path(__file__).parent.parent.parent
@@ -110,9 +112,21 @@ def sample_input_for_model(test_model_loader):
 
 @pytest.fixture
 def temp_model_dir():
-    """Create a temporary directory for test models."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        yield Path(temp_dir)
+    """Create a temporary directory for test models with disk space management."""
+    disk_manager = DiskSpaceManager()
+    
+    # Check if there's enough space for model files (need at least 500MB)
+    if not disk_manager.has_enough_space(required_mb=500):
+        pytest.skip("Insufficient disk space for test models")
+    
+    try:
+        with managed_temp_dir(required_space_mb=500) as temp_dir:
+            yield temp_dir
+    except OSError as e:
+        if "No space left on device" in str(e):
+            pytest.skip(f"Insufficient disk space for test models: {e}")
+        else:
+            raise
 
 
 @pytest.fixture

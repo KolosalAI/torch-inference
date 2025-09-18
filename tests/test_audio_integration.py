@@ -14,6 +14,8 @@ from unittest.mock import Mock, patch
 import base64
 import wave
 
+from tests.utils.disk_management import managed_temp_file, DiskSpaceManager
+
 # Import framework components
 from framework.core.config import InferenceConfig, DeviceType
 from framework.core.config_manager import get_config_manager
@@ -49,28 +51,45 @@ class TestAudioIntegration:
     
     @pytest.fixture
     def mock_wav_file(self, mock_audio_data):
-        """Create a temporary WAV file for testing."""
+        """Create a temporary WAV file for testing with disk space management."""
+        disk_manager = DiskSpaceManager()
+        
+        # Check if there's enough space for audio file creation
+        if not disk_manager.has_enough_space(required_mb=10):
+            pytest.skip("Insufficient disk space for audio file creation")
+        
         audio_data, sample_rate = mock_audio_data
         
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-            temp_path = temp_file.name
-        
-        # Write WAV file
-        with wave.open(temp_path, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)
-            
-            # Convert to 16-bit PCM
-            audio_16bit = (audio_data * 32767).astype(np.int16)
-            wav_file.writeframes(audio_16bit.tobytes())
-        
-        yield temp_path
-        
-        # Cleanup
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+        try:
+            # Use managed temp file
+            with managed_temp_file(suffix='.wav', required_space_mb=5, delete=False) as temp_file:
+                temp_path = temp_file.name
+                temp_file.close()  # Close before wave opens it
+                
+                # Write WAV file
+                with wave.open(temp_path, 'wb') as wav_file:
+                    wav_file.setnchannels(1)  # Mono
+                    wav_file.setsampwidth(2)  # 16-bit
+                    wav_file.setframerate(sample_rate)
+                    
+                    # Convert to 16-bit PCM
+                    audio_16bit = (audio_data * 32767).astype(np.int16)
+                    wav_file.writeframes(audio_16bit.tobytes())
+                
+                yield temp_path
+                
+        except OSError as e:
+            if "No space left on device" in str(e):
+                pytest.skip(f"Insufficient disk space for audio creation: {e}")
+            else:
+                raise
+        finally:
+            # Cleanup
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
     
     @pytest.mark.integration
     @pytest.mark.audio
