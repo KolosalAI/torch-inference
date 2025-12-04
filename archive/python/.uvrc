@@ -1,0 +1,23 @@
+# uv Project Configuration
+# This file contains uv-specific settings and shortcuts
+
+# Environment variables for CUDA
+CUDA_VISIBLE_DEVICES=0
+TORCH_CUDA_ARCH_LIST="7.5;8.0;8.6;8.9;9.0"
+
+# uv run shortcuts (add to your shell profile)
+alias torch-run="uv run python"
+alias torch-benchmark="uv run python benchmark.py" 
+alias torch-demo="uv run python optimization_demo.py"
+alias torch-test="uv run python test_installation.py"
+
+# Development shortcuts
+alias torch-format="uv run black . && uv run ruff check --fix ."
+alias torch-lint="uv run ruff check ."
+alias torch-type="uv run mypy ."
+alias torch-test-unit="uv run pytest"
+
+# uv environment info
+# Run: uv info
+# Check: uv tree  
+# Update: uv sync
