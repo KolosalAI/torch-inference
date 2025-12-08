@@ -6,3 +6,6 @@ pub mod model_download;
 pub mod system;
 pub mod logging;
 pub mod performance;
+pub mod tts;
+pub mod registry;
+pub mod models;

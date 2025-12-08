@@ -155,25 +155,103 @@ pub async fn get_cache_info(
 }
 
 pub async fn list_available_models() -> Result<HttpResponse, ApiError> {
-    // Placeholder - would fetch from HuggingFace or config
+    // Curated list of available models for download
     let available = vec![
+        // Text Models
         serde_json::json!({
             "name": "bert-base-uncased",
             "repo_id": "bert-base-uncased",
             "task": "text-classification",
             "source": "huggingface",
+            "description": "BERT base model (uncased)",
+            "size_estimate": "~440 MB",
         }),
+        serde_json::json!({
+            "name": "gpt2",
+            "repo_id": "gpt2",
+            "task": "text-generation",
+            "source": "huggingface",
+            "description": "GPT-2 language model",
+            "size_estimate": "~500 MB",
+        }),
+        
+        // Image Models
         serde_json::json!({
             "name": "resnet50",
             "repo_id": "microsoft/resnet-50",
             "task": "image-classification",
             "source": "huggingface",
+            "description": "ResNet-50 image classification",
+            "size_estimate": "~100 MB",
+        }),
+        serde_json::json!({
+            "name": "yolov5",
+            "repo_id": "ultralytics/yolov5",
+            "task": "object-detection",
+            "source": "huggingface",
+            "description": "YOLOv5 object detection",
+            "size_estimate": "~30 MB",
+        }),
+        
+        // Audio/TTS Models
+        serde_json::json!({
+            "name": "kokoro-82m",
+            "repo_id": "hexgrad/Kokoro-82M",
+            "task": "text-to-speech",
+            "source": "huggingface",
+            "description": "Kokoro-82M: Efficient TTS model with 82M parameters. State-of-the-art synthesis quality with multiple voices (Bella, Sarah, Emma, Adam, Michael). Based on StyleTTS2 + ISTFTNet.",
+            "size_estimate": "~330 MB (model + voices)",
+            "features": [
+                "Multiple voice options (5+ voices)",
+                "American and British accents",
+                "24kHz high-quality audio",
+                "Fast inference (82M params only)",
+                "ONNX format for deployment"
+            ],
+            "voices": [
+                {"name": "af_bella", "gender": "female", "accent": "american", "desc": "Warm, friendly voice"},
+                {"name": "af_sarah", "gender": "female", "accent": "american", "desc": "Professional voice"},
+                {"name": "bf_emma", "gender": "female", "accent": "british", "desc": "RP accent"},
+                {"name": "am_adam", "gender": "male", "accent": "american", "desc": "Clear voice"},
+                {"name": "am_michael", "gender": "male", "accent": "american", "desc": "Deep voice"}
+            ],
+            "sample_rate": 24000,
+            "license": "apache-2.0",
+            "homepage": "https://huggingface.co/hexgrad/Kokoro-82M",
+            "download_example": {
+                "curl": "curl -X POST http://localhost:8080/models/download -H 'Content-Type: application/json' -d '{\"model_name\": \"kokoro-82m\", \"source_type\": \"huggingface\", \"repo_id\": \"hexgrad/Kokoro-82M\"}'"
+            }
+        }),
+        serde_json::json!({
+            "name": "whisper-base",
+            "repo_id": "openai/whisper-base",
+            "task": "automatic-speech-recognition",
+            "source": "huggingface",
+            "description": "Whisper base model for speech recognition",
+            "size_estimate": "~140 MB",
+        }),
+        
+        // Multimodal
+        serde_json::json!({
+            "name": "clip-vit-base",
+            "repo_id": "openai/clip-vit-base-patch32",
+            "task": "zero-shot-image-classification",
+            "source": "huggingface",
+            "description": "CLIP vision-language model",
+            "size_estimate": "~350 MB",
         }),
     ];
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "models": available,
         "total": available.len(),
+        "categories": {
+            "text": 2,
+            "image": 2,
+            "audio": 2,
+            "multimodal": 1
+        },
+        "message": "Use POST /models/download to download any model",
     })))
 }
 

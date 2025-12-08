@@ -153,3 +153,19 @@ data/*
 encryption.key
 secret_key.txt
 next_steps.txt
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# PowerShell scripts
+*.ps1
+
+# Documentation (keep only README.md)
+*.md
+!README.md
+
+# Models and cache
+/models_cache/
+/cache/

@@ -9,7 +9,7 @@ use crate::models::manager::ModelManager;
 use crate::telemetry::metrics::MetricsCollector;
 
 pub struct InferenceEngine {
-    model_manager: Arc<ModelManager>,
+    pub model_manager: Arc<ModelManager>,
     metrics: MetricsCollector,
     config: Config,
 }

@@ -23,7 +23,10 @@ pub struct DownloadTask {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelSource {
-    HuggingFace { repo_id: String, revision: Option<String> },
+    HuggingFace { 
+        repo_id: String, 
+        revision: Option<String>,
+    },
     TorchHub { repo: String, model: String },
     Url { url: String },
     Local { path: String },
@@ -190,7 +193,12 @@ impl ModelDownloadManager {
 
         match &task.source {
             ModelSource::HuggingFace { repo_id, revision } => {
-                self.download_from_huggingface(&task_id, repo_id, revision.as_deref(), &model_dir).await?;
+                self.download_from_huggingface(
+                    &task_id, 
+                    repo_id, 
+                    revision.as_deref(),
+                    &model_dir
+                ).await?;
             }
             ModelSource::Url { url } => {
                 self.download_from_url(&task_id, url, &model_dir).await?;
@@ -230,6 +238,8 @@ impl ModelDownloadManager {
     ) -> Result<()> {
         let revision = revision.unwrap_or("main");
         
+        log::info!("Downloading from HuggingFace: {} (revision: {})", repo_id, revision);
+        
         // HuggingFace API endpoint
         let api_url = format!("https://huggingface.co/api/models/{}", repo_id);
         
@@ -258,43 +268,65 @@ impl ModelDownloadManager {
 
         let files: Vec<serde_json::Value> = files_response.json().await?;
 
-        // Download each file
-        for file in files {
-            if let Some(path) = file["path"].as_str() {
-                let file_url = format!(
-                    "https://huggingface.co/{}/resolve/{}/{}",
-                    repo_id, revision, path
-                );
+        log::info!("Found {} files in repository", files.len());
 
-                let file_path = target_dir.join(path);
-                
-                // Create parent directories
-                if let Some(parent) = file_path.parent() {
-                    fs::create_dir_all(parent).await?;
-                }
+        // Download all files (no filtering)
+        let files_to_download: Vec<&str> = files.iter()
+            .filter_map(|f| f["path"].as_str())
+            .filter(|path| {
+                // Skip directories
+                !path.ends_with('/')
+            })
+            .collect();
 
-                // Download file
-                let mut response = client.get(&file_url)
-                    .send()
-                    .await
-                    .context("Failed to download file")?;
+        log::info!("Downloading {} files", files_to_download.len());
 
-                let total_size = response.content_length();
-                let mut downloaded = 0u64;
+        // Download all files
+        let total_files = files_to_download.len();
+        for (idx, path) in files_to_download.iter().enumerate() {
+            log::info!("Downloading file {}/{}: {}", idx + 1, total_files, path);
+            
+            let file_url = format!(
+                "https://huggingface.co/{}/resolve/{}/{}",
+                repo_id, revision, path
+            );
 
-                let mut file = fs::File::create(&file_path).await?;
+            let file_path = target_dir.join(path);
+            
+            // Create parent directories
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).await?;
+            }
 
-                while let Some(chunk) = response.chunk().await? {
-                    file.write_all(&chunk).await?;
-                    downloaded += chunk.len() as u64;
+            // Download file
+            let mut response = client.get(&file_url)
+                .send()
+                .await
+                .context(format!("Failed to download file: {}", path))?;
 
-                    // Update progress
-                    if let Some(total) = total_size {
-                        let progress = (downloaded as f32 / total as f32) * 100.0;
-                        self.update_task_progress(task_id, progress, downloaded, Some(total));
-                    }
+            if !response.status().is_success() {
+                log::warn!("Failed to download {}: {}", path, response.status());
+                continue;
+            }
+
+            let total_size = response.content_length();
+            let mut downloaded = 0u64;
+
+            let mut file = fs::File::create(&file_path).await?;
+
+            while let Some(chunk) = response.chunk().await? {
+                file.write_all(&chunk).await?;
+                downloaded += chunk.len() as u64;
+
+                // Update progress
+                let file_progress = idx as f32 / total_files as f32 * 100.0;
+                if let Some(total) = total_size {
+                    let chunk_progress = (downloaded as f32 / total as f32) * (1.0 / total_files as f32) * 100.0;
+                    self.update_task_progress(task_id, file_progress + chunk_progress, downloaded, total_size);
                 }
             }
+
+            log::info!("Downloaded: {} ({} bytes)", path, downloaded);
         }
 
         Ok(())

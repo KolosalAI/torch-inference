@@ -1,0 +1,16 @@
+{
+  "exported_at": "2025-12-08T21:16:57.400209300Z",
+  "models": [
+    {
+      "format": "pytorch",
+      "id": "kokoro-tts-v1",
+      "is_loaded": false,
+      "last_used": null,
+      "load_count": 0,
+      "name": "kokoro-tts-v1",
+      "path": ".\\models\\audio\\kokoro-82m\\kokoro-v1_0.pth",
+      "version": "1.0.0"
+    }
+  ],
+  "total": 1
+}

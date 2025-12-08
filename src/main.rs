@@ -63,12 +63,18 @@ async fn main() -> std::io::Result<()> {
     download_manager.initialize().await.expect("Failed to initialize download manager");
     info!("Model download manager initialized at {}", cache_dir);
     
-    // Initialize audio model manager
+    // Initialize audio model manager (legacy)
     let audio_model_dir = std::env::var("AUDIO_MODEL_DIR")
         .unwrap_or_else(|_| "./models/audio".to_string());
     let audio_model_manager = Arc::new(crate::core::audio_models::AudioModelManager::new(&audio_model_dir));
     audio_model_manager.initialize_default_models().await.ok(); // Don't fail if no models exist yet
     info!("Audio model manager initialized at {}", audio_model_dir);
+    
+    // Initialize modern TTS manager
+    let tts_config = crate::core::tts_manager::TTSManagerConfig::default();
+    let tts_manager = Arc::new(crate::core::tts_manager::TTSManager::new(tts_config));
+    tts_manager.initialize_defaults().await.expect("Failed to initialize TTS manager");
+    info!("TTS Manager initialized with default engines");
     
     let start_time = std::time::Instant::now();
     
@@ -101,6 +107,9 @@ async fn main() -> std::io::Result<()> {
     let audio_state = web::Data::new(crate::api::audio::AudioState {
         model_manager: audio_model_manager,
     });
+    let tts_state = web::Data::new(crate::api::tts::TTSState {
+        manager: tts_manager,
+    });
     let performance_state = web::Data::new(crate::api::performance::PerformanceState {
         monitor,  // Use monitor here (not cloned)
         start_time,
@@ -120,9 +129,13 @@ async fn main() -> std::io::Result<()> {
             .app_data(download_state.clone())
             .app_data(system_state.clone())
             .app_data(audio_state.clone())
+            .app_data(tts_state.clone())
             .app_data(performance_state.clone())
             .wrap(actix_middleware::Logger::default())
             .configure(handlers::configure_routes)
+            .configure(crate::api::tts::configure_routes)
+            .configure(crate::api::registry::configure)
+            .configure(api::models::configure)
     })
     .listen(listener)?
     .run()

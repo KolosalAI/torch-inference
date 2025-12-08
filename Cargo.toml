@@ -38,8 +38,9 @@ symphonia = { version = "0.5", features = ["all"] }
 
 # ML and inference
 onnxruntime = { version = "0.0.14", optional = true }
+ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs"] }
 ndarray = "0.15"
-tch = { version = "0.13", optional = true }
+tch = { version = "0.13", optional = true, features = [] }
 candle-core = { version = "0.3", optional = true }
 candle-nn = { version = "0.3", optional = true }
 

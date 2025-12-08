@@ -1,0 +1,123 @@
+{
+  "updated": "2025-12-08 15:27:05",
+  "version": "1.0",
+  "models": {
+    "windows-sapi": {
+      "status": "Active",
+      "architecture": "Neural TTS",
+      "note": "Currently used for real speech",
+      "voices": 3,
+      "quality": "High",
+      "rank": "Production",
+      "size": "Built-in",
+      "url": "Built-in",
+      "score": "N/A (Native)",
+      "name": "Windows SAPI"
+    },
+    "fish-speech-v1.5": {
+      "status": "Available",
+      "architecture": "VQGAN + Llama",
+      "note": "Requires separate download",
+      "voices": "Multi",
+      "quality": "High",
+      "rank": 8,
+      "size": "~1 GB",
+      "url": "https://huggingface.co/fishaudio/fish-speech-1.5",
+      "score": 57.1,
+      "name": "Fish Speech v1.5"
+    },
+    "styletts2": {
+      "status": "Available",
+      "architecture": "StyleTTS2",
+      "note": "Base model for Kokoro",
+      "voices": "Single",
+      "quality": "Medium-High",
+      "rank": 12,
+      "size": "~500 MB",
+      "url": "https://huggingface.co/yl4579/StyleTTS2-LJSpeech",
+      "score": 49.0,
+      "name": "StyleTTS 2"
+    },
+    "kokoro-v0.19": {
+      "status": "Available",
+      "config_url": "https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/config.json",
+      "voices": 10,
+      "quality": "High",
+      "rank": 6,
+      "size": "312 MB",
+      "url": "https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/kokoro-v0_19.pth",
+      "architecture": "StyleTTS2 + ISTFTNet",
+      "score": 59.0,
+      "name": "Kokoro v0.19"
+    },
+    "xtts-v2": {
+      "status": "Available",
+      "architecture": "Transformer + HiFiGAN",
+      "note": "Coqui TTS",
+      "voices": "Voice Cloning",
+      "quality": "High",
+      "rank": 9,
+      "size": "~2 GB",
+      "url": "https://huggingface.co/coqui/XTTS-v2",
+      "score": 56.1,
+      "name": "XTTS v2"
+    },
+    "piper-lessac": {
+      "status": "Downloaded",
+      "config_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
+      "voices": 1,
+      "quality": "Medium",
+      "rank": "N/A",
+      "size": "60 MB",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+      "architecture": "VITS (ONNX)",
+      "score": "N/A",
+      "name": "Piper (Lessac)"
+    },
+    "melotts": {
+      "status": "Available",
+      "architecture": "VITS",
+      "voices": "Multi-language",
+      "quality": "Medium",
+      "rank": 15,
+      "size": "~200 MB",
+      "url": "https://huggingface.co/myshell-ai/MeloTTS-English",
+      "score": 41.3,
+      "name": "MeloTTS"
+    },
+    "metavoice": {
+      "status": "Available",
+      "architecture": "Transformer",
+      "voices": "Multi",
+      "quality": "Medium-High",
+      "rank": 11,
+      "size": "~1 GB",
+      "url": "https://huggingface.co/metavoiceio/metavoice-1B-v0.1",
+      "score": 49.1,
+      "name": "MetaVoice"
+    },
+    "openvoice": {
+      "status": "Available",
+      "architecture": "VITS",
+      "voices": "Voice Cloning",
+      "quality": "Medium",
+      "rank": 14,
+      "size": "~600 MB",
+      "url": "https://huggingface.co/myshell-ai/OpenVoice",
+      "score": 43.1,
+      "name": "OpenVoice"
+    },
+    "kokoro-v1.0": {
+      "status": "Downloaded",
+      "config_url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/config.json",
+      "voices": 54,
+      "quality": "High",
+      "rank": 7,
+      "size": "312 MB",
+      "url": "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth",
+      "architecture": "StyleTTS2 + ISTFTNet",
+      "score": 58.1,
+      "name": "Kokoro v1.0"
+    }
+  }
+}
