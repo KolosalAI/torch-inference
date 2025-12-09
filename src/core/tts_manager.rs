@@ -116,56 +116,56 @@ impl TTSManager {
         Ok(audio)
     }
     
-    /// Initialize default engines
+    /// Initialize production TTS engines only
     pub async fn initialize_defaults(&self) -> Result<()> {
-        log::info!("Initializing default TTS engines...");
+        log::info!("Initializing production TTS engines...");
         
         // Load Windows SAPI as primary engine (REAL SPEECH on Windows)
         #[cfg(target_os = "windows")]
         {
-            log::info!("Loading Windows SAPI engine (REAL SPEECH)...");
+            log::info!("Loading Windows SAPI engine (production-grade speech)...");
             let sapi_config = serde_json::json!({});
             
             match self.load_engine("windows-sapi".to_string(), "windows-sapi", sapi_config).await {
-                Ok(_) => log::info!("✅ Windows SAPI engine loaded successfully - REAL SPEECH AVAILABLE!"),
-                Err(e) => log::warn!("Failed to load Windows SAPI engine: {}", e),
+                Ok(_) => log::info!("✅ Windows SAPI engine loaded successfully"),
+                Err(e) => log::warn!("⚠️  Failed to load Windows SAPI engine: {}", e),
             }
         }
         
-        // Try to load Piper neural TTS if available
-        let piper_model_path = PathBuf::from("models_cache/tts/piper_lessac/model.onnx");
-        let piper_config_path = PathBuf::from("models_cache/tts/piper_lessac/config.json");
-        
-        if piper_model_path.exists() {
-            log::info!("Loading Piper neural TTS engine...");
-            let piper_config = serde_json::json!({
-                "model_path": piper_model_path.to_string_lossy(),
-                "config_path": piper_config_path.to_string_lossy()
-            });
+        // Load Piper neural TTS only if ONNX feature is enabled
+        #[cfg(feature = "onnx")]
+        {
+            let piper_model_path = PathBuf::from("models/tts/piper_lessac/model.onnx");
+            let piper_config_path = PathBuf::from("models/tts/piper_lessac/config.json");
             
-            match self.load_engine("piper".to_string(), "piper", piper_config).await {
-                Ok(_) => log::info!("✅ Piper neural TTS engine loaded successfully"),
-                Err(e) => log::warn!("Failed to load Piper engine: {}", e),
+            if piper_model_path.exists() {
+                log::info!("Loading Piper neural TTS engine...");
+                let piper_config = serde_json::json!({
+                    "model_path": piper_model_path.to_string_lossy(),
+                    "config_path": piper_config_path.to_string_lossy()
+                });
+                
+                match self.load_engine("piper".to_string(), "piper", piper_config).await {
+                    Ok(_) => log::info!("✅ Piper neural TTS engine loaded successfully"),
+                    Err(e) => log::warn!("⚠️  Failed to load Piper engine: {}", e),
+                }
+            } else {
+                log::info!("⚠️  Piper model not found. Skipping Piper TTS.");
             }
         }
         
-        // Load fallback engines
-        let demo_config = serde_json::json!({"sample_rate": 24000});
-        self.load_engine("demo".to_string(), "demo", demo_config).await
-            .context("Failed to load demo engine")?;
+        #[cfg(not(feature = "onnx"))]
+        {
+            log::info!("⚠️  ONNX feature not enabled. Piper TTS requires ONNX runtime (compile with --features onnx)");
+        }
         
-        let phoneme_config = serde_json::json!({"sample_rate": 22050});
-        self.load_engine("phoneme".to_string(), "phoneme", phoneme_config).await
-            .context("Failed to load phoneme engine")?;
+        let engine_count = self.engines.len();
+        if engine_count == 0 {
+            log::warn!("⚠️  No TTS engines loaded. Install models to enable TTS functionality.");
+        } else {
+            log::info!("✅ {} production TTS engine(s) initialized", engine_count);
+        }
         
-        let neural_config = serde_json::json!({
-            "model_path": "models_cache/tts/neural/model.onnx",
-            "sample_rate": 22050
-        });
-        self.load_engine("neural".to_string(), "neural", neural_config).await
-            .context("Failed to load neural engine")?;
-        
-        log::info!("✅ Default TTS engines initialized");
         Ok(())
     }
     

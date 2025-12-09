@@ -17,6 +17,10 @@ pub struct ModelInfo {
     pub quality: String,
     pub status: String,
     pub note: Option<String>,
+    #[serde(default)]
+    pub model_type: String, // "tts", "image-classification", "neural-network"
+    #[serde(default)]
+    pub task: String, // "text-to-speech", "classification", "detection", etc.
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +46,8 @@ impl ModelRegistry {
             quality: "High".to_string(),
             status: "Downloaded".to_string(),
             note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // Kokoro v0.19
@@ -56,10 +62,12 @@ impl ModelRegistry {
             quality: "High".to_string(),
             status: "Available".to_string(),
             note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // Fish Speech v1.5
-        models.insert("fish-speech".to_string(), ModelInfo {
+        models.insert("fish-speech-1.5".to_string(), ModelInfo {
             name: "Fish Speech v1.5".to_string(),
             score: 57.1,
             rank: 8,
@@ -70,6 +78,8 @@ impl ModelRegistry {
             quality: "High".to_string(),
             status: "Available".to_string(),
             note: Some("Requires git-lfs".to_string()),
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // XTTS v2
@@ -84,6 +94,8 @@ impl ModelRegistry {
             quality: "High".to_string(),
             status: "Available".to_string(),
             note: Some("Coqui TTS".to_string()),
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // StyleTTS 2
@@ -98,6 +110,8 @@ impl ModelRegistry {
             quality: "Medium-High".to_string(),
             status: "Available".to_string(),
             note: Some("Base model for Kokoro".to_string()),
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // MetaVoice
@@ -112,6 +126,8 @@ impl ModelRegistry {
             quality: "Medium-High".to_string(),
             status: "Available".to_string(),
             note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // OpenVoice
@@ -126,6 +142,8 @@ impl ModelRegistry {
             quality: "Medium".to_string(),
             status: "Available".to_string(),
             note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // MeloTTS
@@ -140,6 +158,8 @@ impl ModelRegistry {
             quality: "Medium".to_string(),
             status: "Available".to_string(),
             note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
         // Windows SAPI
@@ -154,11 +174,13 @@ impl ModelRegistry {
             quality: "High".to_string(),
             status: "Active".to_string(),
             note: Some("Currently used for real speech".to_string()),
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
         });
         
-        // Piper ONNX
-        models.insert("piper-onnx".to_string(), ModelInfo {
-            name: "Piper ONNX".to_string(),
+        // Piper Lessac voice
+        models.insert("piper_lessac".to_string(), ModelInfo {
+            name: "Piper (Lessac)".to_string(),
             score: 0.0,
             rank: 0,
             size: "60 MB".to_string(),
@@ -168,6 +190,196 @@ impl ModelRegistry {
             quality: "Medium".to_string(),
             status: "Downloaded".to_string(),
             note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
+        });
+        
+        // ============================================
+        // IMAGE CLASSIFICATION MODELS
+        // ============================================
+        
+        // ResNet-50
+        models.insert("resnet50".to_string(), ModelInfo {
+            name: "ResNet-50".to_string(),
+            score: 0.0,
+            rank: 100,
+            size: "98 MB".to_string(),
+            url: "https://download.pytorch.org/models/resnet50-0676ba61.pth".to_string(),
+            architecture: "ResNet-50".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("ImageNet pre-trained, 1000 classes".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // ResNet-18
+        models.insert("resnet18".to_string(), ModelInfo {
+            name: "ResNet-18".to_string(),
+            score: 0.0,
+            rank: 101,
+            size: "45 MB".to_string(),
+            url: "https://download.pytorch.org/models/resnet18-5c106cde.pth".to_string(),
+            architecture: "ResNet-18".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("ImageNet pre-trained, lightweight".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // MobileNet V2
+        models.insert("mobilenet-v2".to_string(), ModelInfo {
+            name: "MobileNet V2".to_string(),
+            score: 0.0,
+            rank: 102,
+            size: "14 MB".to_string(),
+            url: "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth".to_string(),
+            architecture: "MobileNetV2".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Fast mobile inference, ImageNet".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // EfficientNet B0
+        models.insert("efficientnet-b0".to_string(), ModelInfo {
+            name: "EfficientNet B0".to_string(),
+            score: 0.0,
+            rank: 103,
+            size: "20 MB".to_string(),
+            url: "https://download.pytorch.org/models/efficientnet_b0_rwightman-3dd342df.pth".to_string(),
+            architecture: "EfficientNet-B0".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Efficient architecture, ImageNet".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // VGG16
+        models.insert("vgg16".to_string(), ModelInfo {
+            name: "VGG16".to_string(),
+            score: 0.0,
+            rank: 104,
+            size: "528 MB".to_string(),
+            url: "https://download.pytorch.org/models/vgg16-397923af.pth".to_string(),
+            architecture: "VGG-16".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Classic CNN architecture, ImageNet".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // DenseNet-121
+        models.insert("densenet121".to_string(), ModelInfo {
+            name: "DenseNet-121".to_string(),
+            score: 0.0,
+            rank: 105,
+            size: "31 MB".to_string(),
+            url: "https://download.pytorch.org/models/densenet121-a639ec97.pth".to_string(),
+            architecture: "DenseNet-121".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Dense connections, ImageNet".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // Inception V3
+        models.insert("inception-v3".to_string(), ModelInfo {
+            name: "Inception V3".to_string(),
+            score: 0.0,
+            rank: 106,
+            size: "104 MB".to_string(),
+            url: "https://download.pytorch.org/models/inception_v3_google-1a9a5a14.pth".to_string(),
+            architecture: "Inception-V3".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Multi-scale features, ImageNet".to_string()),
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        });
+        
+        // ============================================
+        // OBJECT DETECTION MODELS
+        // ============================================
+        
+        // Faster R-CNN ResNet-50
+        models.insert("faster-rcnn-resnet50".to_string(), ModelInfo {
+            name: "Faster R-CNN ResNet-50".to_string(),
+            score: 0.0,
+            rank: 200,
+            size: "160 MB".to_string(),
+            url: "https://download.pytorch.org/models/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth".to_string(),
+            architecture: "Faster R-CNN + ResNet-50".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Object detection, COCO dataset".to_string()),
+            model_type: "object-detection".to_string(),
+            task: "detection".to_string(),
+        });
+        
+        // RetinaNet ResNet-50
+        models.insert("retinanet-resnet50".to_string(), ModelInfo {
+            name: "RetinaNet ResNet-50".to_string(),
+            score: 0.0,
+            rank: 201,
+            size: "145 MB".to_string(),
+            url: "https://download.pytorch.org/models/retinanet_resnet50_fpn_coco-eeacb38b.pth".to_string(),
+            architecture: "RetinaNet + ResNet-50".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Single-shot detector, COCO".to_string()),
+            model_type: "object-detection".to_string(),
+            task: "detection".to_string(),
+        });
+        
+        // ============================================
+        // SEGMENTATION MODELS
+        // ============================================
+        
+        // DeepLabV3 ResNet-50
+        models.insert("deeplabv3-resnet50".to_string(), ModelInfo {
+            name: "DeepLabV3 ResNet-50".to_string(),
+            score: 0.0,
+            rank: 300,
+            size: "163 MB".to_string(),
+            url: "https://download.pytorch.org/models/deeplabv3_resnet50_coco-cd0a2569.pth".to_string(),
+            architecture: "DeepLabV3 + ResNet-50".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Semantic segmentation, COCO".to_string()),
+            model_type: "segmentation".to_string(),
+            task: "segmentation".to_string(),
+        });
+        
+        // FCN ResNet-50
+        models.insert("fcn-resnet50".to_string(), ModelInfo {
+            name: "FCN ResNet-50".to_string(),
+            score: 0.0,
+            rank: 301,
+            size: "126 MB".to_string(),
+            url: "https://download.pytorch.org/models/fcn_resnet50_coco-1167a1af.pth".to_string(),
+            architecture: "FCN + ResNet-50".to_string(),
+            voices: "N/A".to_string(),
+            quality: "High".to_string(),
+            status: "Available".to_string(),
+            note: Some("Fully convolutional network, COCO".to_string()),
+            model_type: "segmentation".to_string(),
+            task: "segmentation".to_string(),
         });
         
         Self {
@@ -249,12 +461,19 @@ pub async fn download_model(req: web::Json<DownloadRequest>) -> Result<HttpRespo
                 })));
             }
             
-            // Return download information
+            // Spawn async download task
+            let model_id = req.model_id.clone();
+            let model_clone = model.clone();
+            tokio::spawn(async move {
+                if let Err(e) = download_model_async(&model_id, &model_clone).await {
+                    log::error!("Failed to download {}: {}", model_id, e);
+                }
+            });
+            
             Ok(HttpResponse::Ok().json(serde_json::json!({
                 "status": "download_initiated",
                 "model": model,
-                "message": "Use PowerShell script: .\\Download-Models.ps1 -Model {}",
-                "note": "Direct download from API not yet implemented"
+                "message": format!("Download started for {}", model.name)
             })))
         },
         None => Ok(HttpResponse::NotFound().json(serde_json::json!({
@@ -262,6 +481,168 @@ pub async fn download_model(req: web::Json<DownloadRequest>) -> Result<HttpRespo
             "model_id": req.model_id
         })))
     }
+}
+
+async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Result<()> {
+    use tokio::fs;
+    use tokio::io::AsyncWriteExt;
+    
+    // Determine cache directory based on model type
+    let model_type = if model.model_type.is_empty() {
+        "tts"  // default to tts for backward compatibility
+    } else {
+        model.model_type.as_str()
+    };
+    
+    let cache_dir = match model_type {
+        "tts" => std::path::Path::new("models/tts").join(model_id),
+        "image-classification" => std::path::Path::new("models/classification").join(model_id),
+        "object-detection" => std::path::Path::new("models/detection").join(model_id),
+        "segmentation" => std::path::Path::new("models/segmentation").join(model_id),
+        "neural-network" => std::path::Path::new("models/neural").join(model_id),
+        _ => std::path::Path::new("models/other").join(model_id),
+    };
+    
+    fs::create_dir_all(&cache_dir).await?;
+    
+    log::info!("Downloading {} ({}) from {}", model.name, model_type, model.url);
+    
+    if model.url == "Built-in" {
+        log::info!("{} is built-in, no download needed", model.name);
+        return Ok(());
+    }
+    
+    // Check if URL is a direct file download (contains "resolve") or a repository
+    if model.url.contains("resolve") {
+        // Direct file download
+        let client = reqwest::Client::new();
+        let response = client.get(&model.url).send().await?;
+        
+        if !response.status().is_success() {
+            anyhow::bail!("Failed to download: HTTP {}", response.status());
+        }
+        
+        let extension = if model.url.ends_with(".pth") { "pth" } 
+                       else if model.url.ends_with(".onnx") { "onnx" }
+                       else { "bin" };
+        
+        let filename = format!("model.{}", extension);
+        let filepath = cache_dir.join(&filename);
+        
+        let mut file = fs::File::create(&filepath).await?;
+        let bytes = response.bytes().await?;
+        file.write_all(&bytes).await?;
+        
+        log::info!("Downloaded {} ({} bytes) to {:?}", model.name, bytes.len(), filepath);
+        
+        // Download config if available  
+        if let Some(config_url) = model.note.as_ref().and_then(|n| {
+            if n.contains("http") { Some(n.as_str()) } else { None }
+        }) {
+            let config_response = client.get(config_url).send().await?;
+            if config_response.status().is_success() {
+                let config_bytes = config_response.bytes().await?;
+                let config_path = cache_dir.join("config.json");
+                let mut config_file = fs::File::create(&config_path).await?;
+                config_file.write_all(&config_bytes).await?;
+                log::info!("Downloaded config to {:?}", config_path);
+            }
+        }
+    } else if model.url.starts_with("https://huggingface.co/") {
+        // Repository download - extract repo_id
+        let repo_id = model.url
+            .trim_start_matches("https://huggingface.co/")
+            .trim_end_matches('/');
+        
+        log::info!("Downloading repository {} from HuggingFace", repo_id);
+        
+        download_huggingface_repo(repo_id, &cache_dir).await?;
+        
+        log::info!("Successfully downloaded repository {} to {:?}", repo_id, cache_dir);
+    } else {
+        log::warn!("{} requires manual download from: {}", model.name, model.url);
+    }
+    
+    Ok(())
+}
+
+async fn download_huggingface_repo(repo_id: &str, target_dir: &std::path::Path) -> anyhow::Result<()> {
+    use tokio::fs;
+    use tokio::io::AsyncWriteExt;
+    
+    let client = reqwest::Client::new();
+    
+    // Get list of files in the repository
+    let files_url = format!("https://huggingface.co/api/models/{}/tree/main", repo_id);
+    
+    log::info!("Fetching file list from {}", files_url);
+    
+    let response = client.get(&files_url).send().await?;
+    
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to fetch repository file list: HTTP {}", response.status());
+    }
+    
+    let files: Vec<serde_json::Value> = response.json().await?;
+    
+    log::info!("Found {} items in repository", files.len());
+    
+    // Filter files to download (skip .git files, large binaries we don't need, etc.)
+    let files_to_download: Vec<String> = files.iter()
+        .filter_map(|f| {
+            if f["type"] == "file" {
+                f["path"].as_str().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|path| {
+            // Skip unnecessary files
+            !path.starts_with(".git") && 
+            !path.ends_with(".md") &&
+            !path.ends_with(".txt") &&
+            !path.contains("test") &&
+            !path.contains("example")
+        })
+        .collect();
+    
+    log::info!("Downloading {} files from repository", files_to_download.len());
+    
+    // Download each file
+    for (idx, file_path) in files_to_download.iter().enumerate() {
+        log::info!("Downloading {}/{}: {}", idx + 1, files_to_download.len(), file_path);
+        
+        let file_url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            repo_id, file_path
+        );
+        
+        let local_path = target_dir.join(file_path);
+        
+        // Create parent directories
+        if let Some(parent) = local_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        
+        // Download file
+        match client.get(&file_url).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    let bytes = response.bytes().await?;
+                    let mut file = fs::File::create(&local_path).await?;
+                    file.write_all(&bytes).await?;
+                    log::info!("  ✓ Downloaded {} ({} bytes)", file_path, bytes.len());
+                } else {
+                    log::warn!("  ✗ Failed to download {}: HTTP {}", file_path, response.status());
+                }
+            }
+            Err(e) => {
+                log::warn!("  ✗ Error downloading {}: {}", file_path, e);
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 /// GET /api/models/comparison - Get model comparison

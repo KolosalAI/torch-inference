@@ -156,6 +156,45 @@ impl GpuManager {
     pub fn is_cuda_available() -> bool {
         cfg!(feature = "cuda")
     }
+    
+    /// Check if CUDA is available at runtime (not just compile-time)
+    #[cfg(feature = "cuda")]
+    pub fn is_cuda_runtime_available() -> bool {
+        use nvml_wrapper::Nvml;
+        Nvml::init().is_ok()
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    pub fn is_cuda_runtime_available() -> bool {
+        false
+    }
+    
+    /// Get CUDA runtime information
+    #[cfg(feature = "cuda")]
+    pub fn get_cuda_info() -> Option<String> {
+        use nvml_wrapper::Nvml;
+        if let Ok(nvml) = Nvml::init() {
+            if let Ok(count) = nvml.device_count() {
+                if count > 0 {
+                    if let Ok(device) = nvml.device_by_index(0) {
+                        if let Ok(name) = device.name() {
+                            if let Ok(driver_version) = nvml.sys_driver_version() {
+                                if let Ok(cuda_version) = nvml.sys_cuda_driver_version() {
+                                    return Some(format!("{} (Driver: {}, CUDA: {})", name, driver_version, cuda_version));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    pub fn get_cuda_info() -> Option<String> {
+        None
+    }
 
     pub fn get_best_device(&self) -> Result<Option<usize>> {
         let info = self.get_info()?;

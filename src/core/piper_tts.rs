@@ -140,9 +140,12 @@ impl PiperTTSEngine {
         let has_onnx = model_path.exists();
         if has_onnx {
             log::info!("✅ Piper ONNX model found at: {:?}", model_path);
-            log::info!("⚠️ Note: Full ONNX inference requires feature flag. Using enhanced phoneme synthesis.");
+            #[cfg(not(feature = "onnx"))]
+            {
+                bail!("ONNX feature not enabled. Compile with --features onnx to use Piper TTS");
+            }
         } else {
-            log::warn!("Piper model not found, using phoneme fallback");
+            bail!("Piper model not found at {:?}", model_path);
         }
         
         Ok(Self {
@@ -357,7 +360,7 @@ impl TTSEngine for PiperTTSEngine {
     
     async fn synthesize(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
         self.validate_text(text)?;
-        self.synthesize_with_phonemes(text, params)
+        bail!("Piper TTS requires ONNX Runtime. Please use Windows SAPI engine or compile with --features onnx")
     }
     
     fn list_voices(&self) -> Vec<VoiceInfo> {
