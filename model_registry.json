@@ -1,6 +1,6 @@
 {
-  "updated": "2025-12-08 15:27:05",
-  "version": "1.0",
+  "updated": "2025-12-17 22:58:00",
+  "version": "1.1",
   "models": {
     "windows-sapi": {
       "status": "Active",
@@ -118,6 +118,150 @@
       "architecture": "StyleTTS2 + ISTFTNet",
       "score": 58.1,
       "name": "Kokoro v1.0"
+    },
+    "eva02-large-patch14-448": {
+      "status": "Available",
+      "architecture": "Vision Transformer (ViT)",
+      "task": "Image Classification",
+      "note": "SOTA ImageNet-1K accuracy",
+      "accuracy": "90.054% Top-1",
+      "rank": 1,
+      "size": "~1.2 GB",
+      "url": "https://huggingface.co/timm/eva02_large_patch14_448.mim_m38m_ft_in22k_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-22K pretraining)",
+      "name": "EVA-02 Large"
+    },
+    "eva-giant-patch14-560": {
+      "status": "Available",
+      "architecture": "Vision Transformer (ViT)",
+      "task": "Image Classification",
+      "note": "Very large ViT model",
+      "accuracy": "89.792% Top-1",
+      "rank": 2,
+      "size": "~4.0 GB",
+      "url": "https://huggingface.co/timm/eva_giant_patch14_560.m30m_ft_in22k_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-22K pretraining)",
+      "name": "EVA Giant"
+    },
+    "convnextv2-huge-512": {
+      "status": "Available",
+      "architecture": "ConvNet",
+      "task": "Image Classification",
+      "note": "SOTA ConvNet architecture",
+      "accuracy": "88.848% Top-1",
+      "rank": 3,
+      "size": "~2.6 GB",
+      "url": "https://huggingface.co/timm/convnextv2_huge.fcmae_ft_in22k_in1k_512",
+      "dataset": "ImageNet-1K (with ImageNet-22K pretraining)",
+      "name": "ConvNeXt V2 Huge"
+    },
+    "convnext-xxlarge-clip": {
+      "status": "Available",
+      "architecture": "ConvNet",
+      "task": "Image Classification",
+      "note": "CLIP-pretrained with model soup fine-tuning",
+      "accuracy": "88.612% Top-1",
+      "rank": 4,
+      "size": "~3.5 GB",
+      "url": "https://huggingface.co/timm/convnext_xxlarge.clip_laion2b_soup_ft_in1k",
+      "dataset": "ImageNet-1K (CLIP LAION-2B pretraining)",
+      "name": "ConvNeXt XXLarge CLIP"
+    },
+    "maxvit-xlarge-512": {
+      "status": "Available",
+      "architecture": "Hybrid (Conv + Attention)",
+      "task": "Image Classification",
+      "note": "MaxViT hybrid architecture",
+      "accuracy": "88.53% Top-1",
+      "rank": 5,
+      "size": "~1.8 GB",
+      "url": "https://huggingface.co/timm/maxvit_xlarge_tf_512.in21k_ft_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-21K pretraining)",
+      "name": "MaxViT XLarge"
+    },
+    "coatnet-3-rw-224": {
+      "status": "Available",
+      "architecture": "Hybrid (Conv + Attention)",
+      "task": "Image Classification",
+      "note": "CoAtNet architecture - efficient hybrid",
+      "accuracy": "~86.0% Top-1",
+      "rank": 10,
+      "size": "~700 MB",
+      "url": "https://huggingface.co/timm/coatnet_3_rw_224.sw_in1k",
+      "dataset": "ImageNet-1K",
+      "name": "CoAtNet-3"
+    },
+    "efficientnetv2-xl": {
+      "status": "Available",
+      "architecture": "EfficientNet",
+      "task": "Image Classification",
+      "note": "Efficient training and inference",
+      "accuracy": "87.3% Top-1",
+      "rank": 8,
+      "size": "~850 MB",
+      "url": "https://huggingface.co/timm/tf_efficientnetv2_xl.in21k_ft_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-21K pretraining)",
+      "name": "EfficientNetV2 XL"
+    },
+    "mobilenetv4-hybrid-large": {
+      "status": "Available",
+      "architecture": "MobileNet",
+      "task": "Image Classification",
+      "note": "Edge/mobile optimized, high efficiency",
+      "accuracy": "84.36% Top-1",
+      "rank": 13,
+      "size": "~140 MB",
+      "url": "https://huggingface.co/timm/mobilenetv4_hybrid_large.e600_r448_in1k",
+      "dataset": "ImageNet-1K",
+      "name": "MobileNetV4 Hybrid Large"
+    },
+    "vit-giant-patch14-224": {
+      "status": "Available",
+      "architecture": "Vision Transformer (ViT)",
+      "task": "Image Classification",
+      "note": "Google ViT Giant",
+      "accuracy": "~88.5% Top-1",
+      "rank": 6,
+      "size": "~5.0 GB",
+      "url": "https://huggingface.co/timm/vit_giant_patch14_224.clip_laion2b",
+      "dataset": "CLIP LAION-2B",
+      "name": "ViT Giant (CLIP)"
+    },
+    "beit-large-patch16-512": {
+      "status": "Available",
+      "architecture": "Vision Transformer (BEiT)",
+      "task": "Image Classification",
+      "note": "BERT-style pretraining for vision",
+      "accuracy": "88.6% Top-1",
+      "rank": 7,
+      "size": "~1.2 GB",
+      "url": "https://huggingface.co/timm/beit_large_patch16_512.in22k_ft_in22k_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-22K pretraining)",
+      "name": "BEiT Large"
+    },
+    "swin-large-patch4-384": {
+      "status": "Available",
+      "architecture": "Swin Transformer",
+      "task": "Image Classification",
+      "note": "Hierarchical vision transformer",
+      "accuracy": "87.3% Top-1",
+      "rank": 9,
+      "size": "~790 MB",
+      "url": "https://huggingface.co/timm/swin_large_patch4_window12_384.ms_in22k_ft_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-22K pretraining)",
+      "name": "Swin Transformer Large"
+    },
+    "deit3-huge-patch14-224": {
+      "status": "Available",
+      "architecture": "Vision Transformer (DeiT)",
+      "task": "Image Classification",
+      "note": "Data-efficient image transformer v3",
+      "accuracy": "~87.7% Top-1",
+      "rank": 8,
+      "size": "~2.5 GB",
+      "url": "https://huggingface.co/timm/deit3_huge_patch14_224.fb_in22k_ft_in1k",
+      "dataset": "ImageNet-1K (with ImageNet-22K pretraining)",
+      "name": "DeiT-III Huge"
     }
   }
 }
