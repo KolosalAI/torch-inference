@@ -217,6 +217,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/models/download/{name}", web::delete().to(crate::api::model_download::delete_model))
         .route("/models/cache/info", web::get().to(crate::api::model_download::get_cache_info))
         .route("/models/available", web::get().to(crate::api::model_download::list_available_models))
+        // SOTA model endpoints
+        .route("/models/sota", web::get().to(crate::api::model_download::list_sota_models))
+        .route("/models/sota/{model_id}", web::post().to(crate::api::model_download::download_sota_model))
         // System info endpoints
         .route("/system/info", web::get().to(crate::api::system::get_system_info))
         .route("/system/config", web::get().to(crate::api::system::get_config))
