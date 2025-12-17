@@ -30,11 +30,8 @@ __pycache__/
 venv/
 ENV/
 
-# Model files
-/models/**/*.bin
-/models/**/*.onnx
-/models/**/*.pt
-/models/**/*.pth
+# Model files - ignore all downloaded models
+/models/*
 !/models/.gitkeep
 
 # Output files
