@@ -195,34 +195,6 @@ pub async fn list_available_models() -> Result<HttpResponse, ApiError> {
         
         // Audio/TTS Models
         serde_json::json!({
-            "name": "kokoro-82m",
-            "repo_id": "hexgrad/Kokoro-82M",
-            "task": "text-to-speech",
-            "source": "huggingface",
-            "description": "Kokoro-82M: Efficient TTS model with 82M parameters. State-of-the-art synthesis quality with multiple voices (Bella, Sarah, Emma, Adam, Michael). Based on StyleTTS2 + ISTFTNet.",
-            "size_estimate": "~330 MB (model + voices)",
-            "features": [
-                "Multiple voice options (5+ voices)",
-                "American and British accents",
-                "24kHz high-quality audio",
-                "Fast inference (82M params only)",
-                "ONNX format for deployment"
-            ],
-            "voices": [
-                {"name": "af_bella", "gender": "female", "accent": "american", "desc": "Warm, friendly voice"},
-                {"name": "af_sarah", "gender": "female", "accent": "american", "desc": "Professional voice"},
-                {"name": "bf_emma", "gender": "female", "accent": "british", "desc": "RP accent"},
-                {"name": "am_adam", "gender": "male", "accent": "american", "desc": "Clear voice"},
-                {"name": "am_michael", "gender": "male", "accent": "american", "desc": "Deep voice"}
-            ],
-            "sample_rate": 24000,
-            "license": "apache-2.0",
-            "homepage": "https://huggingface.co/hexgrad/Kokoro-82M",
-            "download_example": {
-                "curl": "curl -X POST http://localhost:8080/models/download -H 'Content-Type: application/json' -d '{\"model_name\": \"kokoro-82m\", \"source_type\": \"huggingface\", \"repo_id\": \"hexgrad/Kokoro-82M\"}'"
-            }
-        }),
-        serde_json::json!({
             "name": "whisper-base",
             "repo_id": "openai/whisper-base",
             "task": "automatic-speech-recognition",

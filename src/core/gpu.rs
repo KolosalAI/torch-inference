@@ -4,10 +4,18 @@ use anyhow::{Result, Context};
 use dashmap::DashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GpuBackend {
+    Cuda,
+    Metal,
+    Cpu,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuInfo {
     pub available: bool,
     pub count: usize,
     pub devices: Vec<GpuDevice>,
+    pub backend: GpuBackend,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,11 +54,141 @@ impl GpuManager {
         }
     }
 
+    /// Check if Metal is available (macOS only)
+    #[cfg(target_os = "macos")]
+    pub fn is_metal_available() -> bool {
+        use std::process::Command;
+        
+        // Check if we're on Apple Silicon or if Metal is available
+        if let Ok(output) = Command::new("sysctl")
+            .arg("-n")
+            .arg("machdep.cpu.brand_string")
+            .output()
+        {
+            if let Ok(cpu_info) = String::from_utf8(output.stdout) {
+                // Check for Apple Silicon (M1, M2, M3, etc.)
+                if cpu_info.contains("Apple") {
+                    return true;
+                }
+            }
+        }
+        
+        // Alternative: Check for Metal framework
+        std::path::Path::new("/System/Library/Frameworks/Metal.framework").exists()
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    pub fn is_metal_available() -> bool {
+        false
+    }
+
+    /// Get Metal GPU info
+    #[cfg(target_os = "macos")]
+    pub fn get_metal_info(&self) -> Result<GpuInfo> {
+        use std::process::Command;
+        
+        log::info!("Detecting Metal GPU...");
+        
+        // Get system info
+        let output = Command::new("system_profiler")
+            .arg("SPDisplaysDataType")
+            .output()
+            .context("Failed to run system_profiler")?;
+        
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        
+        // Parse GPU information
+        let mut devices = Vec::new();
+        let mut gpu_name = "Apple GPU".to_string();
+        let mut total_memory = 0u64;
+        
+        // Try to extract GPU name and memory
+        for line in output_str.lines() {
+            let line = line.trim();
+            if line.starts_with("Chipset Model:") {
+                if let Some(name) = line.split(':').nth(1) {
+                    gpu_name = name.trim().to_string();
+                }
+            } else if line.contains("VRAM") || line.contains("Memory") {
+                // Try to extract memory size (e.g., "8 GB")
+                if let Some(mem_part) = line.split(':').nth(1) {
+                    let mem_str = mem_part.trim();
+                    if let Some(size_str) = mem_str.split_whitespace().next() {
+                        if let Ok(size) = size_str.parse::<u64>() {
+                            total_memory = size * 1024 * 1024 * 1024; // Convert GB to bytes
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If we couldn't get specific memory, estimate based on system RAM
+        if total_memory == 0 {
+            // Unified memory on Apple Silicon - typically 2/3 of RAM can be used for GPU
+            if let Ok(output) = Command::new("sysctl")
+                .arg("-n")
+                .arg("hw.memsize")
+                .output()
+            {
+                if let Ok(mem_str) = String::from_utf8(output.stdout) {
+                    if let Ok(sys_mem) = mem_str.trim().parse::<u64>() {
+                        total_memory = (sys_mem * 2) / 3; // Estimate GPU can use 2/3 of system memory
+                    }
+                }
+            }
+        }
+        
+        devices.push(GpuDevice {
+            id: 0,
+            name: gpu_name,
+            total_memory,
+            free_memory: total_memory * 8 / 10, // Estimate 80% free
+            used_memory: total_memory * 2 / 10, // Estimate 20% used
+            temperature: None, // Metal doesn't expose temperature easily
+            utilization: None, // Would need IOKit for this
+            power_usage: None,
+            power_limit: None,
+        });
+        
+        Ok(GpuInfo {
+            available: true,
+            count: 1,
+            devices,
+            backend: GpuBackend::Metal,
+        })
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    pub fn get_metal_info(&self) -> Result<GpuInfo> {
+        Ok(GpuInfo {
+            available: false,
+            count: 0,
+            devices: Vec::new(),
+            backend: GpuBackend::Cpu,
+        })
+    }
+
     #[cfg(feature = "cuda")]
     pub fn get_info(&self) -> Result<GpuInfo> {
         use nvml_wrapper::Nvml;
 
-        let nvml = Nvml::init().context("Failed to initialize NVML")?;
+        // Try CUDA first
+        let nvml_result = Nvml::init();
+        if nvml_result.is_err() {
+            // CUDA not available, try Metal on macOS
+            #[cfg(target_os = "macos")]
+            {
+                if Self::is_metal_available() {
+                    log::info!("CUDA not available, falling back to Metal GPU");
+                    return self.get_metal_info();
+                }
+            }
+            
+            // Return the NVML error
+            return Err(nvml_result.unwrap_err().into());
+        }
+        
+        let nvml = nvml_result.unwrap();
         let device_count = nvml.device_count().context("Failed to get device count")?;
 
         let mut devices = Vec::new();
@@ -87,15 +225,28 @@ impl GpuManager {
             available: device_count > 0,
             count: device_count as usize,
             devices,
+            backend: GpuBackend::Cuda,
         })
     }
 
     #[cfg(not(feature = "cuda"))]
     pub fn get_info(&self) -> Result<GpuInfo> {
+        // On macOS, try Metal first
+        #[cfg(target_os = "macos")]
+        {
+            if Self::is_metal_available() {
+                log::info!("Detected Metal GPU, using Metal backend");
+                return self.get_metal_info();
+            }
+        }
+        
+        // Fall back to CPU
+        log::info!("No GPU detected, using CPU backend");
         Ok(GpuInfo {
             available: false,
             count: 0,
             devices: Vec::new(),
+            backend: GpuBackend::Cpu,
         })
     }
 

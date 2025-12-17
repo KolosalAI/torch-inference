@@ -42,5 +42,5 @@ pub fn setup_logging() {
         .try_init()
         .ok();
     
-    info!("🚀 Logging system initialized (level: {})", log_level);
+    info!("[START] Logging system initialized (level: {})", log_level);
 }

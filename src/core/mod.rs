@@ -5,11 +5,29 @@ pub mod audio;
 pub mod audio_models;
 pub mod image_security;
 
+// Python bridge for neural TTS (fallback)
+pub mod python_tts_bridge;
+
+// Native Rust TTS components
+pub mod phoneme_converter;
+pub mod g2p_misaki;
+pub mod styletts2_model;
+pub mod istftnet_vocoder;
+
 // Production TTS engines
 pub mod tts_engine;
 pub mod tts_manager;
+pub mod kokoro_tts;
+pub mod kokoro_onnx;
 pub mod piper_tts;
 pub mod windows_sapi_tts;
+pub mod vits_tts;
+pub mod styletts2;
+pub mod bark_tts;
+pub mod xtts;
+
+// Speech-to-Text (STT) engine
+pub mod whisper_stt;
 
 // Neural network and ML modules
 pub mod neural_network;

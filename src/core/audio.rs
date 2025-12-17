@@ -266,13 +266,13 @@ impl AudioProcessor {
         })
     }
 
-    /// Save audio as WAV
+    /// Save audio as WAV (16-bit PCM for maximum compatibility)
     pub fn save_wav(&self, audio: &AudioData) -> Result<Vec<u8>> {
         let spec = hound::WavSpec {
             channels: audio.channels,
             sample_rate: audio.sample_rate,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
         };
 
         let mut cursor = Cursor::new(Vec::new());
@@ -280,8 +280,10 @@ impl AudioProcessor {
             let mut writer = hound::WavWriter::new(&mut cursor, spec)
                 .context("Failed to create WAV writer")?;
             
+            // Convert f32 samples (-1.0 to 1.0) to i16 (-32768 to 32767)
             for &sample in &audio.samples {
-                writer.write_sample(sample)
+                let sample_i16 = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                writer.write_sample(sample_i16)
                     .context("Failed to write sample")?;
             }
 

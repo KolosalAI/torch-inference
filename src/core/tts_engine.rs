@@ -113,6 +113,8 @@ impl TTSEngineFactory {
     pub fn create(engine_type: &str, config: &serde_json::Value) -> Result<Arc<dyn TTSEngine>> {
         match engine_type {
             // Production engines only
+            "kokoro" => Ok(Arc::new(crate::core::kokoro_tts::KokoroEngine::new(config)?)),
+            "kokoro-onnx" => Ok(Arc::new(crate::core::kokoro_onnx::KokoroOnnxEngine::new(config)?)),
             "windows-sapi" | "sapi" => {
                 #[cfg(target_os = "windows")]
                 {
@@ -124,9 +126,13 @@ impl TTSEngineFactory {
                 }
             },
             "piper" => Ok(Arc::new(crate::core::piper_tts::PiperTTSEngine::new(config)?)),
+            "vits" => Ok(Arc::new(crate::core::vits_tts::VITSEngine::new(config)?)),
+            "styletts2" => Ok(Arc::new(crate::core::styletts2::StyleTTS2Engine::new(config)?)),
+            "bark" => Ok(Arc::new(crate::core::bark_tts::BarkEngine::new(config)?)),
+            "xtts" => Ok(Arc::new(crate::core::xtts::XTTSEngine::new(config)?)),
             "torch" => Ok(Arc::new(TorchTTSEngine::new(config)?)),
             _ => anyhow::bail!(
-                "Unknown engine type: '{}'. Available production engines: windows-sapi, piper, torch", 
+                "Unknown engine type: '{}'. Available production engines: kokoro, kokoro-onnx, windows-sapi, piper, vits, styletts2, bark, xtts, torch", 
                 engine_type
             ),
         }
@@ -134,7 +140,7 @@ impl TTSEngineFactory {
     
     /// List available production engine types
     pub fn available_engines() -> Vec<&'static str> {
-        vec!["windows-sapi", "piper", "torch"]
+        vec!["kokoro", "kokoro-onnx", "windows-sapi", "piper", "vits", "styletts2", "bark", "xtts", "torch"]
     }
 }
 

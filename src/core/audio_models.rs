@@ -5,12 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[cfg(feature = "onnx")]
-use onnxruntime::{
-    environment::Environment,
-    GraphOptimizationLevel, LoggingLevel,
-    session::Session,
-    tensor::OrtOwnedTensor,
-};
+use ort::session::Session;
 
 use super::audio::{AudioData, AudioProcessor};
 
@@ -99,18 +94,11 @@ impl TTSModel {
 
     #[cfg(feature = "onnx")]
     fn synthesize_with_onnx(&self, text: &str, params: &TTSParameters) -> Result<AudioData> {
-        use onnxruntime::ndarray::Array2;
+        use ndarray::Array2;
         
-        // Create ONNX environment and session for this inference
-        let environment = Environment::builder()
-            .with_name("tts")
-            .with_log_level(LoggingLevel::Warning)
-            .build()?;
-
-        let session = Session::builder(&environment)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .with_model_from_file(&self.config.model_path)?;
+        // Create ONNX session for this inference
+        let session = Session::builder()?
+            .commit_from_file(&self.config.model_path)?;
 
         // Tokenize text
         let tokens = self.tokenize_text(text)?;
@@ -176,7 +164,6 @@ impl TTSModel {
 
     fn tokenize_text(&self, text: &str) -> Result<Vec<i64>> {
         // Simple character-level tokenization
-        // In production, use proper phoneme-based tokenization
         Ok(text.chars()
             .filter(|c| c.is_alphanumeric() || c.is_whitespace())
             .map(|c| c as i64)
@@ -258,16 +245,9 @@ impl STTModel {
     fn transcribe_with_onnx(&self, audio: &AudioData, return_timestamps: bool) -> Result<TranscriptionResult> {
         use onnxruntime::ndarray::Array3;
         
-        // Create ONNX environment and session for this inference
-        let environment = Environment::builder()
-            .with_name("stt")
-            .with_log_level(LoggingLevel::Warning)
-            .build()?;
-
-        let session = Session::builder(&environment)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .with_model_from_file(&self.config.model_path)?;
+        // Create ONNX session for this inference
+        let session = Session::builder()?
+            .commit_from_file(&self.config.model_path)?;
 
         // Resample if needed
         let audio = if audio.sample_rate != self.config.sample_rate {

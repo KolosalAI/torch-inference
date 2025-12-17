@@ -92,7 +92,7 @@ impl WindowsSAPIEngine {
             return Err(anyhow::anyhow!("Generated WAV file is invalid or empty ({} bytes)", wav_data.len()));
         }
         
-        log::debug!("✅ SAPI generated {} bytes of audio", wav_data.len());
+        log::debug!("[OK] SAPI generated {} bytes of audio", wav_data.len());
         Ok(wav_data)
     }
 }
@@ -123,7 +123,7 @@ impl TTSEngine for WindowsSAPIEngine {
         let audio = self.audio_processor.load_audio(&wav_data)
             .context("Failed to load generated audio")?;
         
-        log::info!("✅ Generated REAL SPEECH: {:.2}s", 
+        log::info!("[OK] Generated REAL SPEECH: {:.2}s", 
             audio.samples.len() as f32 / audio.sample_rate as f32
         );
         

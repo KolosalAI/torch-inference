@@ -19,7 +19,7 @@ pub struct TTSManagerConfig {
 impl Default for TTSManagerConfig {
     fn default() -> Self {
         Self {
-            default_engine: "windows-sapi".to_string(), // Use Windows SAPI for REAL speech
+            default_engine: "kokoro-onnx".to_string(),
             cache_dir: PathBuf::from("./cache/tts"),
             max_concurrent_requests: 10,
         }
@@ -120,15 +120,37 @@ impl TTSManager {
     pub async fn initialize_defaults(&self) -> Result<()> {
         log::info!("Initializing production TTS engines...");
         
-        // Load Windows SAPI as primary engine (REAL SPEECH on Windows)
+        // Load Kokoro ONNX TTS as PRIMARY engine (high-quality neural TTS with parametric fallback)
+        log::info!("Loading Kokoro ONNX TTS engine...");
+        let kokoro_onnx_config = serde_json::json!({
+            "model_dir": "models/kokoro-onnx",
+            "sample_rate": 24000
+        });
+        match self.load_engine("kokoro-onnx".to_string(), "kokoro-onnx", kokoro_onnx_config).await {
+            Ok(_) => log::info!("[OK] Kokoro ONNX TTS engine loaded successfully"),
+            Err(e) => log::warn!("[WARN] Failed to load Kokoro ONNX engine: {}", e),
+        }
+        
+        // Load original Kokoro TTS as SECONDARY engine
+        log::info!("Loading Kokoro neural TTS engine...");
+        let kokoro_config = serde_json::json!({
+            "model_path": "models/kokoro-82m/kokoro-v1_0.pth",
+            "sample_rate": 24000
+        });
+        match self.load_engine("kokoro".to_string(), "kokoro", kokoro_config).await {
+            Ok(_) => log::info!("[OK] Kokoro TTS engine loaded successfully"),
+            Err(e) => log::warn!("[WARN] Failed to load Kokoro engine: {}", e),
+        }
+        
+        // Load Windows SAPI as secondary engine (REAL SPEECH on Windows)
         #[cfg(target_os = "windows")]
         {
             log::info!("Loading Windows SAPI engine (production-grade speech)...");
             let sapi_config = serde_json::json!({});
             
             match self.load_engine("windows-sapi".to_string(), "windows-sapi", sapi_config).await {
-                Ok(_) => log::info!("✅ Windows SAPI engine loaded successfully"),
-                Err(e) => log::warn!("⚠️  Failed to load Windows SAPI engine: {}", e),
+                Ok(_) => log::info!("[OK] Windows SAPI engine loaded successfully"),
+                Err(e) => log::warn!("[WARN]  Failed to load Windows SAPI engine: {}", e),
             }
         }
         
@@ -146,24 +168,72 @@ impl TTSManager {
                 });
                 
                 match self.load_engine("piper".to_string(), "piper", piper_config).await {
-                    Ok(_) => log::info!("✅ Piper neural TTS engine loaded successfully"),
-                    Err(e) => log::warn!("⚠️  Failed to load Piper engine: {}", e),
+                    Ok(_) => log::info!("[OK] Piper neural TTS engine loaded successfully"),
+                    Err(e) => log::warn!("[WARN]  Failed to load Piper engine: {}", e),
                 }
             } else {
-                log::info!("⚠️  Piper model not found. Skipping Piper TTS.");
+                log::info!("[WARN]  Piper model not found. Skipping Piper TTS.");
             }
         }
         
         #[cfg(not(feature = "onnx"))]
         {
-            log::info!("⚠️  ONNX feature not enabled. Piper TTS requires ONNX runtime (compile with --features onnx)");
+            log::info!("[WARN]  ONNX feature not enabled. Piper TTS requires ONNX runtime (compile with --features onnx)");
+        }
+        
+        // Load VITS TTS engine
+        log::info!("Loading VITS neural TTS engine...");
+        let vits_config = serde_json::json!({
+            "model_path": "models/vits/model.pth",
+            "config_path": "models/vits/config.json",
+            "sample_rate": 22050
+        });
+        match self.load_engine("vits".to_string(), "vits", vits_config).await {
+            Ok(_) => log::info!("[OK] VITS TTS engine loaded successfully"),
+            Err(e) => log::warn!("[WARN]  Failed to load VITS engine: {}", e),
+        }
+        
+        // Load StyleTTS2 expressive TTS engine
+        log::info!("Loading StyleTTS2 expressive TTS engine...");
+        let styletts2_config = serde_json::json!({
+            "model_path": "models/styletts2/model.pth",
+            "config_path": "models/styletts2/config.json",
+            "sample_rate": 24000
+        });
+        match self.load_engine("styletts2".to_string(), "styletts2", styletts2_config).await {
+            Ok(_) => log::info!("[OK] StyleTTS2 engine loaded successfully"),
+            Err(e) => log::warn!("[WARN]  Failed to load StyleTTS2 engine: {}", e),
+        }
+        
+        // Load Bark generative audio engine
+        log::info!("Loading Bark generative audio engine...");
+        let bark_config = serde_json::json!({
+            "model_path": "models/bark/",
+            "sample_rate": 24000,
+            "use_small_model": false
+        });
+        match self.load_engine("bark".to_string(), "bark", bark_config).await {
+            Ok(_) => log::info!("[OK] Bark engine loaded successfully"),
+            Err(e) => log::warn!("[WARN]  Failed to load Bark engine: {}", e),
+        }
+        
+        // Load XTTS multilingual TTS engine
+        log::info!("Loading XTTS multilingual TTS engine...");
+        let xtts_config = serde_json::json!({
+            "model_path": "models/xtts/model.pth",
+            "config_path": "models/xtts/config.json",
+            "sample_rate": 24000
+        });
+        match self.load_engine("xtts".to_string(), "xtts", xtts_config).await {
+            Ok(_) => log::info!("[OK] XTTS engine loaded successfully"),
+            Err(e) => log::warn!("[WARN]  Failed to load XTTS engine: {}", e),
         }
         
         let engine_count = self.engines.len();
         if engine_count == 0 {
-            log::warn!("⚠️  No TTS engines loaded. Install models to enable TTS functionality.");
+            log::warn!("[WARN]  No TTS engines loaded. Install models to enable TTS functionality.");
         } else {
-            log::info!("✅ {} production TTS engine(s) initialized", engine_count);
+            log::info!("[OK] {} production TTS engine(s) initialized", engine_count);
         }
         
         Ok(())
@@ -205,11 +275,12 @@ mod tests {
         let config = TTSManagerConfig::default();
         let manager = TTSManager::new(config);
         
+        // Test that loading an unknown engine fails gracefully
         let demo_config = serde_json::json!({ "sample_rate": 24000 });
-        manager.load_engine("test".to_string(), "demo", demo_config).await.unwrap();
+        let result = manager.load_engine("test".to_string(), "demo", demo_config).await;
         
-        assert_eq!(manager.list_engines().len(), 1);
-        assert!(manager.get_engine("test").is_some());
+        assert!(result.is_err());
+        assert_eq!(manager.list_engines().len(), 0);
     }
     
     #[tokio::test]
@@ -217,12 +288,10 @@ mod tests {
         let config = TTSManagerConfig::default();
         let manager = TTSManager::new(config);
         
-        manager.initialize_defaults().await.unwrap();
-        
         let params = SynthesisParams::default();
-        let audio = manager.synthesize("Hello, world!", Some("demo"), params).await.unwrap();
+        // Test that synthesis without an engine fails gracefully
+        let result = manager.synthesize("Hello, world!", Some("nonexistent"), params).await;
         
-        assert!(audio.samples.len() > 0);
-        assert_eq!(audio.sample_rate, 24000);
+        assert!(result.is_err());
     }
 }

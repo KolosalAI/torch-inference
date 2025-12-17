@@ -144,7 +144,7 @@ impl ModelManager {
             ))?;
         
         // Run inference with preprocessing/postprocessing
-        let result = self.pytorch_loader.infer(model, input, &metadata)
+        let result = self.pytorch_loader.infer(&model, input, &metadata)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
         
         // Mark as used

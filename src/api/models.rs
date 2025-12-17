@@ -34,38 +34,6 @@ impl ModelRegistry {
     pub fn new() -> Self {
         let mut models = HashMap::new();
         
-        // Kokoro v1.0
-        models.insert("kokoro-v1.0".to_string(), ModelInfo {
-            name: "Kokoro v1.0".to_string(),
-            score: 58.1,
-            rank: 7,
-            size: "312 MB".to_string(),
-            url: "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth".to_string(),
-            architecture: "StyleTTS2 + ISTFTNet".to_string(),
-            voices: "54".to_string(),
-            quality: "High".to_string(),
-            status: "Downloaded".to_string(),
-            note: None,
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // Kokoro v0.19
-        models.insert("kokoro-v0.19".to_string(), ModelInfo {
-            name: "Kokoro v0.19".to_string(),
-            score: 59.0,
-            rank: 6,
-            size: "312 MB".to_string(),
-            url: "https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/kokoro-v0_19.pth".to_string(),
-            architecture: "StyleTTS2 + ISTFTNet".to_string(),
-            voices: "10".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: None,
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
         // Fish Speech v1.5
         models.insert("fish-speech-1.5".to_string(), ModelInfo {
             name: "Fish Speech v1.5".to_string(),
@@ -109,7 +77,7 @@ impl ModelRegistry {
             voices: "Single".to_string(),
             quality: "Medium-High".to_string(),
             status: "Available".to_string(),
-            note: Some("Base model for Kokoro".to_string()),
+            note: Some("Expressive TTS with voice cloning".to_string()),
             model_type: "tts".to_string(),
             task: "text-to-speech".to_string(),
         });

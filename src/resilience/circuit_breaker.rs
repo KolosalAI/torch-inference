@@ -133,3 +133,140 @@ impl Default for CircuitBreakerConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_circuit_breaker_initial_state() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        assert_eq!(cb.get_state(), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_circuit_breaker_successful_call() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        let result = cb.call(|| Ok("success"));
+        
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success");
+        assert_eq!(cb.get_state(), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_circuit_breaker_failed_call() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        let result: Result<String, String> = cb.call(|| Err("error".to_string()));
+        
+        assert!(result.is_err());
+        assert_eq!(cb.get_state(), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_circuit_breaker_open_after_threshold() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        });
+        
+        for _ in 0..3 {
+            let _ = cb.call(|| Err::<(), String>("error".to_string()));
+        }
+        
+        assert_eq!(cb.get_state(), CircuitState::Open);
+    }
+
+    #[test]
+    fn test_circuit_breaker_reject_when_open() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        });
+        
+        // Trigger open state
+        for _ in 0..2 {
+            let _ = cb.call(|| Err::<(), String>("error".to_string()));
+        }
+        
+        // Next call should be rejected
+        let result = cb.call(|| Ok("should not run"));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Circuit breaker is open");
+    }
+
+    #[test]
+    fn test_circuit_breaker_half_open_transition() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_millis(100),
+        });
+        
+        // Trigger open state
+        for _ in 0..2 {
+            let _ = cb.call(|| Err::<(), String>("error".to_string()));
+        }
+        
+        assert_eq!(cb.get_state(), CircuitState::Open);
+        
+        // Wait for timeout
+        std::thread::sleep(Duration::from_millis(150));
+        
+        // Should transition to HalfOpen
+        let _ = cb.call(|| Ok("test"));
+        assert_ne!(cb.get_state(), CircuitState::Open);
+    }
+
+    #[test]
+    fn test_circuit_breaker_half_open_to_closed() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_millis(100),
+        });
+        
+        // Trigger open
+        for _ in 0..2 {
+            let _ = cb.call(|| Err::<(), String>("error".to_string()));
+        }
+        
+        // Wait and recover
+        std::thread::sleep(Duration::from_millis(150));
+        
+        // Successful calls to close
+        let _ = cb.call(|| Ok("success"));
+        let _ = cb.call(|| Ok("success"));
+        
+        assert_eq!(cb.get_state(), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_circuit_breaker_reset() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        });
+        
+        // Trigger open state
+        for _ in 0..2 {
+            let _ = cb.call(|| Err::<(), String>("error".to_string()));
+        }
+        
+        assert_eq!(cb.get_state(), CircuitState::Open);
+        
+        cb.reset();
+        assert_eq!(cb.get_state(), CircuitState::Closed);
+    }
+
+    #[test]
+    fn test_circuit_breaker_config_default() {
+        let config = CircuitBreakerConfig::default();
+        assert_eq!(config.failure_threshold, 5);
+        assert_eq!(config.success_threshold, 2);
+        assert_eq!(config.timeout, Duration::from_secs(60));
+    }
+}

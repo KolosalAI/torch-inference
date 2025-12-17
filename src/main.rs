@@ -35,34 +35,38 @@ async fn main() -> std::io::Result<()> {
     setup_logging();
     
     println!("\n{}", "═".repeat(80));
-    println!("  🚀 PyTorch Inference Framework v1.0.0");
+    println!("  [START] PyTorch Inference Framework v1.0.0");
     println!("{}\n", "═".repeat(80));
     
     let config = Config::load().expect("Failed to load configuration");
-    info!("✅ Configuration loaded successfully");
+    info!("[OK] Configuration loaded successfully");
     
     log_system_info();
     
     // Initialize PyTorch auto-detection (if torch feature enabled)
     #[cfg(feature = "torch")]
     {
-        info!("🔧 Initializing PyTorch environment...");
+        info!("[INIT] Initializing PyTorch environment...");
+        
+        // Initialize tch for thread safety
+        tch::maybe_init_cuda();
+        
         match crate::core::torch_autodetect::initialize_torch().await {
             Ok(torch_config) => {
-                info!("✅ PyTorch initialized successfully");
+                info!("[OK] PyTorch initialized successfully");
                 info!("   ├─ Backend: {:?}", torch_config.backend);
                 info!("   ├─ Path: {:?}", torch_config.libtorch_path);
                 info!("   └─ Version: {}", torch_config.version);
             }
             Err(e) => {
-                log::warn!("⚠️  PyTorch initialization failed: {}", e);
+                log::warn!("[WARN]  PyTorch initialization failed: {}", e);
                 log::warn!("   └─ ML inference features will be limited");
             }
         }
     }
     
     // Initialize components
-    info!("🔧 Initializing core components...");
+    info!("[INIT] Initializing core components...");
     let model_manager = Arc::new(ModelManager::new(&config));
     let inference_engine = Arc::new(InferenceEngine::new(model_manager.clone(), &config));
     let monitor = Arc::new(Monitor::new());
@@ -71,15 +75,28 @@ async fn main() -> std::io::Result<()> {
     let bulkhead = Arc::new(Bulkhead::new(BulkheadConfig::default()));
     let cache = Arc::new(Cache::new(5000));
     let deduplicator = Arc::new(RequestDeduplicator::new(5000));
-    info!("✅ Core components initialized");
+    info!("[OK] Core components initialized");
     
     // Initialize GPU manager
-    info!("🎮 Initializing GPU manager...");
+    info!("[GPU] Initializing GPU manager...");
     let gpu_manager = Arc::new(GpuManager::new());
-    if GpuManager::is_cuda_runtime_available() {
-        match gpu_manager.get_info() {
-            Ok(info) => {
-                info!("✅ GPU Manager initialized - {} GPU(s) detected", info.count);
+    
+    // Try to detect GPUs
+    match gpu_manager.get_info() {
+        Ok(info) => {
+            if info.available {
+                match info.backend {
+                    crate::core::gpu::GpuBackend::Cuda => {
+                        info!("[OK] GPU Manager initialized - {} CUDA GPU(s) detected", info.count);
+                    }
+                    crate::core::gpu::GpuBackend::Metal => {
+                        info!("[OK] GPU Manager initialized - Metal GPU detected (Apple Silicon)");
+                    }
+                    crate::core::gpu::GpuBackend::Cpu => {
+                        info!("[INFO]  GPU Manager initialized (No GPU detected, using CPU)");
+                    }
+                }
+                
                 for device in &info.devices {
                     info!("   └─ GPU {}: {} ({:.2} GB)", 
                         device.id, 
@@ -87,17 +104,18 @@ async fn main() -> std::io::Result<()> {
                         device.total_memory as f64 / 1024.0 / 1024.0 / 1024.0
                     );
                 }
-            }
-            Err(e) => {
-                log::warn!("⚠️  GPU Manager initialized but failed to get GPU info: {}", e);
+            } else {
+                info!("[INFO]  GPU Manager initialized (No GPU available, using CPU)");
             }
         }
-    } else {
-        info!("ℹ️  GPU Manager initialized (CUDA runtime not available, using CPU)");
+        Err(e) => {
+            log::warn!("[WARN]  GPU Manager initialized but failed to get GPU info: {}", e);
+            info!("[INFO]  Falling back to CPU mode");
+        }
     }
     
     // Initialize model download manager
-    info!("📦 Initializing model download manager...");
+    info!("[DOWNLOAD] Initializing model download manager...");
     let cache_dir = std::env::var("MODEL_CACHE_DIR")
         .unwrap_or_else(|_| "./models".to_string());
     let download_manager = Arc::new(
@@ -105,36 +123,36 @@ async fn main() -> std::io::Result<()> {
             .expect("Failed to create model download manager")
     );
     download_manager.initialize().await.expect("Failed to initialize download manager");
-    info!("✅ Model download manager ready at: {}", cache_dir);
+    info!("[OK] Model download manager ready at: {}", cache_dir);
     
     // Initialize audio model manager (legacy)
-    info!("🎵 Initializing audio model manager...");
+    info!("[AUDIO] Initializing audio model manager...");
     let audio_model_dir = std::env::var("AUDIO_MODEL_DIR")
         .unwrap_or_else(|_| "./models/audio".to_string());
     let audio_model_manager = Arc::new(crate::core::audio_models::AudioModelManager::new(&audio_model_dir));
     audio_model_manager.initialize_default_models().await.ok();
-    info!("✅ Audio model manager ready at: {}", audio_model_dir);
+    info!("[OK] Audio model manager ready at: {}", audio_model_dir);
     
     // Initialize modern TTS manager
-    info!("🎙️  Initializing TTS engines...");
+    info!("[TTS]  Initializing TTS engines...");
     let tts_config = crate::core::tts_manager::TTSManagerConfig::default();
     let tts_manager = Arc::new(crate::core::tts_manager::TTSManager::new(tts_config));
     tts_manager.initialize_defaults().await.expect("Failed to initialize TTS manager");
     let tts_stats = tts_manager.get_stats();
-    info!("✅ TTS Manager ready - {} engine(s) loaded", tts_stats.total_engines);
+    info!("[OK] TTS Manager ready - {} engine(s) loaded", tts_stats.total_engines);
     for engine_id in &tts_stats.engine_ids {
         info!("   └─ {}", engine_id);
     }
     
     let start_time = std::time::Instant::now();
     
-    info!("🔥 Warming up inference engine...");
+    info!("[WARMUP] Warming up inference engine...");
     let config_cloned = config.clone();
     inference_engine.warmup(&config_cloned).await.expect("Warmup failed");
-    info!("✅ Inference engine ready");
+    info!("[OK] Inference engine ready");
     
     let addr = format!("{}:{}", config.server.host, config.server.port);
-    info!("🌐 Starting HTTP server on {}...", addr);
+    info!("[SERVER] Starting HTTP server on {}...", addr);
     
     let listener = std::net::TcpListener::bind(&addr)?;
     
@@ -168,12 +186,12 @@ async fn main() -> std::io::Result<()> {
     });
     
     println!("\n{}", "═".repeat(80));
-    println!("  ✅ Server Ready!");
-    println!("  🌐 Listening on: http://{}", addr);
-    println!("  📚 API Docs: http://{}/health", addr);
+    println!("  [OK] Server Ready!");
+    println!("  [SERVER] Listening on: http://{}", addr);
+    println!("  [DOCS] API Docs: http://{}/health", addr);
     println!("{}\n", "═".repeat(80));
     
-    info!("✅ Server started successfully - Workers: {}", config.server.workers);
+    info!("[OK] Server started successfully - Workers: {}", config.server.workers);
     
     HttpServer::new(move || {
         App::new()
@@ -206,23 +224,33 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn log_system_info() {
-    println!("\n  📊 System Information:");
+    println!("\n  [SYSTEM] System Information:");
     println!("  {}", "─".repeat(78));
     
     // CPU Information
     let cpu_count = num_cpus::get();
-    info!("💻 CPU: {} cores available", cpu_count);
+    info!("[CPU] CPU: {} cores available", cpu_count);
     
     // Memory Information
     if let Ok(sys_info) = sys_info::mem_info() {
         let total_gb = sys_info.total as f64 / 1024.0 / 1024.0;
         let avail_gb = sys_info.avail as f64 / 1024.0 / 1024.0;
-        info!("🧠 RAM: {:.2} GB total, {:.2} GB available", total_gb, avail_gb);
+        info!("[RAM] RAM: {:.2} GB total, {:.2} GB available", total_gb, avail_gb);
+    }
+    
+    // GPU Backend information
+    #[cfg(target_os = "macos")]
+    {
+        if GpuManager::is_metal_available() {
+            info!("[METAL] Metal: Available (Apple Silicon GPU)");
+        } else {
+            info!("[METAL] Metal: Not available");
+        }
     }
     
     // CUDA information
     if cfg!(feature = "cuda") {
-        info!("🎮 CUDA: Enabled");
+        info!("[GPU] CUDA: Enabled");
         if GpuManager::is_cuda_runtime_available() {
             if let Some(cuda_info) = GpuManager::get_cuda_info() {
                 info!("   └─ {}", cuda_info);
@@ -231,32 +259,40 @@ fn log_system_info() {
             log::warn!("   └─ CUDA runtime not detected");
         }
     } else {
-        info!("🎮 CUDA: Disabled (compile with --features cuda to enable)");
+        #[cfg(not(target_os = "macos"))]
+        info!("[GPU] CUDA: Disabled (compile with --features cuda to enable)");
+        
+        #[cfg(target_os = "macos")]
+        {
+            if !GpuManager::is_metal_available() {
+                info!("[GPU] GPU: Not available (Metal not detected)");
+            }
+        }
     }
     
     // ONNX support
     if cfg!(feature = "onnx") {
-        info!("🤖 ONNX: Enabled");
+        info!("[ONNX] ONNX: Enabled");
     } else {
-        info!("🤖 ONNX: Disabled");
+        info!("[ONNX] ONNX: Disabled");
     }
     
     // Audio processing
     #[cfg(feature = "audio")]
-    info!("🎵 Audio Processing: Enabled");
+    info!("[AUDIO] Audio Processing: Enabled");
     
     #[cfg(not(feature = "audio"))]
-    info!("🎵 Audio Processing: Disabled");
+    info!("[AUDIO] Audio Processing: Disabled");
     
     // Image security
     #[cfg(feature = "image-security")]
-    info!("🔒 Image Security: Enabled");
+    info!("[SECURITY] Image Security: Enabled");
     
     #[cfg(not(feature = "image-security"))]
-    info!("🔒 Image Security: Disabled");
+    info!("[SECURITY] Image Security: Disabled");
     
     // OS Information
-    info!("🖥️  OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+    info!("[OS]  OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
     
     println!("  {}\n", "─".repeat(78));
 }

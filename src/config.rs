@@ -117,3 +117,65 @@ impl Default for Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.server.port, 8000);
+        assert_eq!(config.server.host, "0.0.0.0");
+        assert_eq!(config.device.device_type, "auto");
+        assert_eq!(config.batch.batch_size, 1);
+        assert_eq!(config.batch.max_batch_size, 8);
+    }
+
+    #[test]
+    fn test_server_config_defaults() {
+        let config = Config::default();
+        assert_eq!(config.server.log_level, "info");
+        assert!(config.server.workers > 0);
+    }
+
+    #[test]
+    fn test_device_config_defaults() {
+        let config = Config::default();
+        assert_eq!(config.device.device_id, 0);
+        assert!(!config.device.use_fp16);
+        assert!(!config.device.use_tensorrt);
+        assert!(!config.device.use_torch_compile);
+    }
+
+    #[test]
+    fn test_batch_config_defaults() {
+        let config = Config::default();
+        assert!(config.batch.enable_dynamic_batching);
+    }
+
+    #[test]
+    fn test_performance_config_defaults() {
+        let config = Config::default();
+        assert_eq!(config.performance.warmup_iterations, 3);
+        assert!(config.performance.enable_caching);
+        assert!(!config.performance.enable_profiling);
+        assert_eq!(config.performance.cache_size_mb, 1024);
+    }
+
+    #[test]
+    fn test_auth_config_defaults() {
+        let config = Config::default();
+        assert!(config.auth.enabled);
+        assert_eq!(config.auth.jwt_algorithm, "HS256");
+        assert_eq!(config.auth.access_token_expire_minutes, 60);
+        assert_eq!(config.auth.refresh_token_expire_days, 7);
+    }
+
+    #[test]
+    fn test_models_config_defaults() {
+        let config = Config::default();
+        assert_eq!(config.models.max_loaded_models, 5);
+        assert_eq!(config.models.cache_dir, PathBuf::from("models"));
+    }
+}

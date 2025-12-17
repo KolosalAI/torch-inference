@@ -76,3 +76,77 @@ impl ResponseError for ApiError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_inference_error_model_not_found() {
+        let error = InferenceError::ModelNotFound("test_model".to_string());
+        assert_eq!(error.to_string(), "Model not found: test_model");
+    }
+
+    #[test]
+    fn test_inference_error_model_load_error() {
+        let error = InferenceError::ModelLoadError("load failed".to_string());
+        assert_eq!(error.to_string(), "Model load failed: load failed");
+    }
+
+    #[test]
+    fn test_inference_error_invalid_input() {
+        let error = InferenceError::InvalidInput("bad input".to_string());
+        assert_eq!(error.to_string(), "Invalid input: bad input");
+    }
+
+    #[test]
+    fn test_inference_error_timeout() {
+        let error = InferenceError::Timeout;
+        assert_eq!(error.to_string(), "Timeout");
+    }
+
+    #[test]
+    fn test_api_error_bad_request() {
+        let error = ApiError::BadRequest("invalid data".to_string());
+        assert_eq!(error.status_code(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_api_error_not_found() {
+        let error = ApiError::NotFound("resource not found".to_string());
+        assert_eq!(error.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_api_error_unauthorized() {
+        let error = ApiError::Unauthorized("not authorized".to_string());
+        assert_eq!(error.status_code(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_api_error_forbidden() {
+        let error = ApiError::Forbidden("access denied".to_string());
+        assert_eq!(error.status_code(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn test_api_error_internal() {
+        let error = ApiError::InternalError("server error".to_string());
+        assert_eq!(error.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_inference_error_from_io_error() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let error: InferenceError = io_error.into();
+        assert!(matches!(error, InferenceError::IoError(_)));
+    }
+
+    #[test]
+    fn test_inference_error_from_serde_error() {
+        let json_str = "{invalid json}";
+        let serde_error = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
+        let error: InferenceError = serde_error.into();
+        assert!(matches!(error, InferenceError::SerializationError(_)));
+    }
+}

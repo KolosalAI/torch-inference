@@ -9,6 +9,7 @@ use std::fs;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TorchBackend {
     Cuda(String),  // CUDA version (e.g., "12.1")
+    Metal,         // Apple Metal (macOS)
     Cpu,
 }
 
@@ -22,6 +23,7 @@ pub struct TorchConfig {
 pub struct TorchLibAutoDetect {
     cuda_available: bool,
     cuda_version: Option<String>,
+    metal_available: bool,
     libtorch_dir: PathBuf,
 }
 
@@ -35,8 +37,49 @@ impl TorchLibAutoDetect {
         Self {
             cuda_available: false,
             cuda_version: None,
+            metal_available: false,
             libtorch_dir,
         }
+    }
+
+    /// Detect Metal availability (macOS only)
+    #[cfg(target_os = "macos")]
+    pub fn detect_metal(&mut self) -> Result<()> {
+        log::info!("Detecting Metal GPU...");
+        
+        // Check if we're on Apple Silicon
+        if let Ok(output) = std::process::Command::new("sysctl")
+            .arg("-n")
+            .arg("machdep.cpu.brand_string")
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(cpu_info) = String::from_utf8(output.stdout) {
+                    if cpu_info.contains("Apple") {
+                        log::info!("[OK] Apple Silicon detected - Metal available");
+                        self.metal_available = true;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        
+        // Check for Metal framework
+        if std::path::Path::new("/System/Library/Frameworks/Metal.framework").exists() {
+            log::info!("[OK] Metal framework detected");
+            self.metal_available = true;
+            return Ok(());
+        }
+        
+        log::info!("[ERROR] Metal not available");
+        self.metal_available = false;
+        Ok(())
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    pub fn detect_metal(&mut self) -> Result<()> {
+        self.metal_available = false;
+        Ok(())
     }
 
     /// Detect CUDA availability and version
@@ -50,7 +93,7 @@ impl TorchLibAutoDetect {
             let cuda_path = PathBuf::from(&cuda_path);
             if cuda_path.exists() {
                 if let Some(version) = self.extract_cuda_version_from_path(&cuda_path) {
-                    log::info!("✅ CUDA detected via CUDA_PATH: {}", version);
+                    log::info!("[OK] CUDA detected via CUDA_PATH: {}", version);
                     self.cuda_available = true;
                     self.cuda_version = Some(version);
                     return Ok(());
@@ -66,7 +109,7 @@ impl TorchLibAutoDetect {
                     let cuda_path = PathBuf::from(&cuda_path);
                     if cuda_path.exists() {
                         let version = format!("{}.{}", major, minor);
-                        log::info!("✅ CUDA detected via {}: {}", var_name, version);
+                        log::info!("[OK] CUDA detected via {}: {}", var_name, version);
                         self.cuda_available = true;
                         self.cuda_version = Some(version);
                         // Set CUDA_PATH for consistency
@@ -87,7 +130,7 @@ impl TorchLibAutoDetect {
                         let path = entry.path();
                         if path.is_dir() {
                             if let Some(version) = self.extract_cuda_version_from_path(&path) {
-                                log::info!("✅ CUDA detected at: {:?} ({})", path, version);
+                                log::info!("[OK] CUDA detected at: {:?} ({})", path, version);
                                 self.cuda_available = true;
                                 self.cuda_version = Some(version);
                                 env::set_var("CUDA_PATH", &path);
@@ -108,7 +151,7 @@ impl TorchLibAutoDetect {
                 .output()
             {
                 if output.status.success() {
-                    log::info!("✅ CUDA detected via nvidia-smi");
+                    log::info!("[OK] CUDA detected via nvidia-smi");
                     self.cuda_available = true;
                     self.cuda_version = Some("11.8".to_string()); // Default for compatibility
                     return Ok(());
@@ -116,7 +159,7 @@ impl TorchLibAutoDetect {
             }
         }
 
-        log::warn!("❌ CUDA not detected - will use CPU backend");
+        log::warn!("[ERROR] CUDA not detected - will use CPU backend");
         self.cuda_available = false;
         self.cuda_version = None;
         Ok(())
@@ -143,11 +186,11 @@ impl TorchLibAutoDetect {
             let path = PathBuf::from(&libtorch_path);
             if self.validate_libtorch_installation(&path) {
                 let backend = self.detect_backend(&path);
-                log::info!("✅ Found libtorch at: {:?} (backend: {:?})", path, backend);
+                log::info!("[OK] Found libtorch at: {:?} (backend: {:?})", path, backend);
                 return Some(TorchConfig {
                     backend,
                     libtorch_path: path,
-                    version: "2.2.0".to_string(), // Default version
+                    version: "2.3.0".to_string(), // Default version
                 });
             }
         }
@@ -155,15 +198,15 @@ impl TorchLibAutoDetect {
         // Check default installation directory
         if self.libtorch_dir.exists() && self.validate_libtorch_installation(&self.libtorch_dir) {
             let backend = self.detect_backend(&self.libtorch_dir);
-            log::info!("✅ Found libtorch at: {:?} (backend: {:?})", self.libtorch_dir, backend);
+            log::info!("[OK] Found libtorch at: {:?} (backend: {:?})", self.libtorch_dir, backend);
             return Some(TorchConfig {
                 backend,
                 libtorch_path: self.libtorch_dir.clone(),
-                version: "2.2.0".to_string(),
+                version: "2.3.0".to_string(),
             });
         }
 
-        log::info!("❌ No existing libtorch installation found");
+        log::info!("[ERROR] No existing libtorch installation found");
         None
     }
 
@@ -188,6 +231,14 @@ impl TorchLibAutoDetect {
     fn detect_backend(&self, path: &Path) -> TorchBackend {
         let lib_dir = path.join("lib");
 
+        // Check for Metal libraries (macOS)
+        #[cfg(target_os = "macos")]
+        {
+            if lib_dir.join("libtorch_mps.dylib").exists() || self.metal_available {
+                return TorchBackend::Metal;
+            }
+        }
+
         // Check for CUDA libraries
         #[cfg(target_os = "windows")]
         {
@@ -209,7 +260,7 @@ impl TorchLibAutoDetect {
     /// Get download URL for libtorch
     pub fn get_download_url(&self, backend: &TorchBackend) -> String {
         let base_url = "https://download.pytorch.org/libtorch";
-        let version = "2.2.0"; // Latest stable version
+        let version = "2.3.0"; // Latest stable version
 
         #[cfg(target_os = "windows")]
         {
@@ -225,6 +276,10 @@ impl TorchLibAutoDetect {
                     };
                     format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
                     // Note: CUDA builds require manual download from PyTorch website
+                }
+                TorchBackend::Metal => {
+                    // Metal is not available on Windows
+                    format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
                 }
                 TorchBackend::Cpu => {
                     format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
@@ -244,6 +299,11 @@ impl TorchLibAutoDetect {
                     format!("{}/{}/libtorch-cxx11-abi-shared-with-deps-{}.zip", 
                         base_url, cuda_suffix, version)
                 }
+                TorchBackend::Metal => {
+                    // Metal is not available on Linux
+                    format!("{}/cpu/libtorch-cxx11-abi-shared-with-deps-{}.zip", 
+                        base_url, version)
+                }
                 TorchBackend::Cpu => {
                     format!("{}/cpu/libtorch-cxx11-abi-shared-with-deps-{}.zip", 
                         base_url, version)
@@ -253,7 +313,27 @@ impl TorchLibAutoDetect {
 
         #[cfg(target_os = "macos")]
         {
-            format!("{}/cpu/libtorch-macos-{}.zip", base_url, version)
+            match backend {
+                TorchBackend::Metal => {
+                    // Use ARM64 build for Apple Silicon with Metal support
+                    if cfg!(target_arch = "aarch64") {
+                        format!("{}/cpu/libtorch-macos-arm64-{}.zip", base_url, version)
+                    } else {
+                        format!("{}/cpu/libtorch-macos-x86_64-{}.zip", base_url, version)
+                    }
+                }
+                TorchBackend::Cpu => {
+                    if cfg!(target_arch = "aarch64") {
+                        format!("{}/cpu/libtorch-macos-arm64-{}.zip", base_url, version)
+                    } else {
+                        format!("{}/cpu/libtorch-macos-x86_64-{}.zip", base_url, version)
+                    }
+                }
+                TorchBackend::Cuda(_) => {
+                    // CUDA not available on macOS, fall back to CPU/Metal
+                    format!("{}/cpu/libtorch-macos-arm64-{}.zip", base_url, version)
+                }
+            }
         }
     }
 
@@ -265,7 +345,7 @@ impl TorchLibAutoDetect {
             .unwrap_or(Path::new("."))
             .join(filename);
 
-        log::info!("📥 Downloading libtorch from: {}", url);
+        log::info!("[DOWNLOAD] Downloading libtorch from: {}", url);
         log::info!("   Destination: {:?}", download_path);
         log::info!("   Backend: {:?}", backend);
 
@@ -291,16 +371,16 @@ impl TorchLibAutoDetect {
         fs::write(&download_path, &bytes)
             .context("Failed to write downloaded file")?;
 
-        log::info!("✅ Downloaded successfully");
+        log::info!("[OK] Downloaded successfully");
 
         // Extract archive
-        log::info!("📦 Extracting archive...");
+        log::info!("[DOWNLOAD] Extracting archive...");
         self.extract_archive(&download_path)?;
 
         // Clean up downloaded file
         fs::remove_file(&download_path)?;
 
-        log::info!("✅ Libtorch installed successfully at: {:?}", self.libtorch_dir);
+        log::info!("[OK] Libtorch installed successfully at: {:?}", self.libtorch_dir);
 
         // Set environment variable
         env::set_var("LIBTORCH", &self.libtorch_dir);
@@ -353,21 +433,25 @@ impl TorchLibAutoDetect {
         log::info!("║   PyTorch Auto-Detection and Setup        ║");
         log::info!("╚════════════════════════════════════════════╝");
 
-        // Step 1: Detect CUDA
+        // Step 1: Detect GPU backends
         self.detect_cuda()?;
+        self.detect_metal()?;
 
         // Step 2: Check for existing installation
         if let Some(config) = self.check_existing_installation() {
-            log::info!("✅ Using existing PyTorch installation");
+            log::info!("[OK] Using existing PyTorch installation");
             return Ok(config);
         }
 
-        // Step 3: Determine backend
+        // Step 3: Determine backend (priority: CUDA > Metal > CPU)
         let backend = if self.cuda_available {
-            log::info!("🎮 CUDA available - will download CUDA-enabled PyTorch");
+            log::info!("[GPU] CUDA available - will download CUDA-enabled PyTorch");
             TorchBackend::Cuda(self.cuda_version.clone().unwrap_or("11.8".to_string()))
+        } else if self.metal_available {
+            log::info!("[METAL] Metal available - will download Metal-enabled PyTorch for Apple Silicon");
+            TorchBackend::Metal
         } else {
-            log::info!("💻 CUDA not available - will download CPU-only PyTorch");
+            log::info!("[CPU] No GPU acceleration detected - will download CPU-only PyTorch");
             TorchBackend::Cpu
         };
 
@@ -377,7 +461,7 @@ impl TorchLibAutoDetect {
         Ok(TorchConfig {
             backend,
             libtorch_path,
-            version: "2.2.0".to_string(),
+            version: "2.3.0".to_string(),
         })
     }
 

@@ -9,6 +9,9 @@ use tch::{nn, Tensor, Device, Kind, CModule};
 #[cfg(not(feature = "torch"))]
 type Device = ();
 
+#[cfg(feature = "torch")]
+use crate::models::pytorch_loader::get_best_device;
+
 /// Generic neural network for inference
 pub struct NeuralNetwork {
     #[cfg(feature = "torch")]
@@ -51,7 +54,7 @@ impl NeuralNetwork {
         device: Option<Device>,
         metadata: Option<NetworkMetadata>,
     ) -> Result<Self> {
-        let device = device.unwrap_or(Device::Cpu);
+        let device = device.unwrap_or_else(|| get_best_device());
         
         log::info!("Loading neural network model from {:?}", model_path);
         
@@ -146,7 +149,7 @@ impl NeuralNetwork {
         let start = std::time::Instant::now();
         
         // Create tensor from slice
-        let input = Tensor::of_slice(data)
+        let input = Tensor::from_slice(data)
             .reshape(shape)
             .to_device(self.device);
         

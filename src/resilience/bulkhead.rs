@@ -53,3 +53,88 @@ impl Default for BulkheadConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_bulkhead_new() {
+        let config = BulkheadConfig {
+            max_concurrent: 5,
+            queue_size: 10,
+        };
+        let bulkhead = Bulkhead::new(config);
+        
+        assert_eq!(bulkhead.available_permits(), 5);
+        assert_eq!(bulkhead.max_concurrent(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_bulkhead_acquire_permit() {
+        let config = BulkheadConfig {
+            max_concurrent: 2,
+            queue_size: 10,
+        };
+        let bulkhead = Bulkhead::new(config);
+        
+        let permit1 = bulkhead.acquire_permit().await;
+        assert!(permit1.is_ok());
+        assert_eq!(bulkhead.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_bulkhead_at_capacity() {
+        let config = BulkheadConfig {
+            max_concurrent: 2,
+            queue_size: 10,
+        };
+        let bulkhead = Bulkhead::new(config);
+        
+        let _permit1 = bulkhead.acquire_permit().await.unwrap();
+        let _permit2 = bulkhead.acquire_permit().await.unwrap();
+        
+        let result = bulkhead.acquire_permit().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Bulkhead at capacity");
+    }
+
+    #[tokio::test]
+    async fn test_bulkhead_permit_release() {
+        let config = BulkheadConfig {
+            max_concurrent: 2,
+            queue_size: 10,
+        };
+        let bulkhead = Bulkhead::new(config);
+        
+        {
+            let _permit1 = bulkhead.acquire_permit().await.unwrap();
+            let _permit2 = bulkhead.acquire_permit().await.unwrap();
+            assert_eq!(bulkhead.available_permits(), 0);
+        }
+        
+        // Permits should be released
+        assert_eq!(bulkhead.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_bulkhead_available_permits() {
+        let config = BulkheadConfig {
+            max_concurrent: 5,
+            queue_size: 10,
+        };
+        let bulkhead = Bulkhead::new(config);
+        
+        assert_eq!(bulkhead.available_permits(), 5);
+        
+        let _permit = bulkhead.acquire_permit().await.unwrap();
+        assert_eq!(bulkhead.available_permits(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_bulkhead_config_default() {
+        let config = BulkheadConfig::default();
+        assert_eq!(config.max_concurrent, 100);
+        assert_eq!(config.queue_size, 1000);
+    }
+}

@@ -202,3 +202,478 @@ impl Default for Monitor {
 }
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_monitor_new() {
+        let monitor = Monitor::new();
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 0);
+        assert_eq!(metrics.total_errors, 0);
+        assert_eq!(metrics.total_processed, 0);
+    }
+
+    #[test]
+    fn test_monitor_record_request() {
+        let monitor = Monitor::new();
+        monitor.record_request_start();
+        
+        let health = monitor.get_health_status();
+        assert_eq!(health.active_requests, 1);
+    }
+
+    #[test]
+    fn test_monitor_record_request_end_success() {
+        let monitor = Monitor::new();
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/test", true);
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_processed, 1);
+        assert_eq!(metrics.total_errors, 0);
+        assert_eq!(metrics.avg_latency_ms, 100.0);
+    }
+
+    #[test]
+    fn test_monitor_record_request_end_failure() {
+        let monitor = Monitor::new();
+        monitor.record_request_start();
+        monitor.record_request_end(50, "/api/test", false);
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_errors, 1);
+    }
+
+    #[test]
+    fn test_monitor_min_max_latency() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/test", true);
+        
+        monitor.record_request_start();
+        monitor.record_request_end(50, "/api/test", true);
+        
+        monitor.record_request_start();
+        monitor.record_request_end(200, "/api/test", true);
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.min_latency_ms, 50.0);
+        assert_eq!(metrics.max_latency_ms, 200.0);
+    }
+
+    #[test]
+    fn test_monitor_avg_latency() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/test", true);
+        
+        monitor.record_request_start();
+        monitor.record_request_end(200, "/api/test", true);
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.avg_latency_ms, 150.0);
+    }
+
+    #[test]
+    fn test_monitor_endpoint_stats() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/endpoint1", true);
+        
+        monitor.record_request_start();
+        monitor.record_request_end(200, "/api/endpoint2", true);
+        
+        let stats = monitor.get_endpoint_stats();
+        assert_eq!(stats.len(), 2);
+    }
+
+    #[test]
+    fn test_monitor_health_status() {
+        let monitor = Monitor::new();
+        let health = monitor.get_health_status();
+        
+        assert!(health.healthy);
+        assert_eq!(health.error_count, 0);
+        assert_eq!(health.active_requests, 0);
+    }
+
+    #[test]
+    fn test_monitor_reset() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/test", true);
+        
+        monitor.reset();
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 0);
+        assert_eq!(metrics.total_processed, 0);
+        assert_eq!(metrics.total_errors, 0);
+    }
+
+    #[test]
+    fn test_monitor_throughput() {
+        let monitor = Monitor::new();
+        
+        for _ in 0..10 {
+            monitor.record_request_start();
+            monitor.record_request_end(50, "/api/test", true);
+        }
+        
+        thread::sleep(std::time::Duration::from_secs(1));
+        
+        let metrics = monitor.get_metrics();
+        assert!(metrics.throughput_rps > 0.0);
+    }
+
+    #[test]
+    fn test_monitor_uptime() {
+        let monitor = Monitor::new();
+        thread::sleep(std::time::Duration::from_secs(1));
+        
+        let metrics = monitor.get_metrics();
+        assert!(metrics.uptime_seconds >= 1);
+    }
+
+    // ===== Enterprise-Grade Tests =====
+
+    #[test]
+    fn test_monitor_concurrent_recording() {
+        let monitor = Arc::new(Monitor::new());
+        let mut handles = vec![];
+
+        for thread_id in 0..10 {
+            let monitor_clone = Arc::clone(&monitor);
+            let handle = thread::spawn(move || {
+                for i in 0..100 {
+                    monitor_clone.record_request_start();
+                    thread::sleep(std::time::Duration::from_micros(100));
+                    let latency = (i % 100) as u64 + 50;
+                    monitor_clone.record_request_end(
+                        latency,
+                        &format!("/api/endpoint{}", thread_id % 5),
+                        i % 10 != 0, // 10% failure rate
+                    );
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 1000);
+        assert_eq!(metrics.total_processed, 1000);
+        assert!(metrics.total_errors > 0); // Should have some errors
+    }
+
+    #[test]
+    fn test_monitor_high_frequency_updates() {
+        let monitor = Monitor::new();
+        
+        let start = std::time::Instant::now();
+        for i in 0..10000 {
+            monitor.record_request_start();
+            monitor.record_request_end(i % 200, "/api/test", true);
+        }
+        let duration = start.elapsed();
+
+        // Should complete 10k updates in reasonable time
+        assert!(duration < std::time::Duration::from_secs(1));
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 10000);
+        assert_eq!(metrics.total_processed, 10000);
+    }
+
+    #[test]
+    fn test_monitor_latency_accuracy() {
+        let monitor = Monitor::new();
+        let test_latencies = vec![100, 200, 150, 50, 300];
+        let expected_avg = 160.0;
+        
+        for latency in &test_latencies {
+            monitor.record_request_start();
+            monitor.record_request_end(*latency, "/api/test", true);
+        }
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.avg_latency_ms, expected_avg);
+        assert_eq!(metrics.min_latency_ms, 50.0);
+        assert_eq!(metrics.max_latency_ms, 300.0);
+    }
+
+    #[test]
+    fn test_monitor_endpoint_aggregation() {
+        let monitor = Monitor::new();
+        
+        // Record multiple calls to same endpoint
+        for i in 0..10 {
+            monitor.record_request_start();
+            monitor.record_request_end(100 + i * 10, "/api/users", true);
+        }
+        
+        let stats = monitor.get_endpoint_stats();
+        let user_stats = stats.iter().find(|s| s.path == "/api/users").unwrap();
+        
+        assert_eq!(user_stats.calls, 10);
+        assert_eq!(user_stats.errors, 0);
+        assert!(user_stats.avg_latency_ms > 0.0);
+    }
+
+    #[test]
+    fn test_monitor_error_tracking() {
+        let monitor = Monitor::new();
+        
+        // Record mix of successes and failures
+        for i in 0..20 {
+            monitor.record_request_start();
+            monitor.record_request_end(100, "/api/test", i % 3 != 0);
+        }
+        
+        let metrics = monitor.get_metrics();
+        // Should have failures every 3rd request
+        assert!(metrics.total_errors > 0);
+        assert_eq!(metrics.total_processed, 20);
+    }
+
+    #[test]
+    fn test_monitor_health_threshold() {
+        let monitor = Monitor::new();
+        
+        // Record many errors
+        for _ in 0..150 {
+            monitor.record_request_start();
+            monitor.record_request_end(100, "/api/test", false);
+        }
+        
+        let health = monitor.get_health_status();
+        // Should be unhealthy after 100+ errors
+        assert!(!health.healthy);
+        assert_eq!(health.error_count, 150);
+    }
+
+    #[test]
+    fn test_monitor_active_requests_tracking() {
+        let monitor = Arc::new(Monitor::new());
+        
+        // Start multiple requests
+        for _ in 0..5 {
+            monitor.record_request_start();
+        }
+        
+        let health = monitor.get_health_status();
+        assert_eq!(health.active_requests, 5);
+        
+        // End some requests
+        for _ in 0..3 {
+            monitor.record_request_end(100, "/api/test", true);
+        }
+        
+        let health = monitor.get_health_status();
+        assert_eq!(health.active_requests, 2);
+    }
+
+    #[test]
+    fn test_monitor_reset_preserves_started_time() {
+        let monitor = Monitor::new();
+        let initial_metrics = monitor.get_metrics();
+        let initial_time = initial_metrics.started_at;
+        
+        thread::sleep(std::time::Duration::from_secs(1));
+        
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/test", true);
+        
+        monitor.reset();
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 0);
+        // Started_at should still be the initial time
+        assert_eq!(metrics.started_at, initial_time);
+    }
+
+    #[test]
+    fn test_monitor_multiple_endpoints() {
+        let monitor = Monitor::new();
+        let endpoints = vec![
+            "/api/users",
+            "/api/products",
+            "/api/orders",
+            "/api/analytics",
+            "/api/reports",
+        ];
+        
+        for endpoint in &endpoints {
+            for i in 0..5 {
+                monitor.record_request_start();
+                monitor.record_request_end(100 + i * 10, endpoint, true);
+            }
+        }
+        
+        let stats = monitor.get_endpoint_stats();
+        assert_eq!(stats.len(), 5);
+        
+        for endpoint in &endpoints {
+            let stat = stats.iter().find(|s| s.path == *endpoint);
+            assert!(stat.is_some());
+            assert_eq!(stat.unwrap().calls, 5);
+        }
+    }
+
+    #[test]
+    fn test_monitor_zero_latency() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(0, "/api/test", true);
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.min_latency_ms, 0.0);
+        assert_eq!(metrics.avg_latency_ms, 0.0);
+    }
+
+    #[test]
+    fn test_monitor_extreme_latency() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(u64::MAX / 2, "/api/slow", true);
+        
+        let metrics = monitor.get_metrics();
+        assert!(metrics.max_latency_ms > 1000000.0);
+    }
+
+    #[test]
+    fn test_monitor_throughput_calculation() {
+        let monitor = Monitor::new();
+        
+        // Record exactly 100 requests
+        for _ in 0..100 {
+            monitor.record_request_start();
+            monitor.record_request_end(50, "/api/test", true);
+        }
+        
+        thread::sleep(std::time::Duration::from_secs(1));
+        
+        let metrics = monitor.get_metrics();
+        // Throughput should be close to 100 requests over uptime
+        assert!(metrics.throughput_rps > 0.0);
+        assert_eq!(metrics.total_processed, 100);
+    }
+
+    #[test]
+    fn test_monitor_concurrent_endpoint_updates() {
+        let monitor = Arc::new(Monitor::new());
+        let mut handles = vec![];
+        
+        for i in 0..5 {
+            let monitor_clone = Arc::clone(&monitor);
+            let endpoint = format!("/api/endpoint{}", i);
+            let handle = thread::spawn(move || {
+                for _ in 0..100 {
+                    monitor_clone.record_request_start();
+                    monitor_clone.record_request_end(50, &endpoint, true);
+                }
+            });
+            handles.push(handle);
+        }
+        
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        
+        let stats = monitor.get_endpoint_stats();
+        assert_eq!(stats.len(), 5);
+        
+        for stat in stats {
+            assert_eq!(stat.calls, 100);
+            assert_eq!(stat.errors, 0);
+        }
+    }
+
+    #[test]
+    fn test_monitor_avg_latency_update() {
+        let monitor = Monitor::new();
+        
+        monitor.record_request_start();
+        monitor.record_request_end(100, "/api/test", true);
+        
+        let metrics1 = monitor.get_metrics();
+        assert_eq!(metrics1.avg_latency_ms, 100.0);
+        
+        monitor.record_request_start();
+        monitor.record_request_end(200, "/api/test", true);
+        
+        let metrics2 = monitor.get_metrics();
+        assert_eq!(metrics2.avg_latency_ms, 150.0);
+    }
+
+    #[test]
+    fn test_monitor_default_construction() {
+        let monitor1 = Monitor::default();
+        let monitor2 = Monitor::new();
+        
+        let metrics1 = monitor1.get_metrics();
+        let metrics2 = monitor2.get_metrics();
+        
+        assert_eq!(metrics1.total_requests, metrics2.total_requests);
+        assert_eq!(metrics1.total_errors, metrics2.total_errors);
+    }
+
+    #[test]
+    fn test_monitor_memory_efficiency() {
+        let monitor = Monitor::new();
+        
+        // Record many unique endpoints
+        for i in 0..1000 {
+            monitor.record_request_start();
+            monitor.record_request_end(50, &format!("/api/endpoint{}", i), true);
+        }
+        
+        let stats = monitor.get_endpoint_stats();
+        assert_eq!(stats.len(), 1000);
+    }
+
+    #[test]
+    fn test_monitor_stress_test() {
+        let monitor = Arc::new(Monitor::new());
+        let mut handles = vec![];
+        
+        // Spawn many threads doing many operations
+        for thread_id in 0..50 {
+            let monitor_clone = Arc::clone(&monitor);
+            let handle = thread::spawn(move || {
+                for i in 0..200 {
+                    monitor_clone.record_request_start();
+                    let latency = (i % 300) as u64;
+                    let success = i % 7 != 0;
+                    monitor_clone.record_request_end(
+                        latency,
+                        &format!("/api/endpoint{}", thread_id % 10),
+                        success,
+                    );
+                }
+            });
+            handles.push(handle);
+        }
+        
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 10000);
+        assert_eq!(metrics.total_processed, 10000);
+    }
+}

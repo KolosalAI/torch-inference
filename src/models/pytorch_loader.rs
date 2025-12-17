@@ -8,6 +8,26 @@ use tch::{nn, Tensor, Device, Kind, CModule};
 
 use crate::models::registry::{ModelMetadata, PreprocessingConfig, PostprocessingConfig};
 
+/// Get the best available device for PyTorch inference
+#[cfg(feature = "torch")]
+pub fn get_best_device() -> Device {
+    if tch::Cuda::is_available() {
+        info!("CUDA detected, using GPU acceleration");
+        Device::Cuda(0)
+    } else if tch::utils::has_mps() {
+        info!("MPS (Metal Performance Shaders) detected, using GPU acceleration");
+        Device::Mps
+    } else {
+        info!("Using CPU for inference");
+        Device::Cpu
+    }
+}
+
+#[cfg(not(feature = "torch"))]
+pub fn get_best_device() -> () {
+    ()
+}
+
 /// PyTorch model loader with preprocessing/postprocessing
 pub struct PyTorchModelLoader {
     device: String,
@@ -20,6 +40,9 @@ impl PyTorchModelLoader {
             {
                 if tch::Cuda::is_available() {
                     "cuda:0".to_string()
+                } else if tch::utils::has_mps() {
+                    info!("MPS (Metal Performance Shaders) detected, using GPU acceleration");
+                    "mps".to_string()
                 } else {
                     "cpu".to_string()
                 }
@@ -46,6 +69,9 @@ impl PyTorchModelLoader {
         // Determine device
         let device = if self.device.starts_with("cuda") && tch::Cuda::is_available() {
             Device::Cuda(0)
+        } else if self.device == "mps" && tch::utils::has_mps() {
+            info!("Loading model on MPS (Metal) device");
+            Device::Mps
         } else {
             Device::Cpu
         };
@@ -59,11 +85,13 @@ impl PyTorchModelLoader {
             Err(e) => {
                 warn!("Failed to load as TorchScript: {}, trying as tensor checkpoint", e);
                 
-                // Try loading as tensor checkpoint
-                match Tensor::load(path) {
+                // Try loading as tensor checkpoint (returns Vec<(String, Tensor)>)
+                match Tensor::load_multi(path) {
                     Ok(tensors) => {
                         info!("Successfully loaded tensor checkpoint");
-                        LoadedModel::Tensors(tensors)
+                        // Extract just the tensors, discarding names
+                        let tensor_vec: Vec<Tensor> = tensors.into_iter().map(|(_, t)| t).collect();
+                        LoadedModel::Tensors(tensor_vec)
                     }
                     Err(e2) => {
                         return Err(anyhow::anyhow!(
@@ -312,7 +340,7 @@ impl PyTorchModelLoader {
                         .collect();
                     
                     if !values.is_empty() {
-                        return Ok(Tensor::of_slice(&values));
+                        return Ok(Tensor::from_slice(&values));
                     }
                 }
                 
@@ -403,6 +431,12 @@ pub struct LoadedPyTorchModel {
     
     metadata: Option<ModelMetadata>,
 }
+
+// SAFETY: We ensure thread-safe access through Arc<RwLock<>> in ModelManager
+#[cfg(feature = "torch")]
+unsafe impl Send for LoadedPyTorchModel {}
+#[cfg(feature = "torch")]
+unsafe impl Sync for LoadedPyTorchModel {}
 
 #[cfg(feature = "torch")]
 enum LoadedModel {

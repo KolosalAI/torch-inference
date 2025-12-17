@@ -10,6 +10,9 @@ use tch::{Tensor, Device};
 use crate::core::neural_network::{NeuralNetwork, InferenceResult, NetworkMetadata};
 use crate::error::ApiError;
 
+#[cfg(feature = "torch")]
+use crate::models::pytorch_loader::get_best_device;
+
 pub struct NeuralNetworkState {
     pub networks: Arc<dashmap::DashMap<String, Arc<NeuralNetwork>>>,
 }
@@ -71,11 +74,13 @@ pub async fn load_model(
     let device = if let Some(dev_str) = &req.device {
         if dev_str.starts_with("cuda") {
             Device::Cuda(0)
+        } else if dev_str == "mps" {
+            Device::Mps
         } else {
             Device::Cpu
         }
     } else {
-        Device::Cpu
+        get_best_device()
     };
     
     // Load model

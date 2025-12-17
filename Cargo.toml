@@ -41,9 +41,10 @@ symphonia = { version = "0.5", features = ["all"] }
 onnxruntime = { version = "0.0.14", optional = true }
 ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs"] }
 ndarray = "0.15"
-tch = { version = "0.13", optional = true, features = [] }
+tch = { version = "0.16", optional = true, features = [] }  # Requires PyTorch 2.3.0+
 candle-core = { version = "0.3", optional = true }
 candle-nn = { version = "0.3", optional = true }
+pyo3 = { version = "0.20", features = ["auto-initialize"] }
 
 # Logging and monitoring
 log = "0.4"
@@ -90,23 +91,43 @@ indicatif = "0.17"
 
 # Validation
 validator = { version = "0.16", features = ["derive"] }
+regex = "1.10"
 
 # File operations
 walkdir = "2.4"
 tempfile = "3.8"
 bytes = "1.5"
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.4"
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+tokio-test = "0.4"
+mockall = "0.12"
+rstest = "0.18"
+test-case = "3.3"
+serial_test = "3.0"
+
 [features]
-default = ["cuda"]  # Enable CUDA by default if available
+default = []  # No default features to avoid build issues
 cuda = ["nvml-wrapper"]
 onnx = ["onnxruntime"]
 torch = ["tch"]
 candle = ["candle-core", "candle-nn"]
 all-backends = ["cuda", "onnx", "torch", "candle"]
 
+[lib]
+name = "torch_inference"
+path = "src/lib.rs"
+
 [[bin]]
 name = "torch-inference-server"
 path = "src/main.rs"
+
+[[bench]]
+name = "cache_bench"
+harness = false
 
 [profile.release]
 opt-level = 3

@@ -111,3 +111,105 @@ impl Default for RequestDeduplicator {
         Self::new(5000)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dedup_set_and_get() {
+        let dedup = RequestDeduplicator::new(100);
+        let key = "test_key".to_string();
+        let result = serde_json::json!({"output": "test_result"});
+        
+        assert!(dedup.set(key.clone(), result.clone(), 60).is_ok());
+        assert_eq!(dedup.get(&key), Some(result));
+    }
+
+    #[test]
+    fn test_dedup_miss() {
+        let dedup = RequestDeduplicator::new(100);
+        assert_eq!(dedup.get("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_dedup_expiration() {
+        let dedup = RequestDeduplicator::new(100);
+        let key = "expire_test".to_string();
+        let result = serde_json::json!({"output": "will_expire"});
+        
+        assert!(dedup.set(key.clone(), result.clone(), 0).is_ok());
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        
+        assert_eq!(dedup.get(&key), None);
+    }
+
+    #[test]
+    fn test_dedup_full() {
+        let dedup = RequestDeduplicator::new(2);
+        assert!(dedup.set("key1".to_string(), serde_json::json!("val1"), 60).is_ok());
+        assert!(dedup.set("key2".to_string(), serde_json::json!("val2"), 60).is_ok());
+        assert!(dedup.set("key3".to_string(), serde_json::json!("val3"), 60).is_err());
+    }
+
+    #[test]
+    fn test_dedup_invalidate() {
+        let dedup = RequestDeduplicator::new(100);
+        let key = "invalidate_test".to_string();
+        
+        dedup.set(key.clone(), serde_json::json!("value"), 60).unwrap();
+        assert!(dedup.get(&key).is_some());
+        
+        dedup.invalidate(&key);
+        assert!(dedup.get(&key).is_none());
+    }
+
+    #[test]
+    fn test_dedup_clear() {
+        let dedup = RequestDeduplicator::new(100);
+        dedup.set("key1".to_string(), serde_json::json!("val1"), 60).unwrap();
+        dedup.set("key2".to_string(), serde_json::json!("val2"), 60).unwrap();
+        
+        assert_eq!(dedup.size(), 2);
+        dedup.clear();
+        assert_eq!(dedup.size(), 0);
+    }
+
+    #[test]
+    fn test_dedup_cleanup_expired() {
+        let dedup = RequestDeduplicator::new(100);
+        dedup.set("key1".to_string(), serde_json::json!("val1"), 0).unwrap();
+        dedup.set("key2".to_string(), serde_json::json!("val2"), 60).unwrap();
+        
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        dedup.cleanup_expired();
+        
+        assert_eq!(dedup.size(), 1);
+        assert!(dedup.get("key2").is_some());
+    }
+
+    #[test]
+    fn test_dedup_generate_key() {
+        let dedup = RequestDeduplicator::new(100);
+        let model = "test_model";
+        let inputs = serde_json::json!({"data": "test"});
+        
+        let key1 = dedup.generate_key(model, &inputs);
+        let key2 = dedup.generate_key(model, &inputs);
+        
+        // Keys should be equal within 10 second window
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn test_dedup_size() {
+        let dedup = RequestDeduplicator::new(100);
+        assert_eq!(dedup.size(), 0);
+        
+        dedup.set("key1".to_string(), serde_json::json!("val1"), 60).unwrap();
+        assert_eq!(dedup.size(), 1);
+        
+        dedup.set("key2".to_string(), serde_json::json!("val2"), 60).unwrap();
+        assert_eq!(dedup.size(), 2);
+    }
+}

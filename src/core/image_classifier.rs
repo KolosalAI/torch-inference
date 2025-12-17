@@ -8,6 +8,9 @@ use tch::{nn, Tensor, Device, Kind, vision};
 #[cfg(not(feature = "torch"))]
 type Device = ();
 
+#[cfg(feature = "torch")]
+use crate::models::pytorch_loader::get_best_device;
+
 /// Image classification model wrapper
 pub struct ImageClassifier {
     #[cfg(feature = "torch")]
@@ -48,7 +51,7 @@ impl ImageClassifier {
         input_size: Option<(i64, i64)>,
         device: Option<Device>,
     ) -> Result<Self> {
-        let device = device.unwrap_or(Device::Cpu);
+        let device = device.unwrap_or_else(|| get_best_device());
         
         log::info!("Loading image classification model from {:?}", model_path);
         let model = tch::CModule::load_on_device(model_path, device)
@@ -101,7 +104,9 @@ impl ImageClassifier {
         for c in 0..3 {
             let mean = self.normalize_mean[c as usize];
             let std = self.normalize_std[c as usize];
-            tensor = tensor.select(0, c).sub_scalar_(mean).div_scalar_(std);
+            let mut channel = tensor.select(0, c);
+            channel -= mean;
+            channel /= std;
         }
         
         // Add batch dimension
