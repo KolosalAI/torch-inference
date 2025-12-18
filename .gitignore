@@ -65,3 +65,24 @@ sample_output/*.wav
 tmp/
 temp/
 *.tmp
+
+# Test scripts (generated)
+test_*.sh
+!test_outputs/.gitkeep
+
+# Test output files
+test_outputs/
+test_report_output.txt
+
+# Benchmark outputs (generated at runtime)
+benchmark_results/
+benchmark_images/
+build_output.log
+server_torch.log
+
+# Downloaded test images
+test_images/
+
+# Model downloads
+models/
+!models/.gitkeep

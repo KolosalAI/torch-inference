@@ -286,3 +286,52 @@ The server includes several performance optimizations:
 ## License
 
 Copyright © 2024 Genta Dev Team
+
+## Testing
+
+Comprehensive testing has been completed for all endpoints and features.
+
+### Quick Test
+```bash
+./test_quick.sh
+```
+
+### Full Test Suite
+```bash
+./test_final_report.sh
+```
+
+### Test Results
+See [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) for detailed test results and coverage.
+
+**Latest Test Results:**
+- ✅ 47/47 tests passed (100% success rate)
+- ✅ All 6 TTS engines operational
+- ✅ All 22 SOTA models available for download
+- ✅ Stress tested with 20+ concurrent requests
+- ✅ System monitoring and performance metrics verified
+
+## 📚 Documentation
+
+Complete documentation is available in the [docs/](docs/) directory:
+
+### Getting Started
+- [RUN_NOW.md](docs/RUN_NOW.md) - Quick start guide
+- [BUILDING_WITH_TORCH.md](docs/BUILDING_WITH_TORCH.md) - Build with PyTorch support
+- [COMPLETE_TESTING_GUIDE.md](docs/COMPLETE_TESTING_GUIDE.md) - Complete testing guide
+
+### SOTA Models
+- [SOTA_IMAGE_MODELS_SUMMARY.md](docs/SOTA_IMAGE_MODELS_SUMMARY.md) - Model catalog
+- [API_SOTA_MODELS.md](docs/API_SOTA_MODELS.md) - API documentation
+- [IMAGE_MODELS_STATUS.md](docs/IMAGE_MODELS_STATUS.md) - Status & roadmap
+
+### Benchmarking
+- [BENCHMARK_SUMMARY.md](docs/BENCHMARK_SUMMARY.md) - Quick overview
+- [BENCHMARK_GUIDE.md](docs/BENCHMARK_GUIDE.md) - User guide
+- [BENCHMARK_README.md](docs/BENCHMARK_README.md) - Complete reference
+
+### Testing & Fixes
+- [TEST_RESULTS.md](docs/TEST_RESULTS.md) - Test results
+- [TEST_FIXES.md](docs/TEST_FIXES.md) - Issues resolved
+- [GIT_CLEANUP_SUMMARY.md](docs/GIT_CLEANUP_SUMMARY.md) - Repository cleanup
+

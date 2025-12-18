@@ -350,3 +350,102 @@ The endpoints read from `model_registry.json` with the following structure:
 - [SOTA_MODELS.md](SOTA_MODELS.md) - Detailed model information and benchmarks
 - [model_registry.json](model_registry.json) - Complete model registry
 - [README.md](README.md) - General server documentation
+
+---
+
+## Complete Model Catalog
+
+### Top Tier Models (>88% Accuracy)
+
+#### 1. EVA-02 Large (90.054% Top-1) 🥇
+- **Best for:** Highest accuracy requirements
+- **Size:** 1.2 GB (efficient for SOTA)
+- **Recommended:** Production use with high accuracy needs
+
+#### 2. EVA Giant (89.792% Top-1) 🥈  
+- **Best for:** Research and benchmarking
+- **Size:** 4.0 GB (largest ViT)
+- **Note:** Requires significant compute resources
+
+#### 3. ConvNeXt V2 Huge (88.848% Top-1) 🥉
+- **Best for:** Pure CNN enthusiasts
+- **Size:** 2.6 GB
+- **Note:** Best performing ConvNet architecture
+
+### Efficient Models
+
+#### MobileNetV4 Hybrid Large (84.36% Top-1) ⚡
+- **Best for:** Mobile and edge deployment  
+- **Size:** 140 MB (Smallest!)
+- **Recommended:** Real-time inference, resource-constrained environments
+
+---
+
+## Testing the API
+
+### Step 1: Start the Server
+```bash
+./target/release/torch-inference-server
+```
+
+### Step 2: List Available SOTA Models
+```bash
+curl http://localhost:8000/models/sota | jq '.models[] | {id, name, accuracy, size}'
+```
+
+### Step 3: Download a Model (Example: MobileNetV4)
+```bash
+curl -X POST http://localhost:8000/models/sota/mobilenetv4-hybrid-large
+```
+
+**Response:**
+```json
+{
+  "task_id": "uuid-here",
+  "status": "started",
+  "message": "Download task created"
+}
+```
+
+### Step 4: Check Download Progress
+```bash
+curl http://localhost:8000/models/download/list
+```
+
+---
+
+## Model Comparison
+
+| Model | Top-1 Acc | Size | Type | Speed | Memory |
+|-------|-----------|------|------|-------|--------|
+| EVA-02 Large | 90.1% | 1.2GB | ViT | Medium | High |
+| MobileNetV4 | 84.4% | 140MB | Hybrid | Fast | Low |
+| EfficientNetV2 XL | 87.3% | 850MB | CNN | Fast | Medium |
+| ConvNeXt V2 Huge | 88.8% | 2.6GB | CNN | Medium | High |
+
+---
+
+## Important Notes
+
+⚠️ **Torch Feature Required**
+
+The current build does not include PyTorch support. To enable inference:
+
+```bash
+# Rebuild with torch feature
+cargo build --release --features torch
+
+# Ensure LibTorch is available
+export LIBTORCH=/path/to/libtorch
+```
+
+✅ **Currently Working:**
+- Model download API
+- Download progress tracking
+- Model registry queries
+
+❌ **Requires Rebuild:**
+- Actual inference
+- GPU acceleration
+- Model loading for prediction
+
