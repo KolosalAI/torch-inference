@@ -1,1 +1,0 @@
-# Framework scripts package
