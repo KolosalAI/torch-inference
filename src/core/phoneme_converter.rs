@@ -2,7 +2,6 @@
 /// Implements grapheme-to-phoneme conversion for Kokoro TTS
 use anyhow::{Result, Context};
 use std::collections::HashMap;
-use lazy_static::lazy_static;
 
 /// Simple English G2P rules (basic implementation)
 /// For production, this should use espeak-ng or a proper G2P library

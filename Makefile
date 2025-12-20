@@ -6,40 +6,43 @@
 # Default target
 .DEFAULT_GOAL := help
 
+# Use cargo directly (assumes cargo is in PATH)
+CARGO := cargo
+
 help: ## Show this help message
 	@echo "╔══════════════════════════════════════════════════════════╗"
 	@echo "║         Torch Inference - Available Commands            ║"
 	@echo "╚══════════════════════════════════════════════════════════╝"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 
 build: ## Build release binary (recommended)
 	@echo "Building release binary..."
-	cargo build --release --no-default-features
+	$(CARGO) build --release --no-default-features
 	@echo ""
 	@echo "✅ Build complete: ./target/release/torch-inference-server"
 
 run: ## Run server in release mode
 	@echo "Starting server (release mode)..."
-	cargo run --release --no-default-features
+	$(CARGO) run --release --no-default-features
 
 dev: ## Run server in dev mode (faster compile)
 	@echo "Starting server (dev mode)..."
-	cargo run --no-default-features
+	$(CARGO) run --no-default-features
 
 test: ## Run tests
 	@echo "Running tests..."
-	cargo test --no-default-features
+	$(CARGO) test --no-default-features
 
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
-	cargo clean
+	$(CARGO) clean
 	@echo "✅ Clean complete"
 
 install: ## Install binary to ~/.cargo/bin
 	@echo "Installing binary..."
-	cargo install --path . --no-default-features
+	$(CARGO) install --path . --no-default-features
 	@echo "✅ Installed to: ~/.cargo/bin/torch-inference-server"
 
 doctor: ## Check system requirements
@@ -70,34 +73,71 @@ build-torch: ## Build with PyTorch support (requires LibTorch)
 		echo "❌ LibTorch not found. Run: ./download_libtorch.sh"; \
 		exit 1; \
 	fi
-	LIBTORCH="$$(pwd)/libtorch" cargo build --release --features torch
+	LIBTORCH="$$(pwd)/libtorch" $(CARGO) build --release --features torch
 
 build-all: ## Build with all features
 	@echo "Building with all features..."
-	cargo build --release --features all-backends
+	$(CARGO) build --release --features all-backends
 
-# Testing variants
-test-all: ## Run all tests
+# Testing
+test-all: ## Run all tests including integration
 	@echo "Running all tests..."
-	cargo test --all-features
+	$(CARGO) test --all-features
 
-bench: ## Run benchmarks
+test-bench: ## Run benchmark unit tests
+	@echo "Running benchmark tests..."
+	$(CARGO) test --test benchmark_test
+	@echo "✅ Benchmark tests complete"
+
+test-bench-full: ## Full benchmark test suite
+	@echo "Running full benchmark test suite..."
+	@chmod +x test_benchmarks.sh
+	@./test_benchmarks.sh
+
+test-bench-quick: ## Quick benchmark validation
+	@echo "Quick benchmark validation..."
+	@$(CARGO) test --test benchmark_test
+	@$(CARGO) bench --bench cache_bench -- --test
+	@$(CARGO) bench --bench model_inference_bench -- --test
+	@echo "✅ All benchmark tests passed"
+
+# Benchmarks
+bench: ## Run all benchmarks
 	@echo "Running benchmarks..."
-	cargo bench --no-default-features
+	$(CARGO) bench
+
+bench-cache: ## Run cache benchmarks only
+	@echo "Running cache benchmarks..."
+	$(CARGO) bench --bench cache_bench
+
+bench-models: ## Run model inference benchmarks
+	@echo "Running model inference benchmarks..."
+	$(CARGO) bench --bench model_inference_bench
+
+bench-torch: ## Run benchmarks with torch feature
+	@echo "Running benchmarks with torch support..."
+	$(CARGO) bench --bench model_inference_bench --features torch
+
+bench-report: ## View benchmark HTML report
+	@if [ -f "target/criterion/report/index.html" ]; then \
+		open target/criterion/report/index.html || xdg-open target/criterion/report/index.html; \
+	else \
+		echo "❌ No benchmark results found. Run 'make bench' first."; \
+	fi
 
 # Maintenance
 fmt: ## Format code
 	@echo "Formatting code..."
-	cargo fmt
+	$(CARGO) fmt
 	@echo "✅ Code formatted"
 
 clippy: ## Run clippy linter
 	@echo "Running clippy..."
-	cargo clippy --no-default-features -- -D warnings
+	$(CARGO) clippy --no-default-features -- -D warnings
 
 check: ## Check code without building
 	@echo "Checking code..."
-	cargo check --no-default-features
+	$(CARGO) check --no-default-features
 
 # Server management
 start: build ## Build and start server

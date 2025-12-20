@@ -8,6 +8,7 @@ use crate::core::engine::InferenceEngine;
 use crate::models::manager::ModelManager;
 use crate::monitor::Monitor;
 use crate::middleware::RateLimiter;
+use crate::dedup::RequestDeduplicator;
 
 pub async fn root() -> impl Responder {
     HttpResponse::Ok().json(json!({
@@ -47,6 +48,7 @@ pub async fn predict(
     engine: web::Data<std::sync::Arc<InferenceEngine>>,
     rate_limiter: web::Data<std::sync::Arc<RateLimiter>>,
     monitor: web::Data<std::sync::Arc<Monitor>>,
+    deduplicator: web::Data<std::sync::Arc<RequestDeduplicator>>,
     http_req: HttpRequest,
 ) -> impl Responder {
     let client_ip = http_req
@@ -61,6 +63,21 @@ pub async fn predict(
         return actix_web::error::ErrorTooManyRequests(e.message).error_response();
     }
 
+    // Check for duplicate request
+    let dedup_key = deduplicator.generate_key(&req.model_name, &req.inputs);
+    if let Some(cached_result) = deduplicator.get(&dedup_key) {
+        monitor.record_request_start(); // Record start to balance metrics
+        monitor.record_request_end(0, "/predict", true); // 0ms latency for cache hit
+        
+        return HttpResponse::Ok().json(InferenceResponse {
+            success: true,
+            result: Some(cached_result),
+            error: None,
+            processing_time: Some(0.0),
+            model_info: Some(serde_json::json!({"source": "deduplication_cache"})),
+        });
+    }
+
     monitor.record_request_start();
     let start = std::time::Instant::now();
 
@@ -68,6 +85,9 @@ pub async fn predict(
         Ok(result) => {
             let latency_ms = start.elapsed().as_millis() as u64;
             monitor.record_request_end(latency_ms, "/predict", true);
+            
+            // Cache result for deduplication (TTL 10s)
+            let _ = deduplicator.set(dedup_key, result.clone(), 10);
             
             HttpResponse::Ok().json(InferenceResponse {
                 success: true,

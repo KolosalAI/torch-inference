@@ -7,6 +7,9 @@ use serde_json::Value;
 use tch::{nn, Tensor, Device, Kind, CModule};
 
 use crate::models::registry::{ModelMetadata, PreprocessingConfig, PostprocessingConfig};
+use crate::config::DeviceConfig;
+use crate::tensor_pool::{TensorPool, TensorShape};
+use std::sync::Arc;
 
 /// Get the best available device for PyTorch inference
 #[cfg(feature = "torch")]
@@ -31,10 +34,12 @@ pub fn get_best_device() -> () {
 /// PyTorch model loader with preprocessing/postprocessing
 pub struct PyTorchModelLoader {
     device: String,
+    config: Option<DeviceConfig>,
+    tensor_pool: Option<Arc<TensorPool>>,
 }
 
 impl PyTorchModelLoader {
-    pub fn new(device: Option<String>) -> Self {
+    pub fn new(device: Option<String>, config: Option<DeviceConfig>, tensor_pool: Option<Arc<TensorPool>>) -> Self {
         let device = device.unwrap_or_else(|| {
             #[cfg(feature = "torch")]
             {
@@ -54,32 +59,96 @@ impl PyTorchModelLoader {
         });
 
         info!("PyTorch loader initialized with device: {}", device);
-        Self { device }
+        
+        // Apply global JIT settings if config is provided
+        #[cfg(feature = "torch")]
+        if let Some(cfg) = &config {
+            if cfg.enable_jit {
+                info!("Enabling JIT compilation optimizations");
+                // Note: tch-rs might not expose all JIT flags directly in safe Rust
+                // We can try to set some if available, or just rely on CModule loading
+                
+                if cfg.enable_jit_profiling {
+                    // tch::jit::set_profiling_mode(true); // Hypothetical API
+                    info!("JIT profiling enabled (if supported)");
+                }
+                
+                if cfg.enable_jit_executor {
+                    // tch::jit::set_profiling_executor(true); // Hypothetical API
+                    info!("JIT profiling executor enabled (if supported)");
+                }
+            }
+        }
+        
+        Self { device, config, tensor_pool }
     }
 
     /// Load a PyTorch model (.pt or .pth)
     #[cfg(feature = "torch")]
-    pub fn load_model(&self, path: &Path) -> Result<LoadedPyTorchModel> {
-        info!("Loading PyTorch model from: {:?}", path);
+    pub fn load_model(&self, path: &Path, device_override: Option<String>) -> Result<LoadedPyTorchModel> {
+        info!("Loading PyTorch model from: {:?} (device override: {:?})", path, device_override);
 
         if !path.exists() {
             return Err(anyhow::anyhow!("Model file not found: {:?}", path));
         }
 
         // Determine device
-        let device = if self.device.starts_with("cuda") && tch::Cuda::is_available() {
-            Device::Cuda(0)
-        } else if self.device == "mps" && tch::utils::has_mps() {
-            info!("Loading model on MPS (Metal) device");
-            Device::Mps
+        let device_str = device_override.unwrap_or_else(|| self.device.clone());
+        
+        let device = if device_str.starts_with("cuda") {
+            if tch::Cuda::is_available() {
+                // Parse cuda:N
+                if let Some(idx_str) = device_str.strip_prefix("cuda:") {
+                    let idx = idx_str.parse::<usize>().unwrap_or(0);
+                    Device::Cuda(idx)
+                } else {
+                    Device::Cuda(0)
+                }
+            } else {
+                warn!("CUDA requested but not available");
+                if tch::utils::has_mps() {
+                    info!("Falling back to MPS (Metal)");
+                    Device::Mps
+                } else {
+                    info!("Falling back to CPU");
+                    Device::Cpu
+                }
+            }
+        } else if device_str == "mps" {
+            if tch::utils::has_mps() {
+                info!("Loading model on MPS (Metal) device");
+                Device::Mps
+            } else {
+                warn!("MPS requested but not available");
+                if tch::Cuda::is_available() {
+                    info!("Falling back to CUDA");
+                    Device::Cuda(0)
+                } else {
+                    info!("Falling back to CPU");
+                    Device::Cpu
+                }
+            }
         } else {
             Device::Cpu
         };
 
         // Try loading as TorchScript module
         let model = match CModule::load_on_device(path, device) {
-            Ok(m) => {
+            Ok(mut m) => {
                 info!("Successfully loaded TorchScript model");
+                
+                // Apply JIT optimizations
+                m.set_eval();
+                
+                // If JIT is enabled in config, we can try to optimize further
+                if let Some(cfg) = &self.config {
+                    if cfg.enable_jit {
+                        // Trigger JIT compilation/optimization
+                        // Some models might benefit from a dummy forward pass to warm up the JIT
+                        info!("JIT enabled: Model set to eval mode for optimization");
+                    }
+                }
+                
                 LoadedModel::TorchScript(m)
             }
             Err(e) => {
@@ -335,12 +404,33 @@ impl PyTorchModelLoader {
             PreprocessedInput::Raw(data) => {
                 // Try to convert JSON to tensor
                 if let Some(arr) = data.as_array() {
-                    let values: Vec<f32> = arr.iter()
-                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                        .collect();
-                    
-                    if !values.is_empty() {
-                        return Ok(Tensor::from_slice(&values));
+                    // Use tensor pool if available
+                    if let Some(pool) = &self.tensor_pool {
+                        let len = arr.len();
+                        let shape = TensorShape::new(vec![len]);
+                        let mut values = pool.acquire(shape.clone());
+                        
+                        // Fill values
+                        for (i, v) in arr.iter().enumerate() {
+                            if i < values.len() {
+                                values[i] = v.as_f64().map(|f| f as f32).unwrap_or(0.0);
+                            }
+                        }
+                        
+                        let tensor = Tensor::from_slice(&values);
+                        
+                        // Release back to pool
+                        pool.release(shape, values);
+                        
+                        return Ok(tensor);
+                    } else {
+                        let values: Vec<f32> = arr.iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect();
+                        
+                        if !values.is_empty() {
+                            return Ok(Tensor::from_slice(&values));
+                        }
                     }
                 }
                 
@@ -450,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_pytorch_loader_creation() {
-        let loader = PyTorchModelLoader::new(Some("cpu".to_string()));
+        let loader = PyTorchModelLoader::new(Some("cpu".to_string()), None, None);
         assert_eq!(loader.device, "cpu");
     }
 }

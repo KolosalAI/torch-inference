@@ -86,3 +86,6 @@ test_images/
 # Model downloads
 models/
 !models/.gitkeep
+
+# Configuration files
+config.optimized.toml

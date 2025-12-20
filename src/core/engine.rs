@@ -7,11 +7,13 @@ use crate::config::Config;
 use crate::error::Result;
 use crate::models::manager::ModelManager;
 use crate::telemetry::metrics::MetricsCollector;
+use crate::security::sanitizer::Sanitizer;
 
 pub struct InferenceEngine {
     pub model_manager: Arc<ModelManager>,
     metrics: MetricsCollector,
     config: Config,
+    sanitizer: Sanitizer,
 }
 
 impl InferenceEngine {
@@ -20,6 +22,7 @@ impl InferenceEngine {
             model_manager,
             metrics: MetricsCollector::new(),
             config: config.clone(),
+            sanitizer: Sanitizer::new(config.sanitizer.clone()),
         }
     }
     
@@ -42,22 +45,42 @@ impl InferenceEngine {
     pub async fn infer(&self, model_name: &str, inputs: &serde_json::Value) -> Result<serde_json::Value> {
         let start = Instant::now();
         
-        let model = self.model_manager.get_model(model_name)?;
-        let result = model.forward(inputs).await?;
+        // Sanitize input
+        let sanitized_inputs = self.sanitizer.sanitize_input(inputs)
+            .map_err(|e| crate::error::InferenceError::InvalidInput(e))?;
+        
+        // Try registered model first
+        let result = if let Ok(_) = self.model_manager.get_model_metadata(model_name) {
+            self.model_manager.infer_registered(model_name, &sanitized_inputs).await?
+        } else {
+            // Fallback to legacy model
+            let model = self.model_manager.get_model(model_name)?;
+            model.forward(&sanitized_inputs).await?
+        };
+        
+        // Sanitize output
+        let sanitized_result = self.sanitizer.sanitize_output(&result);
         
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
         self.metrics.record_inference(model_name, elapsed);
         
-        Ok(result)
+        Ok(sanitized_result)
     }
     
     pub async fn tts_synthesize(&self, model_name: &str, text: &str) -> Result<String> {
         info!("TTS synthesis requested for model: {}", model_name);
         
+        // Sanitize text input
+        let sanitized_text = self.sanitizer.sanitize_input(&json!(text))
+            .map_err(|e| crate::error::InferenceError::InvalidInput(e))?
+            .as_str()
+            .ok_or_else(|| crate::error::InferenceError::InvalidInput("Sanitized text is not a string".to_string()))?
+            .to_string();
+        
         let _model = self.model_manager.get_model(model_name)?;
         
         // Placeholder: In real implementation, would call actual TTS model
-        let audio_data = format!("base64_audio_for_{}_words", text.split_whitespace().count());
+        let audio_data = format!("base64_audio_for_{}_words", sanitized_text.split_whitespace().count());
         
         self.metrics.record_request();
         

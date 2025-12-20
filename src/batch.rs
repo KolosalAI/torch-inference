@@ -1,8 +1,9 @@
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::Mutex;
 use log::{info, debug};
 use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 #[derive(Clone, Debug)]
 pub struct BatchRequest {
@@ -15,67 +16,149 @@ pub struct BatchRequest {
 
 pub struct BatchProcessor {
     max_batch_size: usize,
+    min_batch_size: usize,
     batch_timeout_ms: u64,
-    current_batch: Arc<RwLock<Vec<BatchRequest>>>,
+    adaptive_timeout_enabled: bool,
+    current_batch: Arc<Mutex<Vec<BatchRequest>>>,
+    processed_batches: AtomicU64,
+    total_latency_ms: AtomicU64,
+    queue_depth: AtomicUsize,
 }
 
 impl BatchProcessor {
     pub fn new(max_batch_size: usize, batch_timeout_ms: u64) -> Self {
         Self {
             max_batch_size,
+            min_batch_size: 1,
             batch_timeout_ms,
-            current_batch: Arc::new(RwLock::new(Vec::new())),
+            adaptive_timeout_enabled: true,
+            current_batch: Arc::new(Mutex::new(Vec::new())),
+            processed_batches: AtomicU64::new(0),
+            total_latency_ms: AtomicU64::new(0),
+            queue_depth: AtomicUsize::new(0),
         }
+    }
+    
+    pub fn with_adaptive_batching(mut self, enabled: bool) -> Self {
+        self.adaptive_timeout_enabled = enabled;
+        self
+    }
+    
+    pub fn with_min_batch_size(mut self, size: usize) -> Self {
+        self.min_batch_size = size;
+        self
     }
 
     pub async fn add_request(&self, request: BatchRequest) -> Result<bool, String> {
-        let mut batch = self.current_batch.write().await;
-        
-        if batch.len() >= self.max_batch_size {
-            return Err("Batch is full".to_string());
-        }
+        // Use block to release lock immediately
+        let len = {
+            let mut batch = self.current_batch.lock().map_err(|_| "Lock poisoned".to_string())?;
+            
+            if batch.len() >= self.max_batch_size {
+                return Err("Batch is full".to_string());
+            }
 
-        batch.push(request);
-        debug!("Request added to batch. Current size: {}", batch.len());
+            batch.push(request);
+            batch.len()
+        };
         
-        Ok(batch.len() >= self.max_batch_size)
+        self.queue_depth.store(len, Ordering::Relaxed);
+        debug!("Request added to batch. Current size: {}", len);
+        
+        Ok(len >= self.max_batch_size)
     }
 
     pub async fn should_process_batch(&self) -> bool {
-        let batch = self.current_batch.read().await;
+        let (len, oldest_age) = {
+            let batch = self.current_batch.lock().unwrap();
+            if batch.is_empty() {
+                return false;
+            }
+            let age = batch.first().map(|r| r.timestamp.elapsed());
+            (batch.len(), age)
+        };
         
-        if batch.is_empty() {
+        // Process immediately if max size reached
+        if len >= self.max_batch_size {
+            return true;
+        }
+        
+        // Check min batch size
+        if len < self.min_batch_size {
             return false;
         }
 
-        if batch.len() >= self.max_batch_size {
-            return true;
-        }
-
-        if let Some(oldest) = batch.first() {
-            let age = oldest.timestamp.elapsed();
-            return age >= Duration::from_millis(self.batch_timeout_ms);
+        if let Some(age) = oldest_age {
+            let timeout = self.get_adaptive_timeout();
+            return age >= Duration::from_millis(timeout);
         }
 
         false
     }
+    
+    fn get_adaptive_timeout(&self) -> u64 {
+        if !self.adaptive_timeout_enabled {
+            return self.batch_timeout_ms;
+        }
+        
+        let queue_depth = self.queue_depth.load(Ordering::Relaxed);
+        
+        // Adaptive timeout based on queue depth
+        // More items waiting = shorter timeout
+        match queue_depth {
+            0..=2 => self.batch_timeout_ms,
+            3..=5 => self.batch_timeout_ms / 2,
+            6..=10 => self.batch_timeout_ms / 4,
+            _ => self.batch_timeout_ms / 8,
+        }
+    }
 
     pub async fn get_batch(&self) -> Vec<BatchRequest> {
-        let mut batch = self.current_batch.write().await;
+        let mut requests = {
+            let mut batch = self.current_batch.lock().unwrap();
+            // Pre-allocate with exact capacity to avoid reallocation
+            let capacity = batch.len();
+            let mut requests = Vec::with_capacity(capacity);
+            std::mem::swap(&mut requests, &mut batch);
+            requests
+        };
         
-        let mut requests = Vec::new();
-        std::mem::swap(&mut requests, &mut batch);
+        // Sort by priority (higher priority first) - uses unstable sort for better performance
+        requests.sort_unstable_by(|a, b| b.priority.cmp(&a.priority));
         
-        info!("Processing batch with {} requests", requests.len());
+        self.queue_depth.store(0, Ordering::Relaxed);
+        self.processed_batches.fetch_add(1, Ordering::Relaxed);
+        
+        info!("Processing batch with {} requests (sorted by priority)", requests.len());
         requests
+    }
+    
+    pub fn record_batch_latency(&self, latency_ms: u64) {
+        self.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
+    }
+    
+    pub fn get_stats(&self) -> BatchStats {
+        let batches = self.processed_batches.load(Ordering::Relaxed);
+        let total_latency = self.total_latency_ms.load(Ordering::Relaxed);
+        let avg_latency = if batches > 0 {
+            total_latency / batches
+        } else {
+            0
+        };
+        
+        BatchStats {
+            processed_batches: batches,
+            avg_latency_ms: avg_latency,
+            current_queue_depth: self.queue_depth.load(Ordering::Relaxed),
+        }
     }
 
     pub async fn get_batch_size(&self) -> usize {
-        self.current_batch.read().await.len()
+        self.current_batch.lock().unwrap().len()
     }
 
     pub async fn clear_batch(&self) {
-        let mut batch = self.current_batch.write().await;
+        let mut batch = self.current_batch.lock().unwrap();
         batch.clear();
         debug!("Batch cleared");
     }
@@ -97,6 +180,13 @@ impl Default for BatchProcessor {
     fn default() -> Self {
         Self::new(32, 100)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct BatchStats {
+    pub processed_batches: u64,
+    pub avg_latency_ms: u64,
+    pub current_queue_depth: usize,
 }
 
 #[cfg(test)]
@@ -286,7 +376,7 @@ mod tests {
     async fn test_batch_priority_handling() {
         let processor = BatchProcessor::new(100, 1000);
         
-        // Add requests with different priorities
+        // Add requests with different priorities (higher number = higher priority)
         for i in 0..10 {
             let request = BatchRequest {
                 id: format!("req_{}", i),
@@ -300,6 +390,12 @@ mod tests {
         
         let batch = processor.get_batch().await;
         assert_eq!(batch.len(), 10);
+        
+        // Verify requests are sorted by priority (highest first)
+        for i in 0..9 {
+            assert!(batch[i].priority >= batch[i + 1].priority,
+                   "Priority should be sorted in descending order");
+        }
         
         // Verify all requests are present
         for i in 0..10 {

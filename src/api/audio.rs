@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::core::audio::AudioProcessor;
 use crate::core::audio_models::{AudioModelManager, TTSParameters};
 use crate::error::ApiError;
+use crate::security::sanitizer::Sanitizer;
 
 #[derive(Debug, Deserialize)]
 pub struct SynthesizeRequest {
@@ -66,6 +67,7 @@ pub struct AudioHealthResponse {
 
 pub struct AudioState {
     pub model_manager: Arc<AudioModelManager>,
+    pub sanitizer: Sanitizer,
 }
 
 pub async fn synthesize_speech(
@@ -75,6 +77,13 @@ pub async fn synthesize_speech(
     if req.text.is_empty() {
         return Err(ApiError::BadRequest("Text cannot be empty".to_string()));
     }
+
+    // Sanitize text
+    let sanitized_text = state.sanitizer.sanitize_input(&serde_json::json!(req.text))
+        .map_err(|e| ApiError::BadRequest(format!("Invalid input: {}", e)))?
+        .as_str()
+        .ok_or_else(|| ApiError::BadRequest("Sanitized text is not a string".to_string()))?
+        .to_string();
 
     // Get model name (default to "default")
     let model_name = req.model.as_deref().unwrap_or("default");
@@ -91,7 +100,7 @@ pub async fn synthesize_speech(
     };
 
     // Synthesize audio
-    let audio = model.synthesize(&req.text, &params)
+    let audio = model.synthesize(&sanitized_text, &params)
         .map_err(|e| ApiError::InternalError(format!("TTS synthesis failed: {}", e)))?;
 
     // Convert to WAV

@@ -4,11 +4,14 @@ use log::{info, warn, error};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use rand;
 
 use crate::config::Config;
 use crate::error::{InferenceError, Result};
 use crate::models::registry::{ModelRegistry, ModelMetadata, ModelFormat};
 use crate::models::pytorch_loader::{PyTorchModelLoader, LoadedPyTorchModel};
+use crate::models::onnx_loader::{OnnxModelLoader, LoadedOnnxModel};
+use crate::tensor_pool::TensorPool;
 
 #[derive(Clone)]
 pub struct BaseModel {
@@ -53,21 +56,35 @@ pub struct ModelManager {
     models: DashMap<String, BaseModel>,
     registry: Arc<ModelRegistry>,
     pytorch_loader: Arc<PyTorchModelLoader>,
-    loaded_pytorch_models: Arc<RwLock<DashMap<String, LoadedPyTorchModel>>>,
+    loaded_pytorch_models: Arc<DashMap<String, Vec<LoadedPyTorchModel>>>,
+    onnx_loader: Arc<OnnxModelLoader>,
+    loaded_onnx_models: Arc<DashMap<String, Vec<LoadedOnnxModel>>>,
     config: Config,
+    tensor_pool: Option<Arc<TensorPool>>,
 }
 
 impl ModelManager {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, tensor_pool: Option<Arc<TensorPool>>) -> Self {
         let model_path = PathBuf::from(&config.models.cache_dir);
         let device_type = config.device.device_type.clone();
         
         Self {
             models: DashMap::new(),
             registry: Arc::new(ModelRegistry::new(model_path)),
-            pytorch_loader: Arc::new(PyTorchModelLoader::new(Some(device_type))),
-            loaded_pytorch_models: Arc::new(RwLock::new(DashMap::new())),
+            pytorch_loader: Arc::new(PyTorchModelLoader::new(
+                Some(device_type.clone()), 
+                Some(config.device.clone()),
+                tensor_pool.clone()
+            )),
+            loaded_pytorch_models: Arc::new(DashMap::new()),
+            onnx_loader: Arc::new(OnnxModelLoader::new(
+                config.device.use_tensorrt, 
+                config.device.device_id,
+                tensor_pool.clone()
+            )),
+            loaded_onnx_models: Arc::new(DashMap::new()),
             config: config.clone(),
+            tensor_pool,
         }
     }
     
@@ -104,13 +121,30 @@ impl ModelManager {
         }
         
         // Load model
-        let loaded_model = self.pytorch_loader.load_model(&metadata.path)
-            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        // Determine devices to load on
+        let devices = if let Some(ids) = &self.config.device.device_ids {
+            ids.clone()
+        } else {
+            vec![self.config.device.device_id]
+        };
+        
+        let mut loaded_models = Vec::new();
+        
+        for device_id in devices {
+            let device_str = if self.config.device.device_type == "cuda" || self.config.device.device_type == "auto" {
+                format!("cuda:{}", device_id)
+            } else {
+                self.config.device.device_type.clone()
+            };
+            
+            info!("Loading PyTorch model {} on device {}", model_id, device_str);
+            let loaded_model = self.pytorch_loader.load_model(&metadata.path, Some(device_str))
+                .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+            loaded_models.push(loaded_model);
+        }
         
         // Store in cache
-        let mut models = self.loaded_pytorch_models.write().await;
-        models.insert(model_id.to_string(), loaded_model);
-        drop(models);
+        self.loaded_pytorch_models.insert(model_id.to_string(), loaded_models);
         
         // Mark as loaded in registry
         self.registry.mark_loaded(model_id)
@@ -119,9 +153,52 @@ impl ModelManager {
         info!("PyTorch model loaded successfully: {}", model_id);
         Ok(())
     }
-    
+
+    /// Load an ONNX model
+    pub async fn load_onnx_model(&self, model_id: &str) -> Result<()> {
+        info!("Loading ONNX model: {}", model_id);
+        
+        // Get metadata from registry
+        let metadata = self.registry.get_model(model_id)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        
+        // Check format
+        if metadata.format != ModelFormat::ONNX {
+            return Err(InferenceError::ModelLoadError(
+                format!("Model {} is not an ONNX model", model_id)
+            ));
+        }
+        
+        // Determine devices to load on
+        let devices = if let Some(ids) = &self.config.device.device_ids {
+            ids.clone()
+        } else {
+            vec![self.config.device.device_id]
+        };
+        
+        let mut loaded_models = Vec::new();
+        
+        for device_id in devices {
+            info!("Loading model {} on device {}", model_id, device_id);
+            let loaded_model = self.onnx_loader.load_model(&metadata.path, Some(device_id))
+                .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+            loaded_models.push(loaded_model);
+        }
+        
+        // Store in cache
+        self.loaded_onnx_models.insert(model_id.to_string(), loaded_models);
+        
+        // Mark as loaded in registry
+        self.registry.mark_loaded(model_id)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        
+        info!("ONNX model loaded successfully: {}", model_id);
+        Ok(())
+    }
+
+    /// Load a PyTorch model (fallback when torch feature is disabled)
     #[cfg(not(feature = "torch"))]
-    pub async fn load_pytorch_model(&self, model_id: &str) -> Result<()> {
+    pub async fn load_pytorch_model(&self, _model_id: &str) -> Result<()> {
         Err(InferenceError::ModelLoadError(
             "PyTorch support not enabled. Compile with --features torch".to_string()
         ))
@@ -137,14 +214,55 @@ impl ModelManager {
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
         
         // Get loaded model
-        let models = self.loaded_pytorch_models.read().await;
-        let model = models.get(model_id)
+        let models = self.loaded_pytorch_models.get(model_id)
             .ok_or_else(|| InferenceError::ModelNotFound(
                 format!("Model {} not loaded", model_id)
             ))?;
+            
+        if models.is_empty() {
+             return Err(InferenceError::ModelLoadError("No model instances loaded".to_string()));
+        }
+        
+        // Select a replica
+        let idx = rand::random::<usize>() % models.len();
+        let model = &models[idx];
         
         // Run inference with preprocessing/postprocessing
-        let result = self.pytorch_loader.infer(&model, input, &metadata)
+        let result = self.pytorch_loader.infer(model, input, &metadata)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        
+        // Mark as used
+        self.registry.mark_used(model_id)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        
+        info!("Inference completed for model: {}", model_id);
+        Ok(result)
+    }
+
+    /// Run inference on an ONNX model
+    pub async fn infer_onnx(&self, model_id: &str, input: &serde_json::Value) -> Result<serde_json::Value> {
+        info!("Running inference on ONNX model: {}", model_id);
+        
+        // Get metadata
+        let metadata = self.registry.get_model(model_id)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        
+        // Get loaded models
+        let models = self.loaded_onnx_models.get(model_id)
+            .ok_or_else(|| InferenceError::ModelNotFound(
+                format!("Model {} not loaded", model_id)
+            ))?;
+            
+        if models.is_empty() {
+             return Err(InferenceError::ModelLoadError("No model instances loaded".to_string()));
+        }
+        
+        // Select a replica (simple random load balancing)
+        let idx = rand::random::<usize>() % models.len();
+        let model = &models[idx];
+        
+        // Run inference
+        let result = self.onnx_loader.infer(model, input, &metadata)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
         
         // Mark as used
@@ -162,6 +280,27 @@ impl ModelManager {
         ))
     }
     
+    /// Run inference on any registered model
+    pub async fn infer_registered(&self, model_id: &str, input: &serde_json::Value) -> Result<serde_json::Value> {
+        let metadata = self.registry.get_model(model_id)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+            
+        match metadata.format {
+            ModelFormat::PyTorch => {
+                #[cfg(feature = "torch")]
+                return self.infer_pytorch(model_id, input).await;
+                #[cfg(not(feature = "torch"))]
+                return Err(InferenceError::ModelLoadError("PyTorch support disabled".to_string()));
+            }
+            ModelFormat::ONNX => {
+                return self.infer_onnx(model_id, input).await;
+            }
+            _ => {
+                return Err(InferenceError::ModelLoadError(format!("Unsupported format: {:?}", metadata.format)));
+            }
+        }
+    }
+
     /// Get model metadata from registry
     pub fn get_model_metadata(&self, model_id: &str) -> Result<ModelMetadata> {
         self.registry.get_model(model_id)
@@ -267,8 +406,23 @@ impl ModelManager {
                 // Try PyTorch model from registry
                 #[cfg(feature = "torch")]
                 {
-                    if let Err(e) = self.load_pytorch_model(model_name).await {
-                        warn!("Failed to load PyTorch model {}: {}", model_name, e);
+                    if let Ok(metadata) = self.registry.get_model(model_name) {
+                        if metadata.format == ModelFormat::PyTorch {
+                            if let Err(e) = self.load_pytorch_model(model_name).await {
+                                warn!("Failed to load PyTorch model {}: {}", model_name, e);
+                            }
+                        }
+                    }
+                }
+
+                // Try ONNX model from registry
+                {
+                    if let Ok(metadata) = self.registry.get_model(model_name) {
+                        if metadata.format == ModelFormat::ONNX {
+                            if let Err(e) = self.load_onnx_model(model_name).await {
+                                warn!("Failed to load ONNX model {}: {}", model_name, e);
+                            }
+                        }
                     }
                 }
             }

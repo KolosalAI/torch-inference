@@ -11,11 +11,11 @@ actix-web = "4.8"
 actix-rt = "2.10"
 actix-files = "0.6"
 actix-multipart = "0.6"
-tokio = { version = "1.40", features = ["full"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "time", "sync", "fs", "io-util"] }
 tokio-stream = "0.1"
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 toml = "0.8"
 serde_yaml = "0.9"
@@ -39,7 +39,7 @@ symphonia = { version = "0.5", features = ["all"] }
 
 # ML and inference
 onnxruntime = { version = "0.0.14", optional = true }
-ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs"] }
+ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs", "coreml"] }
 ndarray = "0.15"
 tch = { version = "0.16", optional = true, features = [] }  # Requires PyTorch 2.3.0+
 candle-core = { version = "0.3", optional = true }
@@ -51,8 +51,15 @@ log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt", "ansi"] }
+tracing-appender = "0.2"
+tracing-opentelemetry = { version = "0.22", optional = true }
+opentelemetry = { version = "0.21", optional = true }
+opentelemetry-otlp = { version = "0.14", optional = true }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true }
 sys-info = "0.9"
+prometheus = { version = "0.13", optional = true }
+lazy_static = "1.4"
 
 # Security and auth
 jsonwebtoken = "9.3"
@@ -73,7 +80,6 @@ dotenv = "0.15"
 
 # Caching
 dashmap = "5.5"
-lazy_static = "1.4"
 lru = "0.12"
 
 # Compression
@@ -85,6 +91,7 @@ zip = "0.6"
 num_cpus = "1.16"
 sysinfo = "0.31"
 nvml-wrapper = { version = "0.9", optional = true }
+tikv-jemallocator = { version = "0.5", optional = true }
 
 # Progress tracking
 indicatif = "0.17"
@@ -108,13 +115,17 @@ mockall = "0.12"
 rstest = "0.18"
 test-case = "3.3"
 serial_test = "3.0"
+futures-util = "0.3"
 
 [features]
-default = []  # No default features to avoid build issues
+default = ["jemalloc"]  # Use jemalloc by default for better performance
 cuda = ["nvml-wrapper"]
 onnx = ["onnxruntime"]
 torch = ["tch"]
 candle = ["candle-core", "candle-nn"]
+telemetry = ["tracing-opentelemetry", "opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk"]
+metrics = ["prometheus"]
+jemalloc = ["tikv-jemallocator"]
 all-backends = ["cuda", "onnx", "torch", "candle"]
 
 [lib]
@@ -129,7 +140,26 @@ path = "src/main.rs"
 name = "cache_bench"
 harness = false
 
+[[bench]]
+name = "model_inference_bench"
+harness = false
+
+[[bench]]
+name = "model_inference_bench_optimized"
+harness = false
+
 [profile.release]
 opt-level = 3
-lto = true
+lto = "fat"
 codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+incremental = true
+codegen-units = 256
+
+[profile.test]
+opt-level = 1
+incremental = true

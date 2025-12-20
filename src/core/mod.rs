@@ -32,6 +32,7 @@ pub mod whisper_stt;
 // Neural network and ML modules
 pub mod neural_network;
 pub mod image_classifier;
+pub mod yolo;  // YOLO object detection (v5, v8, v10, v11, v12)
 
 // PyTorch auto-detection
 pub mod torch_autodetect;
