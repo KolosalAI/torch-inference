@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use log::debug;
 
 /// Tensor pool for reusing pre-allocated tensors
+#[allow(dead_code)]
 pub struct TensorPool {
     pools: DashMap<TensorShape, Vec<Vec<f32>>>,
     max_pooled_tensors: usize,

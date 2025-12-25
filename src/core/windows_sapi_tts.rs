@@ -9,6 +9,7 @@ use super::tts_engine::{TTSEngine, EngineCapabilities, VoiceInfo, VoiceGender, V
 use super::audio::{AudioData, AudioProcessor};
 
 /// Windows SAPI TTS Engine
+#[allow(dead_code)]
 pub struct WindowsSAPIEngine {
     capabilities: EngineCapabilities,
     audio_processor: AudioProcessor,

@@ -104,6 +104,8 @@ regex = "1.10"
 walkdir = "2.4"
 tempfile = "3.8"
 bytes = "1.5"
+rayon = "1.11.0"
+parking_lot = "0.12.5"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -116,6 +118,7 @@ rstest = "0.18"
 test-case = "3.3"
 serial_test = "3.0"
 futures-util = "0.3"
+lazy_static = "1.4"
 
 [features]
 default = ["jemalloc"]  # Use jemalloc by default for better performance
@@ -148,6 +151,27 @@ harness = false
 name = "model_inference_bench_optimized"
 harness = false
 
+[[bench]]
+name = "model_inference_bench_with_report"
+harness = false
+
+[[bench]]
+name = "batch_concurrent_bench"
+harness = false
+
+# Benchmark analysis binaries (temporarily disabled due to compilation errors)
+# [[bin]]
+# name = "analyze-benchmarks"
+# path = "benches/analyze_benchmarks.rs"
+# 
+# [[bin]]
+# name = "analyze-scaling"
+# path = "benches/analyze_scaling.rs"
+# 
+# [[bin]]
+# name = "generate-inference-table"
+# path = "benches/generate_inference_table.rs"
+
 [profile.release]
 opt-level = 3
 lto = "fat"
@@ -163,3 +187,23 @@ codegen-units = 256
 [profile.test]
 opt-level = 1
 incremental = true
+
+[[bench]]
+name = "image_classification_bench"
+harness = false
+
+[[bench]]
+name = "concurrent_throughput_bench"
+harness = false
+
+[[bench]]
+name = "optimized_concurrent_bench"
+harness = false
+
+[[bench]]
+name = "optimized_throughput_bench"
+harness = false
+
+[[bench]]
+name = "ultra_performance_bench"
+harness = false

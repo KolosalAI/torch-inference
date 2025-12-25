@@ -24,6 +24,7 @@ impl Default for WhisperConfig {
     }
 }
 
+#[allow(dead_code)]
 pub struct WhisperEngine {
     config: WhisperConfig,
     #[cfg(feature = "torch")]

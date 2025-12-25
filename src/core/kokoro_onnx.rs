@@ -14,6 +14,7 @@ pub struct KokoroOnnxConfig {
     pub sample_rate: u32,
 }
 
+#[allow(dead_code)]
 pub struct KokoroOnnxEngine {
     config: KokoroOnnxConfig,
     capabilities: EngineCapabilities,

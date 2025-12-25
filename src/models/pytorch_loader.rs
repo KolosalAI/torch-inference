@@ -32,6 +32,7 @@ pub fn get_best_device() -> () {
 }
 
 /// PyTorch model loader with preprocessing/postprocessing
+#[allow(dead_code)]
 pub struct PyTorchModelLoader {
     device: String,
     config: Option<DeviceConfig>,
@@ -508,6 +509,7 @@ impl ModelOutput {
 }
 
 /// Loaded PyTorch model
+#[allow(dead_code)]
 pub struct LoadedPyTorchModel {
     #[cfg(feature = "torch")]
     model: LoadedModel,

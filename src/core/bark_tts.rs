@@ -18,6 +18,7 @@ pub struct BarkConfig {
     pub use_small_model: bool,
 }
 
+#[allow(dead_code)]
 pub struct BarkEngine {
     config: BarkConfig,
     capabilities: EngineCapabilities,

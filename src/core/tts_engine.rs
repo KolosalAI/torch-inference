@@ -145,6 +145,7 @@ impl TTSEngineFactory {
 }
 
 /// PyTorch-based TTS Engine (placeholder for future ML-based TTS)
+#[allow(dead_code)]
 pub struct TorchTTSEngine {
     capabilities: EngineCapabilities,
 }

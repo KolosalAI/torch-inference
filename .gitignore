@@ -80,6 +80,10 @@ benchmark_images/
 build_output.log
 server_torch.log
 
+# Benchmark data - DO NOT IGNORE
+# benches/data/ contains CSV and JSON benchmark results
+# These files should be tracked in git for analysis
+
 # Downloaded test images
 test_images/
 

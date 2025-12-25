@@ -3,11 +3,13 @@ pub mod auth;
 pub mod batch;
 pub mod cache;
 pub mod compression;
+pub mod concurrency_limiter;
 pub mod config;
 pub mod core;
 pub mod dedup;
 pub mod error;
 pub mod guard;
+pub mod image_processor;
 pub mod inflight_batch;
 pub mod middleware;
 pub mod model_pool;
@@ -17,6 +19,7 @@ pub mod resilience;
 pub mod security;
 pub mod telemetry;
 pub mod tensor_pool;
+pub mod ultra_optimized_processor;
 pub mod worker_pool;
 
 #[cfg(feature = "torch")]

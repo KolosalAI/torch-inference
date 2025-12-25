@@ -21,6 +21,7 @@ pub struct PiperConfig {
 }
 
 /// Piper TTS Engine - High-quality neural TTS
+#[allow(dead_code)]
 pub struct PiperTTSEngine {
     config: PiperConfig,
     capabilities: EngineCapabilities,

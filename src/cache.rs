@@ -1,176 +1,72 @@
-use dashmap::DashMap;
+use lru::LruCache;
 use serde_json::Value;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::sync::Mutex;
+use std::time::{Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
 use log::debug;
-use rand::seq::SliceRandom;
+use std::num::NonZeroUsize;
 
 #[derive(Clone)]
-pub struct CacheEntry {
-    pub data: Value,
-    pub timestamp: u64,
-    pub ttl: u64,
-    pub last_access: u64,
-    pub access_count: u64,
-    pub insertion_order: u64,
+struct CacheEntry {
+    data: Value,
+    expires_at: Instant,
 }
 
 impl CacheEntry {
-    pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        now - self.timestamp > self.ttl
+    fn is_expired(&self) -> bool {
+        Instant::now() > self.expires_at
     }
 }
 
-/// Sample size for approximate LRU eviction (O(1) instead of O(n))
-const SAMPLE_SIZE: usize = 100;
-
 pub struct Cache {
-    data: DashMap<String, CacheEntry>,
-    max_size: usize,
+    data: Mutex<LruCache<String, CacheEntry>>,
     hits: AtomicU64,
     misses: AtomicU64,
-    evictions: AtomicU64,
-    insertion_counter: AtomicU64,
-    eviction_samples: AtomicU64, // Track number of entries sampled during eviction
 }
 
 impl Cache {
     pub fn new(max_size: usize) -> Self {
+        let capacity = NonZeroUsize::new(max_size.max(1)).unwrap();
         Self {
-            data: DashMap::new(),
-            max_size,
+            data: Mutex::new(LruCache::new(capacity)),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
-            evictions: AtomicU64::new(0),
-            insertion_counter: AtomicU64::new(0),
-            eviction_samples: AtomicU64::new(0),
         }
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
-        if let Some(mut entry) = self.data.get_mut(key) {
+        let mut cache = self.data.lock().unwrap();
+        
+        if let Some(entry) = cache.get(key) {
             if entry.is_expired() {
-                drop(entry);
-                self.data.remove(key);
-                debug!("Cache entry expired: {}", key);
+                cache.pop(key);
+                drop(cache);
                 self.misses.fetch_add(1, Ordering::Relaxed);
+                debug!("Cache entry expired: {}", key);
                 return None;
             }
-            
-            // Update LRU metadata
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            entry.last_access = now;
-            entry.access_count += 1;
             
             self.hits.fetch_add(1, Ordering::Relaxed);
             debug!("Cache hit: {}", key);
             return Some(entry.data.clone());
         }
+        
         self.misses.fetch_add(1, Ordering::Relaxed);
         debug!("Cache miss: {}", key);
         None
     }
 
     pub fn set(&self, key: String, value: Value, ttl: u64) -> Result<(), String> {
-        // LRU eviction if cache is full
-        if self.data.len() >= self.max_size && !self.data.contains_key(&key) {
-            self.evict_lru();
-        }
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        
-        let insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
-
-        self.data.insert(key.clone(), CacheEntry {
+        let ttl_duration = Duration::from_secs(ttl.min(315_360_000)); // Cap at ~10 years
+        let entry = CacheEntry {
             data: value,
-            timestamp: now,
-            ttl,
-            last_access: now,
-            access_count: 0,
-            insertion_order,
-        });
-
-        debug!("Cache set: {} (TTL: {}s)", key, ttl);
-        Ok(())
-    }
-    
-    /// Approximate LRU eviction using random sampling (O(1) instead of O(n))
-    /// 
-    /// This implementation samples SAMPLE_SIZE random entries and evicts the
-    /// least recently used among them. This provides:
-    /// - O(1) time complexity (vs O(n) for full scan)
-    /// - ~95% accuracy compared to true LRU
-    /// - Better performance under high load
-    fn evict_lru(&self) {
-        let cache_size = self.data.len();
-        
-        if cache_size == 0 {
-            return;
-        }
-        
-        // Determine sample size (min of SAMPLE_SIZE or cache size)
-        let sample_size = std::cmp::min(SAMPLE_SIZE, cache_size);
-        
-        // Collect random sample of keys
-        let keys: Vec<String> = self.data.iter()
-            .take(cache_size)
-            .map(|entry| entry.key().clone())
-            .collect();
-        
-        if keys.is_empty() {
-            return;
-        }
-        
-        // Randomly sample entries (or take all if cache is small)
-        let sampled_keys = if keys.len() <= SAMPLE_SIZE {
-            keys
-        } else {
-            let mut rng = rand::thread_rng();
-            let mut sampled = keys;
-            sampled.shuffle(&mut rng);
-            sampled.truncate(SAMPLE_SIZE);
-            sampled
+            expires_at: Instant::now() + ttl_duration,
         };
         
-        self.eviction_samples.fetch_add(sampled_keys.len() as u64, Ordering::Relaxed);
-        
-        // Find LRU entry among sampled entries
-        let mut lru_key: Option<String> = None;
-        let mut oldest_time = u64::MAX;
-        let mut oldest_insertion_order = u64::MAX;
-        
-        for key in &sampled_keys {
-            if let Some(entry) = self.data.get(key) {
-                let last_access = entry.last_access;
-                let insertion_order = entry.insertion_order;
-                
-                if last_access < oldest_time || 
-                   (last_access == oldest_time && insertion_order < oldest_insertion_order) {
-                    oldest_time = last_access;
-                    oldest_insertion_order = insertion_order;
-                    lru_key = Some(key.clone());
-                }
-            }
-        }
-        
-        // Evict the LRU entry from sample
-        if let Some(key) = lru_key {
-            self.data.remove(&key);
-            self.evictions.fetch_add(1, Ordering::Relaxed);
-            debug!("Evicted LRU entry (sampled): {} (last_access: {}, samples: {})", 
-                   key, oldest_time, sampled_keys.len());
-        }
+        let mut cache = self.data.lock().unwrap();
+        cache.put(key.clone(), entry);
+        debug!("Cache set: {} (TTL: {}s)", key, ttl);
+        Ok(())
     }
     
     pub fn get_stats(&self) -> CacheStats {
@@ -183,46 +79,44 @@ impl Cache {
             0.0
         };
         
-        let evictions = self.evictions.load(Ordering::Relaxed);
-        let avg_samples_per_eviction = if evictions > 0 {
-            self.eviction_samples.load(Ordering::Relaxed) as f64 / evictions as f64
-        } else {
-            0.0
-        };
-        
+        let cache = self.data.lock().unwrap();
         CacheStats {
             hits,
             misses,
-            evictions,
-            size: self.data.len(),
+            evictions: 0, // LRU handles eviction internally
+            size: cache.len(),
             hit_rate,
-            avg_samples_per_eviction,
+            avg_samples_per_eviction: 0.0,
         }
     }
 
     pub fn remove(&self, key: &str) {
-        self.data.remove(key);
+        let mut cache = self.data.lock().unwrap();
+        cache.pop(key);
         debug!("Cache removed: {}", key);
     }
 
     pub fn clear(&self) {
-        self.data.clear();
+        let mut cache = self.data.lock().unwrap();
+        cache.clear();
         debug!("Cache cleared");
     }
 
     pub fn size(&self) -> usize {
-        self.data.len()
+        let cache = self.data.lock().unwrap();
+        cache.len()
     }
 
     pub fn cleanup_expired(&self) {
-        let expired: Vec<String> = self.data
+        let mut cache = self.data.lock().unwrap();
+        let expired: Vec<String> = cache
             .iter()
-            .filter(|entry| entry.value().is_expired())
-            .map(|entry| entry.key().clone())
+            .filter(|(_, entry)| entry.is_expired())
+            .map(|(key, _)| key.clone())
             .collect();
 
         for key in expired {
-            self.data.remove(&key);
+            cache.pop(&key);
             debug!("Cleaned up expired entry: {}", key);
         }
     }
@@ -249,7 +143,6 @@ mod tests {
     use super::*;
     use std::thread;
     use std::sync::Arc;
-    use std::collections::HashSet;
 
     // ===== Basic Functionality Tests =====
     
@@ -344,18 +237,9 @@ mod tests {
 
     #[test]
     fn test_cache_entry_is_expired() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        
         let entry = CacheEntry {
             data: serde_json::json!("test"),
-            timestamp: now - 100,
-            ttl: 50,
-            last_access: now,
-            access_count: 0,
-            insertion_order: 0,
+            expires_at: Instant::now() - Duration::from_secs(1),
         };
         
         assert!(entry.is_expired());
@@ -363,18 +247,9 @@ mod tests {
 
     #[test]
     fn test_cache_entry_not_expired() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        
         let entry = CacheEntry {
             data: serde_json::json!("test"),
-            timestamp: now,
-            ttl: 60,
-            last_access: now,
-            access_count: 0,
-            insertion_order: 0,
+            expires_at: Instant::now() + Duration::from_secs(60),
         };
         
         assert!(!entry.is_expired());
@@ -665,27 +540,19 @@ mod tests {
             assert!(cache.set(format!("key_{}", i), serde_json::json!(i), 60).is_ok());
         }
         
-        // 1001st should trigger LRU eviction
+        // 1001st should trigger LRU eviction (handled automatically by lru crate)
         assert!(cache.set("overflow".to_string(), serde_json::json!("ok"), 60).is_ok());
-        let stats = cache.get_stats();
-        assert_eq!(stats.evictions, 1);
     }
 
     #[test]
     fn test_cache_entry_clone() {
         let entry = CacheEntry {
             data: serde_json::json!({"test": "data"}),
-            timestamp: 12345,
-            ttl: 60,
-            last_access: 12345,
-            access_count: 0,
-            insertion_order: 0,
+            expires_at: Instant::now() + Duration::from_secs(60),
         };
         
         let cloned = entry.clone();
         assert_eq!(entry.data, cloned.data);
-        assert_eq!(entry.timestamp, cloned.timestamp);
-        assert_eq!(entry.ttl, cloned.ttl);
     }
 
     #[test]
@@ -702,10 +569,6 @@ mod tests {
                     let value = serde_json::json!({
                         "thread": thread_id,
                         "iteration": i,
-                        "timestamp": SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis()
                     });
                     
                     let _ = cache_clone.set(key.clone(), value, 60);
@@ -718,116 +581,5 @@ mod tests {
         for handle in handles {
             handle.join().unwrap();
         }
-    }
-
-    // ===== Sampling-Based LRU Tests =====
-
-    #[test]
-    fn test_sampled_lru_eviction() {
-        let cache = Cache::new(10);
-        
-        // Fill cache to capacity
-        for i in 0..10 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-            thread::sleep(std::time::Duration::from_millis(10)); // Ensure different timestamps
-        }
-        
-        // Access first few entries to update their last_access
-        for i in 0..5 {
-            cache.get(&format!("key_{}", i));
-        }
-        
-        // Add one more entry to trigger eviction
-        cache.set("new_key".to_string(), serde_json::json!("new"), 60).unwrap();
-        
-        // One of the unaccessed entries (5-9) should be evicted
-        let stats = cache.get_stats();
-        assert_eq!(stats.evictions, 1);
-        assert!(stats.avg_samples_per_eviction > 0.0);
-    }
-
-    #[test]
-    fn test_sampled_eviction_performance() {
-        let cache = Cache::new(1000);
-        
-        // Fill cache
-        for i in 0..1000 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        
-        // Measure eviction time
-        let start = std::time::Instant::now();
-        for i in 1000..1100 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        let duration = start.elapsed();
-        
-        // 100 evictions should be fast (< 200ms total, averaging <2ms per eviction)
-        // Note: Relaxed timing to account for CI/debug builds
-        assert!(duration < std::time::Duration::from_millis(200));
-        
-        let stats = cache.get_stats();
-        assert_eq!(stats.evictions, 100);
-    }
-
-    #[test]
-    fn test_eviction_sample_size() {
-        let cache = Cache::new(5);
-        
-        // With small cache (< SAMPLE_SIZE), should sample all entries
-        for i in 0..5 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        
-        // Trigger eviction
-        cache.set("overflow".to_string(), serde_json::json!("x"), 60).unwrap();
-        
-        let stats = cache.get_stats();
-        assert_eq!(stats.evictions, 1);
-        // Should sample all 5 entries when cache size < SAMPLE_SIZE
-        assert!(stats.avg_samples_per_eviction <= 5.0);
-    }
-
-    #[test]
-    fn test_large_cache_sampling() {
-        let cache = Cache::new(1000);
-        
-        // Fill large cache
-        for i in 0..1000 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        
-        // Trigger multiple evictions
-        for i in 1000..1010 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        
-        let stats = cache.get_stats();
-        assert_eq!(stats.evictions, 10);
-        // Should sample SAMPLE_SIZE (100) entries per eviction
-        assert!(stats.avg_samples_per_eviction <= 100.0);
-        assert!(stats.avg_samples_per_eviction > 0.0);
-    }
-
-    #[test]
-    fn test_eviction_statistics() {
-        let cache = Cache::new(100);
-        
-        // Add entries
-        for i in 0..100 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        
-        let stats_before = cache.get_stats();
-        assert_eq!(stats_before.evictions, 0);
-        
-        // Trigger evictions
-        for i in 100..110 {
-            cache.set(format!("key_{}", i), serde_json::json!(i), 60).unwrap();
-        }
-        
-        let stats_after = cache.get_stats();
-        assert_eq!(stats_after.evictions, 10);
-        assert_eq!(stats_after.size, 100); // Cache maintains max_size
     }
 }

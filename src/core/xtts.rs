@@ -18,6 +18,7 @@ pub struct XTTSConfig {
     pub sample_rate: u32,
 }
 
+#[allow(dead_code)]
 pub struct XTTSEngine {
     config: XTTSConfig,
     capabilities: EngineCapabilities,

@@ -315,23 +315,28 @@ See [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) for detailed test results and c
 
 Complete documentation is available in the [docs/](docs/) directory:
 
-### Getting Started
-- [RUN_NOW.md](docs/RUN_NOW.md) - Quick start guide
-- [BUILDING_WITH_TORCH.md](docs/BUILDING_WITH_TORCH.md) - Build with PyTorch support
-- [COMPLETE_TESTING_GUIDE.md](docs/COMPLETE_TESTING_GUIDE.md) - Complete testing guide
+**📖 [Documentation Index](docs/README.md)** - Complete organized documentation
 
-### SOTA Models
-- [SOTA_IMAGE_MODELS_SUMMARY.md](docs/SOTA_IMAGE_MODELS_SUMMARY.md) - Model catalog
-- [API_SOTA_MODELS.md](docs/API_SOTA_MODELS.md) - API documentation
-- [IMAGE_MODELS_STATUS.md](docs/IMAGE_MODELS_STATUS.md) - Status & roadmap
+### Quick Links
 
-### Benchmarking
-- [BENCHMARK_SUMMARY.md](docs/BENCHMARK_SUMMARY.md) - Quick overview
-- [BENCHMARK_GUIDE.md](docs/BENCHMARK_GUIDE.md) - User guide
-- [BENCHMARK_README.md](docs/BENCHMARK_README.md) - Complete reference
+#### 🚀 Getting Started
+- [Quick Start Guide](docs/QUICK_START.md)
+- [Configuration Guide](docs/CONFIGURATION.md)
+- [API Reference](docs/API_REFERENCE.md)
 
-### Testing & Fixes
-- [TEST_RESULTS.md](docs/TEST_RESULTS.md) - Test results
-- [TEST_FIXES.md](docs/TEST_FIXES.md) - Issues resolved
-- [GIT_CLEANUP_SUMMARY.md](docs/GIT_CLEANUP_SUMMARY.md) - Repository cleanup
+#### 📊 Benchmarking
+- [Benchmark Quick Start](docs/benchmarks/BENCHMARK_QUICKSTART.md)
+- [Benchmark Results](docs/benchmarks/BENCHMARK_RESULTS.md)
+- [Benchmark Summary](docs/benchmarks/BENCHMARK_SUMMARY.md)
+
+#### 💻 Development
+- [Code Simplification Report](docs/development/CODE_SIMPLIFICATION_REPORT.md)
+- [Python to Rust Migration](docs/development/PYTHON_TO_RUST_MIGRATION.md)
+- [Architecture Guide](docs/ARCHITECTURE.md)
+
+#### 🧪 Testing
+- [Testing Guide](docs/TESTING.md)
+- [Test Results](docs/TEST_RESULTS.md) (if exists)
+
+For a complete list of all documentation, see [docs/README.md](docs/README.md)
 

@@ -16,9 +16,7 @@ pub struct BatchRequest {
 
 pub struct BatchProcessor {
     max_batch_size: usize,
-    min_batch_size: usize,
     batch_timeout_ms: u64,
-    adaptive_timeout_enabled: bool,
     current_batch: Arc<Mutex<Vec<BatchRequest>>>,
     processed_batches: AtomicU64,
     total_latency_ms: AtomicU64,
@@ -29,28 +27,15 @@ impl BatchProcessor {
     pub fn new(max_batch_size: usize, batch_timeout_ms: u64) -> Self {
         Self {
             max_batch_size,
-            min_batch_size: 1,
             batch_timeout_ms,
-            adaptive_timeout_enabled: true,
             current_batch: Arc::new(Mutex::new(Vec::new())),
             processed_batches: AtomicU64::new(0),
             total_latency_ms: AtomicU64::new(0),
             queue_depth: AtomicUsize::new(0),
         }
     }
-    
-    pub fn with_adaptive_batching(mut self, enabled: bool) -> Self {
-        self.adaptive_timeout_enabled = enabled;
-        self
-    }
-    
-    pub fn with_min_batch_size(mut self, size: usize) -> Self {
-        self.min_batch_size = size;
-        self
-    }
 
     pub async fn add_request(&self, request: BatchRequest) -> Result<bool, String> {
-        // Use block to release lock immediately
         let len = {
             let mut batch = self.current_batch.lock().map_err(|_| "Lock poisoned".to_string())?;
             
@@ -78,58 +63,31 @@ impl BatchProcessor {
             (batch.len(), age)
         };
         
-        // Process immediately if max size reached
         if len >= self.max_batch_size {
             return true;
         }
-        
-        // Check min batch size
-        if len < self.min_batch_size {
-            return false;
-        }
 
         if let Some(age) = oldest_age {
-            let timeout = self.get_adaptive_timeout();
-            return age >= Duration::from_millis(timeout);
+            return age >= Duration::from_millis(self.batch_timeout_ms);
         }
 
         false
-    }
-    
-    fn get_adaptive_timeout(&self) -> u64 {
-        if !self.adaptive_timeout_enabled {
-            return self.batch_timeout_ms;
-        }
-        
-        let queue_depth = self.queue_depth.load(Ordering::Relaxed);
-        
-        // Adaptive timeout based on queue depth
-        // More items waiting = shorter timeout
-        match queue_depth {
-            0..=2 => self.batch_timeout_ms,
-            3..=5 => self.batch_timeout_ms / 2,
-            6..=10 => self.batch_timeout_ms / 4,
-            _ => self.batch_timeout_ms / 8,
-        }
     }
 
     pub async fn get_batch(&self) -> Vec<BatchRequest> {
         let mut requests = {
             let mut batch = self.current_batch.lock().unwrap();
-            // Pre-allocate with exact capacity to avoid reallocation
-            let capacity = batch.len();
-            let mut requests = Vec::with_capacity(capacity);
+            let mut requests = Vec::with_capacity(batch.len());
             std::mem::swap(&mut requests, &mut batch);
             requests
         };
         
-        // Sort by priority (higher priority first) - uses unstable sort for better performance
         requests.sort_unstable_by(|a, b| b.priority.cmp(&a.priority));
         
         self.queue_depth.store(0, Ordering::Relaxed);
         self.processed_batches.fetch_add(1, Ordering::Relaxed);
         
-        info!("Processing batch with {} requests (sorted by priority)", requests.len());
+        info!("Processing batch with {} requests", requests.len());
         requests
     }
     
@@ -167,12 +125,9 @@ impl BatchProcessor {
     where
         F: std::future::Future<Output = Result<T, String>>,
     {
-        tokio::time::timeout(
-            Duration::from_secs(30),
-            processor,
-        )
-        .await
-        .map_err(|_| "Batch processing timeout".to_string())?
+        tokio::time::timeout(Duration::from_secs(30), processor)
+            .await
+            .map_err(|_| "Batch processing timeout".to_string())?
     }
 }
 

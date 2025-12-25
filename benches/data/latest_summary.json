@@ -1,0 +1,428 @@
+{
+  "benchmarks": {
+    "cache_cleanup": [
+      {
+        "mean_time_ms": 0.1222,
+        "median_ms": 0.1222,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 8185.58
+      },
+      {
+        "mean_time_ms": 0.1191,
+        "median_ms": 0.1191,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 8397.5
+      },
+      {
+        "mean_time_ms": 0.475,
+        "median_ms": 0.475,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 2105.26
+      },
+      {
+        "mean_time_ms": 0.7655,
+        "median_ms": 0.7655,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 1306.34
+      },
+      {
+        "mean_time_ms": 3.8216,
+        "median_ms": 3.8216,
+        "model": "",
+        "parameter": "size_5000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 261.67
+      },
+      {
+        "mean_time_ms": 2.2582,
+        "median_ms": 2.2582,
+        "model": "",
+        "parameter": "size_5000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 442.82
+      }
+    ],
+    "cache_get": [
+      {
+        "mean_time_ms": 0.0004,
+        "median_ms": 0.0004,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 2403846.15
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3690036.9
+      },
+      {
+        "mean_time_ms": 0.0002,
+        "median_ms": 0.0002,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 4571428.57
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 7380073.8
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 8533333.33
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 10376134.89
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 10377817.42
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3003003.0
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 4000000.0
+      },
+      {
+        "mean_time_ms": 0.0002,
+        "median_ms": 0.0002,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 4175365.34
+      },
+      {
+        "mean_time_ms": 0.0009,
+        "median_ms": 0.0009,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 1091703.06
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3690036.9
+      },
+      {
+        "mean_time_ms": 0.0002,
+        "median_ms": 0.0002,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 5050505.05
+      },
+      {
+        "mean_time_ms": 0.0002,
+        "median_ms": 0.0002,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 6617038.88
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 7383479.46
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 7837374.48
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 8486938.07
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 9035719.33
+      },
+      {
+        "mean_time_ms": 0.0001,
+        "median_ms": 0.0001,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 8752136.75
+      }
+    ],
+    "cache_set": [
+      {
+        "mean_time_ms": 0.0013,
+        "median_ms": 0.0013,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 750187.55
+      },
+      {
+        "mean_time_ms": 0.0011,
+        "median_ms": 0.0011,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 941176.47
+      },
+      {
+        "mean_time_ms": 0.0006,
+        "median_ms": 0.0006,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 1714530.65
+      },
+      {
+        "mean_time_ms": 0.0007,
+        "median_ms": 0.0007,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 1342732.46
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3459459.46
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3186616.21
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3572026.57
+      },
+      {
+        "mean_time_ms": 0.0016,
+        "median_ms": 0.0016,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 632098.77
+      },
+      {
+        "mean_time_ms": 0.0039,
+        "median_ms": 0.0039,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 258151.17
+      },
+      {
+        "mean_time_ms": 0.0046,
+        "median_ms": 0.0046,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 216853.5
+      },
+      {
+        "mean_time_ms": 0.0052,
+        "median_ms": 0.0052,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 194018.99
+      },
+      {
+        "mean_time_ms": 0.0055,
+        "median_ms": 0.0055,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 182454.62
+      },
+      {
+        "mean_time_ms": 0.0055,
+        "median_ms": 0.0055,
+        "model": "",
+        "parameter": "size_100",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 183106.46
+      },
+      {
+        "mean_time_ms": 0.0013,
+        "median_ms": 0.0013,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 773993.81
+      },
+      {
+        "mean_time_ms": 0.0009,
+        "median_ms": 0.0009,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 1090512.54
+      },
+      {
+        "mean_time_ms": 0.0005,
+        "median_ms": 0.0005,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 2042900.92
+      },
+      {
+        "mean_time_ms": 0.0004,
+        "median_ms": 0.0004,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 2629848.78
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3801378.0
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_1000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3710144.93
+      },
+      {
+        "mean_time_ms": 0.001,
+        "median_ms": 0.001,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 960614.79
+      },
+      {
+        "mean_time_ms": 0.0011,
+        "median_ms": 0.0011,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 872981.23
+      },
+      {
+        "mean_time_ms": 0.0007,
+        "median_ms": 0.0007,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 1454545.45
+      },
+      {
+        "mean_time_ms": 0.0004,
+        "median_ms": 0.0004,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 2526049.89
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3200000.0
+      },
+      {
+        "mean_time_ms": 0.0003,
+        "median_ms": 0.0003,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 3839692.82
+      },
+      {
+        "mean_time_ms": 0.0002,
+        "median_ms": 0.0002,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 4185468.58
+      },
+      {
+        "mean_time_ms": 0.0002,
+        "median_ms": 0.0002,
+        "model": "",
+        "parameter": "size_10000",
+        "std_dev_ms": 0.0,
+        "throughput_ops_per_sec": 4015686.27
+      }
+    ]
+  },
+  "timestamp": "2025-12-22T06:07:11.279816+00:00",
+  "total_benchmarks": 52
+}

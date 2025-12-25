@@ -18,6 +18,7 @@ pub struct VITSConfig {
     pub sample_rate: u32,
 }
 
+#[allow(dead_code)]
 pub struct VITSEngine {
     config: VITSConfig,
     capabilities: EngineCapabilities,

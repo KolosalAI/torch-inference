@@ -9,6 +9,7 @@ use crate::models::manager::ModelManager;
 use crate::telemetry::metrics::MetricsCollector;
 use crate::security::sanitizer::Sanitizer;
 
+#[allow(dead_code)]
 pub struct InferenceEngine {
     pub model_manager: Arc<ModelManager>,
     metrics: MetricsCollector,

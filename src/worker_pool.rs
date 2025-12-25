@@ -17,6 +17,7 @@ pub enum WorkerState {
 
 /// Worker statistics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WorkerStats {
     pub worker_id: usize,
     pub state: WorkerState,
@@ -28,6 +29,7 @@ pub struct WorkerStats {
 }
 
 /// Individual worker
+#[allow(dead_code)]
 pub struct Worker {
     pub id: usize,
     state: Arc<RwLock<WorkerState>>,
@@ -115,6 +117,7 @@ impl Default for WorkerPoolConfig {
 }
 
 /// Worker pool manager
+#[allow(dead_code)]
 pub struct WorkerPool {
     config: WorkerPoolConfig,
     workers: Arc<RwLock<Vec<Arc<Worker>>>>,
@@ -501,6 +504,7 @@ impl WorkerPool {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WorkerPoolStats {
     pub total_workers: usize,
     pub active_workers: usize,
