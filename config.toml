@@ -14,6 +14,10 @@ device_id = 0
 use_fp16 = true  # Enable for 2x speedup on compatible GPUs
 use_tensorrt = false  # TensorRT optimization (NVIDIA only)
 use_torch_compile = true  # PyTorch 2.0 compilation
+enable_jit = true  # Enable JIT compilation
+enable_jit_profiling = false
+enable_jit_executor = true
+enable_jit_fusion = true
 
 # Metal-specific optimizations (macOS/Apple Silicon)
 metal_use_mlx = false  # Use Apple MLX framework (experimental)

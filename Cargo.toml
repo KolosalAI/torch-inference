@@ -216,3 +216,7 @@ path = "benches/visualize_throughput.rs"
 [[bin]]
 name = "visualize_multi_model"
 path = "benches/visualize_multi_model.rs"
+
+[[bin]]
+name = "batch_size_throughput_bench"
+path = "benches/batch_size_throughput_bench.rs"
