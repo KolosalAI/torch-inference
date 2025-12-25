@@ -1,0 +1,12 @@
+model,batch_size,throughput_img_per_sec,latency_ms
+ultra-optimized-preprocessing,1,793.85,1.26
+ultra-optimized-preprocessing,2,813.73,1.23
+ultra-optimized-preprocessing,4,823.51,1.21
+ultra-optimized-preprocessing,8,798.64,1.25
+ultra-optimized-preprocessing,16,808.91,1.24
+ultra-optimized-preprocessing,32,893.74,1.12
+ultra-optimized-preprocessing,64,948.52,1.05
+ultra-optimized-preprocessing,128,970.99,1.03
+ultra-optimized-preprocessing,256,989.14,1.01
+ultra-optimized-preprocessing,512,993.37,1.01
+ultra-optimized-preprocessing,1024,995.68,1.00

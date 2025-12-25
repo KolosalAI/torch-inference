@@ -212,3 +212,7 @@ harness = false
 [[bin]]
 name = "visualize_throughput"
 path = "benches/visualize_throughput.rs"
+
+[[bin]]
+name = "visualize_multi_model"
+path = "benches/visualize_multi_model.rs"
