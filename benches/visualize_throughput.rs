@@ -29,13 +29,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     
     // Generate visualizations
-    create_throughput_comparison(&baseline, &optimized, &ultra)?;
+    create_throughput_bar_charts(&baseline, &optimized, &ultra)?;
     create_speedup_chart(&baseline, &ultra)?;
     create_latency_chart(&baseline, &optimized, &ultra)?;
     create_efficiency_chart(&ultra)?;
     
     println!("\n✅ Generated visualization charts:");
-    println!("   📊 benches/data/throughput_comparison.png");
+    println!("   📊 benches/data/baseline_bar_chart.png");
+    println!("   📊 benches/data/optimized_bar_chart.png");
+    println!("   📊 benches/data/ultra_bar_chart.png");
     println!("   📈 benches/data/speedup_comparison.png");
     println!("   ⏱️  benches/data/latency_comparison.png");
     println!("   🎯 benches/data/parallel_efficiency.png");
@@ -44,68 +46,88 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Create throughput comparison chart
-fn create_throughput_comparison(
+/// Create bar charts for each model's throughput
+fn create_throughput_bar_charts(
     baseline: &BenchmarkData,
     optimized: &BenchmarkData,
     ultra: &BenchmarkData,
 ) -> Result<(), Box<dyn Error>> {
-    let root = BitMapBackend::new("benches/data/throughput_comparison.png", (1200, 800))
+    create_single_bar_chart(baseline, "benches/data/baseline_bar_chart.png", &RED)?;
+    create_single_bar_chart(optimized, "benches/data/optimized_bar_chart.png", &BLUE)?;
+    create_single_bar_chart(ultra, "benches/data/ultra_bar_chart.png", &GREEN)?;
+    Ok(())
+}
+
+/// Create a single bar chart for a model
+fn create_single_bar_chart(
+    data: &BenchmarkData,
+    filename: &str,
+    color: &RGBColor,
+) -> Result<(), Box<dyn Error>> {
+    let root = BitMapBackend::new(filename, (1600, 900))
         .into_drawing_area();
     root.fill(&WHITE)?;
     
-    let max_throughput = 900.0;
+    let max_throughput = data.throughputs.iter().cloned().fold(0.0_f64, f64::max) * 1.1;
+    let title = format!("{} - Throughput by Batch Size", data.name);
     
     let mut chart = ChartBuilder::on(&root)
-        .caption("Image Processing Throughput Comparison", ("sans-serif", 40))
-        .margin(15)
-        .x_label_area_size(50)
-        .y_label_area_size(60)
+        .caption(&title, ("sans-serif", 50).into_font().color(&BLACK))
+        .margin(20)
+        .x_label_area_size(80)
+        .y_label_area_size(80)
         .build_cartesian_2d(
-            (1usize..1024usize).log_scale(),
+            (0..data.batch_sizes.len()).into_segmented(),
             0f64..max_throughput,
         )?;
     
     chart
         .configure_mesh()
-        .x_desc("Batch Size (log scale)")
+        .x_desc("Batch Size")
         .y_desc("Throughput (images/sec)")
-        .x_label_formatter(&|x| format!("{}", x))
+        .x_label_formatter(&|x| {
+            if let SegmentValue::CenterOf(idx) = x {
+                if *idx < data.batch_sizes.len() {
+                    format!("{}", data.batch_sizes[*idx])
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        })
+        .y_label_formatter(&|y| format!("{:.0}", y))
+        .x_label_style(("sans-serif", 20))
+        .y_label_style(("sans-serif", 20))
         .draw()?;
     
-    // Draw baseline
-    chart.draw_series(LineSeries::new(
-        baseline.batch_sizes.iter().zip(baseline.throughputs.iter()).map(|(&x, &y)| (x, y)),
-        ShapeStyle::from(&RED).stroke_width(3),
-    ))?
-    .label(&baseline.name)
-    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED.stroke_width(3)));
+    // Draw bars
+    chart.draw_series(
+        data.batch_sizes.iter().enumerate().map(|(idx, _)| {
+            let throughput = data.throughputs[idx];
+            let mut bar = Rectangle::new(
+                [(SegmentValue::CenterOf(idx), 0.0), (SegmentValue::CenterOf(idx), throughput)],
+                color.filled(),
+            );
+            bar.set_margin(0, 0, 5, 5);
+            bar
+        })
+    )?;
     
-    // Draw optimized
-    chart.draw_series(LineSeries::new(
-        optimized.batch_sizes.iter().zip(optimized.throughputs.iter()).map(|(&x, &y)| (x, y)),
-        ShapeStyle::from(&BLUE).stroke_width(3),
-    ))?
-    .label(&optimized.name)
-    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE.stroke_width(3)));
-    
-    // Draw ultra
-    chart.draw_series(LineSeries::new(
-        ultra.batch_sizes.iter().zip(ultra.throughputs.iter()).map(|(&x, &y)| (x, y)),
-        ShapeStyle::from(&GREEN).stroke_width(3),
-    ))?
-    .label(&ultra.name)
-    .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN.stroke_width(3)));
-    
-    chart.configure_series_labels()
-        .background_style(WHITE.mix(0.8))
-        .border_style(BLACK)
-        .draw()?;
+    // Add value labels on top of bars
+    for (idx, &throughput) in data.throughputs.iter().enumerate() {
+        chart.draw_series(std::iter::once(Text::new(
+            format!("{:.0}", throughput),
+            (SegmentValue::CenterOf(idx), throughput + max_throughput * 0.02),
+            ("sans-serif", 18).into_font().color(&BLACK),
+        )))?;
+    }
     
     root.present()?;
-    println!("✓ Generated throughput_comparison.png");
+    println!("✓ Generated {}", filename);
     Ok(())
 }
+
 
 /// Create speedup comparison chart
 fn create_speedup_chart(
