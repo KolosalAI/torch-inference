@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::time::Duration;
-use torch_inference::ultra_optimized_processor::{UltraOptimizedProcessor, create_test_image_fast};
+use torch_inference::image_processor::{ImageProcessor, create_test_image};
 
 // All non-TTS models from registry
 const MODELS: &[(&str, &str)] = &[
@@ -21,11 +21,11 @@ const MODELS: &[(&str, &str)] = &[
 const CONCURRENCY_LEVELS: &[usize] = &[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 fn benchmark_all_models(c: &mut Criterion) {
-    let mut group = c.benchmark_group("all_models_ultra_optimized");
+    let mut group = c.benchmark_group("all_models_batch_processing");
     group.measurement_time(Duration::from_secs(20));
     group.sample_size(10);
 
-    let processor = UltraOptimizedProcessor::new(None);
+    let processor = ImageProcessor::new(64);
     let target_size = (224, 224);
 
     for (model_name, _model_path) in MODELS {
@@ -33,21 +33,21 @@ fn benchmark_all_models(c: &mut Criterion) {
 
         for &batch_size in CONCURRENCY_LEVELS {
             let images: Vec<_> = (0..batch_size)
-                .map(|_| create_test_image_fast(224, 224))
+                .map(|_| create_test_image(224, 224))
                 .collect();
 
             let bench_id = BenchmarkId::new(*model_name, batch_size);
             
             group.bench_with_input(bench_id, &images, |b, imgs| {
                 b.iter(|| {
-                    let results = processor.process_batch_ultra(imgs, target_size);
+                    let results = processor.preprocess_batch(imgs, target_size);
                     black_box(results)
                 });
             });
 
             // Calculate throughput
             let start = std::time::Instant::now();
-            let _ = processor.process_batch_ultra(&images, target_size);
+            let _ = processor.preprocess_batch(&images, target_size);
             let elapsed = start.elapsed();
             let throughput = batch_size as f64 / elapsed.as_secs_f64();
             

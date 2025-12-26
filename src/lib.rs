@@ -19,8 +19,4 @@ pub mod resilience;
 pub mod security;
 pub mod telemetry;
 pub mod tensor_pool;
-pub mod ultra_optimized_processor;
 pub mod worker_pool;
-
-#[cfg(feature = "torch")]
-pub mod torch_optimization;

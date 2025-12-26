@@ -3,11 +3,13 @@ mod auth;
 mod batch;
 mod cache;
 mod compression;
+mod concurrency_limiter;
 mod config;
 mod core;
 mod dedup;
 mod error;
 mod guard;
+mod image_processor;
 mod inflight_batch;
 mod middleware;
 mod model_pool;
@@ -18,9 +20,6 @@ mod security;
 mod telemetry;
 mod tensor_pool;
 mod worker_pool;
-
-#[cfg(feature = "torch")]
-mod torch_optimization;
 
 use actix_web::{web, App, HttpServer, middleware as actix_middleware};
 use log::info;

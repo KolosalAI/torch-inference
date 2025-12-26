@@ -1,26 +1,14 @@
-//! Concurrency limiter to prevent thread pool exhaustion and maintain optimal throughput
+//! Concurrency limiter to prevent thread pool exhaustion
 //! 
-//! This module provides a bounded concurrency limiter that:
-//! - Prevents spawn_blocking pool exhaustion
-//! - Maintains peak throughput (364 img/sec)
-//! - Provides graceful degradation under extreme load
-//! - Uses Semaphore for efficient async coordination
+//! Provides bounded concurrency control using semaphores to:
+//! - Prevent blocking thread pool exhaustion
+//! - Maintain stable throughput under load
+//! - Enable graceful degradation
 
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use log::{debug, warn};
 
-/// Limits concurrent CPU-bound operations to prevent thread pool exhaustion
-/// 
-/// # Design
-/// - Uses tokio Semaphore for async coordination
-/// - Optimal limit: 64 concurrent (based on M4 10-core performance)
-/// - Prevents degradation beyond optimal concurrency
-/// 
-/// # Performance
-/// - Maintains peak throughput: 364 img/sec
-/// - No degradation at high load
-/// - Graceful queueing when limit reached
+/// Limits concurrent CPU-bound operations
 #[derive(Clone)]
 pub struct ConcurrencyLimiter {
     semaphore: Arc<Semaphore>,
@@ -31,14 +19,8 @@ impl ConcurrencyLimiter {
     /// Create a new concurrency limiter
     /// 
     /// # Arguments
-    /// * `max_concurrent` - Maximum number of concurrent operations (recommended: 64)
-    /// 
-    /// # Example
-    /// ```
-    /// let limiter = ConcurrencyLimiter::new(64);
-    /// ```
+    /// * `max_concurrent` - Maximum number of concurrent operations
     pub fn new(max_concurrent: usize) -> Self {
-        debug!("Initializing ConcurrencyLimiter with max_concurrent={}", max_concurrent);
         Self {
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             max_concurrent,
@@ -46,43 +28,16 @@ impl ConcurrencyLimiter {
     }
     
     /// Execute a CPU-bound operation with concurrency limiting
-    /// 
-    /// # Type Parameters
-    /// * `F` - Closure that performs the work
-    /// * `T` - Return type of the work
-    /// 
-    /// # Arguments
-    /// * `f` - Closure to execute
-    /// 
-    /// # Returns
-    /// Result of the closure execution
-    /// 
-    /// # Example
-    /// ```
-    /// let result = limiter.execute(|| {
-    ///     // CPU-bound work here
-    ///     preprocess_image(&image, (224, 224))
-    /// }).await;
-    /// ```
+    #[inline]
     pub async fn execute<F, T>(&self, f: F) -> T
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        // Acquire permit (will wait if at limit)
-        let permit = self.semaphore.acquire().await.unwrap();
-        
-        debug!("Acquired permit, {} available", self.semaphore.available_permits());
-        
-        // Execute work in blocking thread pool
-        let result = tokio::task::spawn_blocking(f)
+        let _permit = self.semaphore.acquire().await.expect("Semaphore closed");
+        tokio::task::spawn_blocking(f)
             .await
-            .expect("Blocking task failed");
-        
-        // Permit automatically released on drop
-        drop(permit);
-        
-        result
+            .expect("Blocking task failed")
     }
     
     /// Try to execute without waiting if capacity available
