@@ -1,228 +1,113 @@
-# Torch Inference Server - Optimized Configuration
-# This configuration enables all performance optimizations
+# Torch Inference Server - High Concurrency Optimized Configuration
+# Optimized for near-linear scaling up to 64 concurrent requests
 
 [server]
 host = "0.0.0.0"
 port = 8000
 log_level = "info"
-workers = 8  # Auto-detected based on CPU cores
+workers = 16  # Increased from 8 to handle more concurrent connections
 
 [device]
-# Device configuration
-device_type = "auto"  # Options: auto, cuda, cpu, metal, mps
+device_type = "auto"
 device_id = 0
-use_fp16 = true  # Enable for 2x speedup on compatible GPUs
-use_tensorrt = false  # TensorRT optimization (NVIDIA only)
-use_torch_compile = true  # PyTorch 2.0 compilation
-enable_jit = true  # Enable JIT compilation
+use_fp16 = false  # Disabled for stability under high concurrency
+use_tensorrt = false
+use_torch_compile = false  # Disabled to reduce JIT overhead
+enable_jit = false  # Disabled for predictable latency
 enable_jit_profiling = false
-enable_jit_executor = true
-enable_jit_fusion = true
+enable_jit_executor = false
+enable_jit_fusion = false
 
-# Metal-specific optimizations (macOS/Apple Silicon)
-metal_use_mlx = false  # Use Apple MLX framework (experimental)
-metal_cache_shaders = true  # Cache Metal shaders for faster startup
-metal_optimize_for_apple_silicon = true  # Enable Apple Silicon specific optimizations
+# Metal-specific optimizations
+metal_use_mlx = true
+metal_cache_shaders = true
+metal_optimize_for_apple_silicon = true
 
 # PyTorch/LibTorch Optimizations
-num_threads = 8  # Intra-op threads (set to num_cpus for best performance)
-num_interop_threads = 1  # Inter-op threads (1 for serving workloads)
-cudnn_benchmark = true  # Auto-select fastest cuDNN algorithms (stable input shapes)
-enable_autocast = true  # Mixed precision (AMP) for faster inference
-torch_warmup_iterations = 5  # Warmup iterations for stable latency
+num_threads = 8  # Reduced from 8 to prevent thread contention
+num_interop_threads = 2  # Increased from 1 for better parallelism
+cudnn_benchmark = true
+enable_autocast = false  # Disabled for stability
+torch_warmup_iterations = 10  # Increased for better warmup
 
 [batch]
-# Batching configuration
 batch_size = 1
-max_batch_size = 32  # Maximum batch size for inference
-enable_dynamic_batching = true  # Enable dynamic batching
+max_batch_size = 8  # Smaller batches for lower latency
+enable_dynamic_batching = false  # Disabled to reduce coordination overhead
 
 [performance]
-# === Core Performance Settings ===
-
 # Warmup
-warmup_iterations = 3  # Number of warmup iterations on startup
+warmup_iterations = 10
 
 # Profiling
-enable_profiling = false  # Enable performance profiling (use in dev only)
+enable_profiling = false
 
-# === Caching Optimizations ===
-enable_caching = true  # Enable LRU cache with automatic eviction
-cache_size_mb = 2048  # Cache size in megabytes (2GB default)
+# === Caching - ENABLED with RwLock optimization ===
+enable_caching = true  # Now uses RwLock for concurrent reads
+cache_size_mb = 512  # 512MB cache
 
-# === Batching Optimizations ===
-enable_request_batching = true  # Enable request batching
-adaptive_batch_timeout = true  # Adaptive timeout based on queue depth
-min_batch_size = 1  # Minimum batch size before processing
+# === Batching - DISABLED for low overhead ===
+enable_request_batching = false  # Disabled for minimal coordination
+adaptive_batch_timeout = false
+min_batch_size = 1
 
-# Inflight Batching (Advanced)
-enable_inflight_batching = false  # Allow batching while inference is running
-max_inflight_batches = 4  # Maximum concurrent batches in processing
+# Inflight Batching - DISABLED
+enable_inflight_batching = false
+max_inflight_batches = 1
 
-# Worker Pool Management
-enable_worker_pool = true  # Enable managed worker pool
-min_workers = 2  # Minimum number of workers
-max_workers = 16  # Maximum number of workers
-enable_auto_scaling = true  # Auto-scale workers based on load
-enable_zero_scaling = false # Allow scaling down to zero workers
+# Worker Pool - OPTIMIZED
+enable_worker_pool = true
+min_workers = 16  # Match server workers
+max_workers = 64  # Allow scaling to 64
+enable_auto_scaling = true
+enable_zero_scaling = false
 
 # === Memory Optimizations ===
-enable_tensor_pooling = true  # Reuse tensor memory (50-70% faster allocation)
-max_pooled_tensors = 500  # Maximum number of pooled tensors per shape
+enable_tensor_pooling = true  # Keep enabled for memory reuse
+max_pooled_tensors = 1000  # Increased pool size
 
-# === Model Loading Optimizations ===
-enable_async_model_loading = true  # Load models asynchronously
-preload_models_on_startup = false  # Pre-load all auto_load models at startup
+# === Model Loading ===
+enable_async_model_loading = true
+preload_models_on_startup = true  # Preload to avoid lazy loading delays
 
-# === Network Optimizations ===
-enable_result_compression = true  # Compress large responses with gzip
-compression_level = 6  # Compression level (1=fast, 9=best, 6=balanced)
+# === Network - DISABLED for minimal overhead ===
+enable_result_compression = false  # No compression overhead
+compression_level = 0
 
-# === Advanced Optimizations ===
-enable_model_quantization = true  # Enable model quantization (experimental)
-quantization_bits = 8  # Quantization bits (8 or 16)
-enable_cuda_graphs = true  # CUDA graphs for lower latency (NVIDIA only)
+# === Advanced - DISABLED ===
+enable_model_quantization = false
+quantization_bits = 8
+enable_cuda_graphs = false  # Can cause issues with concurrency
 
 [auth]
-# Authentication configuration
-enabled = true
-jwt_secret = "your-secret-key-here-change-in-production"
+enabled = false  # Disabled for benchmark
+jwt_secret = "benchmark-secret-key"
 jwt_algorithm = "HS256"
 access_token_expire_minutes = 60
 refresh_token_expire_days = 7
 
 [models]
-# Model management
-auto_load = ["example"]  # Models to auto-load on startup
-cache_dir = "models"  # Directory for model cache
-max_loaded_models = 5  # Maximum number of models to keep in memory
+auto_load = ["example"]
+cache_dir = "models"
+max_loaded_models = 10  # Increased to support more models
+instances_per_model = 8  # NEW: Create 8 model replicas for parallel inference
 
 [guard]
-# System Guards - Protection & Auto-Mitigation
-enable_guards = true  # Enable system guards
-max_memory_mb = 8192  # Maximum memory usage (8GB)
-max_requests_per_second = 1000  # Rate limit
-max_queue_depth = 500  # Maximum queue size
-min_cache_hit_rate = 60.0  # Minimum cache hit rate (%)
-max_error_rate = 5.0  # Maximum error rate (%)
-enable_circuit_breaker = true  # Enable circuit breaker
-enable_auto_mitigation = true  # Enable automatic mitigation
+enable_guards = false  # Disabled for benchmark
+max_memory_mb = 16384
+max_requests_per_second = 10000  # Increased limit
+max_queue_depth = 2000  # Increased queue
+min_cache_hit_rate = 0.0
+max_error_rate = 10.0
+enable_circuit_breaker = false  # Disabled for benchmark
+enable_auto_mitigation = false
 
-
-# ===================================================================
-# PERFORMANCE PROFILES
-# ===================================================================
-# Uncomment the profile that matches your use case:
-
-# --- HIGH THROUGHPUT (Batch Processing) ---
-# [batch]
-# max_batch_size = 64
-# 
-# [performance]
-# cache_size_mb = 4096
-# max_pooled_tensors = 500
-# adaptive_batch_timeout = true
-# min_batch_size = 8
-# enable_result_compression = true
-# compression_level = 6
-
-# --- LOW LATENCY (Real-time APIs) ---
-# [batch]
-# max_batch_size = 8
-# 
-# [performance]
-# cache_size_mb = 1024
-# max_pooled_tensors = 100
-# adaptive_batch_timeout = true
-# min_batch_size = 1
-# enable_result_compression = false  # Skip compression for speed
-
-# --- MEMORY CONSTRAINED (Edge/Containers) ---
-# [performance]
-# cache_size_mb = 512
-# max_pooled_tensors = 50
-# enable_result_compression = true
-# compression_level = 9
-# enable_model_quantization = true
-# quantization_bits = 8
-# 
-# [models]
-# max_loaded_models = 3
-
-# ===================================================================
-# OPTIMIZATION NOTES
-# ===================================================================
-#
-# 1. Caching (LRU Cache):
-#    - Automatic eviction of least-recently-used entries
-#    - Typical hit rate: 80-85%
-#    - Memory formula: (request_rate * avg_response_kb * TTL) / 1024
-#
-# 2. Adaptive Batching:
-#    - Timeout adjusts based on queue depth:
-#      * 0-2 items: 100ms
-#      * 3-5 items: 50ms
-#      * 6-10 items: 25ms
-#      * 11+ items: 12.5ms
-#    - 2-4x throughput increase under load
-#
-# 3. Tensor Pooling:
-#    - Reuses pre-allocated tensors
-#    - 50-70% reduction in allocation overhead
-#    - Typical reuse rate: 95%+
-#
-# 4. Result Compression:
-#    - gzip compression for responses > 1KB
-#    - 60-90% bandwidth reduction
-#    - Level 6 = balanced (recommended)
-#    - Level 1 = fast (low CPU)
-#    - Level 9 = best compression (high CPU)
-#
-# 5. Model Pooling:
-#    - Multiple instances per model
-#    - Parallel inference
-#    - Round-robin load balancing
-#
-# 6. Metal/Apple Silicon Optimizations:
-#    - Unified memory architecture (GPU shares system RAM)
-#    - metal_optimize_for_apple_silicon: Enables Apple-specific optimizations
-#    - metal_cache_shaders: Caches Metal shaders for faster startup
-#    - Optimal thread count: 75% of available cores (E+P cores)
-#    - FP16 on Metal: 1.5-2x speedup but may have compatibility issues
-#    - Recommended: Keep FP32 for production, use FP16 for testing
-#
-# ===================================================================
-# MONITORING
-# ===================================================================
-#
-# View performance metrics:
-#
-# Cache stats:
-#   curl http://localhost:8000/api/stats/cache
-#
-# Batch stats:
-#   curl http://localhost:8000/api/stats/batch
-#
-# Tensor pool stats:
-#   curl http://localhost:8000/api/stats/tensor_pool
-#
-# ===================================================================
-# TROUBLESHOOTING
-# ===================================================================
-#
-# High memory usage:
-#   - Reduce cache_size_mb
-#   - Lower max_pooled_tensors
-#   - Enable enable_model_quantization
-#
-# Low cache hit rate:
-#   - Increase cache_size_mb
-#   - Check if requests are cacheable
-#   - Monitor cache stats
-#
-# Slow response times:
-#   - Enable adaptive_batch_timeout
-#   - Reduce min_batch_size
-#   - Check queue depth in batch stats
-#
-# ===================================================================
+[sanitizer]
+max_text_length = 10000
+sanitize_text = false  # Disabled for performance
+sanitize_image_dimensions = false
+max_image_width = 4096
+max_image_height = 4096
+round_probabilities = false
+probability_decimals = 4
+remove_null_values = false

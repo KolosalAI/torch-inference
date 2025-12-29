@@ -39,12 +39,12 @@ symphonia = { version = "0.5", features = ["all"] }
 
 # ML and inference
 onnxruntime = { version = "0.0.14", optional = true }
-ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs", "coreml"] }
+ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs"] }
 ndarray = "0.15"
 tch = { version = "0.16", optional = true, features = [] }  # Requires PyTorch 2.3.0+
 candle-core = { version = "0.3", optional = true }
 candle-nn = { version = "0.3", optional = true }
-pyo3 = { version = "0.20", features = ["auto-initialize"] }
+pyo3 = { version = "0.20", features = [], optional = true }
 
 # Logging and monitoring
 log = "0.4"
@@ -109,7 +109,7 @@ parking_lot = "0.12.5"
 plotters = { version = "0.3.7", features = ["bitmap_backend", "bitmap_encoder", "ttf", "chrono"] }
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 proptest = "1.4"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
@@ -126,6 +126,7 @@ default = ["jemalloc"]  # Use jemalloc by default for better performance
 cuda = ["nvml-wrapper"]
 onnx = ["onnxruntime"]
 torch = ["tch"]
+python = ["pyo3"]  # Python TTS bridge (can conflict with libtorch)
 candle = ["candle-core", "candle-nn"]
 telemetry = ["tracing-opentelemetry", "opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk"]
 metrics = ["prometheus"]
@@ -140,25 +141,6 @@ path = "src/lib.rs"
 name = "torch-inference-server"
 path = "src/main.rs"
 
-[[bench]]
-name = "cache_bench"
-harness = false
-
-[[bench]]
-name = "model_inference_bench"
-harness = false
-
-[[bench]]
-name = "model_inference_bench_optimized"
-harness = false
-
-[[bench]]
-name = "model_inference_bench_with_report"
-harness = false
-
-[[bench]]
-name = "batch_concurrent_bench"
-harness = false
 
 # Benchmark analysis binaries (temporarily disabled due to compilation errors)
 # [[bin]]
@@ -189,34 +171,11 @@ codegen-units = 256
 opt-level = 1
 incremental = true
 
+
 [[bench]]
-name = "image_classification_bench"
+name = "comprehensive_api_benchmark"
 harness = false
 
 [[bench]]
-name = "concurrent_throughput_bench"
+name = "concurrent_throughput_benchmark"
 harness = false
-
-[[bench]]
-name = "optimized_concurrent_bench"
-harness = false
-
-[[bench]]
-name = "optimized_throughput_bench"
-harness = false
-
-[[bench]]
-name = "ultra_performance_bench"
-harness = false
-
-[[bin]]
-name = "visualize_throughput"
-path = "benches/visualize_throughput.rs"
-
-[[bin]]
-name = "visualize_multi_model"
-path = "benches/visualize_multi_model.rs"
-
-[[bin]]
-name = "batch_size_throughput_bench"
-path = "benches/batch_size_throughput_bench.rs"

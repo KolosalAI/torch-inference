@@ -1,6 +1,6 @@
 use lru::LruCache;
 use serde_json::Value;
-use std::sync::Mutex;
+use parking_lot::RwLock;
 use std::time::{Instant, Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
 use log::debug;
@@ -13,13 +13,15 @@ struct CacheEntry {
 }
 
 impl CacheEntry {
+    #[inline]
     fn is_expired(&self) -> bool {
         Instant::now() > self.expires_at
     }
 }
 
+/// High-performance LRU cache with RwLock for concurrent reads
 pub struct Cache {
-    data: Mutex<LruCache<String, CacheEntry>>,
+    data: RwLock<LruCache<String, CacheEntry>>,
     hits: AtomicU64,
     misses: AtomicU64,
 }
@@ -28,34 +30,45 @@ impl Cache {
     pub fn new(max_size: usize) -> Self {
         let capacity = NonZeroUsize::new(max_size.max(1)).unwrap();
         Self {
-            data: Mutex::new(LruCache::new(capacity)),
+            data: RwLock::new(LruCache::new(capacity)),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
         }
     }
 
+    /// Get a cached value - uses read lock for concurrent access
+    #[inline]
     pub fn get(&self, key: &str) -> Option<Value> {
-        let mut cache = self.data.lock().unwrap();
+        // Fast path: try read lock first to check if entry exists and is valid
+        {
+            let cache = self.data.read();
+            if let Some(entry) = cache.peek(key) {
+                if !entry.is_expired() {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    return Some(entry.data.clone());
+                }
+            }
+        }
         
+        // Slow path: entry expired or doesn't exist, need write lock
+        let mut cache = self.data.write();
         if let Some(entry) = cache.get(key) {
             if entry.is_expired() {
                 cache.pop(key);
-                drop(cache);
                 self.misses.fetch_add(1, Ordering::Relaxed);
-                debug!("Cache entry expired: {}", key);
                 return None;
             }
-            
+            // Entry was valid (race condition: added between read and write lock)
             self.hits.fetch_add(1, Ordering::Relaxed);
-            debug!("Cache hit: {}", key);
             return Some(entry.data.clone());
         }
         
         self.misses.fetch_add(1, Ordering::Relaxed);
-        debug!("Cache miss: {}", key);
         None
     }
 
+    /// Set a cached value with TTL in seconds
+    #[inline]
     pub fn set(&self, key: String, value: Value, ttl: u64) -> Result<(), String> {
         let ttl_duration = Duration::from_secs(ttl.min(315_360_000)); // Cap at ~10 years
         let entry = CacheEntry {
@@ -63,9 +76,8 @@ impl Cache {
             expires_at: Instant::now() + ttl_duration,
         };
         
-        let mut cache = self.data.lock().unwrap();
-        cache.put(key.clone(), entry);
-        debug!("Cache set: {} (TTL: {}s)", key, ttl);
+        let mut cache = self.data.write();
+        cache.put(key, entry);
         Ok(())
     }
     
@@ -79,7 +91,7 @@ impl Cache {
             0.0
         };
         
-        let cache = self.data.lock().unwrap();
+        let cache = self.data.read();
         CacheStats {
             hits,
             misses,
@@ -90,25 +102,26 @@ impl Cache {
         }
     }
 
+    #[inline]
     pub fn remove(&self, key: &str) {
-        let mut cache = self.data.lock().unwrap();
+        let mut cache = self.data.write();
         cache.pop(key);
-        debug!("Cache removed: {}", key);
     }
 
     pub fn clear(&self) {
-        let mut cache = self.data.lock().unwrap();
+        let mut cache = self.data.write();
         cache.clear();
         debug!("Cache cleared");
     }
 
+    #[inline]
     pub fn size(&self) -> usize {
-        let cache = self.data.lock().unwrap();
+        let cache = self.data.read();
         cache.len()
     }
 
     pub fn cleanup_expired(&self) {
-        let mut cache = self.data.lock().unwrap();
+        let mut cache = self.data.write();
         let expired: Vec<String> = cache
             .iter()
             .filter(|(_, entry)| entry.is_expired())

@@ -1,8 +1,9 @@
 use dashmap::DashMap;
 use serde_json::Value;
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 use log::{debug, trace};
+use sha2::{Sha256, Digest};
 
 #[derive(Clone)]
 pub struct DeduplicationEntry {
@@ -11,9 +12,11 @@ pub struct DeduplicationEntry {
     pub ttl: u64,
 }
 
+/// High-performance request deduplicator with hash-based keys
 pub struct RequestDeduplicator {
     cache: DashMap<String, DeduplicationEntry>,
     max_entries: usize,
+    last_cleanup: AtomicU64,
 }
 
 impl RequestDeduplicator {
@@ -21,59 +24,133 @@ impl RequestDeduplicator {
         Self {
             cache: DashMap::new(),
             max_entries,
+            last_cleanup: AtomicU64::new(0),
         }
     }
 
-    pub fn generate_key(&self, model: &str, inputs: &Value) -> String {
-        format!("{}:{}:{}", model, inputs.to_string(), SystemTime::now()
+    #[inline]
+    fn current_time() -> u64 {
+        SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs() / 10)
+            .as_secs()
     }
 
-    pub fn get(&self, key: &str) -> Option<Value> {
-        if let Some(entry) = self.cache.get(key) {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+    /// Generate a fast hash-based key instead of serializing the entire input
+    #[inline]
+    pub fn generate_key(&self, model: &str, inputs: &Value) -> String {
+        let now = Self::current_time();
+        let window = now / 10; // 10-second deduplication window
+        
+        // Use compact JSON serialization for hashing
+        let mut hasher = Sha256::new();
+        hasher.update(model.as_bytes());
+        hasher.update(b":");
+        
+        // Hash the JSON value directly - faster than to_string()
+        Self::hash_value(&mut hasher, inputs);
+        
+        hasher.update(b":");
+        hasher.update(window.to_le_bytes());
+        
+        let result = hasher.finalize();
+        // Use first 16 bytes (128 bits) for a shorter but still unique key
+        hex::encode(&result[..16])
+    }
+    
+    /// Recursively hash a JSON value without allocating strings
+    fn hash_value(hasher: &mut Sha256, value: &Value) {
+        match value {
+            Value::Null => hasher.update(b"n"),
+            Value::Bool(b) => hasher.update(if *b { b"t" } else { b"f" }),
+            Value::Number(n) => {
+                hasher.update(b"#");
+                // Use raw bytes for numbers
+                if let Some(i) = n.as_i64() {
+                    hasher.update(i.to_le_bytes());
+                } else if let Some(u) = n.as_u64() {
+                    hasher.update(u.to_le_bytes());
+                } else if let Some(f) = n.as_f64() {
+                    hasher.update(f.to_le_bytes());
+                }
+            }
+            Value::String(s) => {
+                hasher.update(b"s");
+                hasher.update(s.as_bytes());
+            }
+            Value::Array(arr) => {
+                hasher.update(b"[");
+                for item in arr {
+                    Self::hash_value(hasher, item);
+                }
+                hasher.update(b"]");
+            }
+            Value::Object(obj) => {
+                hasher.update(b"{");
+                // Sort keys for consistent hashing
+                let mut keys: Vec<_> = obj.keys().collect();
+                keys.sort();
+                for key in keys {
+                    hasher.update(key.as_bytes());
+                    hasher.update(b":");
+                    Self::hash_value(hasher, &obj[key]);
+                }
+                hasher.update(b"}");
+            }
+        }
+    }
 
+    #[inline]
+    pub fn get(&self, key: &str) -> Option<Value> {
+        let now = Self::current_time();
+        
+        // Lazy cleanup every 30 seconds
+        let last_cleanup = self.last_cleanup.load(Ordering::Relaxed);
+        if now - last_cleanup > 30 {
+            if self.last_cleanup.compare_exchange(
+                last_cleanup, now, Ordering::Relaxed, Ordering::Relaxed
+            ).is_ok() {
+                self.cleanup_expired_internal(now);
+            }
+        }
+
+        if let Some(entry) = self.cache.get(key) {
             if now - entry.timestamp < entry.ttl {
-                debug!("Deduplication cache hit: {}", key);
+                trace!("Deduplication cache hit: {}", key);
                 return Some(entry.result.clone());
             } else {
                 drop(entry);
                 self.cache.remove(key);
-                debug!("Deduplication entry expired: {}", key);
+                trace!("Deduplication entry expired: {}", key);
             }
         }
-        trace!("Deduplication cache miss: {}", key);
         None
     }
 
+    #[inline]
     pub fn set(&self, key: String, result: Value, ttl: u64) -> Result<(), String> {
-        if self.cache.len() >= self.max_entries {
-            return Err("Deduplication cache full".to_string());
+        // Allow some oversubscription before rejecting
+        if self.cache.len() >= self.max_entries + 100 {
+            // Try cleanup first
+            self.cleanup_expired_internal(Self::current_time());
+            if self.cache.len() >= self.max_entries {
+                return Err("Deduplication cache full".to_string());
+            }
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        self.cache.insert(key.clone(), DeduplicationEntry {
+        let now = Self::current_time();
+        self.cache.insert(key, DeduplicationEntry {
             result,
             timestamp: now,
             ttl,
         });
 
-        debug!("Deduplication entry set: {} (TTL: {}s)", key, ttl);
         Ok(())
     }
 
+    #[inline]
     pub fn invalidate(&self, key: &str) {
         self.cache.remove(key);
-        debug!("Deduplication entry invalidated: {}", key);
     }
 
     pub fn clear(&self) {
@@ -81,26 +158,20 @@ impl RequestDeduplicator {
         debug!("Deduplication cache cleared");
     }
 
-    pub fn cleanup_expired(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let expired: Vec<String> = self.cache
-            .iter()
-            .filter(|entry| now - entry.value().timestamp >= entry.value().ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        let count = expired.len();
-        for key in expired.iter() {
-            self.cache.remove(key);
+    fn cleanup_expired_internal(&self, now: u64) {
+        let before = self.cache.len();
+        self.cache.retain(|_, entry| now - entry.timestamp < entry.ttl);
+        let removed = before.saturating_sub(self.cache.len());
+        if removed > 0 {
+            debug!("Deduplication cleanup: removed {} entries", removed);
         }
-
-        debug!("Deduplication cleanup completed, removed {} entries", count);
     }
 
+    pub fn cleanup_expired(&self) {
+        self.cleanup_expired_internal(Self::current_time());
+    }
+
+    #[inline]
     pub fn size(&self) -> usize {
         self.cache.len()
     }
@@ -108,7 +179,7 @@ impl RequestDeduplicator {
 
 impl Default for RequestDeduplicator {
     fn default() -> Self {
-        Self::new(5000)
+        Self::new(10000) // Increased default from 5000 to 10000
     }
 }
 
@@ -149,7 +220,14 @@ mod tests {
         let dedup = RequestDeduplicator::new(2);
         assert!(dedup.set("key1".to_string(), serde_json::json!("val1"), 60).is_ok());
         assert!(dedup.set("key2".to_string(), serde_json::json!("val2"), 60).is_ok());
-        assert!(dedup.set("key3".to_string(), serde_json::json!("val3"), 60).is_err());
+        // Allow some oversubscription (up to 100 extra entries before reject)
+        assert!(dedup.set("key3".to_string(), serde_json::json!("val3"), 60).is_ok());
+        // Fill up the oversubscription buffer
+        for i in 4..=103 {
+            let _ = dedup.set(format!("key{}", i), serde_json::json!("val"), 60);
+        }
+        // Now it should be full
+        assert!(dedup.set("overflow".to_string(), serde_json::json!("val"), 60).is_err());
     }
 
     #[test]

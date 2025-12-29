@@ -192,3 +192,17 @@ mod python_impl {
 
 // Re-export the implementation
 pub use python_impl::KokoroPythonBridge;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    #[cfg(feature = "python")]
+    fn test_kokoro_bridge_creation() {
+        // This test only runs if python feature is enabled
+        let result = KokoroPythonBridge::new();
+        // Just check it doesn't panic - may fail if kokoro not installed
+        let _ = result;
+    }
+}

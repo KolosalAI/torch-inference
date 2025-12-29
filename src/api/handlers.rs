@@ -9,6 +9,7 @@ use crate::models::manager::ModelManager;
 use crate::monitor::Monitor;
 use crate::middleware::RateLimiter;
 use crate::dedup::RequestDeduplicator;
+use crate::cache::Cache;
 
 pub async fn root() -> impl Responder {
     HttpResponse::Ok().json(json!({
@@ -43,12 +44,14 @@ pub async fn health_check(
     }))
 }
 
+/// High-performance prediction endpoint with integrated caching
 pub async fn predict(
     req: web::Json<InferenceRequest>,
     engine: web::Data<std::sync::Arc<InferenceEngine>>,
     rate_limiter: web::Data<std::sync::Arc<RateLimiter>>,
     monitor: web::Data<std::sync::Arc<Monitor>>,
     deduplicator: web::Data<std::sync::Arc<RequestDeduplicator>>,
+    cache: web::Data<std::sync::Arc<Cache>>,
     http_req: HttpRequest,
 ) -> impl Responder {
     let client_ip = http_req
@@ -57,24 +60,40 @@ pub async fn predict(
         .unwrap_or("unknown")
         .to_string();
 
-    // Check rate limit
+    // Check rate limit (fast path)
     if let Err(e) = rate_limiter.is_allowed(&client_ip) {
         monitor.record_request_end(0, "/predict", false);
         return actix_web::error::ErrorTooManyRequests(e.message).error_response();
     }
 
-    // Check for duplicate request
-    let dedup_key = deduplicator.generate_key(&req.model_name, &req.inputs);
-    if let Some(cached_result) = deduplicator.get(&dedup_key) {
-        monitor.record_request_start(); // Record start to balance metrics
-        monitor.record_request_end(0, "/predict", true); // 0ms latency for cache hit
+    // Generate cache key once
+    let cache_key = deduplicator.generate_key(&req.model_name, &req.inputs);
+    
+    // Check deduplication cache first (fastest)
+    if let Some(cached_result) = deduplicator.get(&cache_key) {
+        monitor.record_request_start();
+        monitor.record_request_end(0, "/predict", true);
         
         return HttpResponse::Ok().json(InferenceResponse {
             success: true,
             result: Some(cached_result),
             error: None,
             processing_time: Some(0.0),
-            model_info: Some(serde_json::json!({"source": "deduplication_cache"})),
+            model_info: Some(json!({"source": "dedup_cache"})),
+        });
+    }
+    
+    // Check long-term cache (if enabled)
+    if let Some(cached_result) = cache.get(&cache_key) {
+        monitor.record_request_start();
+        monitor.record_request_end(1, "/predict", true);
+        
+        return HttpResponse::Ok().json(InferenceResponse {
+            success: true,
+            result: Some(cached_result),
+            error: None,
+            processing_time: Some(1.0),
+            model_info: Some(json!({"source": "lru_cache"})),
         });
     }
 
@@ -86,8 +105,9 @@ pub async fn predict(
             let latency_ms = start.elapsed().as_millis() as u64;
             monitor.record_request_end(latency_ms, "/predict", true);
             
-            // Cache result for deduplication (TTL 10s)
-            let _ = deduplicator.set(dedup_key, result.clone(), 10);
+            // Cache result in both caches
+            let _ = deduplicator.set(cache_key.clone(), result.clone(), 10); // Short TTL for dedup
+            let _ = cache.set(cache_key, result.clone(), 300); // 5 min TTL for LRU cache
             
             HttpResponse::Ok().json(InferenceResponse {
                 success: true,

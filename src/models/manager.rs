@@ -120,28 +120,28 @@ impl ModelManager {
             ));
         }
         
-        // Load model
-        // Determine devices to load on
-        let devices = if let Some(ids) = &self.config.device.device_ids {
-            ids.clone()
-        } else {
-            vec![self.config.device.device_id]
-        };
-        
+        // Load model - Create multiple instances for parallel inference
+        let instances_per_model = self.config.models.instances_per_model;
         let mut loaded_models = Vec::new();
         
-        for device_id in devices {
-            let device_str = if self.config.device.device_type == "cuda" || self.config.device.device_type == "auto" {
-                format!("cuda:{}", device_id)
-            } else {
-                self.config.device.device_type.clone()
-            };
-            
-            info!("Loading PyTorch model {} on device {}", model_id, device_str);
-            let loaded_model = self.pytorch_loader.load_model(&metadata.path, Some(device_str))
-                .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        // Determine device
+        let device_str = if self.config.device.device_type == "cuda" || self.config.device.device_type == "auto" {
+            format!("cuda:{}", self.config.device.device_id)
+        } else {
+            self.config.device.device_type.clone()
+        };
+        
+        info!("Loading {} instances of PyTorch model {} on device {}", 
+            instances_per_model, model_id, device_str);
+        
+        for i in 0..instances_per_model {
+            let loaded_model = self.pytorch_loader.load_model(&metadata.path, Some(device_str.clone()))
+                .map_err(|e| InferenceError::ModelLoadError(format!("Instance {}: {}", i, e)))?;
             loaded_models.push(loaded_model);
+            info!("  └─ Instance {}/{} loaded", i + 1, instances_per_model);
         }
+        
+        info!("All {} model instances loaded successfully", instances_per_model);
         
         // Store in cache
         self.loaded_pytorch_models.insert(model_id.to_string(), loaded_models);
@@ -169,21 +169,23 @@ impl ModelManager {
             ));
         }
         
-        // Determine devices to load on
-        let devices = if let Some(ids) = &self.config.device.device_ids {
-            ids.clone()
-        } else {
-            vec![self.config.device.device_id]
-        };
+        // Determine device and create multiple instances
+        let device_id = self.config.device.device_id;
+        let instances_per_model = self.config.models.instances_per_model;
         
         let mut loaded_models = Vec::new();
         
-        for device_id in devices {
-            info!("Loading model {} on device {}", model_id, device_id);
+        info!("Loading {} instances of ONNX model {} on device {}", 
+            instances_per_model, model_id, device_id);
+        
+        for i in 0..instances_per_model {
             let loaded_model = self.onnx_loader.load_model(&metadata.path, Some(device_id))
-                .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+                .map_err(|e| InferenceError::ModelLoadError(format!("Instance {}: {}", i, e)))?;
             loaded_models.push(loaded_model);
+            info!("  └─ Instance {}/{} loaded", i + 1, instances_per_model);
         }
+        
+        info!("All {} ONNX model instances loaded successfully", instances_per_model);
         
         // Store in cache
         self.loaded_onnx_models.insert(model_id.to_string(), loaded_models);

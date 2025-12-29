@@ -23,7 +23,7 @@ pub enum ModelFormat {
 impl ModelFormat {
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext.to_lowercase().as_str() {
-            "pt" | "pth" => Some(ModelFormat::PyTorch),
+            "pt" | "pth" | "ot" => Some(ModelFormat::PyTorch),
             "onnx" => Some(ModelFormat::ONNX),
             "safetensors" => Some(ModelFormat::SafeTensors),
             _ => None,

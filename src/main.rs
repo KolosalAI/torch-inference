@@ -22,7 +22,6 @@ mod tensor_pool;
 mod worker_pool;
 
 use actix_web::{web, App, HttpServer, middleware as actix_middleware};
-use log::info;
 use std::sync::Arc;
 
 use crate::api::handlers;
@@ -50,6 +49,9 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Early startup message - use println to ensure visibility even if logging fails
+    println!("[STARTUP] Initializing torch-inference server...");
+    
     // Initialize structured logging
     let use_json = std::env::var("LOG_JSON").unwrap_or_else(|_| "false".to_string()) == "true";
     let log_dir = std::env::var("LOG_DIR").ok();
@@ -61,7 +63,7 @@ async fn main() -> std::io::Result<()> {
         if let Err(e) = prometheus::init_metrics() {
             log::warn!("[WARN] Failed to initialize Prometheus metrics: {}", e);
         } else {
-            info!("[OK] Prometheus metrics initialized");
+            println!("  [OK] Prometheus metrics initialized");
         }
     }
     
@@ -70,47 +72,47 @@ async fn main() -> std::io::Result<()> {
     println!("{}\n", "═".repeat(80));
     
     let mut config = Config::load().expect("Failed to load configuration");
-    info!("[OK] Configuration loaded successfully");
+    println!("  [OK] Configuration loaded successfully");
 
     // Auto-detect device if set to "auto"
     if config.device.device_type == "auto" {
-        info!("[INIT] Auto-detecting compute device...");
+        println!("  [INIT] Auto-detecting compute device...");
         let temp_gpu_manager = GpuManager::new();
         match temp_gpu_manager.get_info() {
             Ok(info) => {
                 match info.backend {
                     crate::core::gpu::GpuBackend::Cuda => {
                         config.device.device_type = "cuda".to_string();
-                        info!("[AUTO] Detected CUDA - Setting device_type to 'cuda'");
+                        println!("  [AUTO] Detected CUDA - Setting device_type to 'cuda'");
                         
                         // Auto-configure device IDs if not set
                         if config.device.device_ids.is_none() && info.count > 0 {
                             let ids: Vec<usize> = (0..info.count).collect();
-                            info!("[AUTO] Detected {} CUDA devices - Setting device_ids to {:?}", info.count, ids);
+                            println!("  [AUTO] Detected {} CUDA devices - Setting device_ids to {:?}", info.count, ids);
                             config.device.device_ids = Some(ids);
                         }
                     },
                     crate::core::gpu::GpuBackend::Metal => {
                         config.device.device_type = "mps".to_string();
-                        info!("[AUTO] Detected Metal - Setting device_type to 'mps'");
+                        println!("  [AUTO] Detected Metal - Setting device_type to 'mps'");
                         
                         // Enable Metal-specific optimizations
                         if config.device.metal_optimize_for_apple_silicon {
-                            info!("[METAL] Apple Silicon optimizations enabled");
+                            println!("  [METAL] Apple Silicon optimizations enabled");
                             
                             // For unified memory, disable FP16 if not explicitly set (can cause issues on some models)
                             if !config.device.use_fp16 {
-                                info!("[METAL] Using FP32 for maximum compatibility on unified memory");
+                                println!("  [METAL] Using FP32 for maximum compatibility on unified memory");
                             }
                             
                             // Set optimal thread count for Apple Silicon (efficiency + performance cores)
                             let optimal_threads = (num_cpus::get() * 3) / 4; // Use 75% of cores for best performance
                             config.device.num_threads = optimal_threads;
-                            info!("[METAL] Set optimal thread count to {} for Apple Silicon", optimal_threads);
+                            println!("  [METAL] Set optimal thread count to {} for Apple Silicon", optimal_threads);
                         }
                         
                         if config.device.metal_cache_shaders {
-                            info!("[METAL] Metal shader caching enabled for faster startup");
+                            println!("  [METAL] Metal shader caching enabled for faster startup");
                         }
                         
                         // Metal usually just uses device 0 (the unified memory GPU)
@@ -120,12 +122,12 @@ async fn main() -> std::io::Result<()> {
                     },
                     crate::core::gpu::GpuBackend::Cpu => {
                         config.device.device_type = "cpu".to_string();
-                        info!("[AUTO] No GPU detected - Setting device_type to 'cpu'");
+                        println!("  [AUTO] No GPU detected - Setting device_type to 'cpu'");
                     }
                 }
             },
             Err(e) => {
-                log::warn!("[WARN] Failed to detect GPU info: {}. Defaulting to CPU.", e);
+                println!("  [WARN] Failed to detect GPU info: {}. Defaulting to CPU.", e);
                 config.device.device_type = "cpu".to_string();
             }
         }
@@ -136,35 +138,38 @@ async fn main() -> std::io::Result<()> {
     // Initialize PyTorch auto-detection (if torch feature enabled)
     #[cfg(feature = "torch")]
     {
-        info!("[INIT] Initializing PyTorch environment...");
+        println!("  [INIT] Initializing PyTorch environment...");
         
-        // Initialize tch for thread safety
-        tch::maybe_init_cuda();
+        // Initialize tch for thread safety (CUDA only, skip on macOS which uses Metal)
+        #[cfg(not(target_os = "macos"))]
+        {
+            tch::maybe_init_cuda();
+        }
         
         match crate::core::torch_autodetect::initialize_torch().await {
             Ok(torch_config) => {
-                info!("[OK] PyTorch initialized successfully");
-                info!("   ├─ Backend: {:?}", torch_config.backend);
-                info!("   ├─ Path: {:?}", torch_config.libtorch_path);
-                info!("   └─ Version: {}", torch_config.version);
+                println!("  [OK] PyTorch initialized successfully");
+                println!("     ├─ Backend: {:?}", torch_config.backend);
+                println!("     ├─ Path: {:?}", torch_config.libtorch_path);
+                println!("     └─ Version: {}", torch_config.version);
             }
             Err(e) => {
-                log::warn!("[WARN]  PyTorch initialization failed: {}", e);
-                log::warn!("   └─ ML inference features will be limited");
+                println!("  [WARN] PyTorch initialization failed: {}", e);
+                println!("     └─ ML inference features will be limited");
             }
         }
     }
     
     // Initialize tensor pool for memory optimization
     let tensor_pool = if config.performance.enable_tensor_pooling {
-        info!("[OPT] Tensor pooling enabled (max: {} tensors)", config.performance.max_pooled_tensors);
+        println!("  [OPT] Tensor pooling enabled (max: {} tensors)", config.performance.max_pooled_tensors);
         Some(Arc::new(crate::tensor_pool::TensorPool::new(config.performance.max_pooled_tensors)))
     } else {
         None
     };
 
     // Initialize components
-    info!("[INIT] Initializing core components...");
+    println!("  [INIT] Initializing core components...");
     let model_manager = Arc::new(ModelManager::new(&config, tensor_pool.clone()));
     let inference_engine = Arc::new(InferenceEngine::new(model_manager.clone(), &config));
     let monitor = Arc::new(Monitor::new());
@@ -185,20 +190,35 @@ async fn main() -> std::io::Result<()> {
     // Initialize cache with LRU eviction
     let cache_size = (config.performance.cache_size_mb * 1024 * 1024) / 1024; // Estimate entries
     let cache = Arc::new(Cache::new(cache_size.max(1000)));
-    let deduplicator = Arc::new(RequestDeduplicator::new(5000));
+    let deduplicator = Arc::new(RequestDeduplicator::new(10000)); // Increased from 5000
+    
+    // Start background cache cleanup task
+    {
+        let cache_clone = cache.clone();
+        let dedup_clone = deduplicator.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                cache_clone.cleanup_expired();
+                dedup_clone.cleanup_expired();
+            }
+        });
+        println!("  [OPT] Background cache cleanup task started (60s interval)");
+    }
     
     // Initialize compression service
     let compression = if config.performance.enable_result_compression {
-        info!("[OPT] Result compression enabled (level: {})", config.performance.compression_level);
+        println!("  [OPT] Result compression enabled (level: {})", config.performance.compression_level);
         Some(Arc::new(crate::compression::CompressionService::new(config.performance.compression_level)))
     } else {
         None
     };
     
-    info!("[OK] Core components initialized");
+    println!("  [OK] Core components initialized");
     
     // Initialize GPU manager
-    info!("[GPU] Initializing GPU manager...");
+    println!("  [GPU] Initializing GPU manager...");
     let gpu_manager = Arc::new(GpuManager::new());
     
     // Try to detect GPUs
@@ -207,35 +227,35 @@ async fn main() -> std::io::Result<()> {
             if info.available {
                 match info.backend {
                     crate::core::gpu::GpuBackend::Cuda => {
-                        info!("[OK] GPU Manager initialized - {} CUDA GPU(s) detected", info.count);
+                        println!("  [OK] GPU Manager initialized - {} CUDA GPU(s) detected", info.count);
                     }
                     crate::core::gpu::GpuBackend::Metal => {
-                        info!("[OK] GPU Manager initialized - Metal GPU detected (Apple Silicon)");
+                        println!("  [OK] GPU Manager initialized - Metal GPU detected (Apple Silicon)");
                     }
                     crate::core::gpu::GpuBackend::Cpu => {
-                        info!("[INFO]  GPU Manager initialized (No GPU detected, using CPU)");
+                        println!("  [INFO] GPU Manager initialized (No GPU detected, using CPU)");
                     }
                 }
                 
                 for device in &info.devices {
-                    info!("   └─ GPU {}: {} ({:.2} GB)", 
+                    println!("     └─ GPU {}: {} ({:.2} GB)", 
                         device.id, 
                         device.name, 
                         device.total_memory as f64 / 1024.0 / 1024.0 / 1024.0
                     );
                 }
             } else {
-                info!("[INFO]  GPU Manager initialized (No GPU available, using CPU)");
+                println!("  [INFO] GPU Manager initialized (No GPU available, using CPU)");
             }
         }
         Err(e) => {
-            log::warn!("[WARN]  GPU Manager initialized but failed to get GPU info: {}", e);
-            info!("[INFO]  Falling back to CPU mode");
+            println!("  [WARN] GPU Manager initialized but failed to get GPU info: {}", e);
+            println!("  [INFO] Falling back to CPU mode");
         }
     }
     
     // Initialize model download manager
-    info!("[DOWNLOAD] Initializing model download manager...");
+    println!("  [DOWNLOAD] Initializing model download manager...");
     let cache_dir = std::env::var("MODEL_CACHE_DIR")
         .unwrap_or_else(|_| "./models".to_string());
     let download_manager = Arc::new(
@@ -243,45 +263,45 @@ async fn main() -> std::io::Result<()> {
             .expect("Failed to create model download manager")
     );
     download_manager.initialize().await.expect("Failed to initialize download manager");
-    info!("[OK] Model download manager ready at: {}", cache_dir);
+    println!("  [OK] Model download manager ready at: {}", cache_dir);
     
     // Initialize audio model manager (legacy)
-    info!("[AUDIO] Initializing audio model manager...");
+    println!("  [AUDIO] Initializing audio model manager...");
     let audio_model_dir = std::env::var("AUDIO_MODEL_DIR")
         .unwrap_or_else(|_| "./models/audio".to_string());
     let audio_model_manager = Arc::new(crate::core::audio_models::AudioModelManager::new(&audio_model_dir));
     audio_model_manager.initialize_default_models().await.ok();
-    info!("[OK] Audio model manager ready at: {}", audio_model_dir);
+    println!("  [OK] Audio model manager ready at: {}", audio_model_dir);
     
     // Initialize modern TTS manager
-    info!("[TTS]  Initializing TTS engines...");
+    println!("  [TTS] Initializing TTS engines...");
     let tts_config = crate::core::tts_manager::TTSManagerConfig::default();
     let tts_manager = Arc::new(crate::core::tts_manager::TTSManager::new(tts_config));
     tts_manager.initialize_defaults().await.expect("Failed to initialize TTS manager");
     let tts_stats = tts_manager.get_stats();
-    info!("[OK] TTS Manager ready - {} engine(s) loaded", tts_stats.total_engines);
+    println!("  [OK] TTS Manager ready - {} engine(s) loaded", tts_stats.total_engines);
     for engine_id in &tts_stats.engine_ids {
-        info!("   └─ {}", engine_id);
+        println!("     └─ {}", engine_id);
     }
     
     let start_time = std::time::Instant::now();
     
     if config.performance.preload_models_on_startup {
-        info!("[WARMUP] Pre-loading models on startup...");
+        println!("  [WARMUP] Pre-loading models on startup...");
         for model_name in &config.models.auto_load {
             if let Ok(_) = model_manager.get_model(model_name) {
-                info!("   └─ Pre-loaded: {}", model_name);
+                println!("     └─ Pre-loaded: {}", model_name);
             }
         }
     }
     
-    info!("[WARMUP] Warming up inference engine...");
+    println!("  [WARMUP] Warming up inference engine...");
     let config_cloned = config.clone();
     inference_engine.warmup(&config_cloned).await.expect("Warmup failed");
-    info!("[OK] Inference engine ready");
+    println!("  [OK] Inference engine ready");
     
     let addr = format!("{}:{}", config.server.host, config.server.port);
-    info!("[SERVER] Starting HTTP server on {}...", addr);
+    println!("  [SERVER] Starting HTTP server on {}...", addr);
     
     let listener = std::net::TcpListener::bind(&addr)?;
     
@@ -337,10 +357,22 @@ async fn main() -> std::io::Result<()> {
     }
     println!("{}\n", "═".repeat(80));
     
-    info!("[OK] Server started successfully - Workers: {}", config.server.workers);
+    println!("  [OK] Server started successfully - Workers: {}", config.server.workers);
+    
+    // Configure JSON payload limits for better performance
+    let json_config = web::JsonConfig::default()
+        .limit(10 * 1024 * 1024) // 10MB max payload
+        .error_handler(|err, _req| {
+            actix_web::error::InternalError::from_response(
+                err,
+                actix_web::HttpResponse::BadRequest()
+                    .json(serde_json::json!({"error": "Invalid JSON payload"}))
+            ).into()
+        });
     
     let server = HttpServer::new(move || {
         App::new()
+            .app_data(json_config.clone())
             .app_data(config_data.clone())
             .app_data(model_mgr.clone())
             .app_data(infer_engine.clone())
@@ -373,6 +405,8 @@ async fn main() -> std::io::Result<()> {
     })
     .workers(config.server.workers)
     .shutdown_timeout(30)  // 30s graceful shutdown
+    .keep_alive(std::time::Duration::from_secs(75)) // Keep-alive for connection reuse
+    .client_request_timeout(std::time::Duration::from_secs(60)) // Request timeout
     .listen(listener)?
     .run();
 
@@ -380,7 +414,7 @@ async fn main() -> std::io::Result<()> {
     let server_handle = server.handle();
     tokio::spawn(async move {
         shutdown_signal().await;
-        info!("[SHUTDOWN] Shutdown signal received, draining requests...");
+        println!("  [SHUTDOWN] Shutdown signal received, draining requests...");
         server_handle.stop(true).await;
     });
 
@@ -409,10 +443,10 @@ async fn shutdown_signal() {
 
     tokio::select! {
         _ = ctrl_c => {
-            info!("[SHUTDOWN] Received Ctrl+C signal");
+            println!("  [SHUTDOWN] Received Ctrl+C signal");
         },
         _ = terminate => {
-            info!("[SHUTDOWN] Received SIGTERM signal");
+            println!("  [SHUTDOWN] Received SIGTERM signal");
         },
     }
 }
@@ -423,13 +457,13 @@ fn log_system_info() {
     
     // CPU Information
     let cpu_count = num_cpus::get();
-    info!("[CPU] CPU: {} cores available", cpu_count);
+    println!("  [CPU] {} cores available", cpu_count);
     
     // Memory Information
     if let Ok(sys_info) = sys_info::mem_info() {
         let total_gb = sys_info.total as f64 / 1024.0 / 1024.0;
         let avail_gb = sys_info.avail as f64 / 1024.0 / 1024.0;
-        info!("[RAM] RAM: {:.2} GB total, {:.2} GB available", total_gb, avail_gb);
+        println!("  [RAM] {:.2} GB total, {:.2} GB available", total_gb, avail_gb);
     }
     
     // GPU Backend information
@@ -438,60 +472,60 @@ fn log_system_info() {
         if GpuManager::is_metal_available() {
             let gpu_manager = GpuManager::new();
             if let Some(metal_info) = gpu_manager.get_metal_info_string() {
-                info!("[METAL] Metal GPU: {}", metal_info);
+                println!("  [METAL] Metal GPU: {}", metal_info);
             } else {
-                info!("[METAL] Metal: Available (Apple Silicon GPU)");
+                println!("  [METAL] Metal: Available (Apple Silicon GPU)");
             }
         } else {
-            info!("[METAL] Metal: Not available");
+            println!("  [METAL] Metal: Not available");
         }
     }
     
     // CUDA information
     if cfg!(feature = "cuda") {
-        info!("[GPU] CUDA: Enabled");
+        println!("  [GPU] CUDA: Enabled");
         if GpuManager::is_cuda_runtime_available() {
             if let Some(cuda_info) = GpuManager::get_cuda_info() {
-                info!("   └─ {}", cuda_info);
+                println!("     └─ {}", cuda_info);
             }
         } else {
-            log::warn!("   └─ CUDA runtime not detected");
+            println!("     └─ CUDA runtime not detected");
         }
     } else {
         #[cfg(not(target_os = "macos"))]
-        info!("[GPU] CUDA: Disabled (compile with --features cuda to enable)");
+        println!("  [GPU] CUDA: Disabled (compile with --features cuda to enable)");
         
         #[cfg(target_os = "macos")]
         {
             if !GpuManager::is_metal_available() {
-                info!("[GPU] GPU: Not available (Metal not detected)");
+                println!("  [GPU] GPU: Not available (Metal not detected)");
             }
         }
     }
     
     // ONNX support
     if cfg!(feature = "onnx") {
-        info!("[ONNX] ONNX: Enabled");
+        println!("  [ONNX] ONNX: Enabled");
     } else {
-        info!("[ONNX] ONNX: Disabled");
+        println!("  [ONNX] ONNX: Disabled");
     }
     
     // Audio processing
     #[cfg(feature = "audio")]
-    info!("[AUDIO] Audio Processing: Enabled");
+    println!("  [AUDIO] Audio Processing: Enabled");
     
     #[cfg(not(feature = "audio"))]
-    info!("[AUDIO] Audio Processing: Disabled");
+    println!("  [AUDIO] Audio Processing: Disabled");
     
     // Image security
     #[cfg(feature = "image-security")]
-    info!("[SECURITY] Image Security: Enabled");
+    println!("  [SECURITY] Image Security: Enabled");
     
     #[cfg(not(feature = "image-security"))]
-    info!("[SECURITY] Image Security: Disabled");
+    println!("  [SECURITY] Image Security: Disabled");
     
     // OS Information
-    info!("[OS]  OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+    println!("  [OS] {} {}", std::env::consts::OS, std::env::consts::ARCH);
     
     println!("  {}\n", "─".repeat(78));
 }

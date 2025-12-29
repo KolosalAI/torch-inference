@@ -124,6 +124,7 @@ pub struct ModelsConfig {
     pub auto_load: Vec<String>,
     pub cache_dir: PathBuf,
     pub max_loaded_models: usize,
+    pub instances_per_model: usize,  // Number of model replicas for parallel inference
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +223,7 @@ impl Default for Config {
                 auto_load: vec!["example".to_string()],
                 cache_dir: PathBuf::from("models"),
                 max_loaded_models: 5,
+                instances_per_model: 1,  // Default to 1 instance
             },
             guard: GuardConfig {
                 enable_guards: true,
