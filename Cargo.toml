@@ -179,3 +179,7 @@ harness = false
 [[bench]]
 name = "concurrent_throughput_benchmark"
 harness = false
+
+[[bench]]
+name = "image_classification_benchmark"
+harness = false

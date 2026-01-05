@@ -28,12 +28,13 @@ Welcome to the torch-inference documentation! All documentation is organized by 
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Deployment guides and best practices |
 | [QUICK_START.md](QUICK_START.md) | Quick start guide for setup |
 
-### 📊 Benchmarks
+### 📊 Benchmarks & Research
 
 Located in [benchmarks/](benchmarks/)
 
 | Document | Description |
 |----------|-------------|
+| [BENCHMARK_RESEARCH_PAPER.md](BENCHMARK_RESEARCH_PAPER.md) | **Comprehensive benchmark research paper** |
 | [BENCHMARK_QUICKSTART.md](benchmarks/BENCHMARK_QUICKSTART.md) | Quick guide to running benchmarks |
 | [BENCHMARK_IMPLEMENTATION.md](benchmarks/BENCHMARK_IMPLEMENTATION.md) | Technical implementation details |
 | [BENCHMARK_RESULTS.md](benchmarks/BENCHMARK_RESULTS.md) | Performance results and analysis |
@@ -81,6 +82,7 @@ Located in [development/](development/)
 - **Testing**: [TESTING.md](TESTING.md)
 
 ### For Performance Analysis
+- **Research Paper**: [BENCHMARK_RESEARCH_PAPER.md](BENCHMARK_RESEARCH_PAPER.md)
 - **Benchmarks**: [benchmarks/](benchmarks/)
 - **Results**: [benchmarks/BENCHMARK_RESULTS.md](benchmarks/BENCHMARK_RESULTS.md)
 - **Analysis**: [benchmarks/BENCHMARK_SUMMARY.md](benchmarks/BENCHMARK_SUMMARY.md)
@@ -120,5 +122,5 @@ When adding or updating documentation:
 
 ---
 
-**Last Updated**: 2024-12-25  
-**Total Documents**: 19 files organized
+**Last Updated**: 2026-01-04  
+**Total Documents**: 20 files organized
