@@ -128,11 +128,11 @@ The need for efficient inference frameworks is further amplified by the growing 
 
 This paper makes the following contributions to the field of production machine learning systems:
 \begin{enumerate}
-    \item \textbf{Framework Architecture:} We detail the design and implementation of a zero-copy, async-first inference engine that bridges high-level safety guarantees with low-level performance, incorporating production resilience patterns including circuit breakers, bulkhead isolation, and graceful degradation under load.
-    \item \textbf{Comprehensive Benchmarking:} We provide a rigorous comparative analysis against 14 deployment solutions across 54 model architectures spanning 15 families ($N = 144$ configurations), representing one of the most comprehensive studies of local inference engines to date.
-    \item \textbf{Statistical Validation:} We report estimation accuracy with Mean Absolute Percentage Error (MAPE) of 0.84\% (95\% CI: 0.79\%--0.89\%), validated through inferential statistical analysis including confidence intervals, effect size quantification, and regression modeling.
-    \item \textbf{Economic Impact Analysis:} We quantify the implications of memory efficiency and throughput improvements on infrastructure costs, demonstrating how Kolosal Torch-Inference can reduce cloud compute expenditure by up to 65\% for memory-bound deployments.
-    \item \textbf{Reproducible Methodology:} We release our complete benchmarking suite, raw data, and analysis scripts to foster transparency and enable independent verification by the research community.
+    \item[(1)] \textbf{Framework Architecture:} We detail the design and implementation of a zero-copy, async-first inference engine that bridges high-level safety guarantees with low-level performance, incorporating production resilience patterns including circuit breakers, bulkhead isolation, and graceful degradation under load.
+    \item[(2)] \textbf{Comprehensive Benchmarking:} We provide a rigorous comparative analysis against 14 deployment solutions across 54 model architectures spanning 15 families ($N = 144$ configurations), representing one of the most comprehensive studies of local inference engines to date.
+    \item[(3)] \textbf{Statistical Validation:} We report estimation accuracy with Mean Absolute Percentage Error (MAPE) of 0.84\% (95\% CI: 0.79\%--0.89\%), validated through inferential statistical analysis including confidence intervals, effect size quantification, and regression modeling.
+    \item[(4)] \textbf{Economic Impact Analysis:} We quantify the implications of memory efficiency and throughput improvements on infrastructure costs, demonstrating how Kolosal Torch-Inference can reduce cloud compute expenditure by up to 65\% for memory-bound deployments.
+    \item[(5)] \textbf{Reproducible Methodology:} We release our complete benchmarking suite, raw data, and analysis scripts to foster transparency and enable independent verification by the research community.
 \end{enumerate}
 
 The remainder of this paper is organized as follows. \Cref{sec:related} reviews related work in model serving frameworks, Rust-based ML infrastructure, and memory estimation techniques. \Cref{sec:architecture} presents the system architecture and core design principles underlying Kolosal Torch-Inference. \Cref{sec:methods} describes the experimental methodology employed for benchmark validation. \Cref{sec:results} reports empirical results across diverse model architectures with comprehensive statistical analysis. \Cref{sec:discussion} discusses practical deployment implications, inherent limitations, and promising directions for future research. \Cref{sec:conclusion} concludes the paper with a summary of key findings and their significance for machine learning practitioners.
@@ -1213,7 +1213,7 @@ The complete benchmark suite and source code are available at \url{https://githu
 
 \section*{Author Contributions (CRediT)}
 
-\noindent\textbf{Evint Leovonzko:} Conceptualization, Methodology, Software, Validation, Formal Analysis, Investigation, Data Curation, Writing---Original Draft, Writing---Review \& Editing, Visualization, Project Administration, Resources.
+\noindent\textbf{Evint Leovonzko} (First Author): Conceptualization, Methodology, Software, Validation, Formal Analysis, Investigation, Data Curation, Writing---Original Draft, Writing---Review \& Editing, Visualization, Project Administration, Resources.
 
 \section*{Acknowledgments}
 
