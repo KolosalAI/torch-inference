@@ -223,7 +223,9 @@ This section presents the experimental design and methodology employed for bench
 
 \subsection{Hardware Configuration}
 
-All benchmarks were conducted on the following hardware configuration to ensure reproducibility:
+All benchmarks were conducted on the following hardware configurations to ensure reproducibility and cross-platform validation:
+
+\subsubsection{Primary Test System (Apple Silicon)}
 \begin{itemize}
     \item \textbf{CPU:} Apple M2 Pro (\num{12} cores, ARM64 architecture)
     \item \textbf{Memory:} \SI{32}{\giga\byte} unified memory
@@ -233,6 +235,21 @@ All benchmarks were conducted on the following hardware configuration to ensure 
     \item \textbf{PyTorch:} v2.5.1 with \texttt{libtorch} C++ backend
     \item \textbf{Rust:} 1.75+ with release optimizations (\texttt{-O3}, LTO)
 \end{itemize}
+
+\subsubsection{Secondary Test System (Windows/CUDA)}
+\begin{itemize}
+    \item \textbf{CPU:} Intel Core i7-12700H (\num{14} cores: \num{6} P-cores + \num{8} E-cores, \num{20} threads, x64)
+    \item \textbf{Memory:} \SI{64}{\giga\byte} DDR4
+    \item \textbf{GPU:} NVIDIA GeForce RTX 3060 Laptop GPU (\SI{6}{\giga\byte} GDDR6 VRAM)
+    \item \textbf{iGPU:} Intel Iris Xe Graphics (\SI{1}{\giga\byte} shared memory)
+    \item \textbf{Storage:} NVMe SSD
+    \item \textbf{OS:} Microsoft Windows 11 Pro (Build 26200)
+    \item \textbf{CUDA:} CUDA Toolkit 11.8
+    \item \textbf{PyTorch:} v2.5.1 with CUDA 11.8 support
+    \item \textbf{Rust:} 1.75+ with release optimizations (\texttt{-O3}, LTO)
+\end{itemize}
+
+\textit{Note:} The Apple Silicon system served as the primary benchmark platform for CPU and MPS (Metal Performance Shaders) evaluations reported in this paper. The Windows/CUDA system provides validation infrastructure for future GPU-accelerated inference benchmarks with NVIDIA CUDA backends and cross-platform compatibility testing.
 
 \subsection{Sample Selection and Stratification}
 

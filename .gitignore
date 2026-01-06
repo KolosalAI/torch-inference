@@ -1,95 +1,264 @@
-# Rust
+# ==============================================================================
+# Rust Build Artifacts
+# ==============================================================================
 /target/
 **/*.rs.bk
 *.pdb
-
-# Cargo
 Cargo.lock
 .cargo/
 
-# LibTorch
+# ==============================================================================
+# LibTorch / PyTorch
+# ==============================================================================
 /libtorch/
 libtorch*.zip
+.pytorch/
+.cache/torch/
 
-# IDE
+# ==============================================================================
+# IDE & Editors
+# ==============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.project
+.settings/
+.classpath
 
-# OS
+# ==============================================================================
+# Operating System
+# ==============================================================================
 .DS_Store
 Thumbs.db
+desktop.ini
+ehthumbs.db
 
+# ==============================================================================
 # Python
+# ==============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 .Python
 venv/
 ENV/
+env/
+*.egg-info/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.pytype/
 
-# Model files - ignore all downloaded models
-/models/*
-!/models/.gitkeep
+# ==============================================================================
+# Environment Files (IMPORTANT: Contains sensitive data)
+# ==============================================================================
+# Ignore actual environment files with secrets
+.env
+.env.local
+.env.backup
 
-# Output files
+# Ignore pattern-based env files except specific templates
+.env.*
+!.env.cuda
+!.env.example
+
+# ==============================================================================
+# Model Files
+# ==============================================================================
+models/*
+!models/.gitkeep
+!models/README.md
+*.pt
+*.pth
+*.onnx
+*.torchscript
+*.ts
+# Exception: Keep example/test models if small
+!models/example_*.pt
+
+# ==============================================================================
+# Audio/Media Output Files
+# ==============================================================================
 *.log
 *.wav
 *.mp3
 *.flac
+*.ogg
+*.m4a
+*.aac
 
-# Archives
+# ==============================================================================
+# Archives & Compressed Files
+# ==============================================================================
 archive_*/
+*.zip
+*.tar.gz
+*.rar
+*.7z
 
-# Build artifacts
+# ==============================================================================
+# Build Artifacts (C/C++)
+# ==============================================================================
 *.o
 *.a
 *.so
 *.dll
 *.dylib
+*.lib
+*.exp
+*.obj
+*.exe
 
-# Test outputs
+# ==============================================================================
+# Test Outputs
+# ==============================================================================
 inference_outputs/
 stt_validation_results/
 tts_validation_results/
 api_demo_outputs/
 automated_test_results/
-
-# Sample outputs - ignore WAV files but keep structure
-sample_output/*.wav
-!sample_output/README.md
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Test scripts (generated)
-test_*.sh
-!test_outputs/.gitkeep
-
-# Test output files
 test_outputs/
 test_report_output.txt
 
-# Benchmark outputs (generated at runtime)
+# Sample outputs - ignore generated files but keep structure
+sample_output/*.wav
+sample_output/*.mp3
+!sample_output/README.md
+
+# ==============================================================================
+# Temporary Files
+# ==============================================================================
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+.~lock.*
+
+# ==============================================================================
+# Test Scripts (Generated)
+# ==============================================================================
+test_*.sh
+test_*.bat
+!test_outputs/.gitkeep
+
+# ==============================================================================
+# Benchmark Results (Generated at Runtime)
+# ==============================================================================
 benchmark_results/
+!benchmark_results/.gitkeep
 benchmark_images/
 build_output.log
 server_torch.log
+*.prof
+*.profdata
 
-# Benchmark data - DO NOT IGNORE
-# benches/data/ contains CSV and JSON benchmark results
-# These files should be tracked in git for analysis
+# IMPORTANT: Benchmark source data should be tracked
+# benches/data/ contains CSV and JSON benchmark analysis results
+# These should be committed for reproducibility
+!benches/data/
+!benches/**/*.csv
+!benches/**/*.json
 
-# Downloaded test images
+# ==============================================================================
+# Downloaded Assets
+# ==============================================================================
 test_images/
+!test_images/.gitkeep
+downloads/
 
-# Model downloads
-models/
-!models/.gitkeep
+# ==============================================================================
+# CUDA / TensorRT Cache
+# ==============================================================================
+tensorrt_cache/
+tensorrt_calibration_cache/
+.cuda/
+*.trt
+*.engine
+*.plan
 
-# Configuration files
+# ==============================================================================
+# Configuration Files
+# ==============================================================================
+# Ignore instance-specific configs
 config.optimized.toml
+config.local.toml
+config.prod.toml
+config.dev.toml
+
+# Keep template/example configs for documentation
+!config/cuda_tensorrt.toml
+!config/example.toml
+!config.toml.example
+
+# ==============================================================================
+# Documentation Build Output
+# ==============================================================================
+docs/_build/
+docs/.doctrees/
+docs/latex/
+*.aux
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# Keep PDF outputs in docs/research (research papers)
+!docs/research/*.pdf
+
+# ==============================================================================
+# Logs & Monitoring
+# ==============================================================================
+*.log
+logs/
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==============================================================================
+# Database
+# ==============================================================================
+*.db
+*.sqlite
+*.sqlite3
+
+# ==============================================================================
+# Secrets & Credentials (CRITICAL)
+# ==============================================================================
+.secrets/
+secrets.toml
+credentials.json
+*.pem
+*.key
+!public.key
+.env.production
+*.env.prod
+
+# ==============================================================================
+# OS-Specific
+# ==============================================================================
+# Windows
+$RECYCLE.BIN/
+*.stackdump
+
+# macOS
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+.directory
+.Trash-*
+
+# ==============================================================================
+# Project-Specific Ignores
+# ==============================================================================
+# Add any project-specific files to ignore below
