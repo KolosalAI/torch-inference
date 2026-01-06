@@ -23,10 +23,10 @@ pub struct CudaMemoryConfig {
 impl Default for CudaMemoryConfig {
     fn default() -> Self {
         Self {
-            memory_fraction: 0.9,
-            growth_strategy: "default".to_string(),
-            enable_async_alloc: true,
-            pool_size_mb: 4096,
+            memory_fraction: 0.95,  // Use more GPU memory for inference
+            growth_strategy: "aggressive".to_string(),  // Aggressive memory allocation
+            enable_async_alloc: true,   // Enable async memory allocator
+            pool_size_mb: 8192,  // 8GB memory pool for large models
         }
     }
 }

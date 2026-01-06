@@ -202,14 +202,13 @@ impl OnnxModelLoader {
         // 2. CUDA (NVIDIA GPUs) - fallback if TensorRT is not available
         {
             let cuda_ep = ort::execution_providers::CUDAExecutionProvider::default()
-                .with_device_id(target_device as i32);
-            
-            // Note: Additional CUDA EP options can be configured here
-            // .with_arena_extend_strategy(ArenaExtendStrategy::NextPowerOfTwo)
-            // .with_cudnn_conv_algo_search(CuDNNConvAlgoSearch::Exhaustive)
+                .with_device_id(target_device as i32)
+                .with_conv_algorithm_search(ort::execution_providers::cuda::CuDNNConvAlgoSearch::Exhaustive)
+                .with_cudnn_conv_use_max_workspace(true)
+                .with_do_copy_in_default_stream(false);  // Use separate streams for better parallelism
             
             execution_providers.push(cuda_ep.build());
-            debug!("  ✓ CUDA execution provider configured as fallback");
+            debug!("  ✓ CUDA execution provider configured with optimized settings");
         }
 
         // 3. CoreML (Apple Silicon / macOS)

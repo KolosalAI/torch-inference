@@ -99,15 +99,15 @@ impl Default for AutoTensorRTConfig {
         Self {
             auto_detect: true,
             preferred_precision: TensorRTPrecision::FP16,
-            workspace_size_mb: 2048, // 2GB default
-            max_batch_size: 32,
+            workspace_size_mb: 4096, // 4GB workspace for larger models
+            max_batch_size: 64,  // Increased for better throughput
             cache_dir: PathBuf::from("./tensorrt_cache"),
             use_timing_cache: true,
             use_engine_cache: true,
-            optimization_level: 3,
+            optimization_level: 5,  // Maximum optimization
             use_dynamic_shapes: true,
             min_batch_size: 1,
-            optimal_batch_size: 8,
+            optimal_batch_size: 16,  // Optimized for common use case
         }
     }
 }

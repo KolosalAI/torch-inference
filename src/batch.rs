@@ -133,7 +133,7 @@ impl BatchProcessor {
 
 impl Default for BatchProcessor {
     fn default() -> Self {
-        Self::new(32, 100)
+        Self::new(64, 50)  // Larger batches, shorter timeout for better throughput
     }
 }
 
@@ -611,8 +611,8 @@ mod tests {
     async fn test_batch_default_construction() {
         let processor = BatchProcessor::default();
         
-        // Should have default max_batch_size of 32
-        for i in 0..32 {
+        // Should have default max_batch_size of 64
+        for i in 0..64 {
             let request = BatchRequest {
                 id: format!("req_{}", i),
                 model_name: "model".to_string(),

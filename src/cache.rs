@@ -137,7 +137,7 @@ impl Cache {
 
 impl Default for Cache {
     fn default() -> Self {
-        Self::new(1000)
+        Self::new(10000)  // Increased default cache size for better hit rate
     }
 }
 
@@ -548,12 +548,12 @@ mod tests {
     fn test_cache_default_construction() {
         let cache = Cache::default();
         
-        // Should create with default size (1000)
-        for i in 0..1000 {
+        // Should create with default size (10000)
+        for i in 0..1000 {  // Test with 1000 entries (subset of 10000)
             assert!(cache.set(format!("key_{}", i), serde_json::json!(i), 60).is_ok());
         }
         
-        // 1001st should trigger LRU eviction (handled automatically by lru crate)
+        // Additional entry should work fine with 10000 capacity
         assert!(cache.set("overflow".to_string(), serde_json::json!("ok"), 60).is_ok());
     }
 

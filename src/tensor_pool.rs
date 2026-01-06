@@ -106,7 +106,7 @@ pub struct TensorPoolStats {
 
 impl Default for TensorPool {
     fn default() -> Self {
-        Self::new(100)
+        Self::new(500)  // Increased default pool size for better memory reuse
     }
 }
 

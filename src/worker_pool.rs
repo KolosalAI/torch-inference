@@ -104,9 +104,9 @@ pub struct WorkerPoolConfig {
 impl Default for WorkerPoolConfig {
     fn default() -> Self {
         Self {
-            min_workers: 2,
-            max_workers: 16,
-            scale_up_threshold: 10,
+            min_workers: 4,  // Increased for better baseline throughput
+            max_workers: 64,  // Increased to handle high concurrency
+            scale_up_threshold: 5,  // Scale up earlier for faster response
             scale_down_threshold: 2,
             worker_timeout_secs: 300,
             health_check_interval_secs: 30,
@@ -669,7 +669,7 @@ mod tests {
     #[tokio::test]
     async fn test_worker_pool_default() {
         let pool = WorkerPool::new(WorkerPoolConfig::default());
-        assert_eq!(pool.config.min_workers, 2);
-        assert_eq!(pool.config.max_workers, 16);
+        assert_eq!(pool.config.min_workers, 4);  // Updated default
+        assert_eq!(pool.config.max_workers, 64);  // Updated default
     }
 }
