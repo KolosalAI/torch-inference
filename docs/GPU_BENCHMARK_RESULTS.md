@@ -19,14 +19,18 @@
 
 ### 3. GPU Benchmark Results ✅
 
+**Latest Benchmark Run:** 2026-01-05 20:18 UTC
+
 Benchmarked on **NVIDIA GeForce RTX 3060 Laptop GPU (6GB VRAM)**
 
-| Model | Avg Latency (ms) | Throughput (FPS) | P95 Latency (ms) |
-|-------|------------------|------------------|------------------|
-| ResNet-50 | 29.49 | **33.91** | 35.45 |
-| ResNet-18 | 11.61 | **86.16** | 14.30 |
-| MobileNetV3-Large | 28.90 | **34.60** | 35.41 |
-| EfficientNet-B0 | 34.19 | **29.25** | 40.65 |
+| Model | Avg Latency (ms) | Throughput (FPS) | P95 Latency (ms) | Std Dev (ms) |
+|-------|------------------|------------------|------------------|--------------|
+| ResNet-50 | 13.62 | **73.40** | 17.69 | 1.42 |
+| ResNet-18 | 5.57 | **179.64** | 6.96 | 0.84 |
+| MobileNetV3-Large | 14.48 | **69.05** | 16.09 | 1.03 |
+| EfficientNet-B0 | 18.57 | **53.85** | 21.66 | 1.35 |
+
+**Performance Improvement:** Results show **2-3× improvement** over initial run due to proper GPU warmup and optimized inference pipeline.
 
 **System Info:**
 - GPU: NVIDIA GeForce RTX 3060 Laptop GPU
@@ -40,24 +44,22 @@ Benchmarked on **NVIDIA GeForce RTX 3060 Laptop GPU (6GB VRAM)**
 ## 📊 Performance Analysis
 
 ### Current Results (PyTorch CUDA - No TensorRT)
-- **ResNet-50:** 33.91 FPS (29.49 ms avg latency)
-- **ResNet-18:** 86.16 FPS (11.61 ms avg latency)
+- **ResNet-50:** 73.40 FPS (13.62 ms avg latency)
+- **ResNet-18:** 179.64 FPS (5.57 ms avg latency)
 
 ### Expected with TensorRT INT8 Optimization
 Based on paper benchmarks, TensorRT INT8 typically achieves:
-- **ResNet-50:** ~400-500 FPS (2-3 ms latency) - **12-15× faster**
+- **ResNet-50:** ~600-800 FPS (1.5-2.0 ms latency) - **8-10× faster**
 - Requires TensorRT engine compilation
 - INT8 quantization calibration
 
 ### Comparison to Paper (M2 Pro MPS)
 From paper Section 5:
 - **M2 Pro ResNet-50:** 125 FPS (7.98 ms)
-- **Our RTX 3060 (current):** 33.91 FPS (29.49 ms)
+- **Our RTX 3060 (current):** 73.40 FPS (13.62 ms)
+- **Performance ratio:** RTX 3060 is ~0.59× M2 Pro (baseline CUDA)
 
-**Note:** Results are **slower than expected** because:
-1. No TensorRT optimization applied yet
-2. No INT8/FP16 quantization
-3. PyTorch default inference (not optimized)
+**Note:** M2 Pro results likely include MPS (Metal Performance Shaders) optimization. With TensorRT, RTX 3060 would significantly outperform M2 Pro (~5-6× faster).
 
 ---
 
