@@ -166,10 +166,10 @@ impl Default for Config {
                 device_type: "auto".to_string(),
                 device_id: 0,
                 device_ids: None,
-                use_fp16: false,
-                use_tensorrt: false,
-                use_torch_compile: false,
-                metal_use_mlx: false,
+                use_fp16: true,  // Enable FP16 by default for better GPU performance
+                use_tensorrt: true,  // Enable TensorRT by default for optimal inference
+                use_torch_compile: true,  // Enable torch.compile for optimization
+                metal_use_mlx: true,  // Enable MLX on macOS by default
                 metal_cache_shaders: true,
                 metal_optimize_for_apple_silicon: true,
                 enable_jit: true,
@@ -177,10 +177,10 @@ impl Default for Config {
                 enable_jit_executor: true,
                 enable_jit_fusion: true,
                 num_threads: num_cpus::get(),
-                num_interop_threads: 1,
+                num_interop_threads: num_cpus::get().min(4),  // Better parallelism
                 cudnn_benchmark: true,
-                enable_autocast: false,
-                torch_warmup_iterations: 5,
+                enable_autocast: true,  // Enable automatic mixed precision (AMP)
+                torch_warmup_iterations: 10,  // More warmup for TensorRT optimization
             },
             batch: BatchConfig {
                 batch_size: 1,
@@ -188,17 +188,17 @@ impl Default for Config {
                 enable_dynamic_batching: true,
             },
             performance: PerformanceConfig {
-                warmup_iterations: 3,
+                warmup_iterations: 5,  // Increased for better CUDA/TensorRT warmup
                 enable_caching: true,
                 enable_profiling: false,
-                cache_size_mb: 1024,
-                enable_cuda_graphs: false,
-                enable_model_quantization: false,
-                quantization_bits: 8,
+                cache_size_mb: 2048,  // Increased default cache for better performance
+                enable_cuda_graphs: true,  // Enable CUDA graphs by default for reduced overhead
+                enable_model_quantization: true,  // Enable quantization for TensorRT
+                quantization_bits: 8,  // INT8 for maximum TensorRT performance
                 enable_tensor_pooling: true,
-                max_pooled_tensors: 100,
+                max_pooled_tensors: 500,  // Increased pool for better memory reuse
                 enable_async_model_loading: true,
-                preload_models_on_startup: false,
+                preload_models_on_startup: true,  // Preload to avoid lazy loading delays
                 enable_result_compression: false,
                 compression_level: 6,
                 enable_request_batching: true,
@@ -207,8 +207,8 @@ impl Default for Config {
                 enable_inflight_batching: false,
                 max_inflight_batches: 4,
                 enable_worker_pool: true,
-                min_workers: 2,
-                max_workers: 16,
+                min_workers: 4,  // Increased minimum workers
+                max_workers: 32,  // Increased maximum workers
                 enable_auto_scaling: true,
                 enable_zero_scaling: false,
             },
@@ -274,12 +274,13 @@ mod tests {
     fn test_device_config_defaults() {
         let config = Config::default();
         assert_eq!(config.device.device_id, 0);
-        assert!(!config.device.use_fp16);
-        assert!(!config.device.use_tensorrt);
-        assert!(!config.device.use_torch_compile);
-        assert!(!config.device.metal_use_mlx);
+        assert!(config.device.use_fp16);  // Now enabled by default
+        assert!(config.device.use_tensorrt);  // Now enabled by default
+        assert!(config.device.use_torch_compile);  // Now enabled by default
+        assert!(config.device.metal_use_mlx);  // Now enabled by default
         assert!(config.device.metal_cache_shaders);
         assert!(config.device.metal_optimize_for_apple_silicon);
+        assert!(config.device.enable_autocast);  // Now enabled by default
     }
 
     #[test]
@@ -291,10 +292,13 @@ mod tests {
     #[test]
     fn test_performance_config_defaults() {
         let config = Config::default();
-        assert_eq!(config.performance.warmup_iterations, 3);
+        assert_eq!(config.performance.warmup_iterations, 5);  // Updated default
         assert!(config.performance.enable_caching);
         assert!(!config.performance.enable_profiling);
-        assert_eq!(config.performance.cache_size_mb, 1024);
+        assert_eq!(config.performance.cache_size_mb, 2048);  // Updated default
+        assert!(config.performance.enable_cuda_graphs);  // Now enabled by default
+        assert!(config.performance.enable_model_quantization);  // Now enabled by default
+        assert!(config.performance.preload_models_on_startup);  // Now enabled by default
     }
 
     #[test]

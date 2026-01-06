@@ -25,7 +25,7 @@ pub struct TensorRTConfig {
 impl Default for TensorRTConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,  // Enable TensorRT by default
             precision: TensorRTPrecision::FP16,
             workspace_size_mb: 2048, // 2GB workspace
             max_batch_size: 32,
