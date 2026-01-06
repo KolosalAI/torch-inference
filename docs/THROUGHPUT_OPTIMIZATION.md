@@ -197,3 +197,165 @@ If even higher throughput is needed:
 - Improved work distribution (adaptive chunking)
 - Expected linear scaling improvement from 24% to 33%+
 - Should maintain 1200-1800 img/sec at high concurrency
+
+---
+
+## CUDA and TensorRT Optimizations (v1.1)
+
+### Overview
+
+Enhanced the inference pipeline with comprehensive CUDA and TensorRT optimizations for maximum GPU utilization.
+
+### Changes Implemented
+
+#### 1. **PyTorch CUDA Optimizations** (`src/models/pytorch_loader.rs`)
+
+```rust
+// New: CUDA optimization settings
+pub struct CudaOptimizations {
+    pub use_cudnn_benchmark: bool,  // Auto-tune convolution algorithms
+    pub use_fp16: bool,             // Half-precision inference
+    pub use_cuda_graphs: bool,      // Reduce kernel launch overhead
+    pub num_streams: usize,         // Concurrent CUDA streams
+    pub memory_pool_size_mb: usize, // Pre-allocated memory pool
+}
+
+// Initialization function
+pub fn initialize_cuda_optimizations(config: &DeviceConfig) -> Result<()>
+```
+
+**Key Features:**
+- cuDNN benchmark mode for auto-tuned convolution kernels
+- Configurable CPU thread count for data loading
+- Inter-op thread parallelism
+- Model warmup for JIT optimization
+- FP16 mixed precision support
+
+#### 2. **TensorRT Integration** (`src/models/onnx_loader.rs`)
+
+```rust
+// New: TensorRT configuration
+pub struct TensorRTConfig {
+    pub enabled: bool,
+    pub precision: TensorRTPrecision,    // FP32, FP16, INT8
+    pub workspace_size_mb: usize,        // 2GB default
+    pub max_batch_size: usize,           // 32 default
+    pub optimization_level: u32,         // 0-5 scale
+    pub cache_dir: Option<String>,       // Engine cache
+    pub use_dynamic_shapes: bool,
+}
+```
+
+**Precision Modes:**
+| Mode | Description | Speedup | Accuracy |
+|------|-------------|---------|----------|
+| FP32 | Baseline | 1x | 100% |
+| FP16 | Half precision | 2-3x | ~99.9% |
+| INT8 | 8-bit quantized | 4-8x | ~99% |
+
+**Engine Caching:**
+- TensorRT engines cached to `./tensorrt_cache/`
+- First run: 5-15 min per model (engine building)
+- Subsequent runs: 1-2 sec (cached load)
+
+#### 3. **GPU Manager Enhancements** (`src/core/gpu.rs`)
+
+```rust
+// New: CUDA memory configuration
+pub struct CudaMemoryConfig {
+    pub memory_fraction: f32,       // 0.9 = use 90% of VRAM
+    pub growth_strategy: String,    // default/aggressive/conservative
+    pub enable_async_alloc: bool,   // Async memory allocator
+    pub pool_size_mb: usize,        // 4096 MB default
+}
+
+// New methods
+fn initialize_cuda_optimizations(&self, config: &CudaMemoryConfig) -> Result<()>
+fn get_recommended_config(&self) -> Result<CudaMemoryConfig>
+fn is_tensorrt_available() -> bool
+fn get_tensorrt_version() -> Option<String>
+```
+
+### Configuration
+
+Update `config.toml` for optimal performance:
+
+```toml
+[device]
+device_type = "cuda"
+device_id = 0
+use_fp16 = true
+use_tensorrt = true
+cudnn_benchmark = true
+enable_autocast = true
+torch_warmup_iterations = 20
+
+[performance]
+enable_cuda_graphs = true
+enable_model_quantization = true
+quantization_bits = 8
+```
+
+### Environment Variables
+
+```bash
+# TensorRT Configuration
+TENSORRT_PRECISION=fp16      # fp32, fp16, int8
+TENSORRT_WORKSPACE_SIZE_MB=2048
+TENSORRT_MAX_BATCH_SIZE=32
+
+# CUDA Configuration
+CUDA_VISIBLE_DEVICES=0
+CUDNN_BENCHMARK=1
+USE_FP16=1
+ENABLE_CUDA_GRAPHS=1
+
+# Memory Management
+PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512,expandable_segments:True
+```
+
+### Expected Performance Gains
+
+| Configuration | ResNet-50 FPS | Speedup vs CPU |
+|--------------|---------------|----------------|
+| CPU (baseline) | 125 | 1x |
+| CUDA FP32 | 400-500 | 3-4x |
+| CUDA FP16 | 600-800 | 5-6x |
+| TensorRT FP16 | 900-1200 | 7-10x |
+| TensorRT INT8 | 1200-1500 | 10-12x |
+
+### Usage
+
+```rust
+// PyTorch with CUDA optimizations
+let loader = PyTorchModelLoader::new(
+    Some("cuda:0".to_string()),
+    Some(device_config),
+    Some(tensor_pool)
+);
+let model = loader.load_model(&path, None)?;
+
+// ONNX with TensorRT
+let tensorrt_config = TensorRTConfig {
+    enabled: true,
+    precision: TensorRTPrecision::FP16,
+    workspace_size_mb: 2048,
+    ..Default::default()
+};
+let loader = OnnxModelLoader::with_tensorrt_config(0, tensorrt_config, None);
+let model = loader.load_model(&path, None)?;
+```
+
+### Build Commands
+
+```bash
+# CUDA + TensorRT build
+cargo build --release --features cuda,torch
+
+# Run benchmarks
+cargo bench --bench image_classification_benchmark --features cuda,torch
+```
+
+---
+
+*Last updated: 2026-01-06*

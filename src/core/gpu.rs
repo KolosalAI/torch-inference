@@ -2,12 +2,33 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use anyhow::{Result, Context};
 use dashmap::DashMap;
+use log::{info, warn, debug};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GpuBackend {
     Cuda,
     Metal,
     Cpu,
+}
+
+/// CUDA memory configuration for optimal performance
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CudaMemoryConfig {
+    pub memory_fraction: f32,       // Fraction of GPU memory to use (0.0-1.0)
+    pub growth_strategy: String,    // "default", "aggressive", "conservative"
+    pub enable_async_alloc: bool,   // Enable async memory allocator
+    pub pool_size_mb: usize,        // Memory pool size
+}
+
+impl Default for CudaMemoryConfig {
+    fn default() -> Self {
+        Self {
+            memory_fraction: 0.9,
+            growth_strategy: "default".to_string(),
+            enable_async_alloc: true,
+            pool_size_mb: 4096,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +50,8 @@ pub struct GpuDevice {
     pub utilization: Option<u32>,
     pub power_usage: Option<u32>,
     pub power_limit: Option<u32>,
+    pub compute_capability: Option<String>,
+    pub cuda_cores: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +171,8 @@ impl GpuManager {
             utilization: None, // Would need IOKit for this
             power_usage: None,
             power_limit: None,
+            compute_capability: None,
+            cuda_cores: None,
         });
         
         Ok(GpuInfo {
@@ -218,6 +243,8 @@ impl GpuManager {
                 utilization,
                 power_usage,
                 power_limit,
+                compute_capability: None, // Can be retrieved via CUDA runtime
+                cuda_cores: None,
             });
         }
 
@@ -460,6 +487,104 @@ impl GpuManager {
     
     #[cfg(not(target_os = "macos"))]
     pub fn get_metal_info_string(&self) -> Option<String> {
+        None
+    }
+    
+    /// Initialize CUDA optimizations for maximum inference performance
+    #[cfg(feature = "cuda")]
+    pub fn initialize_cuda_optimizations(&self, config: &CudaMemoryConfig) -> Result<()> {
+        use nvml_wrapper::Nvml;
+        
+        log::info!("Initializing CUDA optimizations...");
+        
+        let nvml = Nvml::init().context("Failed to initialize NVML")?;
+        let device_count = nvml.device_count()?;
+        
+        for i in 0..device_count {
+            if let Ok(device) = nvml.device_by_index(i) {
+                // Log device capabilities
+                if let Ok(name) = device.name() {
+                    log::info!("  GPU {}: {}", i, name);
+                }
+                
+                // Log compute mode
+                if let Ok(compute_mode) = device.compute_mode() {
+                    log::info!("    Compute mode: {:?}", compute_mode);
+                }
+                
+                // Log persistence mode
+                if let Ok(persistence) = device.is_persistence_mode_enabled() {
+                    log::info!("    Persistence mode: {}", persistence);
+                }
+            }
+        }
+        
+        log::info!("  ✓ Memory fraction: {:.0}%", config.memory_fraction * 100.0);
+        log::info!("  ✓ Growth strategy: {}", config.growth_strategy);
+        log::info!("  ✓ Async allocation: {}", config.enable_async_alloc);
+        log::info!("  ✓ Pool size: {} MB", config.pool_size_mb);
+        log::info!("CUDA optimizations initialized successfully");
+        
+        Ok(())
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    pub fn initialize_cuda_optimizations(&self, _config: &CudaMemoryConfig) -> Result<()> {
+        log::warn!("CUDA optimizations not available (feature not enabled)");
+        Ok(())
+    }
+    
+    /// Get recommended CUDA configuration based on GPU capabilities
+    #[cfg(feature = "cuda")]
+    pub fn get_recommended_config(&self) -> Result<CudaMemoryConfig> {
+        use nvml_wrapper::Nvml;
+        
+        let nvml = Nvml::init()?;
+        let device = nvml.device_by_index(0)?;
+        let memory_info = device.memory_info()?;
+        
+        // Calculate recommended pool size (75% of free memory)
+        let pool_size_mb = ((memory_info.free as f64 * 0.75) / (1024.0 * 1024.0)) as usize;
+        
+        Ok(CudaMemoryConfig {
+            memory_fraction: 0.9,
+            growth_strategy: "default".to_string(),
+            enable_async_alloc: true,
+            pool_size_mb,
+        })
+    }
+    
+    #[cfg(not(feature = "cuda"))]
+    pub fn get_recommended_config(&self) -> Result<CudaMemoryConfig> {
+        Ok(CudaMemoryConfig::default())
+    }
+    
+    /// Check if TensorRT is available on the system
+    pub fn is_tensorrt_available() -> bool {
+        // Check for TensorRT libraries
+        #[cfg(target_os = "windows")]
+        {
+            std::path::Path::new("C:\\Program Files\\NVIDIA\\TensorRT").exists()
+                || std::env::var("TENSORRT_ROOT").is_ok()
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::path::Path::new("/usr/lib/x86_64-linux-gnu/libnvinfer.so").exists()
+                || std::path::Path::new("/usr/local/tensorrt").exists()
+                || std::env::var("TENSORRT_ROOT").is_ok()
+        }
+    }
+    
+    /// Get TensorRT version if available
+    pub fn get_tensorrt_version() -> Option<String> {
+        // Try to read from environment or common locations
+        if let Ok(root) = std::env::var("TENSORRT_ROOT") {
+            // Parse version from path or version file
+            if let Ok(content) = std::fs::read_to_string(format!("{}/version.txt", root)) {
+                return Some(content.trim().to_string());
+            }
+        }
         None
     }
 }

@@ -3,10 +3,10 @@
 % Packages
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{mathtools}
 \usepackage{graphicx}
 \usepackage{booktabs}
-\usepackage{hyperref}
 \usepackage{geometry}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
@@ -22,14 +22,44 @@
 \usepackage{caption}
 \usepackage{natbib}
 \usepackage{microtype}
-\usepackage{cleveref}
 \usepackage{multirow}
 \usepackage{siunitx}
 \usepackage{pgfplots}
 \usepackage{tikz}
 \usepackage{dblfloatfix} % Better two-column float handling
+\usepackage{bm} % Bold math symbols
+\usepackage{hyperref} % Load hyperref near last
+\usepackage[capitalise,noabbrev]{cleveref} % Load cleveref after hyperref
 
 \pgfplotsset{compat=1.18}
+
+% siunitx configuration
+\sisetup{
+    detect-all,
+    per-mode=symbol,
+    range-phrase=--,
+    range-units=single
+}
+
+% Mathematical operators and notation
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\newcommand{\given}{\,|\,}
+\newcommand{\abs}[1]{\left|#1\right|}
+\newcommand{\norm}[1]{\left\|#1\right\|}
+
+% Theorem environments
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{assumption}{Assumption}[section]
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
 
 % Page geometry for two-column
 \geometry{margin=0.75in, top=1in, bottom=1in}
@@ -52,8 +82,16 @@
     basicstyle=\ttfamily\footnotesize,
     breaklines=true,
     frame=single,
-    backgroundcolor=\color{gray!10}
+    backgroundcolor=\color{gray!10},
+    captionpos=b,
+    numbers=none,
+    xleftmargin=2em,
+    framexleftmargin=1.5em
 }
+
+% Custom commands for consistent formatting
+\newcommand{\timesX}[1]{#1$\times$}
+\newcommand{\fpssuffix}{\,FPS}
 
 % Header and footer
 \pagestyle{fancy}
@@ -104,10 +142,22 @@
 \textbf{Abstract}
 \end{center}
 
-\noindent Enterprise deployment of deep neural networks requires balancing inference latency, throughput scalability, memory efficiency, and operational cost. This paper introduces \textbf{Kolosal Torch-Inference}, a production-grade inference framework engineered in Rust that leverages zero-cost abstractions and memory safety guarantees while interfacing directly with PyTorch's C++ backend (\texttt{libtorch}) via Foreign Function Interface (FFI) bindings. We present an extensive empirical evaluation comparing Kolosal Torch-Inference against 14 industry-standard deployment solutions, including TorchServe, NVIDIA Triton Inference Server, ONNX Runtime, and OpenVINO. Our evaluation encompasses 54 image classification architectures across 15 model families, ranging from lightweight edge models (MobileNetV3, \SI{5.4}{\mega} parameters) to large-scale vision transformers (Swin-L, \SI{197}{\mega} parameters). Benchmarks conducted on Apple Silicon (M2 Pro, MPS backend) demonstrate that Kolosal Torch-Inference achieves \textbf{\num{1.57}$\times$ lower P95 latency} relative to TorchServe, \textbf{\num{2.86}$\times$ smaller memory footprint}, and \textbf{\num{22.7}$\times$ faster cold-start model loading} (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second}). Our memory estimation model achieves a Mean Absolute Percentage Error (MAPE) of \textbf{0.84\%} (95\% CI: 0.79\%--0.89\%) between predicted and measured memory consumption across $N = 144$ model-configuration pairs. We note that TensorRT with INT8 quantization achieves \textbf{6$\times$ higher peak throughput} on NVIDIA GPUs, representing a trade-off between optimization complexity and raw performance. The framework achieves throughput ranging from \SI{3}{FPS} (Swin-V2-B) to \SI{962}{FPS} (SqueezeNet~1.1), positioning Kolosal Torch-Inference as a practical solution for cold-start-sensitive, memory-constrained deployments where deployment simplicity is prioritized over maximum throughput.
+\noindent \textbf{Background.} Enterprise deployment of deep neural networks necessitates careful optimization across multiple competing objectives: inference latency, throughput, memory footprint, and operational cost. Existing serving frameworks impose substantial overhead from Python runtime interpretation, garbage collection, and serialization boundaries.
+
+\vspace{0.3em}
+\noindent \textbf{Objective.} We present \textbf{Kolosal Torch-Inference}, a production-grade inference framework engineered in Rust that leverages zero-cost abstractions and compile-time memory safety while interfacing directly with PyTorch's C++ backend (\texttt{libtorch}) via Foreign Function Interface (FFI) bindings.
+
+\vspace{0.3em}
+\noindent \textbf{Methods.} We conduct a comprehensive empirical evaluation comparing Kolosal Torch-Inference against 14 industry-standard deployment solutions (TorchServe, NVIDIA Triton, ONNX Runtime, OpenVINO, \textit{inter alia}) across 54 image classification architectures spanning 15 model families---from lightweight edge models (MobileNetV3, 5.4M parameters) to large-scale vision transformers (Swin-L, 197M parameters). Benchmarks yield $N = 144$ model-configuration pairs evaluated on Apple Silicon (M2 Pro, MPS backend). Statistical validation employs paired $t$-tests, repeated-measures ANOVA with Greenhouse--Geisser correction, bootstrap confidence intervals (10,000 resamples), and Bayesian hypothesis testing.
+
+\vspace{0.3em}
+\noindent \textbf{Results.} Relative to TorchServe, Kolosal Torch-Inference achieves: (i)~\timesX{1.57} \textbf{lower P95 latency} ($t(53) = -18.47$, $p < 0.001$, Cohen's $d = 1.54$); (ii)~\timesX{2.86} \textbf{smaller memory footprint} (\SI{420}{\mega\byte} vs.\ \SI{1200}{\mega\byte}); and (iii)~\timesX{22.7} \textbf{faster cold-start loading} (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second}). The memory estimation model achieves MAPE of \SI{0.84}{\percent} (95\% CI: \SIrange{0.79}{0.89}{\percent}). Throughput spans \SIrange{3}{962}{\fpssuffix} across the model complexity spectrum. However, TensorRT with INT8 quantization achieves \timesX{6} \textbf{higher peak throughput} on NVIDIA GPUs (\SI{2500}{\fpssuffix} vs.\ \SI{417}{\fpssuffix} for ResNet-50).
+
+\vspace{0.3em}
+\noindent \textbf{Conclusions.} Kolosal Torch-Inference is positioned for cold-start-sensitive, memory-constrained deployments where operational simplicity is prioritized over maximum throughput. The framework, benchmarks, and analysis scripts are publicly available at \url{https://github.com/kolosal-ai/torch-inference}.
 
 \vspace{0.5em}
-\noindent\textit{Keywords:} deep learning inference, model deployment, production ML systems, Rust, PyTorch, performance optimization, benchmarking, statistical validation, computer vision
+\noindent\textit{Keywords:} deep learning inference, model serving, production ML systems, Rust, PyTorch, \texttt{libtorch}, performance optimization, statistical benchmarking, computer vision, serverless deployment
 \vspace{1.5em}
 \end{minipage}
 ]
@@ -118,7 +168,7 @@ The deployment of deep learning models in production environments represents one
 
 The stakes of inefficient inference extend far beyond computational costs. In latency-sensitive applications---autonomous vehicle perception systems requiring sub-\SI{50}{\milli\second} response times~\citep{chen2023autonomousdriving}, high-frequency trading algorithms where microseconds determine profitability~\citep{baron2019hft}, real-time medical imaging analysis where delays can impact patient outcomes~\citep{topol2019deepmedicine}, and content moderation systems processing billions of daily requests~\citep{facebook2023moderation}---inference overhead translates directly to degraded safety, lost revenue, or compromised user experience. Amazon famously reported that every \SI{100}{\milli\second} of latency costs 1\% in sales~\citep{amazon2019latency}, while Google found that a \SI{500}{\milli\second} delay reduces traffic by 20\%~\citep{google2009latency}. For enterprise AI deployments processing millions of inference requests daily, even marginal latency improvements yield substantial economic returns.
 
-Current industry-standard deployment frameworks, including TorchServe~\citep{torchserve}, NVIDIA Triton Inference Server~\citep{triton}, TensorFlow Serving~\citep{tfserving}, and ONNX Runtime~\citep{onnxruntime}, offer robust feature sets but often incur significant performance penalties that become prohibitive at scale. These overheads stem from multiple architectural limitations: Python's Global Interpreter Lock (GIL) preventing true parallelism~\citep{beazley2010gil}, serialization/deserialization costs during inter-process communication that can exceed inference time for small models~\citep{crankshaw2017clipper}, heavyweight runtime environments consuming hundreds of megabytes of memory before loading any model, and garbage collection pauses introducing unpredictable latency spikes~\citep{jones2016gc}. In high-throughput scenarios, these inefficiencies compound multiplicatively, necessitating larger compute clusters and increasing Total Cost of Ownership (TCO) by factors of 2--5$\times$~\citep{aws2023mlcosts}.
+Current industry-standard deployment frameworks, including TorchServe~\citep{torchserve}, NVIDIA Triton Inference Server~\citep{triton}, TensorFlow Serving~\citep{tfserving}, and ONNX Runtime~\citep{onnxruntime}, offer robust feature sets but often incur significant performance penalties that become prohibitive at scale. These overheads stem from multiple architectural limitations: Python's Global Interpreter Lock (GIL) preventing true parallelism~\citep{beazley2010gil}, serialization/deserialization costs during inter-process communication that can exceed inference time for small models~\citep{crankshaw2017clipper}, heavyweight runtime environments consuming hundreds of megabytes of memory before loading any model, and garbage collection pauses introducing unpredictable latency spikes~\citep{jones2016gc}. In high-throughput scenarios, these inefficiencies compound multiplicatively, necessitating larger compute clusters and increasing Total Cost of Ownership (TCO) by factors of \SIrange{2}{5}{}$\times$~\citep{aws2023mlcosts}.
 
 The emergence of Rust as a systems programming language offers a compelling solution to these challenges. Rust's zero-cost abstractions, ownership-based memory management, and guaranteed thread safety without garbage collection~\citep{rustbook,jung2017rustbelt} have driven its adoption in performance-critical infrastructure at Mozilla, Amazon, Microsoft, and Google~\citep{rust2023adoption}. Recent work on Rust-based ML frameworks including Candle~\citep{candle2023} and Burn~\citep{burn2023} demonstrates the viability of native Rust implementations, while production systems like Discord's message storage and Cloudflare's edge computing infrastructure validate Rust's suitability for latency-sensitive, high-throughput workloads~\citep{discord2020rust,cloudflare2022rust}.
 
@@ -203,18 +253,22 @@ Kolosal Torch-Inference is architected to minimize the ``serving tax''---the com
 Rust's ownership model eliminates garbage collection pauses common in Python-based frameworks. We employ \texttt{jemalloc} as a custom allocator, optimized for the allocation patterns typical in tensor operations, further reducing memory fragmentation and allocation latency.
 
 The total memory requirement for inference comprises three fundamental components:
+\begin{definition}[Memory Decomposition]
+\label{def:memory}
+Let $\mathcal{M}_{\mathrm{total}}$ denote the total memory footprint for model inference. We decompose this as:
 \begin{equation}
-    M_{\text{total}} = M_{\text{model}} + M_{\text{cache}} + M_{\text{overhead}}
+    \mathcal{M}_{\mathrm{total}} = \mathcal{M}_{\mathrm{model}} + \mathcal{M}_{\mathrm{cache}} + \mathcal{M}_{\mathrm{overhead}}
     \label{eq:total_memory}
 \end{equation}
+where $\mathcal{M}_{\mathrm{model}} \in \mathbb{R}^{+}$ represents model weights (directly mapped from file size for TorchScript formats), $\mathcal{M}_{\mathrm{cache}} \in \mathbb{R}^{+}$ represents dynamic allocations including inference buffers, and $\mathcal{M}_{\mathrm{overhead}} \in \mathbb{R}^{+}$ accounts for runtime overhead.
+\end{definition}
 
-Where $M_{\text{model}}$ represents model weights (directly mapped from file size for TorchScript formats), $M_{\text{cache}}$ represents dynamic allocations including inference buffers, and $M_{\text{overhead}}$ accounts for runtime overhead. Based on regression analysis of empirical measurements, the overhead component is modeled as:
+Based on regression analysis of empirical measurements, the overhead component is modeled as a linear function of parameter count:
 \begin{equation}
-    M_{\text{overhead}} = \alpha \cdot P + \beta
+    \mathcal{M}_{\mathrm{overhead}}(P) = \alpha P + \beta, \quad \alpha, \beta \in \mathbb{R}^{+}
     \label{eq:overhead}
 \end{equation}
-
-Where $P$ is the parameter count in billions, with empirically derived coefficients $\alpha \approx 0.02$ GB/B and $\beta \approx 0.15$ GB for the default inference backend.
+where $P \in \mathbb{R}^{+}$ denotes the parameter count (in billions), with empirically derived coefficients $\hat{\alpha} \approx 0.02$~GB/B-params and $\hat{\beta} \approx \SI{0.15}{\giga\byte}$ for the default inference backend.
 
 \section{Methods}
 \label{sec:methods}
@@ -311,91 +365,144 @@ We employed a comprehensive statistical framework to validate the hypothesis tha
 
 \subsubsection{Primary Accuracy Metrics}
 
-The Mean Absolute Percentage Error (MAPE) served as the principal accuracy metric for memory estimation:
+Let $\mathcal{D} = \{(A_i, E_i)\}_{i=1}^{n}$ denote the set of actual--estimated memory pairs across $n$ configurations. The Mean Absolute Percentage Error (MAPE) served as the principal accuracy metric for memory estimation:
+\begin{definition}[Mean Absolute Percentage Error]
+\label{def:mape}
 \begin{equation}
-    \text{MAPE} = \frac{1}{n} \sum_{i=1}^{n} \left| \frac{A_i - E_i}{A_i} \right| \times 100\%
+    \mathrm{MAPE}(\mathcal{D}) \coloneqq \frac{100\%}{n} \sum_{i=1}^{n} \left| \frac{A_i - E_i}{A_i} \right|
     \label{eq:mape}
 \end{equation}
+where $A_i \in \mathbb{R}^{+}$ denotes the actual measured value for configuration $i$, and $E_i \in \mathbb{R}^{+}$ denotes the estimated value.
+\end{definition}
 
-Where $A_i$ denotes the actual measured value for configuration $i$, $E_i$ denotes the estimated value, and $n$ is the total number of configurations evaluated. We additionally computed the symmetric MAPE (sMAPE) to address potential asymmetry in error distribution:
+We additionally computed the symmetric MAPE (sMAPE) to address potential asymmetry in the error distribution:
 \begin{equation}
-    \text{sMAPE} = \frac{100\%}{n} \sum_{i=1}^{n} \frac{|A_i - E_i|}{(|A_i| + |E_i|)/2}
+    \mathrm{sMAPE}(\mathcal{D}) \coloneqq \frac{200\%}{n} \sum_{i=1}^{n} \frac{\abs{A_i - E_i}}{\abs{A_i} + \abs{E_i}}
     \label{eq:smape}
 \end{equation}
 
 Root Mean Square Error (RMSE) quantified absolute prediction accuracy:
 \begin{equation}
-    \text{RMSE} = \sqrt{\frac{1}{n} \sum_{i=1}^{n} (A_i - E_i)^2}
+    \mathrm{RMSE}(\mathcal{D}) \coloneqq \sqrt{\frac{1}{n} \sum_{i=1}^{n} (A_i - E_i)^2}
     \label{eq:rmse}
 \end{equation}
 
 \subsubsection{Hypothesis Testing Framework}
 
-We formulated three hierarchical hypotheses to rigorously evaluate Kolosal Torch-Inference's performance relative to the broader ecosystem of deployment frameworks:
+We formulated three hierarchical hypotheses to rigorously evaluate Kolosal Torch-Inference's performance relative to the broader ecosystem of deployment frameworks. Let $\mu_{\mathrm{K}}$ denote the mean latency for Kolosal Torch-Inference, and let $\{\mu_j\}_{j=1}^{k}$ denote the mean latencies for $k$ competing frameworks.
+
+\begin{assumption}[Distribution Requirements]
+\label{asm:normality}
+For paired comparisons, we assume that the difference scores $D_i = X_{\mathrm{K},i} - X_{j,i}$ follow a normal distribution: $D_i \sim \mathcal{N}(\mu_D, \sigma_D^2)$.
+\end{assumption}
 
 \textbf{Primary Hypothesis (Latency):}
-\begin{itemize}
-    \item \textbf{H\textsubscript{0,1}:} Kolosal Torch-Inference exhibits equivalent or higher mean inference latency compared to the majority of evaluated frameworks ($\mu_{\text{Kolosal}} \geq \text{median}(\mu_{\text{frameworks}})$).
-    \item \textbf{H\textsubscript{1,1}:} Kolosal Torch-Inference achieves statistically significantly lower inference latency than the majority of evaluated frameworks ($\mu_{\text{Kolosal}} < \text{median}(\mu_{\text{frameworks}})$), ranking among the top-performing solutions.
-\end{itemize}
+\begin{align}
+    H_{0,1}&: \mu_{\mathrm{K}} \geq \mathrm{median}(\{\mu_j\}_{j=1}^{k}) \notag \\
+    H_{1,1}&: \mu_{\mathrm{K}} < \mathrm{median}(\{\mu_j\}_{j=1}^{k})
+    \label{eq:h1}
+\end{align}
 
 \textbf{Secondary Hypothesis (Memory Efficiency):}
-\begin{itemize}
-    \item \textbf{H\textsubscript{0,2}:} Kolosal Torch-Inference exhibits equivalent or higher memory consumption compared to Python-based serving frameworks ($M_{\text{Kolosal}} \geq \bar{M}_{\text{Python}}$).
-    \item \textbf{H\textsubscript{1,2}:} Kolosal Torch-Inference achieves statistically significantly lower memory consumption than Python-based frameworks ($M_{\text{Kolosal}} < \bar{M}_{\text{Python}}$).
-\end{itemize}
+Let $\mathcal{M}_{\mathrm{K}}$ and $\bar{\mathcal{M}}_{\mathrm{Py}}$ denote the memory consumption for Kolosal and the mean across Python-based frameworks, respectively.
+\begin{align}
+    H_{0,2}&: \mathcal{M}_{\mathrm{K}} \geq \bar{\mathcal{M}}_{\mathrm{Py}} \notag \\
+    H_{1,2}&: \mathcal{M}_{\mathrm{K}} < \bar{\mathcal{M}}_{\mathrm{Py}}
+    \label{eq:h2}
+\end{align}
 
 \textbf{Tertiary Hypothesis (Cold Start Performance):}
-\begin{itemize}
-    \item \textbf{H\textsubscript{0,3}:} Kolosal Torch-Inference exhibits equivalent or slower model loading times compared to other frameworks ($T_{\text{load,Kolosal}} \geq \bar{T}_{\text{load,others}}$).
-    \item \textbf{H\textsubscript{1,3}:} Kolosal Torch-Inference achieves statistically significantly faster model loading than the majority of frameworks ($T_{\text{load,Kolosal}} < \bar{T}_{\text{load,others}}$).
-\end{itemize}
+Let $T_{\mathrm{K}}^{\mathrm{load}}$ and $\bar{T}^{\mathrm{load}}$ denote the model loading times.
+\begin{align}
+    H_{0,3}&: T_{\mathrm{K}}^{\mathrm{load}} \geq \bar{T}^{\mathrm{load}} \notag \\
+    H_{1,3}&: T_{\mathrm{K}}^{\mathrm{load}} < \bar{T}^{\mathrm{load}}
+    \label{eq:h3}
+\end{align}
 
-Given the paired nature of measurements (same model, same hardware, different frameworks), we employed the paired-samples $t$-test for normally distributed data and the Wilcoxon signed-rank test as a non-parametric alternative. Normality was assessed using the Shapiro-Wilk test ($\alpha = 0.05$) and visual inspection of Q-Q plots.
+Given the paired nature of measurements (same model, same hardware, different frameworks), we employed the paired-samples $t$-test for normally distributed data and the Wilcoxon signed-rank test as a non-parametric alternative. Normality was assessed using the Shapiro--Wilk test ($\alpha = 0.05$) and visual inspection of Q--Q plots.
 
-For multi-framework comparisons, we employed one-way repeated measures ANOVA with Greenhouse-Geisser correction for sphericity violations, followed by post-hoc pairwise comparisons using Bonferroni-corrected paired $t$-tests to control the family-wise error rate. We additionally computed the proportion of frameworks that Kolosal Torch-Inference significantly outperforms to quantify its relative standing in the ecosystem.
+For multi-framework comparisons, we employed one-way repeated measures ANOVA with Greenhouse--Geisser correction for sphericity violations, followed by post-hoc pairwise comparisons using Bonferroni-corrected paired $t$-tests to control the family-wise error rate. We additionally computed the proportion of frameworks that Kolosal Torch-Inference significantly outperforms to quantify its relative standing in the ecosystem.
 
 \subsubsection{Effect Size Quantification}
 
 To assess practical significance beyond statistical significance, we computed Cohen's $d$ for paired samples:
+\begin{definition}[Cohen's $d$ for Paired Samples]
+\label{def:cohens_d}
+Let $\{D_i\}_{i=1}^{n}$ be the paired differences. Cohen's $d$ is defined as:
 \begin{equation}
-    d = \frac{\bar{X}_{\text{diff}}}{s_{\text{diff}}}
+    d \coloneqq \frac{\bar{D}}{s_D} = \frac{\frac{1}{n}\sum_{i=1}^{n} D_i}{\sqrt{\frac{1}{n-1}\sum_{i=1}^{n}(D_i - \bar{D})^2}}
     \label{eq:cohens_d}
 \end{equation}
+where $\bar{D}$ is the mean difference and $s_D$ is the standard deviation of differences.
+\end{definition}
 
-Where $\bar{X}_{\text{diff}}$ is the mean difference and $s_{\text{diff}}$ is the standard deviation of differences. Effect sizes were interpreted following~\citet{cohen1988statistical}: small ($d = 0.2$), medium ($d = 0.5$), and large ($d = 0.8$).
+Effect sizes were interpreted following~\citet{cohen1988statistical}: small ($d = 0.2$), medium ($d = 0.5$), and large ($d \geq 0.8$).
 
 For latency improvements, we additionally computed the percentage improvement with bootstrapped 95\% confidence intervals (10,000 resamples, bias-corrected and accelerated method).
 
 \subsubsection{Regression Analysis}
 
-To model the relationship between model characteristics and inference performance, we fitted multiple linear regression models:
+To model the relationship between model characteristics and inference performance, we fitted multiple linear regression models. Let $\bm{X} \in \mathbb{R}^{n \times p}$ denote the design matrix and $\bm{y} \in \mathbb{R}^{n}$ denote the response vector.
+
+\begin{definition}[Latency Regression Model]
+\label{def:regression}
+For model $i \in \{1, \ldots, n\}$, we specify:
 \begin{equation}
-    L_i = \beta_0 + \beta_1 P_i + \beta_2 F_i + \beta_3 D_i + \epsilon_i
+    \log(L_i) = \beta_0 + \beta_1 P_i + \beta_2 F_i + \beta_3 \mathbb{1}_{\{\text{Transformer}\}}(i) + \beta_4 D_i + \varepsilon_i
     \label{eq:regression}
 \end{equation}
+where:
+\begin{itemize}
+    \item $L_i \in \mathbb{R}^{+}$ is the inference latency (ms)
+    \item $P_i \in \mathbb{R}^{+}$ is the parameter count (millions)
+    \item $F_i \in \mathbb{R}^{+}$ is the computational complexity (GFLOPs)
+    \item $\mathbb{1}_{\{\text{Transformer}\}}(i) \in \{0, 1\}$ is an indicator for transformer architecture
+    \item $D_i \in \mathbb{N}$ is the model depth (number of layers)
+    \item $\varepsilon_i \stackrel{\text{iid}}{\sim} \mathcal{N}(0, \sigma^2)$ is the error term
+\end{itemize}
+\end{definition}
 
-Where $L_i$ is the log-transformed latency for model $i$, $P_i$ is the parameter count (in millions), $F_i$ is the computational complexity (GFLOPs), $D_i$ is a categorical indicator for model depth/architecture family, and $\epsilon_i \sim \mathcal{N}(0, \sigma^2)$ represents the error term.
+The parameter vector $\bm{\beta} = (\beta_0, \ldots, \beta_4)^\top$ was estimated via ordinary least squares:
+\begin{equation}
+    \hat{\bm{\beta}} = (\bm{X}^\top \bm{X})^{-1} \bm{X}^\top \bm{y}
+    \label{eq:ols}
+\end{equation}
 
-Model assumptions were validated through residual diagnostics: homoscedasticity (Breusch-Pagan test), normality of residuals (Shapiro-Wilk test), and absence of multicollinearity (Variance Inflation Factor, VIF $< 5$).
+Model assumptions were validated through residual diagnostics: homoscedasticity (Breusch--Pagan test), normality of residuals (Shapiro--Wilk test), and absence of multicollinearity (Variance Inflation Factor, $\mathrm{VIF} < 5$).
 
 \subsubsection{Bayesian Analysis}
 
-To complement frequentist inference, we conducted Bayesian hypothesis testing using the Bayes factor ($BF_{10}$) to quantify evidence for the alternative hypothesis relative to the null:
+To complement frequentist inference, we conducted Bayesian hypothesis testing using the Bayes factor to quantify evidence for the alternative hypothesis relative to the null.
+
+\begin{definition}[Bayes Factor]
+\label{def:bayes_factor}
+The Bayes factor $\mathrm{BF}_{10}$ is defined as the ratio of marginal likelihoods:
 \begin{equation}
-    BF_{10} = \frac{P(\text{Data} | H_1)}{P(\text{Data} | H_0)}
+    \mathrm{BF}_{10} \coloneqq \frac{P(\mathcal{D} \given H_1)}{P(\mathcal{D} \given H_0)} = \frac{\int P(\mathcal{D} \given \theta, H_1) P(\theta \given H_1) \, \mathrm{d}\theta}{\int P(\mathcal{D} \given \theta, H_0) P(\theta \given H_0) \, \mathrm{d}\theta}
     \label{eq:bayes_factor}
 \end{equation}
+where $\mathcal{D}$ denotes the observed data and $\theta$ represents the model parameters.
+\end{definition}
 
-We employed weakly informative priors (Cauchy distribution with scale $r = 0.707$) following~\citet{rouder2009bayesian}. Bayes factors were interpreted using the classification scheme of~\citet{jeffreys1961theory}: $BF_{10} > 100$ indicates extreme evidence, $30 < BF_{10} < 100$ very strong evidence, $10 < BF_{10} < 30$ strong evidence, and $3 < BF_{10} < 10$ moderate evidence for the alternative hypothesis.
+We employed weakly informative priors (Cauchy distribution with scale $r = 0.707$) following~\citet{rouder2009bayesian}. Bayes factors were interpreted using the classification scheme of~\citet{jeffreys1961theory}: $\mathrm{BF}_{10} > 100$ indicates decisive evidence, $30 < \mathrm{BF}_{10} \leq 100$ very strong evidence, $10 < \mathrm{BF}_{10} \leq 30$ strong evidence, and $3 < \mathrm{BF}_{10} \leq 10$ moderate evidence for the alternative hypothesis.
 
 \subsubsection{Power Analysis}
 
-A priori power analysis determined the required sample size for detecting a medium effect size ($d = 0.5$) with 80\% power at $\alpha = 0.05$. Post-hoc power analysis confirmed achieved statistical power given the observed effect sizes and sample sizes.
+A priori power analysis determined the required sample size for detecting a medium effect size ($d = 0.5$) with statistical power $1 - \beta = 0.80$ at significance level $\alpha = 0.05$. For paired $t$-tests, the required sample size is:
+\begin{equation}
+    n \geq \left( \frac{z_{1-\alpha/2} + z_{1-\beta}}{d} \right)^2
+    \label{eq:power}
+\end{equation}
+where $z_p$ denotes the $p$-th quantile of the standard normal distribution. Post-hoc power analysis confirmed achieved statistical power given the observed effect sizes and sample sizes.
 
 \subsubsection{Multiple Comparison Correction}
 
-For analyses involving multiple pairwise comparisons across 14 frameworks, we controlled the false discovery rate (FDR) using the Benjamini-Hochberg procedure~\citep{benjamini1995fdr} at $q = 0.05$, in addition to the more conservative Bonferroni correction for confirmatory analyses.
+For analyses involving multiple pairwise comparisons across $k = 14$ frameworks, we controlled the false discovery rate (FDR) using the Benjamini--Hochberg procedure~\citep{benjamini1995fdr}. Let $p_{(1)} \leq p_{(2)} \leq \cdots \leq p_{(m)}$ denote the ordered $p$-values. We reject $H_{0,(i)}$ for all $i \leq \hat{k}$, where:
+\begin{equation}
+    \hat{k} \coloneqq \max\left\{ i : p_{(i)} \leq \frac{i}{m} \cdot q \right\}
+    \label{eq:bh}
+\end{equation}
+with target FDR level $q = 0.05$. For confirmatory analyses, we additionally applied the more conservative Bonferroni correction ($\alpha_{\mathrm{adj}} = \alpha / m$).
 
 All statistical analyses were conducted using Python (NumPy 1.26, SciPy 1.12, statsmodels 0.14, pingouin 0.5.3) and R (version 4.3.2) for Bayesian analyses (BayesFactor package). All tests employed $\alpha = 0.05$ as the significance threshold unless otherwise specified.
 
@@ -460,12 +567,12 @@ Coefficient of Determination ($R^2$) & 0.9996 \\
 \midrule
 \multicolumn{3}{l}{\textit{H\textsubscript{1,2}: Memory (vs.\ Python frameworks)}} \\
 \quad Paired $t$-test (vs.\ TorchServe) & $t(53) = -24.82$ & $< 0.001$*** \\
-\quad Memory reduction factor & \multicolumn{2}{c}{2.86$\times$} \\
+\quad Memory reduction factor & \multicolumn{2}{c}{\timesX{2.86}} \\
 \quad Frameworks outperformed & \multicolumn{2}{c}{6 of 6 Python (100\%)} \\
 \midrule
 \multicolumn{3}{l}{\textit{H\textsubscript{1,3}: Cold Start (Load Time)}} \\
 \quad Paired $t$-test (vs.\ TorchServe) & $t(53) = -31.56$ & $< 0.001$*** \\
-\quad Load time improvement & \multicolumn{2}{c}{22.7$\times$ faster} \\
+\quad Load time improvement & \multicolumn{2}{c}{\timesX{22.7} faster} \\
 \quad Frameworks outperformed & \multicolumn{2}{c}{13 of 13 (100\%)} \\
 \midrule
 \multicolumn{3}{l}{\textit{Representative Pairwise: vs.\ TorchServe}} \\
@@ -490,11 +597,11 @@ Coefficient of Determination ($R^2$) & 0.9996 \\
 \noindent\textit{Note.} *** $p < 0.001$. df based on 54 unique models. Kolosal ranks 3rd in latency (behind OpenVINO variants), 1st in cold start. Large effect sizes ($d > 1.5$) reflect architectural differences, not subtle optimizations.
 \end{table}
 
-\textbf{Primary Hypothesis (H\textsubscript{1,1}---Latency):} Kolosal Torch-Inference significantly outperformed 11 of 13 competing frameworks in inference latency ($p < 0.001$, sign test). Only OpenVINO (with and without INT8 quantization) achieved lower latency due to Intel-specific hardware optimizations. Among the 14 frameworks evaluated, Kolosal ranked 3rd overall. We note that TensorRT (not included in CPU comparisons) achieves substantially higher throughput on NVIDIA GPUs---see \Cref{tab:latency_gpu} for GPU-specific results where TensorRT INT8 achieves 6$\times$ higher FPS than Kolosal Torch-Inference.
+\textbf{Primary Hypothesis (H\textsubscript{1,1}---Latency):} Kolosal Torch-Inference significantly outperformed 11 of 13 competing frameworks in inference latency ($p < 0.001$, sign test). Only OpenVINO (with and without INT8 quantization) achieved lower latency due to Intel-specific hardware optimizations. Among the 14 frameworks evaluated, Kolosal ranked 3rd overall. We note that TensorRT (not included in CPU comparisons) achieves substantially higher throughput on NVIDIA GPUs---see \cref{tab:latency_gpu} for GPU-specific results where TensorRT INT8 achieves \timesX{6} higher FPS than Kolosal Torch-Inference.
 
-\textbf{Secondary Hypothesis (H\textsubscript{1,2}---Memory):} Kolosal Torch-Inference achieved significantly lower memory consumption than all six Python-based serving frameworks ($p < 0.001$). The paired-samples $t$-test against TorchServe revealed $t(53) = -24.82$, $p < 0.001$, with a \textbf{2.86$\times$} memory reduction. Cohen's $d = 2.12$ indicates a very large effect size. This improvement stems primarily from eliminating Python interpreter overhead rather than inference-level optimizations.
+\textbf{Secondary Hypothesis (H\textsubscript{1,2}---Memory):} Kolosal Torch-Inference achieved significantly lower memory consumption than all six Python-based serving frameworks ($p < 0.001$). The paired-samples $t$-test against TorchServe revealed $t(53) = -24.82$, $p < 0.001$, with a \textbf{\timesX{2.86}} memory reduction. Cohen's $d = 2.12$ indicates a very large effect size. This improvement stems primarily from eliminating Python interpreter overhead rather than inference-level optimizations.
 
-\textbf{Tertiary Hypothesis (H\textsubscript{1,3}---Cold Start):} Kolosal Torch-Inference achieved the fastest model loading time among all 14 frameworks ($p < 0.001$). The \textbf{22.7$\times$} improvement over TorchServe (110ms vs.\ 2.5s) is particularly relevant for serverless deployments where cold start latency impacts billing. However, for long-running services where models remain loaded, this advantage is amortized over many requests and may be less impactful.
+\textbf{Tertiary Hypothesis (H\textsubscript{1,3}---Cold Start):} Kolosal Torch-Inference achieved the fastest model loading time among all 14 frameworks ($p < 0.001$). The \textbf{\timesX{22.7}} improvement over TorchServe (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second}) is particularly relevant for serverless deployments where cold start latency impacts billing. However, for long-running services where models remain loaded, this advantage is amortized over many requests and may be less impactful.
 
 The Bayesian analysis yielded a Bayes factor exceeding $10^{6}$, providing ``decisive evidence'' for the alternative hypotheses. We caution that extreme Bayes factors reflect the magnitude of architectural differences between Rust and Python runtimes; the comparison is between fundamentally different systems rather than incremental optimizations.
 
@@ -581,12 +688,12 @@ All pairwise comparisons achieved statistical significance after Bonferroni corr
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
-\textbf{Predictor} & \textbf{$\beta$} & \textbf{SE} & \textbf{$t$} & \textbf{$p$} \\
+\textbf{Predictor} & \textbf{$\hat{\beta}$} & \textbf{SE($\hat{\beta}$)} & \textbf{$t$} & \textbf{$p$} \\
 \midrule
 (Intercept) & 0.892 & 0.045 & 19.82 & $<.001$*** \\
 Parameters (M) & 0.0042 & 0.0003 & 14.00 & $<.001$*** \\
 GFLOPs & 0.0156 & 0.0012 & 13.00 & $<.001$*** \\
-Transformer (vs.\ CNN) & 0.847 & 0.062 & 13.66 & $<.001$*** \\
+$\mathbb{1}_{\{\text{Transformer}\}}$ & 0.847 & 0.062 & 13.66 & $<.001$*** \\
 Depth (layers) & 0.0028 & 0.0005 & 5.60 & $<.001$*** \\
 \midrule
 \multicolumn{5}{l}{\textit{Model Fit}} \\
@@ -595,10 +702,10 @@ $F(4, 139)$ & \multicolumn{4}{l}{422.8, $p < 0.001$***} \\
 RMSE & \multicolumn{4}{l}{0.187} \\
 \midrule
 \multicolumn{5}{l}{\textit{Diagnostics}} \\
-Breusch-Pagan & \multicolumn{4}{l}{$\chi^2 = 3.42$, $p = 0.489$} \\
-Shapiro-Wilk (resid.) & \multicolumn{4}{l}{$W = 0.987$, $p = 0.241$} \\
+Breusch--Pagan & \multicolumn{4}{l}{$\chi^2 = 3.42$, $p = 0.489$} \\
+Shapiro--Wilk (resid.) & \multicolumn{4}{l}{$W = 0.987$, $p = 0.241$} \\
 Max VIF & \multicolumn{4}{l}{2.34} \\
-Durbin-Watson & \multicolumn{4}{l}{1.92, $p = 0.312$} \\
+Durbin--Watson & \multicolumn{4}{l}{1.92, $p = 0.312$} \\
 \bottomrule
 \end{tabular}
 
@@ -606,15 +713,20 @@ Durbin-Watson & \multicolumn{4}{l}{1.92, $p = 0.312$} \\
 \noindent\textit{Note.} *** $p < 0.001$. DV: $\log(\text{latency})$. VIF $< 5$ confirms no multicollinearity.
 \end{table}
 
-The regression model explained 92.4\% of variance in log-transformed latency ($R^2 = 0.924$), $F(4, 139) = 422.8$, $p < 0.001$. All predictors were statistically significant: parameter count ($\beta = 0.0042$, $p < 0.001$), GFLOPs ($\beta = 0.0156$, $p < 0.001$), architecture type ($\beta_{\text{Transformer}} = 0.847$, $p < 0.001$), and model depth ($\beta = 0.0028$, $p < 0.001$).
+The regression model explained 92.4\% of variance in log-transformed latency ($R^2 = 0.924$, $F(4, 139) = 422.8$, $p < 0.001$). All predictors were statistically significant: parameter count ($\hat{\beta}_1 = 0.0042$, $p < 0.001$), GFLOPs ($\hat{\beta}_2 = 0.0156$, $p < 0.001$), architecture type ($\hat{\beta}_3 = 0.847$, $p < 0.001$), and model depth ($\hat{\beta}_4 = 0.0028$, $p < 0.001$).
 
-The Transformer indicator coefficient ($\beta = 0.847$) implies that, controlling for parameter count and GFLOPs, Transformer architectures exhibit approximately $e^{0.847} = 2.33\times$ higher latency than CNN architectures---consistent with the attention computation overhead observed in Swin models.
+The Transformer indicator coefficient ($\hat{\beta}_3 = 0.847$) implies that, controlling for parameter count and GFLOPs, Transformer architectures exhibit approximately $\exp(\hat{\beta}_3) = e^{0.847} \approx \timesX{2.33}$ higher latency than CNN architectures---consistent with the attention computation overhead observed in Swin models.
 
-All regression assumptions were satisfied: the Breusch-Pagan test confirmed homoscedasticity ($p = 0.489$), Shapiro-Wilk confirmed residual normality ($p = 0.241$), VIF values below 5 indicated no problematic multicollinearity, and the Durbin-Watson statistic confirmed absence of autocorrelation.
+All regression assumptions were satisfied: the Breusch--Pagan test confirmed homoscedasticity ($\chi^2 = 3.42$, $p = 0.489$), Shapiro--Wilk confirmed residual normality ($W = 0.987$, $p = 0.241$), VIF values below 5 indicated no problematic multicollinearity ($\max(\mathrm{VIF}) = 2.34$), and the Durbin--Watson statistic confirmed absence of autocorrelation ($d = 1.92$, $p = 0.312$).
 
 \subsubsection{Bootstrap Confidence Intervals}
 
-To provide robust inference without relying on distributional assumptions, we computed bias-corrected and accelerated (BCa) bootstrap confidence intervals with 10,000 resamples:
+To provide robust inference without relying on distributional assumptions, we computed bias-corrected and accelerated (BCa) bootstrap confidence intervals with $B = 10{,}000$ resamples. For a statistic $\hat{\theta}$, the BCa interval is:
+\begin{equation}
+    \mathrm{CI}_{1-\alpha}^{\mathrm{BCa}} = \left[ \hat{\theta}^{*}_{(\alpha_1)}, \hat{\theta}^{*}_{(\alpha_2)} \right]
+    \label{eq:bca}
+\end{equation}
+where $\hat{\theta}^{*}_{(p)}$ denotes the $p$-th percentile of the bootstrap distribution, and $\alpha_1, \alpha_2$ are adjusted for bias and acceleration.
 
 \begin{table}[t]
 \centering
@@ -624,7 +736,7 @@ To provide robust inference without relying on distributional assumptions, we co
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{Metric} & \textbf{Est.} & \textbf{95\% BCa CI} & \textbf{SE} \\
+\textbf{Metric} & \textbf{$\hat{\theta}$} & \textbf{95\% BCa CI} & \textbf{SE} \\
 \midrule
 Latency impr.\ vs.\ TorchServe & 36.2\% & [33.8\%, 38.7\%] & 1.24\% \\
 Latency impr.\ vs.\ Triton & 28.8\% & [25.9\%, 31.6\%] & 1.45\% \\
@@ -635,7 +747,7 @@ MAPE (memory estimation) & 0.84\% & [0.79\%, 0.89\%] & 0.03\% \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} BCa = bias-corrected accelerated. 10,000 resamples. All CIs exclude zero.
+\noindent\textit{Note.} BCa = bias-corrected accelerated. $B = 10{,}000$ resamples. All CIs exclude zero.
 \end{table}
 
 The bootstrap analysis confirmed the robustness of all performance improvements. The narrow confidence intervals indicate high precision in the estimates, with the latency improvement over TorchServe reliably between 33.8\% and 38.7\%.
@@ -661,7 +773,7 @@ Multi-framework ANOVA & 144 & $f=0.92$ & 0.05 & $>.999$ \\
 \midrule
 \multicolumn{5}{l}{\textit{A Priori Sample Size}} \\
 For $d=0.5$, power$=0.80$ & \multicolumn{4}{l}{$n = 34$ pairs required} \\
-Achieved sample & \multicolumn{4}{l}{$n = 144$ (4.2$\times$ oversampled)} \\
+Achieved sample & \multicolumn{4}{l}{$n = 144$ (\timesX{4.2} oversampled)} \\
 \bottomrule
 \end{tabular}
 
@@ -703,10 +815,10 @@ MLflow & 18.5 & 2.3 & 23.1 & 54 & 4.20 \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} SD = standard deviation across 100 inference iterations $\times$ 5 replicates. Bold indicates Kolosal Torch-Inference. Load time of \SI{0.11}{\second} represents \num{22.7}$\times$ faster cold start than TorchServe (\SI{2.50}{\second}).
+\noindent\textit{Note.} SD = standard deviation across 100 inference iterations $\times$ 5 replicates. Bold indicates Kolosal Torch-Inference. Load time of \SI{0.11}{\second} represents \timesX{22.7} faster cold start than TorchServe (\SI{2.50}{\second}).
 \end{table}
 
-Kolosal Torch-Inference achieves \num{1.57}$\times$ lower latency than TorchServe and \num{1.23}$\times$ lower than ONNX Runtime. Compared to Intel-optimized OpenVINO with INT8 quantization, Kolosal Torch-Inference exhibits \num{2.5}$\times$ higher latency---but without requiring model conversion or quantization, preserving deployment simplicity and full FP32 precision. The load time advantage is pronounced: \SI{110}{\milli\second} vs.\ \SI{2.5}{\second} for TorchServe (\num{22.7}$\times$ faster) and \SI{4.5}{\second} for TF Serving (\num{40.9}$\times$ faster).
+Kolosal Torch-Inference achieves \timesX{1.57} lower latency than TorchServe and \timesX{1.23} lower than ONNX Runtime. Compared to Intel-optimized OpenVINO with INT8 quantization, Kolosal Torch-Inference exhibits \timesX{2.5} higher latency---but without requiring model conversion or quantization, preserving deployment simplicity and full FP32 precision. The load time advantage is pronounced: \SI{110}{\milli\second} vs.\ \SI{2.5}{\second} for TorchServe (\timesX{22.7} faster) and \SI{4.5}{\second} for TF Serving (\timesX{40.9} faster).
 
 \subsection{GPU Performance}
 
@@ -734,10 +846,10 @@ TF Serving & 3.5 & 0.32 & 4.2 & 286 & 3.20 \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} \textbf{TensorRT achieves 6$\times$ higher throughput} than Kolosal Torch-Inference but requires model conversion and lengthy compilation (\SI{12}{\second}--\SI{15}{\second}). GPU results are estimates based on published benchmarks and internal testing; primary validation was conducted on Apple Silicon MPS.
+\noindent\textit{Note.} \textbf{TensorRT achieves \timesX{6} higher throughput} than Kolosal Torch-Inference but requires model conversion and lengthy compilation (\SIrange{12}{15}{\second}). GPU results are estimates based on published benchmarks and internal testing; primary validation was conducted on Apple Silicon MPS.
 \end{table}
 
-TensorRT with INT8 quantization achieves the highest GPU throughput (\SI{2500}{FPS})---\textbf{6$\times$ higher than Kolosal Torch-Inference} (\SI{417}{FPS}). This substantial gap reflects TensorRT's aggressive graph optimization, kernel fusion, and quantization, which require model conversion and lengthy compilation (\SI{15}{\second}). Kolosal Torch-Inference's advantage lies in cold start performance (\SI{0.58}{\second} load time) and deployment simplicity (no model conversion required). For maximum-throughput GPU workloads, TensorRT or Triton with TensorRT backend remain the superior choice; Kolosal Torch-Inference is better suited for scenarios prioritizing deployment agility over peak throughput.
+TensorRT with INT8 quantization achieves the highest GPU throughput (\SI{2500}{\fpssuffix})---\textbf{\timesX{6} higher than Kolosal Torch-Inference} (\SI{417}{\fpssuffix}). This substantial gap reflects TensorRT's aggressive graph optimization, kernel fusion, and quantization, which require model conversion and lengthy compilation (\SI{15}{\second}). Kolosal Torch-Inference's advantage lies in cold start performance (\SI{0.58}{\second} load time) and deployment simplicity (no model conversion required). For maximum-throughput GPU workloads, TensorRT or Triton with TensorRT backend remain the superior choice; Kolosal Torch-Inference is better suited for scenarios prioritizing deployment agility over peak throughput.
 
 \subsection{Comprehensive Model Performance}
 
@@ -889,9 +1001,9 @@ The Pareto analysis reveals several key findings:
 \begin{itemize}
     \item \textbf{Highest accuracy:} EfficientNetV2-L achieves \SI{85.81}{\percent} Top-1 accuracy at \SI{89.26}{\milli\second} latency.
     \item \textbf{Best trade-off:} The ConvNeXt family offers optimal accuracy--latency trade-off for production deployments, with ConvNeXt-Tiny achieving \SI{82.52}{\percent} accuracy at only \SI{7.49}{\milli\second}.
-    \item \textbf{High efficiency:} MobileNetV3 provides excellent efficiency at \SI{295}{FPS} with \SI{74}{\percent} accuracy.
-    \item \textbf{Transformer overhead:} Swin Transformers exhibit \numrange{5}{10}$\times$ higher latency than ConvNets at similar accuracy levels due to attention computation overhead on MPS.
-    \item \textbf{Edge deployment:} For edge devices with relaxed accuracy requirements, SqueezeNet~1.1 achieves \SI{962}{FPS}.
+    \item \textbf{High efficiency:} MobileNetV3 provides excellent efficiency at \SI{295}{\fpssuffix} with \SI{74}{\percent} accuracy.
+    \item \textbf{Transformer overhead:} Swin Transformers exhibit \SIrange{5}{10}{}$\times$ higher latency than ConvNets at similar accuracy levels due to attention computation overhead on MPS.
+    \item \textbf{Edge deployment:} For edge devices with relaxed accuracy requirements, SqueezeNet~1.1 achieves \SI{962}{\fpssuffix}.
 \end{itemize}
 
 \subsection{Multi-Model Comparison Across Frameworks}
@@ -933,8 +1045,8 @@ The cross-framework comparison reveals several consistent patterns:
     \item \textbf{CNN leadership:} Kolosal Torch-Inference leads for CNN-based models including ResNet, EfficientNet, ConvNeXt, and MobileNet families.
     \item \textbf{Quantization advantage:} OpenVINO with INT8 quantization achieves the best absolute performance but requires model conversion and potential accuracy loss.
     \item \textbf{Transformer support:} ONNX Runtime offers competitive performance for Transformer-based models.
-    \item \textbf{Python overhead:} Python-based frameworks such as TorchServe, Ray Serve, and BentoML exhibit \numrange{1.5}{2}$\times$ overhead compared to native solutions.
-    \item \textbf{Cold start advantage:} The load time advantage remains consistent across all model types, with Kolosal Torch-Inference achieving \numrange{10}{30}$\times$ faster cold starts than Python frameworks.
+    \item \textbf{Python overhead:} Python-based frameworks such as TorchServe, Ray Serve, and BentoML exhibit \SIrange{1.5}{2}{}$\times$ overhead compared to native solutions.
+    \item \textbf{Cold start advantage:} The load time advantage remains consistent across all model types, with Kolosal Torch-Inference achieving \SIrange{10}{30}{}$\times$ faster cold starts than Python frameworks.
 \end{itemize}
 
 \subsection{GPU Performance Comparison}
@@ -967,7 +1079,7 @@ VGG-16 & 0.9 & \textbf{0.45} & 2.5 & 2.8 & 3.2 & 4.2 \\
 \noindent\textit{Note.} TRT = TensorRT. Bold indicates best latency per model. TensorRT INT8 achieves lowest latency but requires model conversion and may incur accuracy loss.
 \end{table}
 
-TensorRT with INT8 quantization achieves the best GPU throughput but requires lengthy compilation (\SIrange{8}{20}{\second}) and potential accuracy degradation. Kolosal Torch-Inference provides competitive GPU performance with the fastest model loading (\SI{0.58}{\second} vs.\ \SI{12}{\second} for TensorRT). On ResNet-50, TensorRT achieves 1250 FPS compared to 417 FPS for Kolosal Torch-Inference, while MobileNetV3-L reaches 3333 FPS with TensorRT versus 1111 FPS with our framework.
+TensorRT with INT8 quantization achieves the best GPU throughput but requires lengthy compilation (\SIrange{8}{20}{\second}) and potential accuracy degradation. Kolosal Torch-Inference provides competitive GPU performance with the fastest model loading (\SI{0.58}{\second} vs.\ \SI{12}{\second} for TensorRT). On ResNet-50, TensorRT achieves \SI{1250}{\fpssuffix} compared to \SI{417}{\fpssuffix} for Kolosal Torch-Inference, while MobileNetV3-L reaches \SI{3333}{\fpssuffix} with TensorRT versus \SI{1111}{\fpssuffix} with our framework.
 
 \subsection{Efficiency Analysis}
 
@@ -1018,13 +1130,13 @@ We evaluate throughput scaling with increasing concurrent requests:
 \toprule
 \textbf{Concurrency} & \textbf{FPS} & \textbf{P95 (ms)} & \textbf{Speedup} & \textbf{Efficiency} \\
 \midrule
-1 & 172 & 7.2 & 1.00$\times$ & 100\% \\
-2 & 328 & 8.1 & 1.91$\times$ & 95\% \\
-4 & 612 & 9.4 & 3.56$\times$ & 89\% \\
-8 & 1045 & 12.8 & 6.08$\times$ & 76\% \\
-16 & 1524 & 18.5 & 8.86$\times$ & 55\% \\
-32 & 1812 & 32.4 & 10.53$\times$ & 33\% \\
-64 & 1956 & 58.7 & 11.37$\times$ & 18\% \\
+1 & 172 & 7.2 & \timesX{1.00} & 100\% \\
+2 & 328 & 8.1 & \timesX{1.91} & 95\% \\
+4 & 612 & 9.4 & \timesX{3.56} & 89\% \\
+8 & 1045 & 12.8 & \timesX{6.08} & 76\% \\
+16 & 1524 & 18.5 & \timesX{8.86} & 55\% \\
+32 & 1812 & 32.4 & \timesX{10.53} & 33\% \\
+64 & 1956 & 58.7 & \timesX{11.37} & 18\% \\
 \bottomrule
 \end{tabular}
 
@@ -1032,11 +1144,24 @@ We evaluate throughput scaling with increasing concurrent requests:
 \noindent\textit{Note.} Efficiency = (Actual Speedup / Ideal Speedup) $\times$ 100\%. Near-linear scaling observed up to 4 concurrent requests (89\% efficiency); diminishing returns beyond 16 due to CPU core saturation.
 \end{table}
 
-Kolosal Torch-Inference demonstrates near-linear scaling up to 4 concurrent requests (\SI{89}{\percent} efficiency), with diminishing returns beyond 16 concurrent requests due to CPU core saturation on the 12-core M2~Pro.
+\subsubsection{Scalability Analysis}
+
+We model throughput scaling under concurrent load using a modified Amdahl's Law formulation. Let $T(c)$ denote throughput with concurrency level $c$, and define the parallel efficiency:
+\begin{equation}
+    \eta(c) \coloneqq \frac{T(c)}{c \cdot T(1)} \times 100\%
+    \label{eq:efficiency}
+\end{equation}
+
+\Cref{tab:scaling} presents empirical scaling results, demonstrating near-linear scaling up to $c = 4$ concurrent requests ($\eta = 89\%$), with diminishing returns beyond $c = 16$ due to CPU core saturation on the 12-core M2~Pro.
 
 \subsection{Latency Variance Analysis}
 
 A critical metric for production deployments is latency consistency. \Cref{tab:latency_variance} presents the coefficient of variation (CV) for inference latency across model families, quantifying prediction stability:
+\begin{equation}
+    \mathrm{CV} \coloneqq \frac{s}{\bar{x}} \times 100\%
+    \label{eq:cv}
+\end{equation}
+where $s$ is the sample standard deviation and $\bar{x}$ is the sample mean.
 
 \begin{table}[t]
 \centering
@@ -1079,22 +1204,26 @@ CNN-based architectures (ResNet, MobileNet, EfficientNet, RegNet) demonstrate ex
 \toprule
 \textbf{Framework} & \textbf{Memory (MB)} & \textbf{Relative} \\
 \midrule
-OpenVINO & 380 & 0.90$\times$ \\
-\textbf{Kolosal Torch-Inference} & \textbf{420} & \textbf{1.00$\times$} \\
-ONNX Runtime & 450 & 1.07$\times$ \\
-Triton & 950 & 2.26$\times$ \\
-BentoML & 1100 & 2.62$\times$ \\
-TorchServe & 1200 & 2.86$\times$ \\
-Ray Serve & 1450 & 3.45$\times$ \\
-TF Serving & 1800 & 4.29$\times$ \\
+OpenVINO & 380 & \timesX{0.90} \\
+\textbf{Kolosal Torch-Inference} & \textbf{420} & \textbf{\timesX{1.00}} \\
+ONNX Runtime & 450 & \timesX{1.07} \\
+Triton & 950 & \timesX{2.26} \\
+BentoML & 1100 & \timesX{2.62} \\
+TorchServe & 1200 & \timesX{2.86} \\
+Ray Serve & 1450 & \timesX{3.45} \\
+TF Serving & 1800 & \timesX{4.29} \\
 \bottomrule
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} Relative column shows memory usage normalized to Kolosal Torch-Inference (1.00$\times$). Rust implementation eliminates Python interpreter overhead, achieving \num{2.86}$\times$ lower memory than TorchServe.
+\noindent\textit{Note.} Relative column shows memory usage normalized to Kolosal Torch-Inference (\timesX{1.00}). Rust implementation eliminates Python interpreter overhead, achieving \timesX{2.86} lower memory than TorchServe.
 \end{table}
 
-Kolosal Torch-Inference's Rust implementation avoids Python's memory overhead (interpreter state, garbage collector bookkeeping, and object headers), achieving \num{2.86}$\times$ lower memory consumption than TorchServe and \num{4.29}$\times$ lower than TensorFlow Serving.
+Kolosal Torch-Inference's Rust implementation avoids Python's memory overhead (interpreter state, garbage collector bookkeeping, and object headers), achieving \timesX{2.86} lower memory consumption than TorchServe and \timesX{4.29} lower than TensorFlow Serving. Formally, the memory reduction factor $\rho$ is:
+\begin{equation}
+    \rho \coloneqq \frac{\mathcal{M}_{\mathrm{baseline}}}{\mathcal{M}_{\mathrm{Kolosal}}} = \frac{\SI{1200}{\mega\byte}}{\SI{420}{\mega\byte}} \approx 2.86
+    \label{eq:memory_reduction}
+\end{equation}
 
 \section{Discussion}
 \label{sec:discussion}
@@ -1107,23 +1236,23 @@ The framework presented in this paper enables practitioners to make informed, da
 
 Based on our benchmarks, Kolosal Torch-Inference is particularly well-suited for the following deployment scenarios: CPU-bound inference workloads where GPU acceleration is unavailable or cost-prohibitive; latency-sensitive applications requiring sub-\SI{10}{\milli\second} response times; resource-constrained environments with limited memory budgets; deployments requiring minimal dependencies and fast cold starts; and microservice architectures with many model instances requiring rapid horizontal scaling.
 
-The economic implications of these performance improvements are substantial. According to recent industry analyses, inference costs constitute up to 90\% of ML infrastructure expenditure~\citep{patterson2021carbon}. Our measured \num{2.86}$\times$ memory reduction translates directly to proportional savings in cloud compute costs, as memory-bound workloads can consolidate onto fewer instances. For organizations deploying thousands of model replicas, these savings compound to millions of dollars annually~\citep{aws2023mlcosts}.
+The economic implications of these performance improvements are substantial. According to recent industry analyses, inference costs constitute up to 90\% of ML infrastructure expenditure~\citep{patterson2021carbon}. Our measured \timesX{2.86} memory reduction translates directly to proportional savings in cloud compute costs, as memory-bound workloads can consolidate onto fewer instances. For organizations deploying thousands of model replicas, these savings compound to millions of dollars annually~\citep{aws2023mlcosts}.
 
 \subsection{Analysis of Performance Characteristics}
 
 The empirical evaluation revealed several key performance characteristics worthy of detailed analysis, each grounded in well-established systems principles.
 
 \subsubsection{Latency Improvement Sources}
-The \num{1.57}$\times$ latency improvement over TorchServe stems from three primary architectural factors, each supported by prior research:
+The \timesX{1.57} latency improvement over TorchServe stems from three primary architectural factors, each supported by prior research:
 
 \textbf{(1) Elimination of Python interpreter overhead:} Python's Global Interpreter Lock (GIL) fundamentally limits true parallelism in multi-threaded applications~\citep{beazley2010gil}. By interfacing directly with \texttt{libtorch} through Rust's FFI, we bypass the Python runtime entirely. Prior work by \citet{crankshaw2017clipper} demonstrated that Python overhead can exceed 50\% of total inference time for lightweight models---consistent with our observed improvements on MobileNet and SqueezeNet families.
 
 \textbf{(2) Zero-copy tensor handling:} Traditional Python-C++ interoperability requires data serialization at language boundaries. NumPy arrays must be converted to PyTorch tensors, which are then marshaled to \texttt{libtorch}. Each boundary crossing incurs memory allocation and copying costs. Rust's ownership semantics enable direct memory mapping without intermediate copies, eliminating overhead that \citet{crankshaw2017clipper} identified as a primary bottleneck in prediction serving systems.
 
-\textbf{(3) Deterministic memory management:} Rust's ownership model provides compile-time memory safety guarantees without garbage collection~\citep{jung2017rustbelt}. This eliminates unpredictable GC pauses that \citet{jones2016gc} identified as problematic for latency-sensitive applications. Our P95 latency measurements (Table~\ref{tab:latency}) demonstrate consistently tight latency distributions, with P95/mean ratios below 1.1$\times$ compared to 1.3$\times$--1.5$\times$ for Python-based frameworks.
+\textbf{(3) Deterministic memory management:} Rust's ownership model provides compile-time memory safety guarantees without garbage collection~\citep{jung2017rustbelt}. This eliminates unpredictable GC pauses that \citet{jones2016gc} identified as problematic for latency-sensitive applications. Our P95 latency measurements (\cref{tab:latency}) demonstrate consistently tight latency distributions, with P95/mean ratios below \timesX{1.1} compared to \SIrange{1.3}{1.5}{}$\times$ for Python-based frameworks.
 
 \subsubsection{Memory Efficiency Analysis}
-The \num{2.86}$\times$ memory reduction compared to Python-based frameworks arises from several architectural decisions, each validated by systems research:
+The \timesX{2.86} memory reduction compared to Python-based frameworks arises from several architectural decisions, each validated by systems research:
 
 \textbf{Python interpreter state elimination:} The Python interpreter maintains substantial runtime state including the bytecode cache, imported modules, and the object reference graph. Measurements by \citet{shahrad2020serverless} found that Python cold starts consume \SIrange{80}{200}{\mega\byte} before application code executes. Our Rust implementation eliminates this baseline overhead entirely.
 
@@ -1132,12 +1261,17 @@ The \num{2.86}$\times$ memory reduction compared to Python-based frameworks aris
 \textbf{Custom memory allocation:} We employ \texttt{jemalloc} with thread-local caches optimized for the allocation patterns typical in tensor operations---many similarly-sized allocations followed by bulk deallocation. This reduces fragmentation compared to general-purpose allocators, consistent with findings by \citet{kwon2023pagedattention} on memory management for ML workloads.
 
 \subsubsection{Model Loading Optimization}
-The \num{22.7}$\times$ faster model loading results from direct memory-mapped file access to TorchScript models, bypassing the Python import machinery and associated module initialization overhead inherent in frameworks like TorchServe. This architecture aligns with serverless computing requirements identified by \citet{jonas2019serverless}, where cold start latency directly impacts both user experience and billing costs. Memory-mapped loading enables the operating system's page cache to serve repeated model loads, further reducing latency for frequently-accessed models.
+The \timesX{22.7} faster model loading results from direct memory-mapped file access to TorchScript models, bypassing the Python import machinery and associated module initialization overhead inherent in frameworks like TorchServe. This architecture aligns with serverless computing requirements identified by \citet{jonas2019serverless}, where cold start latency directly impacts both user experience and billing costs. Memory-mapped loading enables the operating system's page cache to serve repeated model loads, further reducing latency for frequently-accessed models.
 
 \subsubsection{Theoretical Performance Bounds}
-Our results align with theoretical expectations from systems performance analysis. According to Amdahl's Law, the maximum speedup achievable by optimizing a portion of a system is bounded by the fraction of time spent in that portion~\citep{patterson2021carbon}. For lightweight models where framework overhead dominates (60--80\% of total time), eliminating this overhead yields \numrange{2.5}{5}$\times$ speedup---consistent with our observed \num{1.57}$\times$--\num{2.5}$\times$ improvements on ResNet-18 and MobileNet families.
+Our results align with theoretical expectations from systems performance analysis. According to Amdahl's Law, the maximum speedup $S$ achievable by optimizing a fraction $f$ of a system is bounded by:
+\begin{equation}
+    S \leq \frac{1}{(1 - f) + f/s}
+    \label{eq:amdahl}
+\end{equation}
+where $s$ is the speedup of the optimized portion~\citep{patterson2021carbon}. For lightweight models where framework overhead dominates ($f \approx 0.6$--$0.8$), eliminating this overhead yields $S \in [2.5, 5]$---consistent with our observed \SIrange{1.57}{2.5}{}$\times$ improvements on ResNet-18 and MobileNet families.
 
-For compute-bound models (Swin Transformers), framework overhead constitutes a smaller fraction (\numrange{10}{20}\%), limiting achievable speedup to \numrange{1.1}{1.25}$\times$. Our measurements confirm this pattern: Swin-T shows only \SI{8}{\percent} improvement over TorchServe, while compute-light SqueezeNet achieves \SI{45}{\percent} improvement.
+For compute-bound models (Swin Transformers), framework overhead constitutes a smaller fraction ($f \approx 0.1$--$0.2$), limiting achievable speedup to $S \in [1.1, 1.25]$. Our measurements confirm this pattern: Swin-T shows only \SI{8}{\percent} improvement over TorchServe, while compute-light SqueezeNet achieves \SI{45}{\percent} improvement.
 
 \subsection{Comparison with Existing Approaches}
 
@@ -1145,7 +1279,7 @@ Our results contextualize within the broader landscape of ML serving optimizatio
 
 \textbf{Comparison with Clipper~\citep{crankshaw2017clipper}:} Clipper pioneered low-latency prediction serving with adaptive batching and caching. However, its Python-based model containers inherit GIL limitations. Kolosal Torch-Inference achieves similar latency reduction goals through a fundamentally different approach---eliminating the Python runtime rather than optimizing around it.
 
-\textbf{Comparison with TensorRT~\citep{triton}:} NVIDIA's TensorRT achieves \textbf{6$\times$ higher throughput} than Kolosal Torch-Inference through aggressive graph optimization and INT8 quantization. However, it requires model conversion and lengthy compilation (\SIrange{10}{20}{\second}), making it unsuitable for scenarios requiring rapid model switching. Our framework offers a complementary trade-off: substantially lower peak throughput but near-instant model loading and deployment simplicity. For maximum-throughput production GPU workloads, TensorRT remains the superior choice.
+\textbf{Comparison with TensorRT~\citep{triton}:} NVIDIA's TensorRT achieves \textbf{\timesX{6} higher throughput} than Kolosal Torch-Inference through aggressive graph optimization and INT8 quantization. However, it requires model conversion and lengthy compilation (\SIrange{10}{20}{\second}), making it unsuitable for scenarios requiring rapid model switching. Our framework offers a complementary trade-off: substantially lower peak throughput but near-instant model loading and deployment simplicity. For maximum-throughput production GPU workloads, TensorRT remains the superior choice.
 
 \textbf{Comparison with PagedAttention~\citep{kwon2023pagedattention}:} The vLLM system optimizes memory efficiency for autoregressive LLM inference through paging mechanisms. While our current work focuses on vision models, the memory management principles---avoiding fragmentation, enabling efficient sharing---apply broadly. Integration of PagedAttention-style techniques represents a promising direction for extending our framework to generative models.
 
@@ -1153,17 +1287,17 @@ Our results contextualize within the broader landscape of ML serving optimizatio
 
 The framework operates within several significant technical and operational constraints. We present these limitations prominently to enable informed framework selection:
 
-\textbf{(1) Substantial GPU throughput gap:} TensorRT with INT8 quantization achieves \textbf{6$\times$ higher throughput} than Kolosal Torch-Inference on NVIDIA GPUs (2500 vs.\ 417 FPS for ResNet-50). For maximum-throughput production deployments, TensorRT or Triton with TensorRT backend should be preferred. Kolosal Torch-Inference's advantages (cold start, deployment simplicity) are most relevant for scenarios where models change frequently or cold start latency is critical.
+\textbf{(1) Substantial GPU throughput gap:} TensorRT with INT8 quantization achieves \textbf{\timesX{6} higher throughput} than Kolosal Torch-Inference on NVIDIA GPUs (\SI{2500}{\fpssuffix} vs.\ \SI{417}{\fpssuffix} for ResNet-50). For maximum-throughput production deployments, TensorRT or Triton with TensorRT backend should be preferred. Kolosal Torch-Inference's advantages (cold start, deployment simplicity) are most relevant for scenarios where models change frequently or cold start latency is critical.
 
-\textbf{(2) Limited Transformer optimization:} Vision Transformers (Swin family) show only \textbf{8--15\% improvement} over TorchServe, compared to 30--50\% for CNNs. Transformers exhibit quadratic attention complexity~\citep{vaswani2017attention} that dominates inference time; framework-level optimizations cannot address this algorithmic bottleneck. For Transformer-heavy workloads, specialized frameworks like vLLM or hardware-specific solutions offer greater benefits.
+\textbf{(2) Limited Transformer optimization:} Vision Transformers (Swin family) show only \textbf{\SIrange{8}{15}{\percent} improvement} over TorchServe, compared to \SIrange{30}{50}{\percent} for CNNs. Transformers exhibit quadratic attention complexity $\mathcal{O}(n^2 d)$ where $n$ is sequence length and $d$ is embedding dimension~\citep{vaswani2017attention}; this algorithmic bottleneck cannot be addressed by framework-level optimizations. For Transformer-heavy workloads, specialized frameworks like vLLM or hardware-specific solutions offer greater benefits.
 
 \textbf{(3) Apple Silicon validation only:} Primary benchmarks were conducted on Apple M2 Pro with MPS backend. While CPU results should generalize, \textbf{GPU performance on NVIDIA/AMD hardware requires independent validation}. Memory access patterns differ substantially between unified memory (Apple Silicon) and discrete VRAM architectures.
 
-\textbf{(4) Cold start vs.\ warm performance trade-off:} The 22.7$\times$ faster model loading is most impactful for serverless deployments with frequent cold starts. For long-running services where models remain loaded for hours or days, this advantage is amortized across millions of requests and may be negligible compared to inference latency differences.
+\textbf{(4) Cold start vs.\ warm performance trade-off:} The \timesX{22.7} faster model loading is most impactful for serverless deployments with frequent cold starts. For long-running services where models remain loaded for hours or days, this advantage is amortized across millions of requests and may be negligible compared to inference latency differences.
 
 \textbf{(5) No comparison with native Rust frameworks:} We did not benchmark against Candle or Burn, which may achieve lower latency for supported models through native Rust tensor operations. These frameworks require model reimplementation rather than loading TorchScript checkpoints, representing a different deployment paradigm.
 
-\textbf{(6) Limited dynamic batching:} Triton's sophisticated scheduler~\citep{triton} implements priority queues, request coalescing, and adaptive timeout policies. Our current implementation uses simpler first-come-first-served batching, which may underutilize GPU resources in heterogeneous request scenarios (up to \numrange{20}{30}\% throughput gap for batch workloads).
+\textbf{(6) Limited dynamic batching:} Triton's sophisticated scheduler~\citep{triton} implements priority queues, request coalescing, and adaptive timeout policies. Our current implementation uses simpler first-come-first-served (FCFS) batching, which may underutilize GPU resources in heterogeneous request scenarios (up to \SIrange{20}{30}{\percent} throughput gap for batch workloads).
 
 \textbf{(7) Smaller ecosystem and learning curve:} TorchServe benefits from PyTorch's extensive community. Our Rust-based approach requires familiarity with systems programming concepts (ownership, lifetimes, FFI) that may present adoption barriers for ML practitioners~\citep{rust2023adoption}.
 
@@ -1182,17 +1316,17 @@ These recommendations align with industry deployment patterns: Amazon reports th
 For applications requiring over \SI{85}{\percent} Top-1 accuracy: EfficientNetV2-L (\SI{85.81}{\percent}) or EfficientNetV2-M (\SI{85.11}{\percent}). For targets above \SI{84}{\percent}: ConvNeXt-Large (\SI{84.41}{\percent}), EfficientNetV2-S (\SI{84.23}{\percent}), or Swin-V2-B (\SI{84.11}{\percent}). For \SI{82}{\percent} accuracy targets: ConvNeXt-Tiny (\SI{82.52}{\percent}), EfficientNet-B3 (\SI{82.01}{\percent}), and Swin-V2-T (\SI{82.07}{\percent}). For standard production targets above \SI{75}{\percent}: ResNet-50 (\SI{76.13}{\percent}), MobileNetV3-L (\SI{74.04}{\percent}), and DenseNet-121 (\SI{74.43}{\percent}).
 
 \subsubsection{Resource-Constrained Environments}
-For \textit{edge and mobile} deployments (under \SI{5}{\mega} parameters): MobileNetV3 family, MNASNet, ShuffleNet, and SqueezeNet variants. For \textit{standard server} deployments (under \SI{50}{\mega} parameters): EfficientNet-B0--B4, ConvNeXt-Tiny/Small, and the ResNet family. For \textit{high-memory servers} (over \SI{100}{\mega} parameters): EfficientNetV2-L, ConvNeXt-Large, Swin-B, and RegNet-Y-32GF.
+For \textit{edge and mobile} deployments (under 5M parameters): MobileNetV3 family, MNASNet, ShuffleNet, and SqueezeNet variants. For \textit{standard server} deployments (under 50M parameters): EfficientNet-B0--B4, ConvNeXt-Tiny/Small, and the ResNet family. For \textit{high-memory servers} (over 100M parameters): EfficientNetV2-L, ConvNeXt-Large, Swin-B, and RegNet-Y-32GF.
 
 \subsection{Future Prospects}
 
 Several extensions to the current framework merit investigation in future research, each addressing identified limitations or emerging requirements:
 
 \subsubsection{TensorRT and Hardware-Specific Optimization}
-Integration of TensorRT's C++ API would enable automatic optimization pipelines for NVIDIA GPUs with INT8/FP16 quantization support. This extension could provide the best of both worlds: fast cold starts from our current architecture with TensorRT's peak throughput when warm. According to NVIDIA benchmarks~\citep{triton}, TensorRT INT8 achieves \numrange{2}{4}$\times$ throughput improvement over FP32, suggesting substantial headroom for optimization.
+Integration of TensorRT's C++ API would enable automatic optimization pipelines for NVIDIA GPUs with INT8/FP16 quantization support. This extension could provide the best of both worlds: fast cold starts from our current architecture with TensorRT's peak throughput when warm. According to NVIDIA benchmarks~\citep{triton}, TensorRT INT8 achieves \SIrange{2}{4}{}$\times$ throughput improvement over FP32, suggesting substantial headroom for optimization.
 
 \subsubsection{Distributed and Large-Model Inference}
-As model sizes grow---GPT-4 reportedly exceeds \SI{1}{\tera} parameters~\citep{patterson2021carbon}---single-device deployment becomes infeasible. Distributed inference capabilities including tensor parallelism (partitioning layers across devices) and pipeline parallelism (partitioning model stages) would support models exceeding single-device memory capacity. Recent work on Megatron-LM and DeepSpeed provides architectural blueprints for such extensions.
+As model sizes grow---GPT-4 reportedly exceeds 1 trillion parameters~\citep{patterson2021carbon}---single-device deployment becomes infeasible. Distributed inference capabilities including tensor parallelism (partitioning layers across devices) and pipeline parallelism (partitioning model stages) would support models exceeding single-device memory capacity. Recent work on Megatron-LM and DeepSpeed provides architectural blueprints for such extensions.
 
 \subsubsection{Advanced Batching Strategies}
 Continuous batching~\citep{kwon2023pagedattention}, where new requests join in-progress batches at sequence boundaries, could improve throughput for autoregressive models. Adaptive batch size adjustment based on request arrival patterns (smaller batches during low-traffic periods for latency, larger batches during peaks for throughput) would better serve variable workloads. Reinforcement learning approaches for batch scheduling have shown promise in recent literature.
@@ -1201,7 +1335,17 @@ Continuous batching~\citep{kwon2023pagedattention}, where new requests join in-p
 Support for GGUF (used by llama.cpp), SafeTensors (Hugging Face's safe serialization format), and emerging quantization formats (GPTQ, AWQ, GGML) would broaden compatibility with the rapidly evolving LLM ecosystem. SafeTensors in particular offers security advantages by avoiding pickle deserialization vulnerabilities present in standard PyTorch checkpoints.
 
 \subsubsection{Automated Model Selection}
-Constraint-based optimization for model selection---given latency budget $L$, accuracy threshold $A$, and memory limit $M$, select the Pareto-optimal model---would help practitioners navigate the accuracy-efficiency trade-off. Our benchmark dataset provides the foundation for such optimization; future work could integrate this capability directly into the framework's model registry.
+Constraint-based optimization for model selection---given latency budget $L_{\max}$, accuracy threshold $A_{\min}$, and memory limit $\mathcal{M}_{\max}$---can be formulated as:
+\begin{equation}
+    \begin{aligned}
+        \max_{m \in \mathcal{M}} \quad & \mathrm{Accuracy}(m) \\
+        \text{s.t.} \quad & \mathrm{Latency}(m) \leq L_{\max} \\
+        & \mathrm{Memory}(m) \leq \mathcal{M}_{\max} \\
+        & \mathrm{Accuracy}(m) \geq A_{\min}
+    \end{aligned}
+    \label{eq:model_selection}
+\end{equation}
+where $\mathcal{M}$ denotes the set of candidate models. Our benchmark dataset provides the foundation for such optimization; future work could integrate this capability directly into the framework's model registry.
 
 \subsubsection{Energy Efficiency Analysis}
 With growing attention to ML sustainability~\citep{patterson2021carbon}, energy consumption per inference represents an increasingly important metric. Preliminary measurements suggest Rust's reduced runtime overhead translates to proportional energy savings, but systematic evaluation across hardware platforms remains future work.
@@ -1215,16 +1359,16 @@ Extending GPU support beyond MPS to include AMD ROCm and Intel oneAPI would broa
 This paper has presented Kolosal Torch-Inference, a Rust-based framework for deploying deep learning models with emphasis on cold-start performance and memory efficiency. Through benchmarking against 14 deployment frameworks across 54 image classification architectures ($N = 144$ configurations) on Apple Silicon (M2 Pro, MPS), we demonstrated:
 
 \begin{enumerate}
-    \item \textbf{\num{1.57}$\times$} lower inference latency compared to TorchServe on ResNet-50 (CPU)
-    \item \textbf{\num{22.7}$\times$} faster cold-start model loading (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second})
-    \item \textbf{\num{2.86}$\times$} smaller memory footprint than Python-based solutions
-    \item \textbf{0.84\%} MAPE in memory estimation (95\% CI: 0.79\%--0.89\%)
-    \item Throughput spanning \SIrange{3}{962}{FPS} across model complexity spectrum
+    \item \textbf{\timesX{1.57}} lower inference latency compared to TorchServe on ResNet-50 (CPU)
+    \item \textbf{\timesX{22.7}} faster cold-start model loading (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second})
+    \item \textbf{\timesX{2.86}} smaller memory footprint than Python-based solutions
+    \item \textbf{\SI{0.84}{\percent}} MAPE in memory estimation (95\% CI: \SIrange{0.79}{0.89}{\percent})
+    \item Throughput spanning \SIrange{3}{962}{\fpssuffix} across model complexity spectrum
 \end{enumerate}
 
-\textbf{Key trade-offs:} TensorRT with INT8 quantization achieves \textbf{6$\times$ higher GPU throughput} than our framework, making it the superior choice for maximum-throughput production deployments. Kolosal Torch-Inference's advantages are most pronounced for: (a) serverless deployments where cold-start latency impacts billing, (b) scenarios requiring frequent model switching, (c) memory-constrained environments, and (d) deployments prioritizing simplicity over peak performance.
+\textbf{Key trade-offs:} TensorRT with INT8 quantization achieves \textbf{\timesX{6} higher GPU throughput} than our framework, making it the superior choice for maximum-throughput production deployments. Kolosal Torch-Inference's advantages are most pronounced for: (a)~serverless deployments where cold-start latency impacts billing, (b)~scenarios requiring frequent model switching, (c)~memory-constrained environments, and (d)~deployments prioritizing simplicity over peak performance.
 
-\textbf{Limitations:} Results are validated primarily on Apple Silicon; NVIDIA/AMD GPU performance requires independent verification. Transformer models show only 8--15\% improvement versus 30--50\% for CNNs. Native Rust frameworks (Candle, Burn) were not benchmarked.
+\textbf{Limitations:} Results are validated primarily on Apple Silicon; NVIDIA/AMD GPU performance requires independent verification. Transformer models show only \SIrange{8}{15}{\percent} improvement versus \SIrange{30}{50}{\percent} for CNNs. Native Rust frameworks (Candle, Burn) were not benchmarked.
 
 The complete benchmark suite and source code are available at \url{https://github.com/kolosal-ai/torch-inference}.
 
