@@ -512,9 +512,9 @@ impl GpuManager {
                     log::info!("    Compute mode: {:?}", compute_mode);
                 }
                 
-                // Log persistence mode
-                if let Ok(persistence) = device.is_persistence_mode_enabled() {
-                    log::info!("    Persistence mode: {}", persistence);
+                // Log ECC mode (persistence API varies by nvml version)
+                if let Ok(ecc) = device.is_ecc_enabled() {
+                    log::info!("    ECC mode: {:?}", ecc);
                 }
             }
         }
