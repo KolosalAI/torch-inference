@@ -183,3 +183,7 @@ harness = false
 [[bench]]
 name = "image_classification_benchmark"
 harness = false
+
+[[bench]]
+name = "cuda_tensorrt_benchmark"
+harness = false

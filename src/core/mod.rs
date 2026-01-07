@@ -5,6 +5,9 @@ pub mod audio;
 pub mod audio_models;
 pub mod image_security;
 
+// CUDA and TensorRT optimization
+pub mod cuda_optimizer;
+
 // Python bridge for neural TTS (fallback)
 pub mod python_tts_bridge;
 
