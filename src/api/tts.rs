@@ -2,6 +2,7 @@
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use base64::Engine;
 
 use crate::core::tts_manager::{TTSManager, TTSManagerStats};
 use crate::core::tts_engine::{SynthesisParams, EngineCapabilities, VoiceInfo};
@@ -107,7 +108,7 @@ pub async fn synthesize(
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
     
     // Encode to base64
-    let audio_base64 = base64::encode(&wav_data);
+    let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&wav_data);
     let duration_secs = audio.samples.len() as f32 / audio.sample_rate as f32;
     
     let engine_used = if let Some(engine_id) = req.engine.as_deref() {

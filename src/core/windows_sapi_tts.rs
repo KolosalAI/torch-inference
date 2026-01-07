@@ -52,18 +52,22 @@ impl WindowsSAPIEngine {
     fn generate_sapi_speech(&self, text: &str, rate: i32) -> Result<Vec<u8>> {
         // Create temporary file for output
         let temp_file = NamedTempFile::new()?.into_temp_path();
-        let wav_path = temp_file.to_str().unwrap();
+        let wav_path = temp_file.to_str()
+            .context("Failed to convert temporary file path to string")?;
         
         log::debug!("Generating SAPI speech to: {}", wav_path);
         
         // Call PowerShell script
         let script_path = std::env::current_dir()?.join("sapi_tts.ps1");
         
+        let script_path_str = script_path.to_str()
+            .context("Failed to convert script path to string")?;
+
         let output = Command::new("powershell")
             .args(&[
                 "-NoProfile",
                 "-ExecutionPolicy", "Bypass",
-                "-File", script_path.to_str().unwrap(),
+                "-File", script_path_str,
                 "-Text", text,
                 "-OutputFile", wav_path,
                 "-Rate", &rate.to_string()

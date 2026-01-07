@@ -131,15 +131,23 @@ impl TTSManager {
             Err(e) => log::warn!("[WARN] Failed to load Kokoro ONNX engine: {}", e),
         }
         
-        // Load original Kokoro TTS as SECONDARY engine
-        log::info!("Loading Kokoro neural TTS engine...");
-        let kokoro_config = serde_json::json!({
-            "model_path": "models/kokoro-82m/kokoro-v1_0.pth",
-            "sample_rate": 24000
-        });
-        match self.load_engine("kokoro".to_string(), "kokoro", kokoro_config).await {
-            Ok(_) => log::info!("[OK] Kokoro TTS engine loaded successfully"),
-            Err(e) => log::warn!("[WARN] Failed to load Kokoro engine: {}", e),
+        // Load original Kokoro TTS as SECONDARY engine (requires torch feature)
+        #[cfg(feature = "torch")]
+        {
+            log::info!("Loading Kokoro neural TTS engine...");
+            let kokoro_config = serde_json::json!({
+                "model_path": "models/kokoro-82m/kokoro-v1_0.pth",
+                "sample_rate": 24000
+            });
+            match self.load_engine("kokoro".to_string(), "kokoro", kokoro_config).await {
+                Ok(_) => log::info!("[OK] Kokoro TTS engine loaded successfully"),
+                Err(e) => log::warn!("[WARN] Failed to load Kokoro engine: {}", e),
+            }
+        }
+
+        #[cfg(not(feature = "torch"))]
+        {
+            log::info!("[INFO] Kokoro native TTS skipped (torch feature not enabled)");
         }
         
         // Load Windows SAPI as secondary engine (REAL SPEECH on Windows)

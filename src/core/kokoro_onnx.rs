@@ -1,5 +1,8 @@
-/// Kokoro ONNX TTS Engine - Production-ready neural TTS
-/// Uses ONNX Runtime for cross-platform inference
+/// Kokoro ONNX TTS Engine - Parametric Synthesis Implementation
+///
+/// NOTE: This engine currently uses high-quality parametric synthesis, not actual ONNX inference.
+/// ONNX neural inference will be implemented in a future update when the ONNX model is integrated.
+/// The parametric synthesis provides good quality audio suitable for testing and development.
 use anyhow::{Result, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -84,19 +87,13 @@ impl KokoroOnnxEngine {
             supports_streaming: false,
         };
         
-        // Try to initialize ONNX session
-        // For now, just log that ONNX would be loaded here
-        log::info!("Kokoro ONNX engine initialized (parametric mode)");
+        // NOTE: ONNX inference not yet implemented - using parametric synthesis
+        log::info!("Kokoro ONNX engine initialized (parametric synthesis mode - neural inference coming soon)");
         
         Ok(Self {
             config,
             capabilities,
         })
-    }
-    
-    fn _check_onnx_model_exists(model_dir: &PathBuf) -> bool {
-        let model_path = model_dir.join("model.onnx");
-        model_path.exists()
     }
     
     fn text_to_phonemes(&self, text: &str) -> Result<Vec<i64>> {
@@ -259,9 +256,9 @@ impl TTSEngine for KokoroOnnxEngine {
     }
     
     async fn synthesize(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
-        // For now always use parametric synthesis (high quality)
-        // ONNX inference can be added later when model is available
-        log::info!("📢 Using enhanced parametric synthesis");
+        // NOTE: Currently uses parametric synthesis as ONNX model integration is pending
+        // This provides high-quality audio suitable for development and testing
+        log::info!("📢 Kokoro ONNX: Using parametric synthesis (neural inference not yet implemented)");
         self.synthesize_parametric(text, params)
     }
     

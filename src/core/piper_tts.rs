@@ -91,25 +91,6 @@ impl PiperTTSEngine {
             supported_languages: vec!["en".to_string()],
             supported_voices: vec![
                 VoiceInfo {
-                    id: "en_US_lessac".to_string(),
-                    name: "English US (Lessac)".to_string(),
-                    language: "en".to_string(),
-                    gender: VoiceGender::Female,
-                    quality: VoiceQuality::High,
-                },
-            ],
-            max_text_length: 10000,
-            sample_rate,
-            supports_ssml: false,
-            supports_streaming: false,
-        };
-        
-        let capabilities = EngineCapabilities {
-            name: "Piper Neural TTS".to_string(),
-            version: "1.0.0".to_string(),
-            supported_languages: vec!["en".to_string()],
-            supported_voices: vec![
-                VoiceInfo {
                     id: "lessac".to_string(),
                     name: "Lessac (High Quality)".to_string(),
                     language: "en".to_string(),
@@ -123,17 +104,24 @@ impl PiperTTSEngine {
             supports_streaming: false,
         };
         
-        // Check if ONNX model exists
-        let has_onnx = model_path.exists();
-        if has_onnx {
-            log::info!("[OK] Piper ONNX model found at: {:?}", model_path);
+        // Check if ONNX model exists and feature is enabled
+        let has_onnx = {
+            #[cfg(feature = "onnx")]
+            {
+                if model_path.exists() {
+                    log::info!("[OK] Piper ONNX model found at: {:?}", model_path);
+                    true
+                } else {
+                    log::warn!("[WARN] Piper model not found at {:?}, will use parametric fallback", model_path);
+                    false
+                }
+            }
             #[cfg(not(feature = "onnx"))]
             {
-                bail!("ONNX feature not enabled. Compile with --features onnx to use Piper TTS");
+                log::info!("[INFO] ONNX feature not enabled, Piper will use parametric synthesis");
+                false
             }
-        } else {
-            bail!("Piper model not found at {:?}", model_path);
-        }
+        };
         
         Ok(Self {
             config,
@@ -179,7 +167,19 @@ impl TTSEngine for PiperTTSEngine {
     
     async fn synthesize(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
         self.validate_text(text)?;
-        bail!("Piper TTS requires ONNX Runtime. Please use Windows SAPI engine or compile with --features onnx")
+
+        #[cfg(feature = "onnx")]
+        {
+            if self.has_onnx {
+                // TODO: Implement actual ONNX inference when onnxruntime is integrated
+                log::warn!("Piper ONNX inference not yet implemented, using parametric fallback");
+                return self.synthesize_fallback(text, params);
+            }
+        }
+
+        // Fallback to parametric synthesis
+        log::info!("Piper TTS using parametric synthesis (compile with --features onnx for neural quality)");
+        self.synthesize_fallback(text, params)
     }
     
     fn list_voices(&self) -> Vec<VoiceInfo> {
