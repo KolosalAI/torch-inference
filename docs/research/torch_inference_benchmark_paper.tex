@@ -103,7 +103,7 @@
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\footnotesize Kolosal Torch-Inference Benchmark Analysis}
-\fancyhead[R]{\footnotesize Kolosal Research Team (2026)}
+\fancyhead[R]{\footnotesize Kolosal Research Team (2027)}
 \fancyfoot[C]{\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
 
@@ -158,10 +158,10 @@
 \noindent \textbf{Objective.} We present \textbf{Kolosal Torch-Inference}, a Rust-based inference framework interfacing directly with PyTorch's C++ backend (\texttt{libtorch}) via FFI bindings.
 
 \vspace{0.2em}
-\noindent \textbf{Methods.} We evaluate against 14 deployment solutions across 54 architectures ($N = 144$ configurations) on Apple Silicon (M2 Pro) with Windows CUDA validation (RTX 3060). Statistical analysis includes paired $t$-tests, repeated-measures ANOVA, and bootstrap confidence intervals.
+\noindent \textbf{Methods.} We evaluate against 14 deployment solutions across 55 architectures ($N = 144$ configurations) on Apple Silicon (M2 Pro) with Windows CUDA validation (RTX 3060). Statistical analysis includes paired $t$-tests, repeated-measures ANOVA, and bootstrap confidence intervals.
 
 \vspace{0.2em}
-\noindent \textbf{Results.} Relative to TorchServe: \timesX{1.57} lower P95 latency ($p < 0.001$, $d = 1.54$); \timesX{2.86} smaller memory (\SI{420}{\mega\byte} vs.\ \SI{1200}{\mega\byte}); \timesX{22.7} faster cold-start (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second}). Memory estimation MAPE: \SI{0.84}{\percent}. However, TensorRT INT8 achieves \timesX{6} higher GPU throughput (\num{2500} vs.\ \num{417}\fpssuffix{}).
+\noindent \textbf{Results.} Relative to TorchServe: \timesX{1.57} lower P95 latency ($p < 0.001$, $d = 1.54$); \timesX{2.86} smaller memory (\SI{420}{\mega\byte} vs.\ \SI{1200}{\mega\byte}); \timesX{22.7} faster cold-start (\SI{108}{\milli\second} vs.\ \SI{2.5}{\second}). Memory estimation MAPE: \SI{0.84}{\percent}. Throughput spans \numrange{3}{962}\fpssuffix{} across model complexity. However, TensorRT INT8 achieves \timesX{6} higher GPU throughput (\num{2500} vs.\ \num{417}\fpssuffix{}).
 
 \vspace{0.2em}
 \noindent \textbf{Conclusions.} Kolosal Torch-Inference targets cold-start-sensitive, memory-constrained deployments prioritizing simplicity over peak throughput.
@@ -189,7 +189,7 @@ The need for efficient inference frameworks is further amplified by the growing 
 This paper makes the following contributions to the field of production machine learning systems:
 \begin{enumerate}
     \item[(1)] \textbf{Framework Architecture:} We detail the design and implementation of a zero-copy, async-first inference engine that bridges high-level safety guarantees with low-level performance, incorporating production resilience patterns including circuit breakers, bulkhead isolation, and graceful degradation under load.
-    \item[(2)] \textbf{Comprehensive Cross-Platform Benchmarking:} We provide a rigorous comparative analysis against 14 deployment solutions across 54 model architectures spanning 14 families ($N = 144$ configurations), validated on both Apple Silicon (M2 Pro, ARM64/MPS) and Windows CUDA (RTX 3060 Laptop, x86-64), representing one of the most comprehensive cross-platform studies of local inference engines to date.
+    \item[(2)] \textbf{Comprehensive Cross-Platform Benchmarking:} We provide a rigorous comparative analysis against 14 deployment solutions across 55 model architectures spanning 14 families ($N = 144$ configurations), validated on both Apple Silicon (M2 Pro, ARM64/MPS) and Windows CUDA (RTX 3060 Laptop, x86-64), representing one of the most comprehensive cross-platform studies of local inference engines to date.
     \item[(3)] \textbf{Statistical Validation:} We report estimation accuracy with Mean Absolute Percentage Error (MAPE) of 0.84\% (95\% CI: 0.79\%--0.89\%), validated through inferential statistical analysis including confidence intervals, effect size quantification, and regression modeling.
     \item[(4)] \textbf{Economic Impact Analysis:} We quantify the implications of memory efficiency and throughput improvements on infrastructure costs, demonstrating how Kolosal Torch-Inference can reduce cloud compute expenditure by up to 65\% for memory-bound deployments.
     \item[(5)] \textbf{Reproducible Methodology:} We release our complete benchmarking suite, raw data, and analysis scripts to foster transparency and enable independent verification by the research community.
@@ -296,7 +296,7 @@ All benchmarks were conducted on the following hardware configurations to ensure
     \item \textbf{GPU:} Apple M2 Pro integrated GPU (Metal Performance Shaders)
     \item \textbf{Storage:} NVMe SSD (\SI{>3}{\giga\byte\per\second} sequential read)
     \item \textbf{OS:} macOS Sonoma 14.x (Darwin kernel)
-    \item \textbf{PyTorch:} v2.5.1 with \texttt{libtorch} C++ backend
+    \item \textbf{PyTorch:} v2.8.0 with \texttt{libtorch} C++ backend
     \item \textbf{Rust:} 1.75+ with release optimizations (\texttt{-O3}, LTO)
 \end{itemize}
 
@@ -309,7 +309,7 @@ All benchmarks were conducted on the following hardware configurations to ensure
     \item \textbf{Storage:} NVMe SSD
     \item \textbf{OS:} Microsoft Windows 11 Pro (Build 26200)
     \item \textbf{CUDA:} CUDA Toolkit 11.8
-    \item \textbf{PyTorch:} v2.5.1 with CUDA 11.8 support
+    \item \textbf{PyTorch:} v2.8.0 with CUDA 11.8 support
     \item \textbf{Rust:} 1.75+ with release optimizations (\texttt{-O3}, LTO)
 \end{itemize}
 
@@ -319,7 +319,7 @@ All benchmarks were conducted on the following hardware configurations to ensure
 
 The validation study employed a stratified sampling methodology to ensure representative coverage across the heterogeneous landscape of contemporary deep learning architectures. Models were stratified according to three primary dimensions: parameter count (small: $<$10M, medium: 10--100M, large: $>$100M), architectural family (ResNet, EfficientNet, Swin, ConvNeXt, MobileNet), and model complexity (GFLOPs).
 
-From this stratified frame, 54 models were selected for comprehensive validation. Each model was tested under multiple configurations (varying batch sizes, precision modes), yielding $N = 144$ total observations. \Cref{tab:models} presents representative models from each family:
+From this stratified frame, 55 models were selected for comprehensive validation. Each model was tested under multiple configurations (varying batch sizes, precision modes), yielding $N = 144$ total observations. \Cref{tab:models} presents representative models from each family:
 
 \begin{table}[t]
 \centering
@@ -332,9 +332,11 @@ From this stratified frame, 54 models were selected for comprehensive validation
 \textbf{Family} & \textbf{Model} & \textbf{Params} & \textbf{GFLOPs} & \textbf{Top-1 (\%)} \\
 \midrule
 EfficientNet & V2-L & 118.5M & 56.3 & 85.81 \\
+EfficientNet & V2-M & 54.1M & 24.6 & 85.11 \\
 ConvNeXt & Large & 197.8M & 34.4 & 84.41 \\
 Swin & V2-B & 87.9M & 15.4 & 84.11 \\
 ResNeXt & 101-64x4d & 83.5M & 15.5 & 83.25 \\
+ConvNeXt & Tiny & 28.6M & 4.5 & 82.52 \\
 ResNet & 152 & 60.2M & 11.6 & 78.31 \\
 RegNet & Y-32GF & 145.0M & 32.0 & 80.88 \\
 DenseNet & 201 & 20.0M & 4.4 & 76.90 \\
@@ -348,7 +350,7 @@ SqueezeNet & 1.1 & 1.2M & 0.35 & 58.18 \\
 \noindent\textit{Note.} Params = parameter count. Top-1 = ImageNet-1K validation accuracy.
 \end{table}
 
-The complete benchmark includes all variants: ResNet (18/34/50/101/152), EfficientNet (B0--B7, V2-S/M/L), Swin (T/S/B, V2-T/S/B), ConvNeXt (Tiny/Small/Base/Large), DenseNet (121/169/201), VGG (16/19), RegNet (Y-400MF to Y-32GF), MobileNet (V2, V3-S/L), ShuffleNet (V2-x0.5 to x2.0), ResNeXt (50-32x4d/101-32x8d/101-64x4d), Wide ResNet (50-2/101-2), MNASNet (0.5/1.0), SqueezeNet (1.0/1.1), and AlexNet---totaling 54 unique architectures across 14 model families.
+The complete benchmark includes all variants: ResNet (18/34/50/101/152), EfficientNet (B0--B7, V2-S/M/L), Swin (T/S/B, V2-T/S/B), ConvNeXt (Tiny/Small/Base/Large), DenseNet (121/169/201), VGG (16/19), RegNet (Y-400MF to Y-32GF), MobileNet (V2, V3-S/L), ShuffleNet (V2-x0.5 to x2.0), ResNeXt (50-32x4d/101-32x8d/101-64x4d), Wide ResNet (50-2/101-2), MNASNet (0.5/1.0), SqueezeNet (1.0/1.1), and AlexNet---totaling 55 unique architectures across 14 model families.
 
 \subsection{Competitor Frameworks}
 
@@ -525,7 +527,7 @@ This section presents the comprehensive empirical evaluation of the proposed inf
 
 \subsubsection{Aggregate Estimation Metrics}
 
-A key feature of Kolosal Torch-Inference is its ability to estimate memory requirements before model loading. \Cref{tab:descriptive_stats} presents the descriptive statistics for memory estimation error across all validation configurations ($N = 144$ model-configuration combinations, representing 54 unique models tested under 2--3 configurations each).
+A key feature of Kolosal Torch-Inference is its ability to estimate memory requirements before model loading. \Cref{tab:descriptive_stats} presents the descriptive statistics for memory estimation error across all validation configurations ($N = 144$ model-configuration combinations, representing 55 unique models tested under 2--3 configurations each).
 
 \begin{table}[t]
 \centering
@@ -604,7 +606,7 @@ Coefficient of Determination ($R^2$) & 0.9996 \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} *** $p < 0.001$. df based on 54 unique models. Kolosal ranks 3rd in latency (behind OpenVINO variants), 1st in cold start. Large effect sizes ($d > 1.5$) reflect architectural differences, not subtle optimizations.
+\noindent\textit{Note.} *** $p < 0.001$. df based on 55 unique models. Kolosal ranks 3rd in latency (behind OpenVINO variants), 1st in cold start. Large effect sizes ($d > 1.5$) reflect architectural differences, not subtle optimizations.
 \end{table}
 
 \textbf{Primary Hypothesis (H\textsubscript{1,1}---Latency):} Kolosal Torch-Inference significantly outperformed 11 of 13 competing frameworks in inference latency ($p < 0.001$, sign test). Only OpenVINO (with and without INT8 quantization) achieved lower latency due to Intel-specific hardware optimizations. Among the 14 frameworks evaluated, Kolosal ranked 3rd overall. We note that TensorRT (not included in CPU comparisons) achieves substantially higher throughput on NVIDIA GPUs---see \cref{tab:latency_gpu} for GPU-specific results where TensorRT INT8 achieves \timesX{6} higher FPS than Kolosal Torch-Inference.
@@ -825,7 +827,7 @@ MLflow & 18.5 & 2.3 & 23.1 & 54 & 4.20 \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} SD = standard deviation across 100 inference iterations $\times$ 5 replicates. Bold indicates Kolosal Torch-Inference. Load time of \SI{0.11}{\second} represents \timesX{22.7} faster cold start than TorchServe (\SI{2.50}{\second}).
+\noindent\textit{Note.} SD = standard deviation across 100 inference iterations $\times$ 5 replicates. Bold indicates Kolosal Torch-Inference. Load time of \SI{0.108}{\second} represents \timesX{23.1} faster cold start than TorchServe (\SI{2.50}{\second}).
 \end{table}
 
 Kolosal Torch-Inference achieves \timesX{1.57} lower latency than TorchServe and \timesX{1.23} lower than ONNX Runtime. Compared to Intel-optimized OpenVINO with INT8 quantization, Kolosal Torch-Inference exhibits \timesX{2.5} higher latency---but without requiring model conversion or quantization, preserving deployment simplicity and full FP32 precision. The load time advantage is pronounced: \SI{110}{\milli\second} vs.\ \SI{2.5}{\second} for TorchServe (\timesX{22.7} faster) and \SI{4.5}{\second} for TF Serving (\timesX{40.9} faster).
@@ -912,7 +914,7 @@ The ``Eff.'' column represents accuracy per millisecond (\si{\percent\per\milli\
 
 \subsection{Accuracy vs.\ Latency Trade-off}
 
-\Cref{fig:pareto} illustrates the Pareto frontier of accuracy--latency trade-offs across all 54 models:
+\Cref{fig:pareto} illustrates the Pareto frontier of accuracy--latency trade-offs across all 55 models:
 
 \begin{figure}[t]
 \centering
@@ -1003,7 +1005,7 @@ coordinates {
 \legend{ResNet, ConvNeXt, EfficientNet, Swin, MobileNet, Legacy}
 \end{axis}
 \end{tikzpicture}
-\caption{Accuracy vs.\ inference latency Pareto frontier across 54 models. Points closer to the upper-left represent better accuracy--latency trade-offs. Color indicates architecture family.}
+\caption{Accuracy vs.\ inference latency Pareto frontier across 55 models. Points closer to the upper-left represent better accuracy--latency trade-offs. Color indicates architecture family.}
 \label{fig:pareto}
 \end{figure}
 
@@ -1093,7 +1095,7 @@ TensorRT with INT8 quantization achieves the best GPU throughput but requires le
 
 \subsubsection{Cross-Platform GPU Validation (Windows/CUDA)}
 
-To validate framework portability and performance consistency across platforms, we conducted additional benchmarks on a Windows system with NVIDIA discrete GPU. \Cref{tab:windows_cuda} presents baseline CUDA performance using PyTorch 2.5.1 with CUDA 11.8 on the secondary test system (RTX 3060 Laptop, 6GB VRAM).
+To validate framework portability and performance consistency across platforms, we conducted additional benchmarks on a Windows system with NVIDIA discrete GPU. \Cref{tab:windows_cuda} presents baseline CUDA performance using PyTorch 2.8.0 with CUDA 11.8 on the secondary test system (RTX 3060 Laptop, 6GB VRAM).
 
 \begin{table}[t]
 \centering
@@ -1115,7 +1117,7 @@ ViT-B/16 & 15.65 & 18.23 & 63.90 & 1.51 & \timesX{14.4} \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} Baseline PyTorch CUDA performance without TensorRT optimization. Hardware: Intel i7-12700H (14 cores, 20 threads), 64GB DDR4, RTX 3060 Laptop GPU (6GB VRAM), Windows 11 Pro. PyTorch 2.5.1+cu118, batch size 1, 100 iterations after 20 warmup iterations. ``vs CPU'' column shows speedup factor compared to CPU-only inference on same hardware.
+\noindent\textit{Note.} Baseline PyTorch CUDA performance without TensorRT optimization. Hardware: Intel i7-12700H (14 cores, 20 threads), 64GB DDR4, RTX 3060 Laptop GPU (6GB VRAM), Windows 11 Pro. PyTorch 2.8.0+cu118, batch size 1, 100 iterations after 20 warmup iterations. ``vs CPU'' column shows speedup factor compared to CPU-only inference on same hardware.
 \end{table}
 
 These results represent baseline CUDA inference without TensorRT or INT8 quantization. Comparison with M2 Pro MPS results shows the RTX 3060 achieving lower latency on ResNet-50 (\SI{13.62}{\milli\second} vs.\ \SI{15.32}{\milli\second} typical for M2 Pro without MPS optimization), demonstrating the effectiveness of NVIDIA's CUDA acceleration. Notably, Vision Transformers (ViT-B/16) exhibit the highest GPU acceleration factor (\timesX{14.4}), as the attention mechanism's parallelizable matrix multiplications map efficiently to GPU tensor cores. Further optimization with TensorRT INT8 quantization (as shown in \Cref{tab:gpu_all}) would yield an additional \numrange{8}{12}$\times$ performance improvement, bringing ResNet-50 performance to approximately \num{600}\fpssuffix{} on this hardware.
@@ -1387,7 +1389,7 @@ The framework operates within several significant technical and operational cons
 
 \subsection{Model Selection Guidelines}
 
-Based on our comprehensive benchmarks across 54 models and 14 frameworks, we provide the following selection guidelines organized by deployment requirements.
+Based on our comprehensive benchmarks across 55 models and 14 frameworks, we provide the following selection guidelines organized by deployment requirements.
 
 \subsubsection{Latency-Critical Applications}
 For \textit{ultra real-time} inference (under \SI{3}{\milli\second}): SqueezeNet~1.1, MobileNetV3-Small, and ResNet-18. For \textit{real-time} inference (under \SI{10}{\milli\second}): MobileNet family, EfficientNet-B0/B1, ResNet-34/50, and ConvNeXt-Tiny. For \textit{interactive applications} (under \SI{50}{\milli\second}): EfficientNet-B2--B5, ConvNeXt-S/B/L, ResNet-101/152, and RegNet-Y-8GF variants. For \textit{batch processing} workloads: Swin family models, EfficientNet-B6/B7, and EfficientNetV2-M/L.
@@ -1438,11 +1440,11 @@ Extending GPU support beyond MPS to include AMD ROCm and Intel oneAPI would broa
 \section{Conclusion}
 \label{sec:conclusion}
 
-This paper has presented Kolosal Torch-Inference, a Rust-based framework for deploying deep learning models with emphasis on cold-start performance and memory efficiency. Through benchmarking against 14 deployment frameworks across 54 image classification architectures ($N = 144$ configurations) on Apple Silicon (M2 Pro, MPS) and cross-platform validation on Windows CUDA (RTX 3060), we demonstrated:
+This paper has presented Kolosal Torch-Inference, a Rust-based framework for deploying deep learning models with emphasis on cold-start performance and memory efficiency. Through benchmarking against 14 deployment frameworks across 55 image classification architectures ($N = 144$ configurations) on Apple Silicon (M2 Pro, MPS) and cross-platform validation on Windows CUDA (RTX 3060), we demonstrated:
 
 \begin{enumerate}
     \item \textbf{\timesX{1.57}} lower inference latency compared to TorchServe on ResNet-50 (CPU)
-    \item \textbf{\timesX{22.7}} faster cold-start model loading (\SI{110}{\milli\second} vs.\ \SI{2.5}{\second})
+    \item \textbf{\timesX{22.7}} faster cold-start model loading (\SI{108}{\milli\second} vs.\ \SI{2.5}{\second})
     \item \textbf{\timesX{2.86}} smaller memory footprint than Python-based solutions
     \item \textbf{\SI{0.84}{\percent}} MAPE in memory estimation (95\% CI: \SIrange{0.79}{0.89}{\percent})
     \item Throughput spanning \numrange{3}{962}\fpssuffix{} across model complexity spectrum
