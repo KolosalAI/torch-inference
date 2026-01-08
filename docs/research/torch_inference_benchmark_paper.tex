@@ -830,11 +830,13 @@ MLflow & 18.5 & 2.3 & 23.1 & 54 & 4.20 \\
 \noindent\textit{Note.} SD = standard deviation across 100 inference iterations $\times$ 5 replicates. Bold indicates Kolosal Torch-Inference. Load time of \SI{0.108}{\second} represents \timesX{23.1} faster cold start than TorchServe (\SI{2.50}{\second}).
 \end{table}
 
-Kolosal Torch-Inference achieves \timesX{1.57} lower latency than TorchServe and \timesX{1.23} lower than ONNX Runtime. Compared to Intel-optimized OpenVINO with INT8 quantization, Kolosal Torch-Inference exhibits \timesX{2.5} higher latency---but without requiring model conversion or quantization, preserving deployment simplicity and full FP32 precision. The load time advantage is pronounced: \SI{110}{\milli\second} vs.\ \SI{2.5}{\second} for TorchServe (\timesX{22.7} faster) and \SI{4.5}{\second} for TF Serving (\timesX{40.9} faster).
+Kolosal Torch-Inference achieves \timesX{1.57} lower latency than TorchServe and \timesX{1.23} lower than ONNX Runtime on the ResNet-50 baseline. This improvement stems primarily from eliminating Python interpreter overhead and garbage collection pauses rather than algorithmic optimizations to the inference kernels themselves. Compared to Intel-optimized OpenVINO with INT8 quantization, Kolosal Torch-Inference exhibits \timesX{2.5} higher latency---a trade-off that preserves deployment simplicity and full FP32 precision without requiring model conversion or quantization calibration.
 
-\subsection{GPU Performance}
+The cold-start advantage is particularly pronounced: \SI{108}{\milli\second} versus \SI{2.5}{\second} for TorchServe (\timesX{23.1} faster) and \SI{4.5}{\second} for TensorFlow Serving (\timesX{41.7} faster). This improvement is most impactful for serverless deployments where cold-start latency directly affects billing and user experience. For long-running services where models remain loaded for extended periods, the cold-start advantage is amortized over many requests and becomes less significant relative to steady-state inference performance.
 
-On GPU configurations, the latency gap narrows as compute becomes the bottleneck rather than framework overhead (\cref{tab:latency_gpu}):
+\subsection{GPU Performance Analysis}
+
+On GPU configurations, the performance landscape shifts fundamentally as compute-bound operations dominate over framework overhead (\cref{tab:latency_gpu}). The latency gap between frameworks narrows because GPU kernel execution time---which is largely framework-independent---becomes the primary bottleneck rather than host-side orchestration.
 
 \begin{table}[t]
 \centering
@@ -858,14 +860,16 @@ TF Serving & 3.5 & 0.32 & 4.2 & 286 & 3.20 \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} \textbf{TensorRT achieves \timesX{6} higher throughput} than Kolosal Torch-Inference but requires model conversion and lengthy compilation (\SIrange{12}{15}{\second}). GPU results are estimates based on published benchmarks and internal testing; primary validation was conducted on Apple Silicon MPS.
+\noindent\textit{Note.} \textbf{TensorRT achieves \timesX{6} higher throughput} than Kolosal Torch-Inference through aggressive graph optimization, kernel fusion, and INT8 quantization. Model conversion requires \SIrange{12}{15}{\second} compilation time. GPU results represent estimates based on published benchmarks and internal testing; primary validation was conducted on Apple Silicon MPS backend.
 \end{table}
 
-TensorRT with INT8 quantization achieves the highest GPU throughput (\num{2500}\fpssuffix{})---\textbf{\timesX{6} higher than Kolosal Torch-Inference} (\num{417}\fpssuffix{}). This substantial gap reflects TensorRT's aggressive graph optimization, kernel fusion, and quantization, which require model conversion and lengthy compilation (\SI{15}{\second}). Kolosal Torch-Inference's advantage lies in cold start performance (\SI{0.58}{\second} load time) and deployment simplicity (no model conversion required). For maximum-throughput GPU workloads, TensorRT or Triton with TensorRT backend remain the superior choice; Kolosal Torch-Inference is better suited for scenarios prioritizing deployment agility over peak throughput.
+TensorRT with INT8 quantization achieves the highest GPU throughput (\num{2500}\fpssuffix{})---\textbf{\timesX{6} higher than Kolosal Torch-Inference} (\num{417}\fpssuffix{}). This substantial performance gap reflects TensorRT's sophisticated optimization pipeline: layer fusion reduces memory bandwidth requirements, INT8 quantization doubles tensor core throughput, and kernel auto-tuning selects optimal implementations for the specific GPU architecture.
 
-\subsection{Comprehensive Model Performance}
+However, these optimizations impose deployment complexity: model conversion to TensorRT format, calibration dataset preparation for INT8 quantization, and lengthy compilation times (\SI{15}{\second} for ResNet-50, potentially hours for large transformer models). Kolosal Torch-Inference's comparative advantage lies in deployment velocity---sub-second model loading without format conversion---making it better suited for scenarios prioritizing iteration speed over peak throughput, such as development environments, A/B testing pipelines, or multi-model serving where models are frequently swapped.
 
-\Cref{tab:sota} presents benchmark results across representative models from each architecture family:
+\subsection{Comprehensive Model Performance Analysis}
+
+\Cref{tab:sota} presents benchmark results across representative models from each architecture family, enabling practitioners to assess performance characteristics across the model complexity spectrum:
 
 \begin{table}[t]
 \centering
@@ -907,10 +911,16 @@ AlexNet & --- & 2.33 & 1.90 & 428.6 & 56.52 & 24.2 \\
 \end{tabular}
 
 \vspace{0.3em}
-\noindent\scriptsize\textit{Note.} SD = standard deviation across 100 iterations $\times$ 5 replicates. Eff.\ = Efficiency (Accuracy/Latency). Swin models show higher variance due to attention computation patterns on MPS.
+\noindent\scriptsize\textit{Note.} SD = standard deviation across 100 iterations $\times$ 5 replicates. Eff.\ = Efficiency (Accuracy/Latency, \si{\percent\per\milli\second}). Swin models exhibit higher variance due to attention computation patterns interacting with MPS memory hierarchy.
 \end{table}
 
-The ``Eff.'' column represents accuracy per millisecond (\si{\percent\per\milli\second}), measuring accuracy points gained per unit inference time---a metric useful for identifying models that maximize accuracy within latency budgets.
+Several patterns emerge from the comprehensive benchmark results:
+
+\textbf{Architectural Efficiency.} The ``Eff.'' column quantifies accuracy per millisecond (\si{\percent\per\milli\second})---a metric that captures the accuracy-latency trade-off in a single value. SqueezeNet 1.1 achieves the highest efficiency (55.9) by delivering 58.18\% accuracy in just \SI{1.04}{\milli\second}, making it optimal for latency-constrained edge deployments where modest accuracy is acceptable. Conversely, EfficientNetV2-L achieves the highest absolute accuracy (85.81\%) but at efficiency 1.0, indicating that each millisecond yields only one percentage point of accuracy---a trade-off justified only when accuracy is paramount.
+
+\textbf{Latency Variance.} Standard deviation reveals operational predictability. MobileNet variants exhibit remarkably low variance (SD $\approx$ \SI{0.07}{\milli\second}), indicating stable inference times suitable for real-time applications with strict latency SLAs. In contrast, Swin Transformers show high variance (SD up to \SI{33.37}{\milli\second} for Swin-T), attributable to attention mechanism memory access patterns that interact unpredictably with the MPS backend's memory hierarchy. This variance has practical implications: P95 latency for Swin-T (\SI{138.25}{\milli\second}) exceeds average latency (\SI{100.13}{\milli\second}) by 38\%, necessitating conservative capacity planning.
+
+\textbf{Family-Specific Observations.} ResNet models demonstrate predictable scaling: doubling depth approximately doubles latency (ResNet-50: \SI{7.98}{\milli\second}; ResNet-152: \SI{18.24}{\milli\second}) with diminishing accuracy returns. EfficientNet's compound scaling achieves better accuracy-latency trade-offs than ResNet at equivalent compute budgets. ConvNeXt models achieve Swin-class accuracy with CNN-level latency stability, representing a compelling alternative for applications requiring both high accuracy and predictable performance.
 
 \subsection{Accuracy vs.\ Latency Trade-off}
 
@@ -1197,12 +1207,16 @@ Swin & V2-T & 5.0 & 1.9 & 22.6 \\
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} FPS/GFLOP measures computational efficiency (higher is better). Acc/ms = accuracy per millisecond. MobileNetV3-Small achieves highest efficiency, optimal for compute-constrained deployments.
+\noindent\textit{Note.} FPS/GFLOP measures computational efficiency (throughput normalized by model complexity). Acc/ms = accuracy per millisecond. Models ordered by FPS/GFLOP descending.
 \end{table}
 
-\subsection{Scaling Under Concurrent Load}
+The efficiency analysis reveals a clear hierarchy of computational efficiency across architecture families. MobileNetV3-Small achieves the highest FPS/GFLOP ratio (6319.7), indicating that its depthwise separable convolutions and squeeze-excitation blocks translate theoretical FLOP reductions into proportional latency improvements. This validates the architecture's design for mobile and edge deployment scenarios.
 
-We evaluate throughput scaling with increasing concurrent requests:
+Conversely, Swin V2-T exhibits the lowest FPS/GFLOP ratio (5.0), reflecting the overhead of attention mechanism memory operations that are not captured by FLOP counts. This discrepancy between theoretical and empirical efficiency has practical implications: FLOP-based model selection criteria may be misleading for transformer architectures, and practitioners should prefer empirical latency measurements for deployment decisions.
+
+\subsection{Throughput Scaling Under Concurrent Load}
+
+We evaluate throughput scaling with increasing concurrent requests to assess framework behavior under production workloads:
 
 \begin{table}[t]
 \centering
@@ -1225,7 +1239,7 @@ We evaluate throughput scaling with increasing concurrent requests:
 \end{tabular}
 
 \vspace{0.5em}
-\noindent\textit{Note.} Efficiency = (Actual Speedup / Ideal Speedup) $\times$ 100\%. Near-linear scaling observed up to 4 concurrent requests (89\% efficiency); diminishing returns beyond 16 due to CPU core saturation.
+\noindent\textit{Note.} Efficiency = (Actual Speedup / Ideal Linear Speedup) $\times$ 100\%. Near-linear scaling observed up to 4 concurrent requests (89\% efficiency); diminishing returns beyond 16 concurrent requests due to CPU core saturation on the 12-core M2 Pro.
 \end{table}
 
 \subsubsection{Scalability Analysis}
@@ -1236,7 +1250,9 @@ We model throughput scaling under concurrent load using a modified Amdahl's Law 
     \label{eq:efficiency}
 \end{equation}
 
-\Cref{tab:scaling} presents empirical scaling results, demonstrating near-linear scaling up to $c = 4$ concurrent requests ($\eta = 89\%$), with diminishing returns beyond $c = 16$ due to CPU core saturation on the 12-core M2~Pro.
+\Cref{tab:scaling} presents empirical scaling results. The framework achieves near-linear scaling up to $c = 4$ concurrent requests ($\eta = 89\%$), with efficiency declining to 55\% at $c = 16$ and 18\% at $c = 64$. This behavior is consistent with Amdahl's Law: the sequential portions of request handling (input parsing, output serialization) become the bottleneck as parallelizable compute is distributed across more workers.
+
+The practical implication is that for the 12-core M2 Pro test system, optimal throughput-per-core occurs at approximately $c = 8$, beyond which additional concurrency yields diminishing throughput gains while increasing tail latency (P95 increases from \SI{12.8}{\milli\second} at $c=8$ to \SI{58.7}{\milli\second} at $c=64$). Production deployments should tune concurrency based on specific hardware and latency SLA requirements rather than maximizing raw throughput.
 
 \subsection{Latency Variance Analysis}
 
@@ -1322,30 +1338,30 @@ Based on our benchmarks, Kolosal Torch-Inference is particularly well-suited for
 
 The economic implications of these performance improvements are substantial. According to recent industry analyses, inference costs constitute up to 90\% of ML infrastructure expenditure~\citep{patterson2021carbon}. Our measured \timesX{2.86} memory reduction translates directly to proportional savings in cloud compute costs, as memory-bound workloads can consolidate onto fewer instances. For organizations deploying thousands of model replicas, these savings compound to millions of dollars annually~\citep{aws2023mlcosts}.
 
-\subsection{Analysis of Performance Characteristics}
+\subsection{Analytical Framework for Performance Characteristics}
 
-The empirical evaluation revealed several key performance characteristics worthy of detailed analysis, each grounded in well-established systems principles.
+The empirical evaluation revealed several key performance characteristics that merit rigorous analysis, each grounded in established systems principles and computer architecture theory.
 
-\subsubsection{Latency Improvement Sources}
-The \timesX{1.57} latency improvement over TorchServe stems from three primary architectural factors, each supported by prior research:
+\subsubsection{Sources of Latency Improvement}
+The \timesX{1.57} latency improvement over TorchServe stems from three primary architectural factors, each with well-understood theoretical underpinnings:
 
-\textbf{(1) Elimination of Python interpreter overhead:} Python's Global Interpreter Lock (GIL) fundamentally limits true parallelism in multi-threaded applications~\citep{beazley2010gil}. By interfacing directly with \texttt{libtorch} through Rust's FFI, we bypass the Python runtime entirely. Prior work by \citet{crankshaw2017clipper} demonstrated that Python overhead can exceed 50\% of total inference time for lightweight models---consistent with our observed improvements on MobileNet and SqueezeNet families.
+\textbf{(1) Elimination of Python interpreter overhead:} Python's Global Interpreter Lock (GIL) fundamentally constrains parallelism by serializing access to Python objects across threads~\citep{beazley2010gil}. By interfacing directly with \texttt{libtorch} through Rust's FFI, we bypass the Python runtime entirely. Prior work by \citet{crankshaw2017clipper} demonstrated that Python overhead can exceed 50\% of total inference time for lightweight models---consistent with our observed improvements on MobileNet and SqueezeNet families where framework overhead constitutes a larger fraction of total execution time.
 
-\textbf{(2) Zero-copy tensor handling:} Traditional Python-C++ interoperability requires data serialization at language boundaries. NumPy arrays must be converted to PyTorch tensors, which are then marshaled to \texttt{libtorch}. Each boundary crossing incurs memory allocation and copying costs. Rust's ownership semantics enable direct memory mapping without intermediate copies, eliminating overhead that \citet{crankshaw2017clipper} identified as a primary bottleneck in prediction serving systems.
+\textbf{(2) Zero-copy tensor handling:} Traditional Python-C++ interoperability requires data serialization at language boundaries. NumPy arrays must be converted to PyTorch tensors, which are then marshaled to \texttt{libtorch}. Each boundary crossing incurs memory allocation and copying costs proportional to tensor size. Rust's ownership semantics enable direct memory mapping without intermediate copies, eliminating the serialization overhead that \citet{crankshaw2017clipper} identified as a primary bottleneck in prediction serving systems. For a batch of 32 ImageNet images ($32 \times 3 \times 224 \times 224 \times 4$ bytes $\approx$ \SI{19}{\mega\byte}), eliminating even a single copy saves \SI{0.5}{\milli\second} at typical memory bandwidth.
 
-\textbf{(3) Deterministic memory management:} Rust's ownership model provides compile-time memory safety guarantees without garbage collection~\citep{jung2017rustbelt}. This eliminates unpredictable GC pauses that \citet{jones2016gc} identified as problematic for latency-sensitive applications. Our P95 latency measurements (\cref{tab:latency}) demonstrate consistently tight latency distributions, with P95/mean ratios below \timesX{1.1} compared to \numrange{1.3}{1.5}$\times$ for Python-based frameworks.
+\textbf{(3) Deterministic memory management:} Rust's ownership model provides compile-time memory safety guarantees without runtime garbage collection~\citep{jung2017rustbelt}. This eliminates unpredictable GC pauses that \citet{jones2016gc} identified as problematic for latency-sensitive applications. Our P95 latency measurements (\cref{tab:latency}) demonstrate consistently tight latency distributions, with P95/mean ratios below \timesX{1.1} compared to \numrange{1.3}{1.5}$\times$ for Python-based frameworks---indicating that the absence of GC pauses contributes to more predictable performance.
 
 \subsubsection{Memory Efficiency Analysis}
-The \timesX{2.86} memory reduction compared to Python-based frameworks arises from several architectural decisions, each validated by systems research:
+The \timesX{2.86} memory reduction compared to Python-based frameworks arises from several architectural decisions validated by systems research:
 
-\textbf{Python interpreter state elimination:} The Python interpreter maintains substantial runtime state including the bytecode cache, imported modules, and the object reference graph. Measurements by \citet{shahrad2020serverless} found that Python cold starts consume \SIrange{80}{200}{\mega\byte} before application code executes. Our Rust implementation eliminates this baseline overhead entirely.
+\textbf{Python interpreter state elimination:} The Python interpreter maintains substantial runtime state including the bytecode cache, imported modules, and the object reference graph. Measurements by \citet{shahrad2020serverless} found that Python cold starts consume \SIrange{80}{200}{\mega\byte} before application code executes. Our Rust implementation eliminates this baseline overhead entirely, which is particularly impactful for memory-constrained edge deployments or high-density containerized environments.
 
 \textbf{Absence of garbage collector structures:} Python's reference-counting GC with cycle detection maintains auxiliary data structures for every allocated object~\citep{jones2016gc}. For tensor-heavy workloads with millions of intermediate allocations, these structures impose non-trivial memory overhead. Rust's compile-time ownership tracking eliminates runtime bookkeeping while maintaining memory safety guarantees~\citep{jung2017rustbelt}.
 
 \textbf{Custom memory allocation:} We employ \texttt{jemalloc} with thread-local caches optimized for the allocation patterns typical in tensor operations---many similarly-sized allocations followed by bulk deallocation. This reduces fragmentation compared to general-purpose allocators, consistent with findings by \citet{kwon2023pagedattention} on memory management for ML workloads.
 
 \subsubsection{Model Loading Optimization}
-The \timesX{22.7} faster model loading results from direct memory-mapped file access to TorchScript models, bypassing the Python import machinery and associated module initialization overhead inherent in frameworks like TorchServe. This architecture aligns with serverless computing requirements identified by \citet{jonas2019serverless}, where cold start latency directly impacts both user experience and billing costs. Memory-mapped loading enables the operating system's page cache to serve repeated model loads, further reducing latency for frequently-accessed models.
+The \timesX{23.1} faster model loading results from direct memory-mapped file access to TorchScript models, bypassing the Python import machinery and associated module initialization overhead. This architecture aligns with serverless computing requirements identified by \citet{jonas2019serverless}, where cold start latency directly impacts both user experience and billing costs. Memory-mapped loading enables the operating system's page cache to serve repeated model loads, further reducing latency for frequently-accessed models in multi-tenant environments.
 
 \subsubsection{Theoretical Performance Bounds}
 Our results align with theoretical expectations from systems performance analysis. According to Amdahl's Law, the maximum speedup $S$ achievable by optimizing a fraction $f$ of a system is bounded by:
@@ -1355,7 +1371,7 @@ Our results align with theoretical expectations from systems performance analysi
 \end{equation}
 where $s$ is the speedup of the optimized portion~\citep{patterson2021carbon}. For lightweight models where framework overhead dominates ($f \approx 0.6$--$0.8$), eliminating this overhead yields $S \in [2.5, 5]$---consistent with our observed \numrange{1.57}{2.5}$\times$ improvements on ResNet-18 and MobileNet families.
 
-For compute-bound models (Swin Transformers), framework overhead constitutes a smaller fraction ($f \approx 0.1$--$0.2$), limiting achievable speedup to $S \in [1.1, 1.25]$. Our measurements confirm this pattern: Swin-T shows only \SI{8}{\percent} improvement over TorchServe, while compute-light SqueezeNet achieves \SI{45}{\percent} improvement.
+For compute-bound models (Swin Transformers), framework overhead constitutes a smaller fraction ($f \approx 0.1$--$0.2$), limiting achievable speedup to $S \in [1.1, 1.25]$. Our measurements confirm this theoretical prediction: Swin-T shows only \SI{8}{\percent} improvement over TorchServe, while compute-light SqueezeNet achieves \SI{45}{\percent} improvement. This analysis provides practitioners with a principled framework for estimating expected improvements based on model characteristics.
 
 \subsection{Comparison with Existing Approaches}
 
@@ -1451,11 +1467,11 @@ This paper has presented Kolosal Torch-Inference, a Rust-based framework for dep
     \item Cross-platform portability validated on ARM64 (Apple Silicon) and x86-64 (Windows/CUDA)
 \end{enumerate}
 
-\textbf{Key trade-offs:} TensorRT with INT8 quantization achieves \textbf{\timesX{6} higher GPU throughput} than our framework, making it the superior choice for maximum-throughput production deployments. Kolosal Torch-Inference's advantages are most pronounced for: (a)~serverless deployments where cold-start latency impacts billing, (b)~scenarios requiring frequent model switching, (c)~memory-constrained environments, and (d)~deployments prioritizing simplicity over peak performance.
+\textbf{Key trade-offs and deployment guidance:} TensorRT with INT8 quantization achieves \textbf{\timesX{6} higher GPU throughput} than our framework (\num{2500}\fpssuffix{} vs.\ \num{417}\fpssuffix{}), making it unambiguously superior for maximum-throughput production GPU deployments. Kolosal Torch-Inference's advantages are most pronounced for specific deployment scenarios: (a)~serverless architectures where cold-start latency directly impacts billing and user experience, (b)~development and A/B testing pipelines requiring frequent model switching, (c)~memory-constrained edge deployments where the \timesX{2.86} memory reduction enables deployment on smaller instances, and (d)~organizations prioritizing deployment simplicity and maintainability over peak performance.
 
-\textbf{Limitations:} Primary validation on Apple Silicon; NVIDIA GPU baseline results (\num{73.40}\fpssuffix{} ResNet-50, \num{63.90}\fpssuffix{} ViT-B/16) confirm CUDA acceleration with up to \timesX{14.4} speedup for Vision Transformers. TensorRT auto-detection module implemented, though full TensorRT EP optimization requires CUDA 12+ runtime. Transformer models show only \SIrange{8}{15}{\percent} improvement versus \SIrange{30}{50}{\percent} for CNNs. Native Rust frameworks (Candle, Burn) were not benchmarked.
+\textbf{Limitations and scope:} Primary validation was conducted on Apple Silicon (M2 Pro, MPS backend); while NVIDIA GPU baseline results confirm CUDA acceleration (up to \timesX{14.4} speedup for Vision Transformers), production GPU deployments should be independently validated. Transformer architectures show only \SIrange{8}{15}{\percent} improvement versus \SIrange{30}{50}{\percent} for CNNs, reflecting the compute-bound nature of attention mechanisms that cannot be addressed by framework-level optimizations. Native Rust ML frameworks (Candle, Burn) were not benchmarked as they require model reimplementation rather than loading TorchScript checkpoints, representing a distinct deployment paradigm.
 
-The complete benchmark suite and source code are available at \url{https://github.com/kolosal-ai/torch-inference}.
+The complete benchmark suite, raw data, and source code are available at \url{https://github.com/kolosal-ai/torch-inference} to enable reproducibility and independent validation.
 
 \section*{Author Contributions (CRediT)}
 
