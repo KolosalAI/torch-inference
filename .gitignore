@@ -77,7 +77,8 @@ models/*
 *.pth
 *.onnx
 *.torchscript
-*.ts
+# TorchScript model files (not TypeScript)
+*.pt.ts
 # Exception: Keep example/test models if small
 !models/example_*.pt
 
@@ -262,3 +263,4 @@ $RECYCLE.BIN/
 # Project-Specific Ignores
 # ==============================================================================
 # Add any project-specific files to ignore below
+onnxruntime_1_22/
