@@ -43,6 +43,13 @@ struct ClassificationBenchmarkResult {
     // Memory
     peak_memory_mb: f64,
     device: String,
+    // New fields for improved reporting
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_size: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warmup_time_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coefficient_of_variation: Option<f64>,
 }
 
 /// Competitor comparison data
@@ -211,6 +218,498 @@ fn get_model_specs() -> HashMap<String, ModelSpec> {
         input_size: 224,
     });
     
+    // Add comprehensive model specs from benchmark data
+    specs.insert("resnet18".to_string(), ModelSpec {
+        family: "ResNet".to_string(),
+        architecture: "ResNet-18".to_string(),
+        parameters_m: 11.7,
+        flops_g: 1.8,
+        top1_accuracy: 69.76,
+        top5_accuracy: 89.08,
+        input_size: 224,
+    });
+    
+    specs.insert("resnet34".to_string(), ModelSpec {
+        family: "ResNet".to_string(),
+        architecture: "ResNet-34".to_string(),
+        parameters_m: 21.8,
+        flops_g: 3.7,
+        top1_accuracy: 73.31,
+        top5_accuracy: 91.42,
+        input_size: 224,
+    });
+    
+    specs.insert("resnet101".to_string(), ModelSpec {
+        family: "ResNet".to_string(),
+        architecture: "ResNet-101".to_string(),
+        parameters_m: 44.5,
+        flops_g: 7.8,
+        top1_accuracy: 77.37,
+        top5_accuracy: 93.55,
+        input_size: 224,
+    });
+    
+    specs.insert("resnet152".to_string(), ModelSpec {
+        family: "ResNet".to_string(),
+        architecture: "ResNet-152".to_string(),
+        parameters_m: 60.2,
+        flops_g: 11.6,
+        top1_accuracy: 78.31,
+        top5_accuracy: 94.05,
+        input_size: 224,
+    });
+    
+    // MobileNet family
+    specs.insert("mobilenet_v2".to_string(), ModelSpec {
+        family: "MobileNet".to_string(),
+        architecture: "MobileNetV2".to_string(),
+        parameters_m: 3.5,
+        flops_g: 0.3,
+        top1_accuracy: 71.88,
+        top5_accuracy: 90.29,
+        input_size: 224,
+    });
+    
+    specs.insert("mobilenet_v3_small".to_string(), ModelSpec {
+        family: "MobileNet".to_string(),
+        architecture: "MobileNetV3 Small".to_string(),
+        parameters_m: 2.5,
+        flops_g: 0.06,
+        top1_accuracy: 67.67,
+        top5_accuracy: 87.4,
+        input_size: 224,
+    });
+    
+    specs.insert("mobilenet_v3_large".to_string(), ModelSpec {
+        family: "MobileNet".to_string(),
+        architecture: "MobileNetV3 Large".to_string(),
+        parameters_m: 5.4,
+        flops_g: 0.22,
+        top1_accuracy: 74.04,
+        top5_accuracy: 91.34,
+        input_size: 224,
+    });
+    
+    // EfficientNet family
+    specs.insert("efficientnet_b0".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNet-B0".to_string(),
+        parameters_m: 5.3,
+        flops_g: 0.39,
+        top1_accuracy: 77.69,
+        top5_accuracy: 93.53,
+        input_size: 224,
+    });
+    
+    specs.insert("efficientnet_b1".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNet-B1".to_string(),
+        parameters_m: 7.8,
+        flops_g: 0.59,
+        top1_accuracy: 78.64,
+        top5_accuracy: 94.19,
+        input_size: 240,
+    });
+    
+    specs.insert("efficientnet_b2".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNet-B2".to_string(),
+        parameters_m: 9.1,
+        flops_g: 0.72,
+        top1_accuracy: 80.61,
+        top5_accuracy: 95.32,
+        input_size: 260,
+    });
+    
+    specs.insert("efficientnet_b3".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNet-B3".to_string(),
+        parameters_m: 12.2,
+        flops_g: 1.1,
+        top1_accuracy: 82.01,
+        top5_accuracy: 96.07,
+        input_size: 300,
+    });
+    
+    specs.insert("efficientnet_b4".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNet-B4".to_string(),
+        parameters_m: 19.0,
+        flops_g: 4.2,
+        top1_accuracy: 83.38,
+        top5_accuracy: 96.59,
+        input_size: 380,
+    });
+    
+    specs.insert("efficientnet_v2_s".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNetV2-S".to_string(),
+        parameters_m: 21.5,
+        flops_g: 8.4,
+        top1_accuracy: 84.23,
+        top5_accuracy: 96.88,
+        input_size: 384,
+    });
+    
+    specs.insert("efficientnet_v2_m".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNetV2-M".to_string(),
+        parameters_m: 54.1,
+        flops_g: 24.6,
+        top1_accuracy: 85.11,
+        top5_accuracy: 97.15,
+        input_size: 480,
+    });
+    
+    specs.insert("efficientnet_v2_l".to_string(), ModelSpec {
+        family: "EfficientNet".to_string(),
+        architecture: "EfficientNetV2-L".to_string(),
+        parameters_m: 118.5,
+        flops_g: 56.3,
+        top1_accuracy: 85.81,
+        top5_accuracy: 97.42,
+        input_size: 480,
+    });
+    
+    // Swin Transformer family
+    specs.insert("swin_t".to_string(), ModelSpec {
+        family: "Swin".to_string(),
+        architecture: "Swin-T".to_string(),
+        parameters_m: 28.3,
+        flops_g: 4.5,
+        top1_accuracy: 81.47,
+        top5_accuracy: 95.54,
+        input_size: 224,
+    });
+    
+    specs.insert("swin_s".to_string(), ModelSpec {
+        family: "Swin".to_string(),
+        architecture: "Swin-S".to_string(),
+        parameters_m: 49.6,
+        flops_g: 8.7,
+        top1_accuracy: 83.20,
+        top5_accuracy: 96.36,
+        input_size: 224,
+    });
+    
+    specs.insert("swin_b".to_string(), ModelSpec {
+        family: "Swin".to_string(),
+        architecture: "Swin-B".to_string(),
+        parameters_m: 87.8,
+        flops_g: 15.4,
+        top1_accuracy: 83.58,
+        top5_accuracy: 96.65,
+        input_size: 224,
+    });
+    
+    specs.insert("swin_v2_t".to_string(), ModelSpec {
+        family: "Swin".to_string(),
+        architecture: "Swin-V2-T".to_string(),
+        parameters_m: 28.3,
+        flops_g: 4.5,
+        top1_accuracy: 82.07,
+        top5_accuracy: 96.01,
+        input_size: 256,
+    });
+    
+    specs.insert("swin_v2_s".to_string(), ModelSpec {
+        family: "Swin".to_string(),
+        architecture: "Swin-V2-S".to_string(),
+        parameters_m: 49.7,
+        flops_g: 8.7,
+        top1_accuracy: 83.71,
+        top5_accuracy: 96.73,
+        input_size: 256,
+    });
+    
+    specs.insert("swin_v2_b".to_string(), ModelSpec {
+        family: "Swin".to_string(),
+        architecture: "Swin-V2-B".to_string(),
+        parameters_m: 87.9,
+        flops_g: 15.4,
+        top1_accuracy: 84.11,
+        top5_accuracy: 96.89,
+        input_size: 256,
+    });
+    
+    // ConvNeXt family
+    specs.insert("convnext_tiny".to_string(), ModelSpec {
+        family: "ConvNeXt".to_string(),
+        architecture: "ConvNeXt-Tiny".to_string(),
+        parameters_m: 28.6,
+        flops_g: 4.5,
+        top1_accuracy: 82.52,
+        top5_accuracy: 96.15,
+        input_size: 224,
+    });
+    
+    specs.insert("convnext_small".to_string(), ModelSpec {
+        family: "ConvNeXt".to_string(),
+        architecture: "ConvNeXt-Small".to_string(),
+        parameters_m: 50.2,
+        flops_g: 8.7,
+        top1_accuracy: 83.62,
+        top5_accuracy: 96.64,
+        input_size: 224,
+    });
+    
+    specs.insert("convnext_base".to_string(), ModelSpec {
+        family: "ConvNeXt".to_string(),
+        architecture: "ConvNeXt-Base".to_string(),
+        parameters_m: 88.6,
+        flops_g: 15.4,
+        top1_accuracy: 84.06,
+        top5_accuracy: 96.74,
+        input_size: 224,
+    });
+    
+    specs.insert("convnext_large".to_string(), ModelSpec {
+        family: "ConvNeXt".to_string(),
+        architecture: "ConvNeXt-Large".to_string(),
+        parameters_m: 197.8,
+        flops_g: 34.4,
+        top1_accuracy: 84.41,
+        top5_accuracy: 96.89,
+        input_size: 224,
+    });
+    
+    // DenseNet family
+    specs.insert("densenet121".to_string(), ModelSpec {
+        family: "DenseNet".to_string(),
+        architecture: "DenseNet-121".to_string(),
+        parameters_m: 8.0,
+        flops_g: 2.9,
+        top1_accuracy: 74.43,
+        top5_accuracy: 91.97,
+        input_size: 224,
+    });
+    
+    specs.insert("densenet169".to_string(), ModelSpec {
+        family: "DenseNet".to_string(),
+        architecture: "DenseNet-169".to_string(),
+        parameters_m: 14.1,
+        flops_g: 3.4,
+        top1_accuracy: 75.60,
+        top5_accuracy: 92.81,
+        input_size: 224,
+    });
+    
+    specs.insert("densenet201".to_string(), ModelSpec {
+        family: "DenseNet".to_string(),
+        architecture: "DenseNet-201".to_string(),
+        parameters_m: 20.0,
+        flops_g: 4.4,
+        top1_accuracy: 76.90,
+        top5_accuracy: 93.37,
+        input_size: 224,
+    });
+    
+    // VGG family
+    specs.insert("vgg16".to_string(), ModelSpec {
+        family: "VGG".to_string(),
+        architecture: "VGG-16".to_string(),
+        parameters_m: 138.4,
+        flops_g: 15.5,
+        top1_accuracy: 71.59,
+        top5_accuracy: 90.38,
+        input_size: 224,
+    });
+    
+    specs.insert("vgg19".to_string(), ModelSpec {
+        family: "VGG".to_string(),
+        architecture: "VGG-19".to_string(),
+        parameters_m: 143.7,
+        flops_g: 19.7,
+        top1_accuracy: 72.38,
+        top5_accuracy: 90.88,
+        input_size: 224,
+    });
+    
+    // RegNet family
+    specs.insert("regnet_y_400mf".to_string(), ModelSpec {
+        family: "RegNet".to_string(),
+        architecture: "RegNetY-400MF".to_string(),
+        parameters_m: 4.3,
+        flops_g: 0.4,
+        top1_accuracy: 74.05,
+        top5_accuracy: 91.76,
+        input_size: 224,
+    });
+    
+    specs.insert("regnet_y_800mf".to_string(), ModelSpec {
+        family: "RegNet".to_string(),
+        architecture: "RegNetY-800MF".to_string(),
+        parameters_m: 6.4,
+        flops_g: 0.8,
+        top1_accuracy: 76.42,
+        top5_accuracy: 93.14,
+        input_size: 224,
+    });
+    
+    specs.insert("regnet_y_1_6gf".to_string(), ModelSpec {
+        family: "RegNet".to_string(),
+        architecture: "RegNetY-1.6GF".to_string(),
+        parameters_m: 11.2,
+        flops_g: 1.6,
+        top1_accuracy: 77.95,
+        top5_accuracy: 93.97,
+        input_size: 224,
+    });
+    
+    specs.insert("regnet_y_8gf".to_string(), ModelSpec {
+        family: "RegNet".to_string(),
+        architecture: "RegNetY-8GF".to_string(),
+        parameters_m: 39.4,
+        flops_g: 8.0,
+        top1_accuracy: 80.03,
+        top5_accuracy: 95.04,
+        input_size: 224,
+    });
+    
+    specs.insert("regnet_y_32gf".to_string(), ModelSpec {
+        family: "RegNet".to_string(),
+        architecture: "RegNetY-32GF".to_string(),
+        parameters_m: 145.0,
+        flops_g: 32.0,
+        top1_accuracy: 80.88,
+        top5_accuracy: 95.34,
+        input_size: 224,
+    });
+    
+    // Lightweight models
+    specs.insert("squeezenet1_0".to_string(), ModelSpec {
+        family: "SqueezeNet".to_string(),
+        architecture: "SqueezeNet 1.0".to_string(),
+        parameters_m: 1.2,
+        flops_g: 0.82,
+        top1_accuracy: 58.09,
+        top5_accuracy: 80.42,
+        input_size: 224,
+    });
+    
+    specs.insert("squeezenet1_1".to_string(), ModelSpec {
+        family: "SqueezeNet".to_string(),
+        architecture: "SqueezeNet 1.1".to_string(),
+        parameters_m: 1.2,
+        flops_g: 0.35,
+        top1_accuracy: 58.18,
+        top5_accuracy: 80.62,
+        input_size: 224,
+    });
+    
+    specs.insert("alexnet".to_string(), ModelSpec {
+        family: "AlexNet".to_string(),
+        architecture: "AlexNet".to_string(),
+        parameters_m: 61.1,
+        flops_g: 0.71,
+        top1_accuracy: 56.52,
+        top5_accuracy: 79.07,
+        input_size: 224,
+    });
+    
+    // ResNeXt family
+    specs.insert("resnext50_32x4d".to_string(), ModelSpec {
+        family: "ResNeXt".to_string(),
+        architecture: "ResNeXt-50-32x4d".to_string(),
+        parameters_m: 25.0,
+        flops_g: 4.3,
+        top1_accuracy: 77.62,
+        top5_accuracy: 93.70,
+        input_size: 224,
+    });
+    
+    specs.insert("resnext101_32x8d".to_string(), ModelSpec {
+        family: "ResNeXt".to_string(),
+        architecture: "ResNeXt-101-32x8d".to_string(),
+        parameters_m: 88.8,
+        flops_g: 16.5,
+        top1_accuracy: 79.31,
+        top5_accuracy: 94.52,
+        input_size: 224,
+    });
+    
+    specs.insert("resnext101_64x4d".to_string(), ModelSpec {
+        family: "ResNeXt".to_string(),
+        architecture: "ResNeXt-101-64x4d".to_string(),
+        parameters_m: 83.5,
+        flops_g: 15.5,
+        top1_accuracy: 83.25,
+        top5_accuracy: 96.23,
+        input_size: 224,
+    });
+    
+    // Wide ResNet
+    specs.insert("wide_resnet50_2".to_string(), ModelSpec {
+        family: "Wide ResNet".to_string(),
+        architecture: "Wide ResNet-50-2".to_string(),
+        parameters_m: 68.9,
+        flops_g: 11.4,
+        top1_accuracy: 78.47,
+        top5_accuracy: 94.09,
+        input_size: 224,
+    });
+    
+    specs.insert("wide_resnet101_2".to_string(), ModelSpec {
+        family: "Wide ResNet".to_string(),
+        architecture: "Wide ResNet-101-2".to_string(),
+        parameters_m: 126.9,
+        flops_g: 22.8,
+        top1_accuracy: 78.85,
+        top5_accuracy: 94.28,
+        input_size: 224,
+    });
+    
+    // MNASNet
+    specs.insert("mnasnet0_5".to_string(), ModelSpec {
+        family: "MNASNet".to_string(),
+        architecture: "MNASNet 0.5".to_string(),
+        parameters_m: 2.2,
+        flops_g: 0.1,
+        top1_accuracy: 67.73,
+        top5_accuracy: 87.49,
+        input_size: 224,
+    });
+    
+    specs.insert("mnasnet1_0".to_string(), ModelSpec {
+        family: "MNASNet".to_string(),
+        architecture: "MNASNet 1.0".to_string(),
+        parameters_m: 4.4,
+        flops_g: 0.32,
+        top1_accuracy: 73.46,
+        top5_accuracy: 91.51,
+        input_size: 224,
+    });
+    
+    // ShuffleNet
+    specs.insert("shufflenet_v2_x0_5".to_string(), ModelSpec {
+        family: "ShuffleNet".to_string(),
+        architecture: "ShuffleNetV2 x0.5".to_string(),
+        parameters_m: 1.4,
+        flops_g: 0.04,
+        top1_accuracy: 60.55,
+        top5_accuracy: 81.75,
+        input_size: 224,
+    });
+    
+    specs.insert("shufflenet_v2_x1_0".to_string(), ModelSpec {
+        family: "ShuffleNet".to_string(),
+        architecture: "ShuffleNetV2 x1.0".to_string(),
+        parameters_m: 2.3,
+        flops_g: 0.15,
+        top1_accuracy: 69.36,
+        top5_accuracy: 88.32,
+        input_size: 224,
+    });
+    
+    specs.insert("shufflenet_v2_x2_0".to_string(), ModelSpec {
+        family: "ShuffleNet".to_string(),
+        architecture: "ShuffleNetV2 x2.0".to_string(),
+        parameters_m: 7.4,
+        flops_g: 0.58,
+        top1_accuracy: 76.23,
+        top5_accuracy: 92.99,
+        input_size: 224,
+    });
     specs
 }
 
@@ -554,6 +1053,9 @@ fn benchmark_image_classification(_c: &mut Criterion) {
                 println!("  ✓ Accuracy: {:.2}% Top-1", spec.top1_accuracy);
             }
 
+            // Calculate coefficient of variation for stability analysis
+            let cv = if avg > 0.0 { (std_dev / avg) * 100.0 } else { 0.0 };
+
             results.push(ClassificationBenchmarkResult {
                 model_name: model_name.clone(),
                 model_family: spec.family.clone(),
@@ -579,6 +1081,9 @@ fn benchmark_image_classification(_c: &mut Criterion) {
                 efficiency_accuracy_per_ms,
                 peak_memory_mb: file_size_mb * 2.5, // Estimate
                 device: device_name.clone(),
+                batch_size: Some(1),
+                warmup_time_ms: None, // Could be calculated if needed
+                coefficient_of_variation: Some(cv),
             });
 
             println!();
@@ -695,29 +1200,20 @@ fn generate_comprehensive_report(results: &[ClassificationBenchmarkResult],
                                   path: &str) {
     let mut file = File::create(path).expect("Unable to create markdown file");
     
+    // Get timestamp from system info
+    let timestamp = system_info.iter()
+        .find(|(k, _)| k == "Timestamp")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("Unknown");
+    
     writeln!(file, "# Image Classification Benchmark Report\n").ok();
-    writeln!(file, "## Executive Summary\n").ok();
+    writeln!(file, "**Generated**: {}\n", timestamp).ok();
     
-    if !results.is_empty() {
-        let fastest = results.iter().min_by(|a, b| a.avg_inference_ms.partial_cmp(&b.avg_inference_ms).unwrap()).unwrap();
-        let most_accurate = results.iter().max_by(|a, b| a.top1_accuracy.partial_cmp(&b.top1_accuracy).unwrap()).unwrap();
-        let most_efficient = results.iter()
-            .filter(|r| r.efficiency_accuracy_per_ms > 0.0)
-            .max_by(|a, b| a.efficiency_accuracy_per_ms.partial_cmp(&b.efficiency_accuracy_per_ms).unwrap());
-        
-        writeln!(file, "- **Models Benchmarked**: {}", results.len()).ok();
-        writeln!(file, "- **Fastest Model**: {} ({:.2} ms)", fastest.model_name, fastest.avg_inference_ms).ok();
-        writeln!(file, "- **Highest Accuracy**: {} ({:.2}%)", most_accurate.model_name, most_accurate.top1_accuracy).ok();
-        if let Some(efficient) = most_efficient {
-            writeln!(file, "- **Most Efficient**: {} ({:.4} acc/%ms)", efficient.model_name, efficient.efficiency_accuracy_per_ms).ok();
-        }
-    }
-    
-    writeln!(file, "\n## System Information\n").ok();
-    writeln!(file, "| Property | Value |").ok();
-    writeln!(file, "|----------|-------|").ok();
+    writeln!(file, "## System Information\n").ok();
     for (k, v) in system_info {
-        writeln!(file, "| {} | {} |", k, v).ok();
+        if k != "Timestamp" {
+            writeln!(file, "- {}: {}", k, v).ok();
+        }
     }
     
     writeln!(file, "\n## Torch-Inference Results\n").ok();
@@ -731,46 +1227,34 @@ fn generate_comprehensive_report(results: &[ClassificationBenchmarkResult],
         ).ok();
     }
     
-    // Competitor comparison
-    writeln!(file, "\n## Competitor Comparison (ResNet-50 Baseline)\n").ok();
-    writeln!(file, "| Provider | Device | Avg (ms) | FPS | Load (ms) | Memory (MB) | Notes |").ok();
-    writeln!(file, "|----------|--------|----------|-----|-----------|-------------|-------|").ok();
+    // Competitor comparison for CPU
+    writeln!(file, "\n## Competitor Comparison (ResNet-50, CPU)\n").ok();
+    writeln!(file, "| Framework | Avg (ms) | FPS | Load (s) | Memory (MB) |").ok();
+    writeln!(file, "|-----------|----------|-----|----------|-------------|").ok();
     
     // Add Torch-Inference result for ResNet-50 if available
     if let Some(our_resnet) = results.iter().find(|r| r.model_name.to_lowercase().contains("resnet50")) {
-        writeln!(file, "| **Torch-Inference** | {} | **{:.2}** | **{:.1}** | **{:.1}** | **{:.1}** | Rust native |",
-            our_resnet.device, our_resnet.avg_inference_ms, our_resnet.throughput_fps,
-            our_resnet.load_time_ms, our_resnet.peak_memory_mb
+        writeln!(file, "| **Torch-Inference** | **{:.2}** | **{:.1}** | **{:.2}** | ~{:.0} |",
+            our_resnet.avg_inference_ms, our_resnet.throughput_fps,
+            our_resnet.load_time_ms / 1000.0, our_resnet.peak_memory_mb
         ).ok();
     }
     
-    for c in competitors {
-        writeln!(file, "| {} | {} | {:.2} | {:.1} | {:.1} | {:.1} | {} |",
-            c.provider, c.device, c.avg_inference_ms, c.throughput_fps,
-            c.load_time_ms, c.memory_mb, c.notes
-        ).ok();
-    }
-    
-    // Latency breakdown
-    writeln!(file, "\n## Detailed Latency Analysis\n").ok();
-    writeln!(file, "| Model | Min (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Max (ms) | Std Dev |").ok();
-    writeln!(file, "|-------|----------|----------|----------|----------|----------|---------|").ok();
-    
-    for r in results {
-        writeln!(file, "| {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} |",
-            r.model_name, r.min_inference_ms, r.p50_ms, r.p95_ms, r.p99_ms, r.max_inference_ms, r.std_dev_ms
+    for c in competitors.iter().filter(|c| c.device == "CPU" && c.model_name.contains("ResNet-50")) {
+        writeln!(file, "| {} | {:.1} | {:.0} | {:.2} | {:.0} |",
+            c.provider, c.avg_inference_ms, c.throughput_fps,
+            c.load_time_ms / 1000.0, c.memory_mb
         ).ok();
     }
     
     // Efficiency analysis
     writeln!(file, "\n## Efficiency Analysis\n").ok();
-    writeln!(file, "| Model | FPS/GFLOP | Accuracy/%ms | Load Efficiency |").ok();
-    writeln!(file, "|-------|-----------|--------------|-----------------|").ok();
+    writeln!(file, "| Model | FPS/GFLOP | Accuracy/%ms |").ok();
+    writeln!(file, "|-------|-----------|-------------|").ok();
     
     for r in results {
-        let load_eff = if r.load_time_ms > 0.0 { r.throughput_fps / (r.load_time_ms / 1000.0) } else { 0.0 };
-        writeln!(file, "| {} | {:.4} | {:.4} | {:.2} |",
-            r.model_name, r.efficiency_fps_per_gflop, r.efficiency_accuracy_per_ms, load_eff
+        writeln!(file, "| {} | {:.2} | {:.2} |",
+            r.model_name, r.efficiency_fps_per_gflop, r.efficiency_accuracy_per_ms
         ).ok();
     }
     
