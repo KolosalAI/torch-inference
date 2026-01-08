@@ -200,6 +200,8 @@ The remainder of this paper is organized as follows. \Cref{sec:related} reviews 
 \section{Related Work}
 \label{sec:related}
 
+This section situates Kolosal Torch-Inference within the broader landscape of model serving infrastructure, examining existing frameworks, the emerging role of Rust in high-performance computing, and prior work on memory estimation for ML deployments.
+
 \subsection{Model Serving Frameworks}
 
 \textbf{TorchServe}~\citep{torchserve} represents the canonical serving solution for the PyTorch ecosystem. While it offers seamless integration and rich features like dynamic batching, its reliance on a Java-based frontend and Python backend introduces measurable latency, particularly in single-stream scenarios. Recent benchmarks by \citet{mlperf2023} demonstrate that TorchServe achieves competitive throughput at high batch sizes but exhibits degraded performance for latency-sensitive single-request workloads.
@@ -227,7 +229,9 @@ Existing memory estimation tools typically operate post-hoc, requiring model dow
 \section{System Architecture}
 \label{sec:architecture}
 
-\subsection{Kolosal Torch-Inference Framework}
+Having established the limitations of existing frameworks and the potential of Rust-based solutions, we now present the architectural design of Kolosal Torch-Inference. The system is built around four core principles that directly address the overhead sources identified in \Cref{sec:related}.
+
+\subsection{Design Principles}
 
 Kolosal Torch-Inference is architected to minimize the ``serving tax''---the computational resources consumed by the serving layer itself rather than the model inference. The system design adheres to four core principles:
 \begin{enumerate}
@@ -283,7 +287,7 @@ where $P \in \mathbb{R}^{+}$ denotes the parameter count (in billions), with emp
 \section{Methods}
 \label{sec:methods}
 
-This section presents the experimental design and methodology employed for benchmark validation. The methodology encompasses hardware configuration, sample selection, measurement protocol, and statistical analysis procedures.
+To rigorously evaluate the performance claims outlined in \Cref{sec:architecture}, we designed a comprehensive benchmark methodology. This section details the experimental setup, including hardware configurations, model selection criteria, measurement protocols, and statistical analysis procedures employed throughout the study.
 
 \subsection{Hardware Configuration}
 
@@ -521,13 +525,15 @@ All statistical analyses were conducted using Python (NumPy 1.26, SciPy 1.12, st
 \section{Results}
 \label{sec:results}
 
-This section presents the comprehensive empirical evaluation of the proposed inference framework. The evaluation encompasses: (1) validation of memory estimation accuracy, (2) latency and throughput benchmarks against competing frameworks, and (3) memory efficiency analysis. We emphasize that the MAPE metric reported herein measures \textit{memory estimation} accuracy---the ability to predict memory requirements prior to deployment---not inference latency prediction.
+We now present the empirical findings from the benchmark evaluation described in \Cref{sec:methods}. The results are organized into four parts: (1) validation of memory estimation accuracy, (2) inference latency comparisons across frameworks, (3) GPU-specific performance analysis, and (4) comprehensive model-level benchmarks. Throughout this section, we report both point estimates and confidence intervals to enable rigorous interpretation of the findings.
 
 \subsection{Memory Estimation Accuracy}
 
+Before examining inference performance, we validate the framework's memory estimation capability---a prerequisite feature for production deployments where resource planning must precede model loading.
+
 \subsubsection{Aggregate Estimation Metrics}
 
-A key feature of Kolosal Torch-Inference is its ability to estimate memory requirements before model loading. \Cref{tab:descriptive_stats} presents the descriptive statistics for memory estimation error across all validation configurations ($N = 144$ model-configuration combinations, representing 55 unique models tested under 2--3 configurations each).
+Kolosal Torch-Inference provides pre-deployment memory estimates based on model architecture metadata. \Cref{tab:descriptive_stats} presents descriptive statistics for estimation error across all validation configurations ($N = 144$ model-configuration combinations, representing 55 unique models tested under 2--3 configurations each).
 
 \begin{table}[t]
 \centering
@@ -558,9 +564,13 @@ Coefficient of Determination ($R^2$) & 0.9996 \\
 \noindent\textit{Note.} These metrics measure \textbf{memory estimation} accuracy (predicted vs.\ actual memory consumption), not inference latency. MAPE of 0.84\% indicates the framework can reliably predict memory requirements before deployment.
 \end{table}
 
-\subsubsection{Inference Performance Statistical Analysis}
+\subsection{Inference Performance Analysis}
 
-\Cref{tab:hypothesis_tests} presents the results of hypothesis testing comparing Kolosal Torch-Inference against baseline frameworks. We note that the large effect sizes and extreme $p$-values reflect substantial performance differences that are expected when comparing fundamentally different architectural approaches (Rust FFI vs.\ Python runtime).
+With memory estimation validated, we turn to the primary performance metrics: inference latency, throughput, and cold-start time. This subsection presents statistical comparisons against the 13 competing frameworks identified in \Cref{sec:methods}.
+
+\subsubsection{Statistical Hypothesis Testing}
+
+\Cref{tab:hypothesis_tests} presents the results of hypothesis testing comparing Kolosal Torch-Inference against baseline frameworks. The large effect sizes and extreme $p$-values reflect substantial architectural differences between Rust FFI and Python runtime approaches---these are expected outcomes when comparing fundamentally different system designs rather than incremental optimizations.
 
 \begin{table}[t]
 \centering
@@ -795,9 +805,9 @@ Achieved sample & \multicolumn{4}{l}{$n = 144$ (\timesX{4.2} oversampled)} \\
 
 All primary analyses achieved statistical power exceeding 0.999, far surpassing the conventional threshold of 0.80. The a priori power analysis indicated that 34 paired observations would be required to detect a medium effect ($d = 0.5$) with 80\% power; our sample of 144 configurations provided substantial oversampling, ensuring robust detection of even smaller effects.
 
-\subsection{Inference Latency Comparison}
+\subsection{CPU Inference Latency}
 
-\Cref{tab:latency} presents inference latency results for ResNet-50, our baseline model for cross-framework comparison.
+Having established statistical significance, we now examine the practical magnitude of performance differences. \Cref{tab:latency} presents inference latency results for ResNet-50, serving as the baseline model for cross-framework comparison due to its ubiquity in deployment benchmarks.
 
 \begin{table}[t]
 \centering
@@ -836,7 +846,7 @@ The cold-start advantage is particularly pronounced: \SI{108}{\milli\second} ver
 
 \subsection{GPU Performance Analysis}
 
-On GPU configurations, the performance landscape shifts fundamentally as compute-bound operations dominate over framework overhead (\cref{tab:latency_gpu}). The latency gap between frameworks narrows because GPU kernel execution time---which is largely framework-independent---becomes the primary bottleneck rather than host-side orchestration.
+The preceding CPU results establish Kolosal Torch-Inference's advantages in framework overhead elimination. However, GPU deployments present a fundamentally different performance landscape where compute-bound operations dominate (\cref{tab:latency_gpu}). The latency gap between frameworks narrows because GPU kernel execution time---which is largely framework-independent---becomes the primary bottleneck rather than host-side orchestration.
 
 \begin{table}[t]
 \centering
@@ -867,9 +877,9 @@ TensorRT with INT8 quantization achieves the highest GPU throughput (\num{2500}\
 
 However, these optimizations impose deployment complexity: model conversion to TensorRT format, calibration dataset preparation for INT8 quantization, and lengthy compilation times (\SI{15}{\second} for ResNet-50, potentially hours for large transformer models). Kolosal Torch-Inference's comparative advantage lies in deployment velocity---sub-second model loading without format conversion---making it better suited for scenarios prioritizing iteration speed over peak throughput, such as development environments, A/B testing pipelines, or multi-model serving where models are frequently swapped.
 
-\subsection{Comprehensive Model Performance Analysis}
+\subsection{Model-Level Performance Analysis}
 
-\Cref{tab:sota} presents benchmark results across representative models from each architecture family, enabling practitioners to assess performance characteristics across the model complexity spectrum:
+Beyond aggregate framework comparisons, practitioners require model-specific guidance for deployment decisions. \Cref{tab:sota} presents benchmark results across all 55 evaluated architectures, organized by model family to reveal performance patterns:
 
 \begin{table}[t]
 \centering
@@ -1328,7 +1338,7 @@ Kolosal Torch-Inference's Rust implementation avoids Python's memory overhead (i
 \section{Discussion}
 \label{sec:discussion}
 
-This section examines the practical implications of the proposed framework for enterprise and individual deployments, provides detailed analysis of performance characteristics with supporting citations and theoretical reasoning, discusses inherent limitations and constraints, and identifies promising directions for future research and development.
+The empirical results presented in \Cref{sec:results} demonstrate measurable performance improvements across multiple dimensions: latency, memory efficiency, and cold-start time. This section interprets these findings in the context of practical deployment decisions, examines the underlying architectural factors driving observed performance, acknowledges limitations, and identifies directions for future work.
 
 \subsection{Practical Deployment Implications}
 
@@ -1456,22 +1466,22 @@ Extending GPU support beyond MPS to include AMD ROCm and Intel oneAPI would broa
 \section{Conclusion}
 \label{sec:conclusion}
 
-This paper has presented Kolosal Torch-Inference, a Rust-based framework for deploying deep learning models with emphasis on cold-start performance and memory efficiency. Through benchmarking against 14 deployment frameworks across 55 image classification architectures ($N = 144$ configurations) on Apple Silicon (M2 Pro, MPS) and cross-platform validation on Windows CUDA (RTX 3060), we demonstrated:
+This paper has presented Kolosal Torch-Inference, a Rust-based inference framework designed to address the systemic inefficiencies of Python-based model serving solutions. Through comprehensive benchmarking against 14 deployment frameworks across 55 image classification architectures ($N = 144$ configurations), we have quantified the performance trade-offs between deployment simplicity, latency, memory efficiency, and peak throughput.
 
+\textbf{Principal findings.} The empirical evaluation demonstrated:
 \begin{enumerate}
-    \item \textbf{\timesX{1.57}} lower inference latency compared to TorchServe on ResNet-50 (CPU)
-    \item \textbf{\timesX{22.7}} faster cold-start model loading (\SI{108}{\milli\second} vs.\ \SI{2.5}{\second})
-    \item \textbf{\timesX{2.86}} smaller memory footprint than Python-based solutions
-    \item \textbf{\SI{0.84}{\percent}} MAPE in memory estimation (95\% CI: \SIrange{0.79}{0.89}{\percent})
-    \item Throughput spanning \numrange{3}{962}\fpssuffix{} across model complexity spectrum
-    \item Cross-platform portability validated on ARM64 (Apple Silicon) and x86-64 (Windows/CUDA)
+    \item \textbf{\timesX{1.57}} lower inference latency compared to TorchServe on ResNet-50 (CPU), attributable to eliminating Python interpreter and GC overhead
+    \item \textbf{\timesX{23.1}} faster cold-start model loading (\SI{108}{\milli\second} vs.\ \SI{2.5}{\second}), critical for serverless and edge deployments
+    \item \textbf{\timesX{2.86}} smaller memory footprint than Python-based solutions, enabling higher instance density
+    \item \textbf{\SI{0.84}{\percent}} MAPE in pre-deployment memory estimation (95\% CI: \SIrange{0.79}{0.89}{\percent})
+    \item Throughput spanning \numrange{3}{962}\fpssuffix{} across model complexity, from SqueezeNet to EfficientNetV2-L
 \end{enumerate}
 
-\textbf{Key trade-offs and deployment guidance:} TensorRT with INT8 quantization achieves \textbf{\timesX{6} higher GPU throughput} than our framework (\num{2500}\fpssuffix{} vs.\ \num{417}\fpssuffix{}), making it unambiguously superior for maximum-throughput production GPU deployments. Kolosal Torch-Inference's advantages are most pronounced for specific deployment scenarios: (a)~serverless architectures where cold-start latency directly impacts billing and user experience, (b)~development and A/B testing pipelines requiring frequent model switching, (c)~memory-constrained edge deployments where the \timesX{2.86} memory reduction enables deployment on smaller instances, and (d)~organizations prioritizing deployment simplicity and maintainability over peak performance.
+\textbf{Trade-offs and positioning.} TensorRT with INT8 quantization achieves \textbf{\timesX{6} higher GPU throughput} (\num{2500}\fpssuffix{} vs.\ \num{417}\fpssuffix{}), making it unambiguously superior for maximum-throughput production GPU workloads. Kolosal Torch-Inference occupies a distinct niche: scenarios where deployment velocity, cold-start performance, and operational simplicity outweigh peak throughput---including serverless functions, development pipelines, A/B testing infrastructure, and memory-constrained edge devices.
 
-\textbf{Limitations and scope:} Primary validation was conducted on Apple Silicon (M2 Pro, MPS backend); while NVIDIA GPU baseline results confirm CUDA acceleration (up to \timesX{14.4} speedup for Vision Transformers), production GPU deployments should be independently validated. Transformer architectures show only \SIrange{8}{15}{\percent} improvement versus \SIrange{30}{50}{\percent} for CNNs, reflecting the compute-bound nature of attention mechanisms that cannot be addressed by framework-level optimizations. Native Rust ML frameworks (Candle, Burn) were not benchmarked as they require model reimplementation rather than loading TorchScript checkpoints, representing a distinct deployment paradigm.
+\textbf{Scope and limitations.} Primary validation was conducted on Apple Silicon; NVIDIA GPU results require independent production validation. Transformer architectures show only \SIrange{8}{15}{\percent} improvement versus \SIrange{30}{50}{\percent} for CNNs, reflecting compute-bound attention mechanisms that cannot be optimized at the framework level. Native Rust frameworks (Candle, Burn) were not evaluated as they require model reimplementation.
 
-The complete benchmark suite, raw data, and source code are available at \url{https://github.com/kolosal-ai/torch-inference} to enable reproducibility and independent validation.
+The complete benchmark suite and source code are available at \url{https://github.com/kolosal-ai/torch-inference}.
 
 \section*{Author Contributions (CRediT)}
 
