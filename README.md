@@ -4,7 +4,7 @@ High-performance PyTorch inference framework in Rust with production-grade testi
 
 ## 🎯 Features
 
-- **Production-Ready Testing**: 147+ unit tests, integration tests, and benchmarks
+- **Production-Ready Testing**: 274 unit tests, integration tests, and benchmarks
 - **Enterprise Resilience**: Circuit breaker, bulkhead isolation, request deduplication
 - **High Performance**: Multi-level caching, dynamic batching, concurrent processing
 - **Comprehensive Monitoring**: Real-time metrics, health checks, endpoint statistics
@@ -19,7 +19,7 @@ cargo build --release
 
 ### Run Tests
 ```bash
-# Run all tests (147+ unit tests + integration tests)
+# Run all tests (274 unit tests + integration tests)
 cargo test
 
 # Run with verbose output

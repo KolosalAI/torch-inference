@@ -240,14 +240,16 @@ pub struct WarmupConfig {
 impl Default for WarmupConfig {
     fn default() -> Self {
         Self {
-            iterations: 20,
+            iterations: 50,                    // More warmup for stable performance
             capture_cuda_graph: true,
             warmup_shapes: vec![
-                vec![1, 3, 224, 224],   // Standard ImageNet
-                vec![1, 3, 384, 384],   // ViT-L
-                vec![1, 3, 512, 512],   // High-res
+                vec![1, 3, 224, 224],          // Standard ImageNet
+                vec![1, 3, 384, 384],          // ViT-L
+                vec![1, 3, 512, 512],          // High-res
+                vec![32, 3, 224, 224],         // Batch 32
+                vec![64, 3, 224, 224],         // Batch 64
             ],
-            warmup_batch_sizes: vec![1, 2, 4, 8],
+            warmup_batch_sizes: vec![1, 8, 16, 32, 64, 128],
             enable_timing_cache: true,
             enable_cudnn_autotune: true,
         }
@@ -255,17 +257,18 @@ impl Default for WarmupConfig {
 }
 
 impl WarmupConfig {
-    /// Create config for maximum throughput
+    /// Create config for maximum throughput (INT8 optimized)
     pub fn for_throughput() -> Self {
         Self {
-            iterations: 50,
+            iterations: 100,                   // Extensive warmup for peak INT8 performance
             capture_cuda_graph: true,
             warmup_shapes: vec![
-                vec![8, 3, 224, 224],
-                vec![16, 3, 224, 224],
                 vec![32, 3, 224, 224],
+                vec![64, 3, 224, 224],
+                vec![128, 3, 224, 224],        // INT8 optimal batch
+                vec![256, 3, 224, 224],        // Max throughput batch
             ],
-            warmup_batch_sizes: vec![8, 16, 32, 64],
+            warmup_batch_sizes: vec![32, 64, 128, 256],
             enable_timing_cache: true,
             enable_cudnn_autotune: true,
         }

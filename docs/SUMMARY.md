@@ -75,7 +75,7 @@ Comprehensive documentation has been created for the entire Torch Inference code
    - Hot-reloading
 
 7. **TESTING.md** (500+ lines)
-   - Test overview (147+ tests)
+   - Test overview (274 tests)
    - Running tests guide
    - Unit tests (91 tests documented)
    - Integration tests (6 tests)
@@ -307,7 +307,7 @@ docs/
 - ✅ **Complete Coverage**: All major features documented
 - ✅ **Practical Examples**: 200+ code examples
 - ✅ **Production Ready**: Full deployment guides
-- ✅ **Well-Tested**: 147+ tests documented
+- ✅ **Well-Tested**: 274 tests documented
 - ✅ **Easy Navigation**: Clear structure and cross-refs
 - ✅ **Professional Quality**: Enterprise-grade documentation
 
@@ -362,7 +362,7 @@ The Torch Inference Server now has **enterprise-grade documentation** covering:
 - ✅ All components with examples
 - ✅ Full API reference
 - ✅ Comprehensive configuration guide
-- ✅ Testing documentation (147+ tests)
+- ✅ Testing documentation (274 tests)
 - ✅ Production deployment guides
 - ✅ Performance tuning
 - ✅ Security best practices

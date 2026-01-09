@@ -10,6 +10,45 @@ use chrono::{DateTime, Utc};
 
 use crate::error::InferenceError;
 
+/// Cache for runtime-determined optimal backends
+/// Key: model name (lowercase), Value: best backend string
+static BACKEND_BENCHMARK_CACHE: std::sync::LazyLock<DashMap<String, String>> = 
+    std::sync::LazyLock::new(|| DashMap::new());
+
+/// Record a benchmark result for runtime adaptive backend selection
+pub fn record_backend_benchmark(model_name: &str, backend: &str, fps: f64) {
+    let key = model_name.to_lowercase();
+    let entry_key = format!("{}_{}", key, backend);
+    
+    // Store FPS for this backend
+    BACKEND_BENCHMARK_CACHE.insert(entry_key, fps.to_string());
+    
+    // Check if we have results for all backends and update winner
+    let pytorch_fp32_key = format!("{}_pytorch_fp32", key);
+    let onnx_key = format!("{}_onnx", key);
+    
+    if let (Some(fp32_entry), Some(onnx_entry)) = (
+        BACKEND_BENCHMARK_CACHE.get(&pytorch_fp32_key),
+        BACKEND_BENCHMARK_CACHE.get(&onnx_key)
+    ) {
+        let fp32_fps: f64 = fp32_entry.parse().unwrap_or(0.0);
+        let onnx_fps: f64 = onnx_entry.parse().unwrap_or(0.0);
+        
+        let winner = if fp32_fps >= onnx_fps { "pytorch_fp32" } else { "onnx" };
+        BACKEND_BENCHMARK_CACHE.insert(format!("{}_winner", key), winner.to_string());
+        
+        info!("Backend benchmark for {}: PyTorch FP32={:.1} FPS, ONNX={:.1} FPS -> Winner: {}", 
+              model_name, fp32_fps, onnx_fps, winner);
+    }
+}
+
+/// Get the runtime-determined optimal backend for a model
+/// Returns None if no benchmark has been run yet
+pub fn get_cached_optimal_backend(model_name: &str) -> Option<String> {
+    let key = format!("{}_winner", model_name.to_lowercase());
+    BACKEND_BENCHMARK_CACHE.get(&key).map(|v| v.clone())
+}
+
 /// Model format types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
@@ -31,6 +70,107 @@ impl ModelFormat {
     }
 }
 
+/// Model architecture types for optimization hints
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelArchitecture {
+    /// Vision Transformer models (ViT, DeiT, Swin) - benefit from FP16
+    Transformer,
+    /// Convolutional networks (ResNet, VGG, AlexNet) - best with FP32/cuDNN
+    Convolution,
+    /// Depthwise separable convolutions (MobileNet, EfficientNet) - benefit from ONNX optimizations
+    DepthwiseSeparable,
+    /// Recurrent networks (LSTM, GRU) - benefit from cuDNN RNN kernels
+    Recurrent,
+    /// Hybrid architectures
+    Hybrid,
+    /// Unknown/unspecified architecture
+    #[default]
+    Unknown,
+}
+
+impl ModelArchitecture {
+    /// Detect architecture from model name
+    pub fn from_name(name: &str) -> Self {
+        let name_lower = name.to_lowercase();
+        if name_lower.contains("vit") || name_lower.contains("transformer") || 
+           name_lower.contains("deit") || name_lower.contains("swin") ||
+           name_lower.contains("bert") || name_lower.contains("gpt") {
+            ModelArchitecture::Transformer
+        } else if name_lower.contains("mobilenet") || name_lower.contains("efficientnet") ||
+                  name_lower.contains("mnasnet") || name_lower.contains("shufflenet") {
+            ModelArchitecture::DepthwiseSeparable
+        } else if name_lower.contains("resnet") || name_lower.contains("vgg") ||
+                  name_lower.contains("alexnet") || name_lower.contains("densenet") ||
+                  name_lower.contains("inception") || name_lower.contains("googlenet") {
+            ModelArchitecture::Convolution
+        } else if name_lower.contains("lstm") || name_lower.contains("gru") ||
+                  name_lower.contains("rnn") {
+            ModelArchitecture::Recurrent
+        } else {
+            ModelArchitecture::Unknown
+        }
+    }
+    
+    /// Returns true if model benefits from FP16 inference
+    /// Note: FP16 is only beneficial at batch >= 4 for most models
+    pub fn prefers_fp16(&self) -> bool {
+        matches!(self, ModelArchitecture::Transformer)
+    }
+    
+    /// Returns true if model benefits from ONNX graph optimizations
+    /// Based on benchmarks: ONNX is faster for depthwise-separable and deeper CNNs
+    pub fn prefers_onnx(&self) -> bool {
+        // ONNX excels for:
+        // - Depthwise-separable CNNs (MobileNet, EfficientNet): 2x+ speedup
+        // - Deeper standard CNNs (ResNet-50+): 1.2x speedup from graph fusion
+        // PyTorch FP32 is faster for:
+        // - Shallow CNNs (ResNet-18): cuDNN kernels are optimal
+        // - Transformers: ONNX memcpy overhead negates benefits
+        matches!(self, ModelArchitecture::DepthwiseSeparable | ModelArchitecture::Unknown)
+    }
+    
+    /// Determine optimal backend based on model name and architecture
+    /// Checks runtime benchmark cache first, falls back to static heuristics
+    /// Returns: "onnx", "pytorch_fp16", or "pytorch_fp32"
+    pub fn optimal_backend(name: &str) -> &'static str {
+        let arch = Self::from_name(name);
+        
+        // For CNNs and Transformers, check if we have a runtime-determined optimal backend
+        if matches!(arch, ModelArchitecture::Convolution | ModelArchitecture::Transformer) {
+            if let Some(cached) = get_cached_optimal_backend(name) {
+                return match cached.as_str() {
+                    "onnx" => "onnx",
+                    "pytorch_fp16" => "pytorch_fp16",
+                    _ => "pytorch_fp32",
+                };
+            }
+        }
+        
+        match arch {
+            // Transformers: Default to FP16 for Tensor Cores
+            // Runtime benchmarks may override this if FP32 proves faster
+            ModelArchitecture::Transformer => "pytorch_fp16",
+            
+            // Depthwise-separable: Always ONNX (2x+ speedup, consistently)
+            ModelArchitecture::DepthwiseSeparable => "onnx",
+            
+            // Standard CNNs: Default to PyTorch FP32 with cuDNN benchmark mode
+            // Runtime benchmarks may override this if ONNX proves faster
+            ModelArchitecture::Convolution => "pytorch_fp32",
+            
+            // Default: ONNX is generally faster for inference
+            _ => "onnx"
+        }
+    }
+    
+    /// Returns true if this architecture should use runtime adaptive backend selection
+    /// CNNs and Transformers show variable performance depending on GPU state
+    pub fn needs_runtime_benchmark(&self) -> bool {
+        matches!(self, ModelArchitecture::Convolution | ModelArchitecture::Transformer)
+    }
+}
+
 /// Model metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
@@ -41,6 +181,9 @@ pub struct ModelMetadata {
     pub version: String,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    /// Model architecture type for optimization hints
+    #[serde(default)]
+    pub architecture: ModelArchitecture,
     pub input_schema: Option<serde_json::Value>,
     pub output_schema: Option<serde_json::Value>,
     pub preprocessing: Option<PreprocessingConfig>,
@@ -189,6 +332,7 @@ impl ModelRegistry {
             version: "1.0.0".to_string(),
             description: None,
             tags: vec![],
+            architecture: ModelArchitecture::Unknown,
             input_schema,
             output_schema,
             preprocessing,

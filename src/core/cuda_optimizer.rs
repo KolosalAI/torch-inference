@@ -313,16 +313,22 @@ impl CudaOptimizer {
         }
     }
     
-    /// Create optimizer optimized for maximum throughput
+    /// Create optimizer optimized for maximum throughput (INT8 + maximum parallelism)
     pub fn for_throughput() -> Self {
         let mut config = CudaOptimizerConfig::default();
         config.optimization_level = CudaOptimizationLevel::Maximum;
-        config.streams.num_compute_streams = 8;  // More streams for parallelism
-        config.streams.num_copy_streams = 4;
-        config.memory_pool.memory_fraction = 0.95; // Use more memory
+        config.streams.num_compute_streams = 16;  // Maximum streams for parallelism
+        config.streams.num_copy_streams = 8;      // More copy streams for overlapping transfers
+        config.memory_pool.memory_fraction = 0.95; // Use maximum available memory
+        config.memory_pool.max_size_mb = 16384;   // 16GB max pool
         config.graphs.enabled = true;
-        config.precision.compute_precision = ComputePrecision::FP16;
+        config.graphs.warmup_iterations = 50;     // More warmup iterations
+        config.graphs.max_cached_graphs = 200;    // Cache more graphs
+        config.precision.compute_precision = ComputePrecision::INT8;  // INT8 for 2x throughput
         config.precision.enable_amp = true;
+        config.precision.enable_tf32 = true;      // TF32 for Ampere GPUs
+        config.cudnn.algorithm_strategy = CudnnAlgorithmStrategy::Exhaustive;
+        config.cudnn.benchmark_mode = true;
         config.enable_persistent_l2 = true;
         Self::with_config(config)
     }

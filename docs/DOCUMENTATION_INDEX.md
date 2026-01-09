@@ -104,7 +104,7 @@ Deploy and operate in production:
 - [x] Configuration profiles
 
 **Testing**
-- [x] Test overview (147+ tests)
+- [x] Test overview (274 tests)
 - [x] Running tests
 - [x] Unit tests documentation
 - [x] Integration tests
@@ -286,7 +286,7 @@ cargo doc --open
 2. **Detailed Architecture** - Understand the entire system
 3. **Production-Ready Deployment** - Multiple deployment options
 4. **Complete Configuration Guide** - Every setting explained
-5. **Testing Documentation** - 147+ tests documented
+5. **Testing Documentation** - 274 tests documented
 6. **Real-World Examples** - Copy-paste ready code
 
 ### What Makes This Documentation Great
@@ -314,7 +314,7 @@ If you can't find what you need:
 - ✅ 3,500+ lines of documentation
 - ✅ Complete API reference
 - ✅ Full deployment guide
-- ✅ Testing guide with 147+ tests
+- ✅ Testing guide with 274 tests
 - ✅ Architecture and component guides
 
 ---

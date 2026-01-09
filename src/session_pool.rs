@@ -60,40 +60,40 @@ pub struct SessionPoolConfig {
 impl Default for SessionPoolConfig {
     fn default() -> Self {
         Self {
-            sessions_per_model: 4,
+            sessions_per_model: 8,              // More sessions for higher parallelism
             use_tensorrt: true,
-            use_fp16: true,
-            tensorrt_workspace_mb: 4096,
+            use_fp16: false,                    // Use INT8 instead (configured in ONNX loader)
+            tensorrt_workspace_mb: 8192,        // 8GB workspace for exhaustive kernel search
             capture_cuda_graphs: true,
-            warmup_iterations: 20,
+            warmup_iterations: 50,              // More warmup for stable performance
             acquire_timeout_ms: 5000,
             enable_health_check: true,
             health_check_interval_secs: 60,
             enable_auto_tuning: true,
             device_id: 0,
             use_pinned_memory: true,
-            max_batch_size: 32,
+            max_batch_size: 128,                // Larger batches for better GPU utilization
         }
     }
 }
 
 impl SessionPoolConfig {
-    /// Create config optimized for throughput
+    /// Create config optimized for throughput (INT8 + maximum parallelism)
     pub fn for_throughput() -> Self {
         Self {
-            sessions_per_model: 8,
+            sessions_per_model: 16,             // Maximum parallelism
             use_tensorrt: true,
-            use_fp16: true,
-            tensorrt_workspace_mb: 8192,
+            use_fp16: false,                    // INT8 provides 2x throughput over FP16
+            tensorrt_workspace_mb: 16384,       // 16GB workspace for exhaustive optimization
             capture_cuda_graphs: true,
-            warmup_iterations: 50,
+            warmup_iterations: 100,             // Extensive warmup for peak performance
             acquire_timeout_ms: 10000,
             enable_health_check: true,
             health_check_interval_secs: 30,
             enable_auto_tuning: true,
             device_id: 0,
             use_pinned_memory: true,
-            max_batch_size: 64,
+            max_batch_size: 256,                // Large batches maximize tensor core utilization
         }
     }
     

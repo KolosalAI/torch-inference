@@ -6,7 +6,7 @@ use serde_json::Value;
 #[cfg(feature = "torch")]
 use tch::{nn, Tensor, Device, Kind, CModule};
 
-use crate::models::registry::{ModelMetadata, PreprocessingConfig, PostprocessingConfig};
+use crate::models::registry::{ModelMetadata, ModelArchitecture, PreprocessingConfig, PostprocessingConfig};
 use crate::config::DeviceConfig;
 use crate::tensor_pool::{TensorPool, TensorShape};
 use std::sync::Arc;
@@ -260,6 +260,12 @@ impl PyTorchModelLoader {
                     self.apply_cuda_model_optimizations(&mut m)?;
                 }
                 
+                // Convert model to FP16 if enabled (critical for Transformer models)
+                if self.use_fp16 && matches!(device, Device::Cuda(_)) {
+                    info!("  ✓ Converting model to FP16 for Tensor Core acceleration");
+                    m = m.to_kind(Kind::Half);
+                }
+                
                 // Warmup the model for JIT optimization
                 if self.warmup_iterations > 0 {
                     info!("Running {} warmup iterations for JIT optimization...", self.warmup_iterations);
@@ -295,6 +301,141 @@ impl PyTorchModelLoader {
             metadata: None,
             use_fp16: self.use_fp16,
         })
+    }
+    
+    /// Load a PyTorch model with metadata for architecture-aware optimizations
+    /// Automatically enables FP16 for Transformer models (ViT, BERT, etc.)
+    #[cfg(feature = "torch")]
+    pub fn load_model_with_metadata(
+        &self, 
+        path: &Path, 
+        metadata: &ModelMetadata,
+        device_override: Option<String>
+    ) -> Result<LoadedPyTorchModel> {
+        // Detect if model benefits from FP16 based on architecture
+        let detected_arch = if metadata.architecture != ModelArchitecture::Unknown {
+            metadata.architecture.clone()
+        } else {
+            ModelArchitecture::from_name(&metadata.name)
+        };
+        
+        let should_use_fp16 = self.use_fp16 || detected_arch.prefers_fp16();
+        
+        if should_use_fp16 && !self.use_fp16 {
+            info!("Auto-enabling FP16 for {:?} architecture ({})", detected_arch, metadata.name);
+        }
+        
+        // Load model with potentially auto-enabled FP16
+        let mut loaded = self.load_model_internal(path, device_override, should_use_fp16)?;
+        loaded.metadata = Some(metadata.clone());
+        
+        Ok(loaded)
+    }
+    
+    /// Internal model loading with explicit FP16 flag
+    #[cfg(feature = "torch")]
+    fn load_model_internal(
+        &self, 
+        path: &Path, 
+        device_override: Option<String>,
+        use_fp16: bool
+    ) -> Result<LoadedPyTorchModel> {
+        info!("Loading PyTorch model from: {:?} (FP16: {})", path, use_fp16);
+
+        if !path.exists() {
+            return Err(anyhow::anyhow!("Model file not found: {:?}", path));
+        }
+
+        // Determine device
+        let device_str = device_override.unwrap_or_else(|| self.device.clone());
+        
+        let device = if device_str.starts_with("cuda") {
+            if tch::Cuda::is_available() {
+                if let Some(idx_str) = device_str.strip_prefix("cuda:") {
+                    Device::Cuda(idx_str.parse::<usize>().unwrap_or(0))
+                } else {
+                    Device::Cuda(0)
+                }
+            } else {
+                warn!("CUDA requested but not available");
+                if tch::utils::has_mps() { Device::Mps } else { Device::Cpu }
+            }
+        } else if device_str == "mps" {
+            if tch::utils::has_mps() { Device::Mps } 
+            else if tch::Cuda::is_available() { Device::Cuda(0) }
+            else { Device::Cpu }
+        } else {
+            Device::Cpu
+        };
+
+        // Load TorchScript module
+        let model = match CModule::load_on_device(path, device) {
+            Ok(mut m) => {
+                m.set_eval();
+                
+                if matches!(device, Device::Cuda(_)) {
+                    self.apply_cuda_model_optimizations(&mut m)?;
+                }
+                
+                // Convert to FP16 if enabled (Tensor Core acceleration for Transformers)
+                if use_fp16 && matches!(device, Device::Cuda(_)) {
+                    info!("  ✓ Converting model to FP16 for Tensor Core acceleration");
+                    m = m.to_kind(Kind::Half);
+                }
+                
+                if self.warmup_iterations > 0 {
+                    info!("Running {} warmup iterations...", self.warmup_iterations);
+                    self.warmup_model_with_fp16(&m, device, use_fp16)?;
+                }
+                
+                LoadedModel::TorchScript(m)
+            }
+            Err(e) => {
+                warn!("Failed to load as TorchScript: {}, trying tensor checkpoint", e);
+                match Tensor::load_multi(path) {
+                    Ok(tensors) => {
+                        let tensor_vec: Vec<Tensor> = tensors.into_iter().map(|(_, t)| t).collect();
+                        LoadedModel::Tensors(tensor_vec)
+                    }
+                    Err(e2) => {
+                        return Err(anyhow::anyhow!(
+                            "Failed to load model: TorchScript: {}, Tensor: {}", e, e2
+                        ));
+                    }
+                }
+            }
+        };
+
+        Ok(LoadedPyTorchModel {
+            model,
+            device,
+            metadata: None,
+            use_fp16,
+        })
+    }
+    
+    /// Warmup with explicit FP16 flag
+    #[cfg(feature = "torch")]
+    fn warmup_model_with_fp16(&self, model: &CModule, device: Device, use_fp16: bool) -> Result<()> {
+        let kind = if use_fp16 && matches!(device, Device::Cuda(_)) {
+            Kind::Half
+        } else {
+            Kind::Float
+        };
+        
+        let dummy_input = Tensor::zeros(&[1, 3, 224, 224], (kind, device));
+        
+        for i in 0..self.warmup_iterations {
+            let _ = model.forward_ts(&[dummy_input.shallow_clone()]);
+            debug!("  Warmup iteration {}/{}", i + 1, self.warmup_iterations);
+        }
+        
+        if let Device::Cuda(device_idx) = device {
+            tch::Cuda::synchronize(device_idx as i64);
+        }
+        
+        info!("  ✓ Model warmup complete");
+        Ok(())
     }
     
     /// Apply CUDA-specific optimizations to a loaded model
@@ -528,12 +669,26 @@ impl PyTorchModelLoader {
         // Preprocess
         let preprocessed = self.preprocess(input, &metadata.preprocessing)?;
         info!("Input preprocessed successfully");
+        
+        // Determine if FP16 should be used (explicit config OR auto-detect from architecture)
+        let use_fp16 = model.use_fp16 || metadata.architecture.prefers_fp16() ||
+                       ModelArchitecture::from_name(&metadata.name).prefers_fp16();
 
         // Run inference
         let output = match &model.model {
             LoadedModel::TorchScript(m) => {
                 // Convert preprocessed input to tensor
-                let input_tensor = self.to_tensor(&preprocessed)?;
+                let mut input_tensor = self.to_tensor(&preprocessed)?;
+                
+                // Move tensor to model device
+                input_tensor = input_tensor.to_device(model.device);
+                
+                // Convert to FP16 if enabled or model architecture prefers it (Transformers)
+                if use_fp16 && matches!(model.device, Device::Cuda(_)) {
+                    input_tensor = input_tensor.to_kind(Kind::Half);
+                    debug!("Input tensor converted to FP16 for optimized inference (architecture: {:?})", 
+                           metadata.architecture);
+                }
                 
                 // Forward pass
                 let output_tensor = m.forward_ts(&[input_tensor])

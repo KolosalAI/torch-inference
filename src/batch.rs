@@ -83,7 +83,7 @@ impl BatchProcessor {
     
     /// Create processor optimized for maximum throughput
     pub fn for_throughput() -> Self {
-        Self::with_config(128, 1, 20, true)
+        Self::with_config(256, 1, 10, true)  // 256 batch size, 10ms timeout
     }
     
     /// Create processor optimized for minimum latency

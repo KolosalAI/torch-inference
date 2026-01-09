@@ -25,7 +25,7 @@ cargo build --release --features all-backends  # All ML backends
 
 ### Testing
 ```bash
-# Run all tests (147+ unit + integration tests)
+# Run all tests (274 unit + integration tests)
 cargo test
 
 # Run specific test suites

@@ -96,13 +96,13 @@ impl TensorPool {
         }
     }
     
-    /// Create an optimized pool for high-throughput inference
+    /// Create an optimized pool for high-throughput inference (INT8 optimized)
     pub fn for_inference() -> Self {
-        let mut pool = Self::new(1000);
-        pool.max_small_pooled = 256;
-        pool.max_medium_pooled = 128;
-        pool.max_large_pooled = 64;
-        pool.max_xlarge_pooled = 32;
+        let mut pool = Self::new(2000);           // More pooled tensors
+        pool.max_small_pooled = 512;              // 2x small tensors
+        pool.max_medium_pooled = 256;             // 2x medium tensors  
+        pool.max_large_pooled = 128;              // 2x large tensors
+        pool.max_xlarge_pooled = 64;              // 2x xlarge tensors
         pool
     }
     
@@ -115,17 +115,19 @@ impl TensorPool {
         debug!("Pre-warmed pool with {} tensor shapes", shapes.len());
     }
     
-    /// Pre-warm with common image classification shapes
+    /// Pre-warm with common image classification shapes (INT8 optimized batch sizes)
     pub fn prewarm_imagenet(&self) {
         let common_shapes = vec![
             TensorShape::image(1, 3, 224, 224),   // Standard ImageNet
             TensorShape::image(1, 3, 299, 299),   // Inception
             TensorShape::image(1, 3, 384, 384),   // ViT-L
             TensorShape::image(1, 3, 512, 512),   // High-res
-            TensorShape::image(4, 3, 224, 224),   // Batch 4
             TensorShape::image(8, 3, 224, 224),   // Batch 8
             TensorShape::image(16, 3, 224, 224),  // Batch 16
             TensorShape::image(32, 3, 224, 224),  // Batch 32
+            TensorShape::image(64, 3, 224, 224),  // Batch 64
+            TensorShape::image(128, 3, 224, 224), // Batch 128 (optimal for INT8)
+            TensorShape::image(256, 3, 224, 224), // Batch 256 (max throughput)
         ];
         self.prewarm(&common_shapes);
     }
