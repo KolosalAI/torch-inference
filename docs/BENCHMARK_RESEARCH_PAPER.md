@@ -2,7 +2,7 @@
 
 **Research Paper v1.0**  
 **Date: January 2026**  
-**Authors: Genta Dev Team - Kolosal AI**
+**Authors: Evint Leovonzko, Alvin Wijayanto - Kolosal AI**
 
 ---
 
