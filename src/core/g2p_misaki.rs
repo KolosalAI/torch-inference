@@ -2,13 +2,12 @@
 /// Replicates the behavior of the Python `misaki` library used by Kokoro
 /// References: https://github.com/hexgrad/misaki
 
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::collections::HashMap;
 use lazy_static::lazy_static;
-use regex::Regex;
 
 lazy_static! {
-    /// Kokoro's phoneme vocabulary (178 tokens)
+    /// Kokoro phoneme symbol map (87 symbols mapping to IDs in the model's 178-token vocabulary)
     static ref PHONEME_VOCAB: HashMap<String, i64> = {
         let mut m = HashMap::new();
         // --- Punctuation & special ---
@@ -318,7 +317,7 @@ impl MisakiG2P {
     
     /// Check if string is punctuation
     fn is_punctuation(&self, s: &str) -> bool {
-        s.len() == 1 && !s.chars().next().unwrap().is_alphanumeric()
+        s.chars().count() == 1 && !s.chars().next().unwrap().is_alphanumeric()
     }
     
     /// Convert word to phoneme tokens
@@ -464,7 +463,7 @@ mod tests {
         assert!(tokens.len() >= 5, "Expected at least 5 tokens, got {}", tokens.len());
         // All tokens must be in valid Kokoro range [1, 177]
         for &t in &tokens {
-            assert!(t >= 1 && t <= 177, "Token {} out of valid range [1,177]", t);
+            assert!(t >= 1 && t <= 158, "Token {} out of valid range [1,158]", t);
         }
     }
 
@@ -474,7 +473,7 @@ mod tests {
         // "xyz" not in dictionary — exercises letter_to_phoneme fallback
         let tokens = g2p.text_to_tokens("xyz").unwrap();
         for &t in &tokens {
-            assert!(t >= 1 && t <= 177, "Fallback token {} out of range", t);
+            assert!(t >= 1 && t <= 158, "Fallback token {} out of range [1,158]", t);
         }
     }
 }
