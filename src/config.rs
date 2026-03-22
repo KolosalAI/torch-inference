@@ -3,13 +3,21 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
     pub device: DeviceConfig,
+    #[serde(default)]
     pub batch: BatchConfig,
+    #[serde(default)]
     pub performance: PerformanceConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
     pub models: ModelsConfig,
+    #[serde(default)]
     pub guard: GuardConfig,
+    #[serde(default)]
     pub sanitizer: SanitizerConfig,
 }
 
@@ -40,102 +48,102 @@ impl Default for SanitizerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServerConfig {
-    pub host: String,
-    pub port: u16,
-    pub log_level: String,
-    pub workers: usize,
+    #[serde(default)] pub host: String,
+    #[serde(default)] pub port: u16,
+    #[serde(default)] pub log_level: String,
+    #[serde(default)] pub workers: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeviceConfig {
-    pub device_type: String,
-    pub device_id: usize,
-    pub device_ids: Option<Vec<usize>>,
-    pub use_fp16: bool,
-    pub use_tensorrt: bool,
-    pub use_torch_compile: bool,
-    
+    #[serde(default)] pub device_type: String,
+    #[serde(default)] pub device_id: usize,
+    #[serde(default)] pub device_ids: Option<Vec<usize>>,
+    #[serde(default)] pub use_fp16: bool,
+    #[serde(default)] pub use_tensorrt: bool,
+    #[serde(default)] pub use_torch_compile: bool,
+
     // Metal-specific optimizations (macOS)
-    pub metal_use_mlx: bool,
-    pub metal_cache_shaders: bool,
-    pub metal_optimize_for_apple_silicon: bool,
+    #[serde(default)] pub metal_use_mlx: bool,
+    #[serde(default)] pub metal_cache_shaders: bool,
+    #[serde(default)] pub metal_optimize_for_apple_silicon: bool,
     
     // JIT Compilation settings
-    pub enable_jit: bool,
-    pub enable_jit_profiling: bool,
-    pub enable_jit_executor: bool,
-    pub enable_jit_fusion: bool,
-    
+    #[serde(default)] pub enable_jit: bool,
+    #[serde(default)] pub enable_jit_profiling: bool,
+    #[serde(default)] pub enable_jit_executor: bool,
+    #[serde(default)] pub enable_jit_fusion: bool,
+
     // PyTorch/LibTorch optimizations
-    pub num_threads: usize,
-    pub num_interop_threads: usize,
-    pub cudnn_benchmark: bool,
-    pub enable_autocast: bool,
-    pub torch_warmup_iterations: usize,
+    #[serde(default)] pub num_threads: usize,
+    #[serde(default)] pub num_interop_threads: usize,
+    #[serde(default)] pub cudnn_benchmark: bool,
+    #[serde(default)] pub enable_autocast: bool,
+    #[serde(default)] pub torch_warmup_iterations: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BatchConfig {
-    pub batch_size: usize,
-    pub max_batch_size: usize,
-    pub enable_dynamic_batching: bool,
+    #[serde(default)] pub batch_size: usize,
+    #[serde(default)] pub max_batch_size: usize,
+    #[serde(default)] pub enable_dynamic_batching: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerformanceConfig {
-    pub warmup_iterations: usize,
-    pub enable_caching: bool,
-    pub enable_profiling: bool,
-    pub cache_size_mb: usize,
-    pub enable_cuda_graphs: bool,
-    pub enable_model_quantization: bool,
-    pub quantization_bits: u8,
-    pub enable_tensor_pooling: bool,
-    pub max_pooled_tensors: usize,
-    pub enable_async_model_loading: bool,
-    pub preload_models_on_startup: bool,
-    pub enable_result_compression: bool,
-    pub compression_level: u32,
-    pub enable_request_batching: bool,
-    pub adaptive_batch_timeout: bool,
-    pub min_batch_size: usize,
-    pub enable_inflight_batching: bool,
-    pub max_inflight_batches: usize,
-    pub enable_worker_pool: bool,
-    pub min_workers: usize,
-    pub max_workers: usize,
-    pub enable_auto_scaling: bool,
-    pub enable_zero_scaling: bool,
+    #[serde(default)] pub warmup_iterations: usize,
+    #[serde(default)] pub enable_caching: bool,
+    #[serde(default)] pub enable_profiling: bool,
+    #[serde(default)] pub cache_size_mb: usize,
+    #[serde(default)] pub enable_cuda_graphs: bool,
+    #[serde(default)] pub enable_model_quantization: bool,
+    #[serde(default)] pub quantization_bits: u8,
+    #[serde(default)] pub enable_tensor_pooling: bool,
+    #[serde(default)] pub max_pooled_tensors: usize,
+    #[serde(default)] pub enable_async_model_loading: bool,
+    #[serde(default)] pub preload_models_on_startup: bool,
+    #[serde(default)] pub enable_result_compression: bool,
+    #[serde(default)] pub compression_level: u32,
+    #[serde(default)] pub enable_request_batching: bool,
+    #[serde(default)] pub adaptive_batch_timeout: bool,
+    #[serde(default)] pub min_batch_size: usize,
+    #[serde(default)] pub enable_inflight_batching: bool,
+    #[serde(default)] pub max_inflight_batches: usize,
+    #[serde(default)] pub enable_worker_pool: bool,
+    #[serde(default)] pub min_workers: usize,
+    #[serde(default)] pub max_workers: usize,
+    #[serde(default)] pub enable_auto_scaling: bool,
+    #[serde(default)] pub enable_zero_scaling: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
-    pub enabled: bool,
-    pub jwt_secret: String,
-    pub jwt_algorithm: String,
-    pub access_token_expire_minutes: u32,
-    pub refresh_token_expire_days: u32,
+    #[serde(default)] pub enabled: bool,
+    #[serde(default)] pub jwt_secret: String,
+    #[serde(default)] pub jwt_algorithm: String,
+    #[serde(default)] pub access_token_expire_minutes: u32,
+    #[serde(default)] pub refresh_token_expire_days: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelsConfig {
-    pub auto_load: Vec<String>,
-    pub cache_dir: PathBuf,
-    pub max_loaded_models: usize,
+    #[serde(default)] pub auto_load: Vec<String>,
+    #[serde(default)] pub cache_dir: PathBuf,
+    #[serde(default)] pub max_loaded_models: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GuardConfig {
-    pub enable_guards: bool,
-    pub max_memory_mb: usize,
-    pub max_requests_per_second: usize,
-    pub max_queue_depth: usize,
-    pub min_cache_hit_rate: f64,
-    pub max_error_rate: f64,
-    pub enable_circuit_breaker: bool,
-    pub enable_auto_mitigation: bool,
+    #[serde(default)] pub enable_guards: bool,
+    #[serde(default)] pub max_memory_mb: usize,
+    #[serde(default)] pub max_requests_per_second: usize,
+    #[serde(default)] pub max_queue_depth: usize,
+    #[serde(default)] pub min_cache_hit_rate: f64,
+    #[serde(default)] pub max_error_rate: f64,
+    #[serde(default)] pub enable_circuit_breaker: bool,
+    #[serde(default)] pub enable_auto_mitigation: bool,
 }
 
 impl Config {

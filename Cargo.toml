@@ -44,7 +44,7 @@ ndarray = "0.15"
 tch = { version = "0.16", optional = true, features = [] }  # Requires PyTorch 2.3.0+
 candle-core = { version = "0.3", optional = true }
 candle-nn = { version = "0.3", optional = true }
-pyo3 = { version = "0.20", features = ["auto-initialize"] }
+pyo3 = { version = "0.20", features = ["auto-initialize"], optional = true }
 
 # Logging and monitoring
 log = "0.4"
@@ -123,6 +123,7 @@ cuda = ["nvml-wrapper"]
 onnx = ["onnxruntime"]
 torch = ["tch"]
 candle = ["candle-core", "candle-nn"]
+python = ["pyo3"]
 telemetry = ["tracing-opentelemetry", "opentelemetry", "opentelemetry-otlp", "opentelemetry_sdk"]
 metrics = ["prometheus"]
 jemalloc = ["tikv-jemallocator"]

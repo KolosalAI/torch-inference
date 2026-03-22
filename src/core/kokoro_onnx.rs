@@ -15,6 +15,8 @@ use super::tts_engine::{TTSEngine, SynthesisParams, EngineCapabilities, VoiceInf
 use super::audio::AudioData;
 
 const VOICE_STYLE_DIM: usize = 256;
+/// Number of style vectors per voice (one per possible phoneme-sequence length, up to 510)
+const VOICE_PACK_SIZE: usize = 510;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KokoroOnnxConfig {
@@ -24,7 +26,7 @@ pub struct KokoroOnnxConfig {
 
 pub struct KokoroOnnxEngine {
     session: Mutex<Session>,
-    voice_styles: HashMap<String, Vec<f32>>,  // voice_id -> flat f32[256]
+    voice_styles: HashMap<String, Vec<f32>>,  // voice_id -> flat f32[VOICE_PACK_SIZE * VOICE_STYLE_DIM]
     config: KokoroOnnxConfig,
     capabilities: EngineCapabilities,
 }
@@ -44,16 +46,18 @@ impl std::fmt::Debug for KokoroOnnxEngine {
 impl KokoroOnnxEngine {
     pub fn new(cfg: &serde_json::Value) -> Result<Self> {
         let model_dir = PathBuf::from(
-            cfg.get("model_dir").and_then(|v| v.as_str()).unwrap_or("models/kokoro-onnx")
+            cfg.get("model_dir").and_then(|v| v.as_str()).unwrap_or("models/kokoro-82m")
         );
-        let model_path = model_dir.join("kokoro-v1_0.onnx");
-        if !model_path.exists() {
-            anyhow::bail!(
-                "Kokoro ONNX model not found at {:?}. \
-                 Download from: https://huggingface.co/hexgrad/Kokoro-82M",
-                model_path
-            );
-        }
+        // Accept several filename conventions
+        let model_path = ["kokoro-v1.0.int8.onnx", "kokoro-v1.0.onnx", "kokoro-v1_0.onnx"]
+            .iter()
+            .map(|name| model_dir.join(name))
+            .find(|p| p.exists())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Kokoro ONNX model not found in {:?}. \
+                 Download from: https://github.com/thewh1teagle/kokoro-onnx/releases",
+                model_dir
+            ))?;
 
         let builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?;
@@ -95,8 +99,10 @@ impl KokoroOnnxEngine {
         let floats: Vec<f32> = bytes.chunks_exact(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
             .collect();
-        anyhow::ensure!(floats.len() == VOICE_STYLE_DIM,
-            "Voice style {:?}: expected {} floats, got {}", path, VOICE_STYLE_DIM, floats.len());
+        let expected = VOICE_PACK_SIZE * VOICE_STYLE_DIM;
+        anyhow::ensure!(floats.len() == expected,
+            "Voice style {:?}: expected {} floats ({}x{}), got {}",
+            path, expected, VOICE_PACK_SIZE, VOICE_STYLE_DIM, floats.len());
         Ok(floats)
     }
 
@@ -188,39 +194,45 @@ impl KokoroOnnxEngine {
         use crate::core::g2p_misaki::MisakiG2P;
 
         let g2p = MisakiG2P::new()?;
-        let tokens = g2p.text_to_tokens(text)?;
-        anyhow::ensure!(!tokens.is_empty(), "G2P produced no tokens for: {:?}", text);
+        let phoneme_tokens = g2p.text_to_tokens(text)?;
+        anyhow::ensure!(!phoneme_tokens.is_empty(), "G2P produced no tokens for: {:?}", text);
 
-        // tokens: int64 [1, seq_len] — use (shape, vec) form to avoid ndarray version mismatch
-        let seq_len = tokens.len();
-        let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
-        let tokens_tensor = Tensor::<i64>::from_array(([1usize, seq_len], tokens_i64))?;
+        let phoneme_count = phoneme_tokens.len();
 
         // style: f32 [1, VOICE_STYLE_DIM]
+        // Indexed by phoneme_count-1 (without BOS/EOS), matching Python: pack[len(ps)-1]
         let voice_id = params.voice.as_deref().unwrap_or("af_heart");
-        let style_vec = self.voice_styles.get(voice_id)
+        let pack = self.voice_styles.get(voice_id)
             .or_else(|| self.voice_styles.get("af_heart"))
             .cloned()
-            .unwrap_or_else(|| vec![0.0f32; VOICE_STYLE_DIM]);
+            .unwrap_or_else(|| vec![0.0f32; VOICE_PACK_SIZE * VOICE_STYLE_DIM]);
+        let style_row = (phoneme_count.saturating_sub(1)).min(VOICE_PACK_SIZE - 1);
+        let style_vec: Vec<f32> = pack[style_row * VOICE_STYLE_DIM..(style_row + 1) * VOICE_STYLE_DIM].to_vec();
         let style_tensor = Tensor::<f32>::from_array(([1usize, VOICE_STYLE_DIM], style_vec))?;
+
+        // tokens: int64 [1, seq_len] with BOS(0) and EOS(0) matching PyTorch: [[0, *input_ids, 0]]
+        let tokens_with_bos_eos: Vec<i64> = std::iter::once(0i64)
+            .chain(phoneme_tokens.iter().copied())
+            .chain(std::iter::once(0i64))
+            .collect();
+        let seq_len = tokens_with_bos_eos.len();
+        let tokens_tensor = Tensor::<i64>::from_array(([1usize, seq_len], tokens_with_bos_eos))?;
 
         // speed: f32 [1]
         let speed_tensor = Tensor::<f32>::from_array(([1usize], vec![params.speed]))?;
 
         let mut session = self.session.lock().unwrap();
-        // ort::inputs![] returns Vec (not Result) — no ? after ]
         let outputs = session.run(ort::inputs![
             "tokens" => tokens_tensor,
             "style"  => style_tensor,
             "speed"  => speed_tensor
         ])?;
 
-        // try_extract_tensor returns Result<(&Shape, &[T])>
-        let (_shape, audio_slice) = outputs["output"].try_extract_tensor::<f32>()?;
+        let (_shape, audio_slice) = outputs["audio"].try_extract_tensor::<f32>()?;
         let samples: Vec<f32> = audio_slice.iter().copied().collect();
 
-        log::info!("Kokoro ONNX: {} tokens -> {} samples ({:.2}s)",
-            seq_len, samples.len(),
+        log::info!("Kokoro ONNX: {} phonemes ({} tokens w/ BOS/EOS) -> {} samples ({:.2}s)",
+            phoneme_count, seq_len, samples.len(),
             samples.len() as f32 / self.config.sample_rate as f32);
 
         Ok(AudioData { samples, sample_rate: self.config.sample_rate, channels: 1 })
@@ -284,20 +296,18 @@ mod tests {
     fn test_load_voice_style_binary() {
         use std::io::Write;
 
-        // Write 256 little-endian f32 values (all 0.5) to a temp file
+        // Write 510*256 little-endian f32 values (all 0.5) to a temp file
+        let n = VOICE_PACK_SIZE * VOICE_STYLE_DIM;
         let mut path = std::env::temp_dir();
         path.push("test_voice_style.bin");
         let mut f = std::fs::File::create(&path).unwrap();
-        for _ in 0..256u32 {
+        for _ in 0..n {
             f.write_all(&0.5f32.to_le_bytes()).unwrap();
         }
 
-        let bytes = std::fs::read(&path).unwrap();
-        let floats: Vec<f32> = bytes.chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-            .collect();
-        assert_eq!(floats.len(), 256);
-        assert!((floats[0] - 0.5).abs() < 1e-6);
+        let loaded = super::KokoroOnnxEngine::load_voice_style(&path).unwrap();
+        assert_eq!(loaded.len(), n);
+        assert!((loaded[0] - 0.5).abs() < 1e-6);
         std::fs::remove_file(&path).ok();
     }
 }

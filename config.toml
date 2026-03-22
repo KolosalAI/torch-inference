@@ -20,6 +20,12 @@ metal_use_mlx = false  # Use Apple MLX framework (experimental)
 metal_cache_shaders = true  # Cache Metal shaders for faster startup
 metal_optimize_for_apple_silicon = true  # Enable Apple Silicon specific optimizations
 
+# JIT Compilation settings
+enable_jit = true
+enable_jit_profiling = false
+enable_jit_executor = true
+enable_jit_fusion = true
+
 # PyTorch/LibTorch Optimizations
 num_threads = 8  # Intra-op threads (set to num_cpus for best performance)
 num_interop_threads = 1  # Inter-op threads (1 for serving workloads)
