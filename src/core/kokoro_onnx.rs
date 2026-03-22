@@ -214,7 +214,7 @@ impl KokoroOnnxEngine {
         ])?;
 
         // try_extract_tensor returns Result<(&Shape, &[T])>
-        let (_shape, audio_slice) = outputs[0].try_extract_tensor::<f32>()?;
+        let (_shape, audio_slice) = outputs["output"].try_extract_tensor::<f32>()?;
         let samples: Vec<f32> = audio_slice.iter().copied().collect();
 
         log::info!("Kokoro ONNX: {} tokens -> {} samples ({:.2}s)",
