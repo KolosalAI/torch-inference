@@ -95,7 +95,7 @@ impl KokoroEngine {
         let device = crate::models::pytorch_loader::get_best_device();
 
         #[cfg(feature = "torch")]
-        let g2p = MisakiG2P::new().expect("MisakiG2P uses static data and must not fail");
+        let g2p = MisakiG2P::new()?;
 
         // Try to initialize native Rust inference
         #[cfg(feature = "torch")]
@@ -161,6 +161,7 @@ impl KokoroEngine {
         Ok(AudioData { samples, sample_rate: self.config.sample_rate, channels: 1 })
     }
     
+    #[cfg(feature = "torch")]
     fn voice_to_speaker_id(&self, voice: Option<&str>) -> i64 {
         match voice {
             Some("af_heart") => 0,
