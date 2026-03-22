@@ -276,7 +276,7 @@ impl ISTFTNetVocoder {
     /// Convert a mel-spectrogram to audio samples.
     ///
     /// `mel` is `[n_mels][n_frames]` (row-major: each inner Vec is one mel bin).
-    pub fn mel_to_audio(&self, mel: &Vec<Vec<f32>>) -> Result<Vec<f32>> {
+    pub fn mel_to_audio(&self, mel: &Vec<Vec<f32>>, device: Device) -> Result<Vec<f32>> {
         let n_mels = mel.len();
         let n_frames = mel
             .first()
@@ -285,7 +285,7 @@ impl ISTFTNetVocoder {
 
         let flat: Vec<f32> = mel.iter().flat_map(|r| r.iter().copied()).collect();
         let mel_tensor = Tensor::of_slice(&flat)
-            .to_device(self.device)
+            .to_device(device)
             .view([1, n_mels as i64, n_frames as i64]);
 
         let audio = tch::no_grad(|| self.net.forward(&mel_tensor));
