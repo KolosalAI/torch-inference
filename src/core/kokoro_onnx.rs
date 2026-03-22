@@ -1,6 +1,6 @@
 /// Kokoro ONNX TTS Engine - Real ort 2.0.0-rc.10 inference
 /// Uses ONNX Runtime for cross-platform neural TTS inference
-use anyhow::Result;
+use anyhow::{Result, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,6 +13,8 @@ use ort::value::Tensor;
 
 use super::tts_engine::{TTSEngine, SynthesisParams, EngineCapabilities, VoiceInfo, VoiceGender, VoiceQuality};
 use super::audio::AudioData;
+
+const VOICE_STYLE_DIM: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KokoroOnnxConfig {
@@ -93,8 +95,8 @@ impl KokoroOnnxEngine {
         let floats: Vec<f32> = bytes.chunks_exact(4)
             .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
             .collect();
-        anyhow::ensure!(floats.len() == 256,
-            "Voice style {:?}: expected 256 floats, got {}", path, floats.len());
+        anyhow::ensure!(floats.len() == VOICE_STYLE_DIM,
+            "Voice style {:?}: expected {} floats, got {}", path, VOICE_STYLE_DIM, floats.len());
         Ok(floats)
     }
 
@@ -194,13 +196,13 @@ impl KokoroOnnxEngine {
         let tokens_i64: Vec<i64> = tokens.iter().map(|&t| t as i64).collect();
         let tokens_tensor = Tensor::<i64>::from_array(([1usize, seq_len], tokens_i64))?;
 
-        // style: f32 [1, 256]
+        // style: f32 [1, VOICE_STYLE_DIM]
         let voice_id = params.voice.as_deref().unwrap_or("af_heart");
         let style_vec = self.voice_styles.get(voice_id)
             .or_else(|| self.voice_styles.get("af_heart"))
             .cloned()
-            .unwrap_or_else(|| vec![0.0f32; 256]);
-        let style_tensor = Tensor::<f32>::from_array(([1usize, 256usize], style_vec))?;
+            .unwrap_or_else(|| vec![0.0f32; VOICE_STYLE_DIM]);
+        let style_tensor = Tensor::<f32>::from_array(([1usize, VOICE_STYLE_DIM], style_vec))?;
 
         // speed: f32 [1]
         let speed_tensor = Tensor::<f32>::from_array(([1usize], vec![params.speed]))?;
@@ -236,7 +238,9 @@ impl TTSEngine for KokoroOnnxEngine {
     }
 
     async fn synthesize(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
+        self.validate_text(text)?;
         self.synthesize_with_onnx(text, params)
+            .with_context(|| format!("Kokoro ONNX synthesis failed for: {:?}", &text[..text.len().min(40)]))
     }
 
     async fn warmup(&self) -> Result<()> {
