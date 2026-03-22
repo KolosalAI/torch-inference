@@ -1,6 +1,6 @@
 /// Kokoro TTS Engine - High-quality neural TTS
 /// Uses the Kokoro v1.0 82M parameter model
-use anyhow::{Result, Context};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -10,16 +10,11 @@ use super::audio::AudioData;
 use super::python_tts_bridge::KokoroPythonBridge;
 
 #[cfg(feature = "torch")]
-use super::phoneme_converter::EnhancedG2P;
-#[cfg(feature = "torch")]
 use super::g2p_misaki::MisakiG2P;
 #[cfg(feature = "torch")]
 use super::styletts2_model::StyleTTS2Inference;
 #[cfg(feature = "torch")]
 use super::istftnet_vocoder::ISTFTNetVocoder;
-
-#[cfg(feature = "torch")]
-use tch::{nn, Device, Tensor, Kind, CModule};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KokoroConfig {
@@ -34,15 +29,16 @@ pub struct KokoroEngine {
     #[cfg(feature = "torch")]
     native_inference: Option<NativeInference>,
     #[cfg(feature = "torch")]
-    device: Device,
+    g2p: MisakiG2P,
+    #[cfg(feature = "torch")]
+    device: tch::Device,
 }
 
 #[cfg(feature = "torch")]
 struct NativeInference {
-    g2p_basic: EnhancedG2P,
-    g2p_misaki: MisakiG2P,
-    model: StyleTTS2Inference,
+    model:   StyleTTS2Inference,
     vocoder: ISTFTNetVocoder,
+    device:  tch::Device,
 }
 
 impl KokoroEngine {
@@ -97,10 +93,13 @@ impl KokoroEngine {
         
         #[cfg(feature = "torch")]
         let device = crate::models::pytorch_loader::get_best_device();
-        
+
+        #[cfg(feature = "torch")]
+        let g2p = MisakiG2P::new().expect("MisakiG2P uses static data and must not fail");
+
         // Try to initialize native Rust inference
         #[cfg(feature = "torch")]
-        let native_inference = Self::init_native_inference(&model_path, device, sample_rate);
+        let native_inference = Self::init_native_inference(&model_path, device);
         
         // Try to initialize Python bridge as fallback
         let python_bridge = match KokoroPythonBridge::new() {
@@ -124,105 +123,42 @@ impl KokoroEngine {
             #[cfg(feature = "torch")]
             native_inference,
             #[cfg(feature = "torch")]
+            g2p,
+            #[cfg(feature = "torch")]
             device,
         })
     }
     
     #[cfg(feature = "torch")]
-    fn init_native_inference(model_path: &PathBuf, device: Device, sample_rate: u32) -> Option<NativeInference> {
-        log::info!("Initializing native Kokoro inference pipeline");
-        
-        // Initialize basic G2P
-        let g2p_basic = match EnhancedG2P::new() {
-            Ok(g) => {
-                log::info!("✅ Basic G2P converter initialized");
-                g
-            }
-            Err(e) => {
-                log::warn!("Failed to initialize basic G2P: {}", e);
-                return None;
-            }
+    fn init_native_inference(model_path: &std::path::Path, device: tch::Device) -> Option<NativeInference> {
+        let safetensors = model_path.with_extension("safetensors");
+        if !safetensors.exists() {
+            log::warn!("Kokoro: {:?} not found. Run: python convert_kokoro.py", safetensors);
+            return None;
+        }
+        let model = match StyleTTS2Inference::new(&safetensors, device) {
+            Ok(m) => m,
+            Err(e) => { log::warn!("Kokoro model load failed: {}", e); return None; }
         };
-        
-        // Initialize Misaki-style G2P (better quality)
-        let g2p_misaki = match MisakiG2P::new() {
-            Ok(g) => {
-                log::info!("✅ Misaki G2P converter initialized (500+ word dictionary)");
-                g
-            }
-            Err(e) => {
-                log::warn!("Failed to initialize Misaki G2P: {}", e);
-                return None;
-            }
+        let vocoder = match ISTFTNetVocoder::new(Some(&safetensors), device, 24000) {
+            Ok(v) => v,
+            Err(e) => { log::warn!("Kokoro vocoder load failed: {}", e); return None; }
         };
-        
-        // Initialize model
-        let model = match StyleTTS2Inference::new(model_path, device) {
-            Ok(m) => {
-                log::info!("✅ StyleTTS2 model loaded");
-                m
-            }
-            Err(e) => {
-                log::warn!("Failed to load StyleTTS2 model: {}", e);
-                return None;
-            }
-        };
-        
-        // Initialize vocoder
-        let vocoder = match ISTFTNetVocoder::new(None, device, sample_rate as i64) {
-            Ok(v) => {
-                log::info!("✅ ISTFTNet vocoder initialized");
-                v
-            }
-            Err(e) => {
-                log::warn!("Failed to initialize vocoder: {}", e);
-                return None;
-            }
-        };
-        
-        log::info!("🎉 Native Kokoro inference fully initialized!");
-        
-        Some(NativeInference {
-            g2p_basic,
-            g2p_misaki,
-            model,
-            vocoder,
-        })
+        log::info!("Kokoro native inference ready");
+        Some(NativeInference { model, vocoder, device })
     }
     
     #[cfg(feature = "torch")]
     fn synthesize_with_native(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
-        let inference = self.native_inference.as_ref()
-            .context("Native inference not initialized")?;
-        
-        log::info!("🎙️ Native Rust synthesis: '{}'", &text[..text.len().min(50)]);
-        
-        // Step 1: Text to phonemes (use Misaki G2P for better quality)
-        let phoneme_tokens = inference.g2p_misaki.text_to_tokens(text)
-            .context("Failed to convert text to phonemes")?;
-        
-        log::debug!("Phoneme tokens: {} tokens (Misaki G2P)", phoneme_tokens.len());
-        
-        // Step 2: Phonemes to mel-spectrogram
+        let inf = self.native_inference.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Native inference not initialized"))?;
+
+        let tokens = self.g2p.text_to_tokens(text)?;
         let speaker_id = self.voice_to_speaker_id(params.voice.as_deref());
-        let mel = inference.model.tokens_to_mel(&phoneme_tokens, Some(speaker_id))
-            .context("Failed to generate mel-spectrogram")?;
-        
-        log::debug!("Mel-spectrogram: {} x {}", mel.len(), mel[0].len());
-        
-        // Step 3: Mel to waveform
-        let samples = inference.vocoder.mel_to_audio(&mel)
-            .context("Failed to convert mel to audio")?;
-        
-        log::info!("✅ Generated {} samples ({:.2}s)", 
-                   samples.len(), 
-                   samples.len() as f32 / self.config.sample_rate as f32);
-        
-        Ok(AudioData {
-            samples,
-            sample_rate: self.config.sample_rate,
-            channels: 1,
-        })
+        let mel = inf.model.tokens_to_mel(&tokens, Some(speaker_id))?;
+        let samples = inf.vocoder.mel_to_audio(&mel, inf.device)?;
+
+        Ok(AudioData { samples, sample_rate: self.config.sample_rate, channels: 1 })
     }
     
     fn voice_to_speaker_id(&self, voice: Option<&str>) -> i64 {
@@ -241,81 +177,6 @@ impl KokoroEngine {
         }
     }
     
-    #[deprecated(note = "Parametric fallback removed - use neural models only")]
-    fn synthesize_fallback(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
-        log::info!("Kokoro fallback synthesis for: '{}'", &text[..text.len().min(40)]);
-        
-        // High-quality parametric synthesis
-        let words = text.split_whitespace().count().max(1);
-        let base_duration = words as f32 / 3.0; // Natural speed
-        let duration = (base_duration / params.speed).max(0.4);
-        let sample_count = (self.config.sample_rate as f32 * duration) as usize;
-        
-        let mut samples = Vec::with_capacity(sample_count);
-        
-        // Voice characteristics based on selected voice
-        let (base_freq, formant_shift) = match params.voice.as_deref() {
-            Some("am") => (120.0, 1.0),  // Male voice - lower pitch
-            Some("bf") => (220.0, 1.15), // British female - slightly higher
-            _ => (200.0, 1.0),            // Default female (af)
-        };
-        
-        let f0 = base_freq * params.pitch;
-        
-        for i in 0..sample_count {
-            let t = i as f32 / self.config.sample_rate as f32;
-            let progress = t / duration;
-            
-            // Natural prosody with word-level variation
-            let word_idx = (progress * words as f32).floor();
-            let word_progress = (progress * words as f32).fract();
-            
-            // Pitch contour - natural falling intonation
-            let pitch_contour = 1.0 + 0.1 * (1.0 - progress) // Slight downward trend
-                + 0.05 * (word_progress * std::f32::consts::PI).sin(); // Word-level variation
-            
-            let freq = f0 * pitch_contour;
-            
-            // Rich harmonic structure for natural voice
-            let fundamental = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.35;
-            let h2 = (2.0 * std::f32::consts::PI * freq * 2.0 * t * formant_shift).sin() * 0.20;
-            let h3 = (2.0 * std::f32::consts::PI * freq * 3.0 * t * formant_shift).sin() * 0.12;
-            let h4 = (2.0 * std::f32::consts::PI * freq * 4.0 * t * formant_shift).sin() * 0.08;
-            let h5 = (2.0 * std::f32::consts::PI * freq * 5.0 * t * formant_shift).sin() * 0.05;
-            
-            // Subtle breathiness
-            let breath = ((i as f32 * 0.1).sin() * 0.5 + 0.5) * 0.02;
-            
-            // Word-level amplitude envelope
-            let word_env = if word_progress < 0.1 {
-                word_progress / 0.1
-            } else if word_progress > 0.8 {
-                (1.0 - word_progress) / 0.2
-            } else {
-                0.95 + 0.05 * (word_progress * 4.0 * std::f32::consts::PI).sin()
-            };
-            
-            // Overall amplitude envelope
-            let global_env = if t < 0.03 {
-                t / 0.03
-            } else if t > duration - 0.08 {
-                (duration - t) / 0.08
-            } else {
-                1.0
-            };
-            
-            let sample = (fundamental + h2 + h3 + h4 + h5 + breath) * word_env * global_env * 0.7;
-            samples.push(sample.clamp(-1.0, 1.0));
-        }
-        
-        log::info!("Kokoro: Synthesized {:.2}s of audio", duration);
-        
-        Ok(AudioData {
-            samples,
-            sample_rate: self.config.sample_rate,
-            channels: 1,
-        })
-    }
 }
 
 #[async_trait]
@@ -329,32 +190,20 @@ impl TTSEngine for KokoroEngine {
     }
     
     async fn synthesize(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
-        // Try native Rust inference first (fastest, no Python overhead)
+        self.validate_text(text)?;
+
         #[cfg(feature = "torch")]
-        {
-            if self.native_inference.is_some() {
-                log::info!("🦀 Using native Rust Kokoro inference");
-                match self.synthesize_with_native(text, params) {
-                    Ok(audio) => return Ok(audio),
-                    Err(e) => {
-                        log::warn!("Native inference failed: {}", e);
-                        log::info!("Falling back to Python bridge...");
-                    }
-                }
-            }
+        if self.native_inference.is_some() {
+            return self.synthesize_with_native(text, params);
         }
-        
-        // Fallback to Python bridge
+
         if let Some(ref bridge) = self.python_bridge {
-            log::info!("🐍 Using Kokoro Python bridge");
             return bridge.synthesize(text, params.voice.as_deref(), params.speed);
         }
-        
-        // No working TTS method available
+
         anyhow::bail!(
-            "Kokoro TTS not available. Options:\n\
-             1. Native Rust (requires proper model format)\n\
-             2. Python bridge: pip install kokoro soundfile"
+            "Kokoro TTS unavailable. Run: python convert_kokoro.py  \
+             then: cargo build --features torch"
         )
     }
     
@@ -370,11 +219,34 @@ impl TTSEngine for KokoroEngine {
                 return true;
             }
         }
-        
+
         if self.python_bridge.is_some() {
             return true;
         }
-        
+
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_kokoro_returns_error_when_model_absent() {
+        let config = serde_json::json!({
+            "model_path": "/nonexistent/kokoro-v1_0.safetensors",
+            "sample_rate": 24000
+        });
+        let engine = KokoroEngine::new(&config).unwrap();
+        // Engine constructs OK (model loading is lazy) but synthesize fails
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let result = engine.synthesize("hello", &params).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        // Must NOT silently produce audio — must return an error
+        assert!(msg.contains("unavailable") || msg.contains("not found") || msg.contains("failed")
+                || msg.contains("Kokoro") || msg.contains("TTS"),
+                "Unexpected error: {}", msg);
     }
 }
