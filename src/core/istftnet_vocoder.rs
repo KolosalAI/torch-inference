@@ -196,12 +196,13 @@ impl ISTFTNet {
         let frames = x.size()[2];
         let n_bins = self.config.gen_istft_n_fft / 2 + 1;
 
-        // Reshape to [batch, n_bins, frames, 2] then apply tanh
-        let stft = x.view([batch, n_bins, frames, 2]).tanh();
+        // x: [batch, n_bins*2, frames]
+        // Split channels into [batch, 2, n_bins, frames] then apply tanh
+        let stft = x.view([batch, 2, n_bins, frames]).tanh();
 
         // Extract real and imag components
-        let real = stft.i((.., .., .., 0i64));
-        let imag = stft.i((.., .., .., 1i64));
+        let real = stft.i((.., 0i64, .., ..)); // [batch, n_bins, frames]
+        let imag = stft.i((.., 1i64, .., ..)); // [batch, n_bins, frames]
         let complex = Tensor::stack(&[real, imag], -1); // [batch, n_bins, frames, 2]
 
         // ISTFT
