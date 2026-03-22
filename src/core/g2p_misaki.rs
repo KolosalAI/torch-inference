@@ -11,7 +11,7 @@ lazy_static! {
     /// Kokoro's phoneme vocabulary (178 tokens)
     static ref PHONEME_VOCAB: HashMap<String, i64> = {
         let mut m = HashMap::new();
-        // Punctuation
+        // --- Punctuation & special ---
         m.insert(";".to_string(), 1);
         m.insert(":".to_string(), 2);
         m.insert(",".to_string(), 3);
@@ -21,51 +21,76 @@ lazy_static! {
         m.insert("—".to_string(), 9);
         m.insert("…".to_string(), 10);
         m.insert(" ".to_string(), 16);
-        
-        // Common IPA phonemes (subset for English)
-        m.insert("a".to_string(), 43);
-        m.insert("b".to_string(), 44);
-        m.insert("d".to_string(), 46);
-        m.insert("e".to_string(), 47);
-        m.insert("f".to_string(), 48);
-        m.insert("h".to_string(), 50);
-        m.insert("i".to_string(), 51);
-        m.insert("k".to_string(), 53);
-        m.insert("l".to_string(), 54);
-        m.insert("m".to_string(), 55);
-        m.insert("n".to_string(), 56);
-        m.insert("o".to_string(), 57);
-        m.insert("p".to_string(), 58);
-        m.insert("r".to_string(), 60);
-        m.insert("s".to_string(), 61);
-        m.insert("t".to_string(), 62);
-        m.insert("u".to_string(), 63);
-        m.insert("v".to_string(), 64);
-        m.insert("w".to_string(), 65);
-        m.insert("z".to_string(), 68);
-        
-        // IPA vowels
-        m.insert("ɑ".to_string(), 69);
-        m.insert("æ".to_string(), 72);
-        m.insert("ɔ".to_string(), 76);
-        m.insert("ð".to_string(), 81);
-        m.insert("ə".to_string(), 83);
-        m.insert("ɛ".to_string(), 86);
-        m.insert("ɪ".to_string(), 102);
-        m.insert("ŋ".to_string(), 112);
-        m.insert("θ".to_string(), 119);
-        m.insert("ʃ".to_string(), 131);
-        m.insert("ʧ".to_string(), 133);
-        m.insert("ʊ".to_string(), 135);
-        m.insert("ʌ".to_string(), 138);
-        m.insert("ʒ".to_string(), 147);
-        m.insert("ʤ".to_string(), 82);
-        
-        // Stress and prosody markers
-        m.insert("ˈ".to_string(), 156);  // Primary stress
-        m.insert("ˌ".to_string(), 157);  // Secondary stress
-        m.insert("ː".to_string(), 158);  // Long vowel
-        
+        // --- ASCII letters (Kokoro uses these for letter-level fallback) ---
+        m.insert("A".to_string(), 21); m.insert("B".to_string(), 22);
+        m.insert("C".to_string(), 23); m.insert("D".to_string(), 24);
+        m.insert("E".to_string(), 25); m.insert("F".to_string(), 26);
+        m.insert("G".to_string(), 27); m.insert("H".to_string(), 28);
+        m.insert("I".to_string(), 29); m.insert("J".to_string(), 30);
+        m.insert("K".to_string(), 31); m.insert("L".to_string(), 32);
+        m.insert("M".to_string(), 33); m.insert("N".to_string(), 34);
+        m.insert("O".to_string(), 35); m.insert("P".to_string(), 36);
+        m.insert("Q".to_string(), 37); m.insert("R".to_string(), 38);
+        m.insert("S".to_string(), 39); m.insert("T".to_string(), 40);
+        m.insert("U".to_string(), 41); m.insert("V".to_string(), 42);
+        m.insert("W".to_string(), 43); m.insert("X".to_string(), 44);
+        m.insert("Y".to_string(), 45); m.insert("Z".to_string(), 46);
+        // --- IPA vowels ---
+        m.insert("a".to_string(), 47);
+        m.insert("ɑ".to_string(), 49);
+        m.insert("ɐ".to_string(), 50);
+        m.insert("ɒ".to_string(), 51);
+        m.insert("æ".to_string(), 52);
+        m.insert("e".to_string(), 55);
+        m.insert("ɘ".to_string(), 57);
+        m.insert("ə".to_string(), 58);
+        m.insert("ɚ".to_string(), 59);
+        m.insert("ɛ".to_string(), 60);
+        m.insert("ɜ".to_string(), 61);
+        m.insert("ɝ".to_string(), 62);
+        m.insert("i".to_string(), 67);
+        m.insert("ɪ".to_string(), 69);
+        m.insert("o".to_string(), 73);
+        m.insert("ɔ".to_string(), 75);
+        m.insert("u".to_string(), 82);
+        m.insert("ʊ".to_string(), 84);
+        m.insert("ʌ".to_string(), 85);
+        m.insert("ɵ".to_string(), 86);
+        // --- IPA consonants ---
+        m.insert("b".to_string(), 88);
+        m.insert("d".to_string(), 90);
+        m.insert("ð".to_string(), 91);
+        m.insert("f".to_string(), 93);
+        m.insert("ɡ".to_string(), 95);
+        m.insert("h".to_string(), 98);
+        m.insert("j".to_string(), 100);
+        m.insert("k".to_string(), 101);
+        m.insert("l".to_string(), 102);
+        m.insert("m".to_string(), 103);
+        m.insert("n".to_string(), 104);
+        m.insert("ŋ".to_string(), 106);
+        m.insert("p".to_string(), 109);
+        m.insert("r".to_string(), 111);
+        m.insert("s".to_string(), 112);
+        m.insert("t".to_string(), 113);
+        m.insert("θ".to_string(), 115);
+        m.insert("v".to_string(), 118);
+        m.insert("w".to_string(), 119);
+        m.insert("z".to_string(), 122);
+        m.insert("ʃ".to_string(), 124);
+        m.insert("ʒ".to_string(), 129);
+        m.insert("ʧ".to_string(), 130);
+        m.insert("ʤ".to_string(), 131);
+        // --- Diphthongs (two-char IPA sequences) ---
+        m.insert("aɪ".to_string(), 48);
+        m.insert("aʊ".to_string(), 53);
+        m.insert("eɪ".to_string(), 56);
+        m.insert("oʊ".to_string(), 74);
+        m.insert("ɔɪ".to_string(), 76);
+        // --- Stress and length markers ---
+        m.insert("ˈ".to_string(), 156);
+        m.insert("ˌ".to_string(), 157);
+        m.insert("ː".to_string(), 158);
         m
     };
     
@@ -202,7 +227,7 @@ lazy_static! {
 
 /// Misaki-style G2P converter
 pub struct MisakiG2P {
-    vocab: &'static HashMap<String, i64>,
+    pub vocab: &'static HashMap<String, i64>,
     dict: &'static HashMap<&'static str, &'static str>,
 }
 
@@ -313,90 +338,72 @@ impl MisakiG2P {
     fn ipa_to_tokens(&self, ipa: &str) -> Result<Vec<i64>> {
         let mut tokens = Vec::new();
         let mut chars = ipa.chars().peekable();
-        
+
         while let Some(ch) = chars.next() {
-            // Try to match multi-character IPA symbols
-            let symbol = if ch == 'ː' || ch == 'ˈ' || ch == 'ˌ' {
-                // Combining marks
-                ch.to_string()
-            } else if ch == 'ʤ' || ch == 'ʧ' || ch == 'ʃ' || ch == 'ʒ' || 
-                      ch == 'θ' || ch == 'ð' || ch == 'ŋ' {
-                // Special IPA characters
-                ch.to_string()
-            } else if let Some(&next_ch) = chars.peek() {
-                // Check for combining characters
-                if next_ch == 'ː' {
-                    chars.next();
-                    format!("{}{}", ch, next_ch)
+            // Try two-character sequence first (diphthongs, length marks)
+            let two_char_symbol = if let Some(&next_ch) = chars.peek() {
+                let candidate = format!("{}{}", ch, next_ch);
+                if self.vocab.contains_key(&candidate) {
+                    chars.next(); // consume the peeked char
+                    Some(candidate)
                 } else {
-                    ch.to_string()
+                    None
                 }
             } else {
-                ch.to_string()
+                None
             };
-            
+
+            let symbol = two_char_symbol.unwrap_or_else(|| ch.to_string());
+
             if let Some(&token) = self.vocab.get(&symbol) {
                 tokens.push(token);
             } else {
-                // Try single character
-                if let Some(&token) = self.vocab.get(&ch.to_string()) {
-                    tokens.push(token);
-                }
+                log::debug!("ipa_to_tokens: no token for symbol {:?}", symbol);
             }
         }
-        
+
         Ok(tokens)
     }
     
     /// Letter-to-phoneme fallback (simplified rules)
     fn letter_to_phoneme(&self, word: &str) -> Result<Vec<i64>> {
         let mut tokens = Vec::new();
-        
         for ch in word.chars() {
-            let phoneme = match ch {
-                // Vowels
-                'a' => "æ",
-                'e' => "ɛ",
-                'i' => "ɪ",
-                'o' => "ɒ",
-                'u' => "ʌ",
-                // Consonants
-                'b' => "b",
-                'c' => "k",
-                'd' => "d",
-                'f' => "f",
-                'g' => "ɡ",
-                'h' => "h",
-                'j' => "ʤ",
-                'k' => "k",
-                'l' => "l",
-                'm' => "m",
-                'n' => "n",
-                'p' => "p",
-                'q' => "k",
-                'r' => "r",
-                's' => "s",
-                't' => "t",
-                'v' => "v",
-                'w' => "w",
-                'x' => "ks",
-                'y' => "j",
-                'z' => "z",
+            let ipa: &str = match ch {
+                'a' | 'A' => "æ",
+                'e' | 'E' => "ɛ",
+                'i' | 'I' => "ɪ",
+                'o' | 'O' => "ɔ",
+                'u' | 'U' => "ʊ",
+                'b' | 'B' => "b",
+                'c' | 'C' => "k",
+                'd' | 'D' => "d",
+                'f' | 'F' => "f",
+                'g' | 'G' => "ɡ",
+                'h' | 'H' => "h",
+                'j' | 'J' => "ʤ",
+                'k' | 'K' => "k",
+                'l' | 'L' => "l",
+                'm' | 'M' => "m",
+                'n' | 'N' => "n",
+                'p' | 'P' => "p",
+                'r' | 'R' => "r",
+                's' | 'S' => "s",
+                't' | 'T' => "t",
+                'v' | 'V' => "v",
+                'w' | 'W' => "w",
+                'x' | 'X' => "s",  // approximate
+                'y' | 'Y' => "j",
+                'z' | 'Z' => "z",
+                'q' | 'Q' => "k",
                 _ => continue,
             };
-            
-            if phoneme.len() == 2 {
-                // Handle digraphs like "ks"
-                for p in phoneme.chars() {
-                    if let Some(&token) = self.vocab.get(&p.to_string()) {
-                        tokens.push(token);
-                    }
-                }
-            } else if let Some(&token) = self.vocab.get(phoneme) {
+            if let Some(&token) = self.vocab.get(ipa) {
                 tokens.push(token);
+            } else {
+                log::warn!("letter_to_phoneme: no token for IPA {:?} (from char {:?})", ipa, ch);
             }
         }
-        
         Ok(tokens)
     }
 }
@@ -428,13 +435,46 @@ mod tests {
     #[test]
     fn test_dictionary_lookup() {
         let g2p = MisakiG2P::new().unwrap();
-        
+
         // These should use dictionary
         let words = vec!["hello", "world", "the", "quick", "brown"];
         for word in words {
             let tokens = g2p.word_to_phonemes(word).unwrap();
             assert!(tokens.len() > 0, "Failed for word: {}", word);
             println!("{} -> {} phonemes", word, tokens.len());
+        }
+    }
+
+    #[test]
+    fn test_all_common_phonemes_have_tokens() {
+        let g2p = MisakiG2P::new().unwrap();
+        // These IPA symbols MUST have token IDs — they appear in the pronunciation dict
+        let required = ["ə", "ɪ", "ɛ", "æ", "ɑ", "ɔ", "ʊ", "ʌ", "ɜ",
+                        "ð", "θ", "ŋ", "ʃ", "ʒ", "ʧ", "ʤ", "ɡ", "j",
+                        "ˈ", "ˌ", "ː", " "];
+        for sym in required {
+            assert!(g2p.vocab.get(sym).is_some(), "Missing token for: {:?}", sym);
+        }
+    }
+
+    #[test]
+    fn test_hello_world_produces_nonzero_tokens() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.text_to_tokens("hello world").unwrap();
+        assert!(tokens.len() >= 5, "Expected at least 5 tokens, got {}", tokens.len());
+        // All tokens must be in valid Kokoro range [1, 177]
+        for &t in &tokens {
+            assert!(t >= 1 && t <= 177, "Token {} out of valid range [1,177]", t);
+        }
+    }
+
+    #[test]
+    fn test_letter_fallback_produces_valid_tokens() {
+        let g2p = MisakiG2P::new().unwrap();
+        // "xyz" not in dictionary — exercises letter_to_phoneme fallback
+        let tokens = g2p.text_to_tokens("xyz").unwrap();
+        for &t in &tokens {
+            assert!(t >= 1 && t <= 177, "Fallback token {} out of range", t);
         }
     }
 }
