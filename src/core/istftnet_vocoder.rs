@@ -1,10 +1,15 @@
 /// ISTFTNet Vocoder - Convert mel-spectrogram to waveform
-/// Implements the ISTFTNet vocoder used in Kokoro TTS
+/// Implements a real tch::nn ISTFTNet vocoder for Kokoro TTS.
 #[cfg(feature = "torch")]
-use tch::{Tensor, Device, Kind};
-use anyhow::{Result, Context};
-use std::f32::consts::PI;
+use tch::{nn, nn::Module, Device, Tensor, Kind};
+#[cfg(feature = "torch")]
+use anyhow::Result;
 
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "torch")]
 #[derive(Debug, Clone)]
 pub struct ISTFTNetConfig {
     pub upsample_rates: Vec<i64>,
@@ -16,9 +21,9 @@ pub struct ISTFTNetConfig {
     pub gen_istft_hop_size: i64,
 }
 
+#[cfg(feature = "torch")]
 impl Default for ISTFTNetConfig {
     fn default() -> Self {
-        // Kokoro default config
         Self {
             upsample_rates: vec![10, 6],
             upsample_kernel_sizes: vec![20, 12],
@@ -35,284 +40,322 @@ impl Default for ISTFTNetConfig {
     }
 }
 
-/// Simplified vocoder using Griffin-Lim algorithm
-/// (Full ISTFTNet implementation would require complete PyTorch model)
-pub struct SimplifiedVocoder {
-    config: ISTFTNetConfig,
-    sample_rate: i64,
-}
+// ---------------------------------------------------------------------------
+// ResBlock — one residual block for the Multi-Receptive-Field Fusion (MRF)
+// ---------------------------------------------------------------------------
 
-impl SimplifiedVocoder {
-    pub fn new(sample_rate: i64) -> Self {
-        Self {
-            config: ISTFTNetConfig::default(),
-            sample_rate,
-        }
-    }
-    
-    /// Convert mel-spectrogram to waveform using Griffin-Lim
-    pub fn mel_to_waveform(&self, mel: &Vec<Vec<f32>>) -> Result<Vec<f32>> {
-        log::info!("Converting mel-spectrogram to waveform (Griffin-Lim)");
-        
-        let n_mels = mel.len();
-        let n_frames = mel.first()
-            .context("Empty mel-spectrogram")?
-            .len();
-        
-        log::debug!("Mel shape: {} x {}", n_mels, n_frames);
-        
-        // Compute hop length and window size
-        let hop_length = 256; // Common value for 24kHz
-        let n_fft = 1024;
-        let win_length = 1024;
-        
-        // Estimate output length
-        let n_samples = n_frames * hop_length + (n_fft - hop_length);
-        
-        // Use simplified approach: convert mel to linear spectrogram
-        let linear_spec = self.mel_to_linear(mel)?;
-        
-        // Apply Griffin-Lim algorithm
-        let waveform = self.griffin_lim(&linear_spec, n_fft, hop_length, win_length, 32)?;
-        
-        log::info!("Generated waveform: {} samples ({:.2}s)", 
-                   waveform.len(), 
-                   waveform.len() as f32 / self.sample_rate as f32);
-        
-        Ok(waveform)
-    }
-    
-    /// Convert mel-spectrogram to linear spectrogram (simplified)
-    fn mel_to_linear(&self, mel: &Vec<Vec<f32>>) -> Result<Vec<Vec<f32>>> {
-        let n_mels = mel.len();
-        let n_frames = mel[0].len();
-        let n_fft = 1024;
-        let n_freqs = n_fft / 2 + 1;
-        
-        // Create mel filterbank (simplified - use linear interpolation)
-        let mut linear = vec![vec![0.0; n_frames]; n_freqs];
-        
-        for t in 0..n_frames {
-            for f in 0..n_freqs {
-                // Map linear frequency bin to mel bin
-                let mel_idx = (f as f32 * n_mels as f32 / n_freqs as f32) as usize;
-                let mel_idx = mel_idx.min(n_mels - 1);
-                
-                // Simple interpolation
-                linear[f][t] = mel[mel_idx][t];
-            }
-        }
-        
-        Ok(linear)
-    }
-    
-    /// Griffin-Lim algorithm for phase reconstruction
-    fn griffin_lim(
-        &self,
-        magnitude: &Vec<Vec<f32>>,
-        n_fft: usize,
-        hop_length: usize,
-        win_length: usize,
-        n_iter: usize,
-    ) -> Result<Vec<f32>> {
-        let n_freqs = magnitude.len();
-        let n_frames = magnitude[0].len();
-        
-        // Initialize random phase
-        let mut phase = vec![vec![0.0; n_frames]; n_freqs];
-        for i in 0..n_freqs {
-            for j in 0..n_frames {
-                phase[i][j] = rand::random::<f32>() * 2.0 * PI;
-            }
-        }
-        
-        // Iterative phase reconstruction
-        for iter in 0..n_iter {
-            // ISTFT
-            let waveform = self.istft(magnitude, &phase, n_fft, hop_length, win_length)?;
-            
-            // STFT to get new phase
-            if iter < n_iter - 1 {
-                let (new_magnitude, new_phase) = self.stft(&waveform, n_fft, hop_length, win_length)?;
-                phase = new_phase;
-            } else {
-                return Ok(waveform);
-            }
-        }
-        
-        // Final ISTFT
-        self.istft(magnitude, &phase, n_fft, hop_length, win_length)
-    }
-    
-    /// Short-Time Fourier Transform
-    fn stft(
-        &self,
-        waveform: &[f32],
-        n_fft: usize,
-        hop_length: usize,
-        win_length: usize,
-    ) -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>)> {
-        let n_frames = (waveform.len() - n_fft) / hop_length + 1;
-        let n_freqs = n_fft / 2 + 1;
-        
-        let mut magnitude = vec![vec![0.0; n_frames]; n_freqs];
-        let mut phase = vec![vec![0.0; n_frames]; n_freqs];
-        
-        // Hann window
-        let window = self.hann_window(win_length);
-        
-        for frame_idx in 0..n_frames {
-            let start = frame_idx * hop_length;
-            
-            // Extract frame and apply window
-            let mut frame = vec![0.0; n_fft];
-            for i in 0..win_length.min(waveform.len() - start) {
-                frame[i] = waveform[start + i] * window[i];
-            }
-            
-            // Compute FFT (simplified - use DFT)
-            for k in 0..n_freqs {
-                let mut real = 0.0;
-                let mut imag = 0.0;
-                
-                for n in 0..n_fft {
-                    let angle = -2.0 * PI * (k * n) as f32 / n_fft as f32;
-                    real += frame[n] * angle.cos();
-                    imag += frame[n] * angle.sin();
-                }
-                
-                magnitude[k][frame_idx] = (real * real + imag * imag).sqrt();
-                phase[k][frame_idx] = imag.atan2(real);
-            }
-        }
-        
-        Ok((magnitude, phase))
-    }
-    
-    /// Inverse Short-Time Fourier Transform
-    fn istft(
-        &self,
-        magnitude: &Vec<Vec<f32>>,
-        phase: &Vec<Vec<f32>>,
-        n_fft: usize,
-        hop_length: usize,
-        win_length: usize,
-    ) -> Result<Vec<f32>> {
-        let n_frames = magnitude[0].len();
-        let output_length = n_frames * hop_length + n_fft;
-        
-        let mut output = vec![0.0; output_length];
-        let mut window_sum = vec![0.0; output_length];
-        
-        let window = self.hann_window(win_length);
-        
-        for frame_idx in 0..n_frames {
-            let start = frame_idx * hop_length;
-            
-            // Inverse FFT (simplified - use IDFT)
-            let mut frame = vec![0.0; n_fft];
-            for n in 0..n_fft {
-                let mut sum = 0.0;
-                
-                for k in 0..magnitude.len() {
-                    let mag = magnitude[k][frame_idx];
-                    let ph = phase[k][frame_idx];
-                    let angle = 2.0 * PI * (k * n) as f32 / n_fft as f32 + ph;
-                    sum += mag * angle.cos();
-                }
-                
-                frame[n] = sum / n_fft as f32;
-            }
-            
-            // Overlap-add with window
-            for i in 0..win_length.min(output_length - start) {
-                output[start + i] += frame[i] * window[i];
-                window_sum[start + i] += window[i] * window[i];
-            }
-        }
-        
-        // Normalize
-        for i in 0..output_length {
-            if window_sum[i] > 1e-8 {
-                output[i] /= window_sum[i];
-            }
-        }
-        
-        Ok(output)
-    }
-    
-    /// Hann window function
-    fn hann_window(&self, length: usize) -> Vec<f32> {
-        (0..length)
-            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f32 / (length - 1) as f32).cos()))
-            .collect()
-    }
+#[cfg(feature = "torch")]
+struct ResBlock {
+    convs: Vec<nn::Conv1D>,
 }
 
 #[cfg(feature = "torch")]
+impl ResBlock {
+    fn new(vs: &nn::Path, channels: i64, kernel: i64, dilations: &[i64]) -> Self {
+        let convs = dilations
+            .iter()
+            .map(|&d| {
+                nn::conv1d(
+                    vs,
+                    channels,
+                    channels,
+                    kernel,
+                    nn::ConvConfig {
+                        padding: (kernel - 1) * d / 2,
+                        dilation: d,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        Self { convs }
+    }
+
+    fn forward(&self, x: &Tensor) -> Tensor {
+        let mut out = x.shallow_clone();
+        for conv in &self.convs {
+            out = conv.forward(&out.leaky_relu()) + &out;
+        }
+        out
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ISTFTNet — the neural vocoder
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "torch")]
+pub struct ISTFTNet {
+    input_proj: nn::Conv1D,
+    upsamplers: Vec<nn::ConvTranspose1D>,
+    mrf_blocks: Vec<Vec<ResBlock>>,
+    output_proj: nn::Conv1D,
+    config: ISTFTNetConfig,
+    device: Device,
+}
+
+#[cfg(feature = "torch")]
+impl ISTFTNet {
+    pub fn new(vs: &nn::Path, cfg: &ISTFTNetConfig) -> Self {
+        let device = vs.device();
+
+        // Input projection: n_mels=80 → upsample_initial_channel
+        let input_proj = nn::conv1d(
+            &(vs / "input_proj"),
+            80,
+            cfg.upsample_initial_channel,
+            7,
+            nn::ConvConfig {
+                padding: 3,
+                ..Default::default()
+            },
+        );
+
+        let mut ch = cfg.upsample_initial_channel;
+        let mut upsamplers = Vec::new();
+        let mut mrf_blocks = Vec::new();
+
+        for (i, (&rate, &ksize)) in cfg
+            .upsample_rates
+            .iter()
+            .zip(cfg.upsample_kernel_sizes.iter())
+            .enumerate()
+        {
+            let out_ch = ch / 2;
+            upsamplers.push(nn::conv_transpose1d(
+                &(vs / format!("up_{}", i)),
+                ch,
+                out_ch,
+                ksize,
+                nn::ConvTransposeConfig {
+                    stride: rate,
+                    padding: (ksize - rate) / 2,
+                    ..Default::default()
+                },
+            ));
+
+            // MRF: one ResBlock per kernel size
+            let blocks: Vec<ResBlock> = cfg
+                .resblock_kernel_sizes
+                .iter()
+                .zip(cfg.resblock_dilation_sizes.iter())
+                .enumerate()
+                .map(|(j, (&k, dilations))| {
+                    ResBlock::new(
+                        &(vs / format!("mrf_{}_{}", i, j)),
+                        out_ch,
+                        k,
+                        dilations,
+                    )
+                })
+                .collect();
+            mrf_blocks.push(blocks);
+            ch = out_ch;
+        }
+
+        // ch is now 128 after two upsamplers (512 → 256 → 128)
+        // Output channels: (n_fft/2 + 1) * 2 for real + imag
+        let out_channels = (cfg.gen_istft_n_fft / 2 + 1) * 2;
+        let output_proj = nn::conv1d(
+            &(vs / "output_proj"),
+            ch,
+            out_channels,
+            1,
+            Default::default(),
+        );
+
+        Self {
+            input_proj,
+            upsamplers,
+            mrf_blocks,
+            output_proj,
+            config: cfg.clone(),
+            device,
+        }
+    }
+
+    pub fn forward(&self, mel: &Tensor) -> Tensor {
+        // mel: [batch, 80, mel_frames]
+        let mut x = self.input_proj.forward(mel).leaky_relu();
+
+        for (up, mrf_stack) in self.upsamplers.iter().zip(self.mrf_blocks.iter()) {
+            x = up.forward(&x.leaky_relu());
+            // MRF: average across all residual block kernels
+            let sum: Tensor = mrf_stack
+                .iter()
+                .map(|b| b.forward(&x))
+                .reduce(|a, b| a + b)
+                .unwrap();
+            x = sum / (mrf_stack.len() as f64);
+        }
+
+        // Output projection → complex STFT representation
+        let x = self.output_proj.forward(&x.leaky_relu());
+        // x: [batch, (n_fft/2+1)*2, upsampled_frames]
+        let batch = x.size()[0];
+        let frames = x.size()[2];
+        let n_bins = self.config.gen_istft_n_fft / 2 + 1;
+
+        // Reshape to [batch, n_bins, frames, 2] then apply tanh
+        let stft = x.view([batch, n_bins, frames, 2]).tanh();
+
+        // Extract real and imag components
+        let real = stft.i((.., .., .., 0i64));
+        let imag = stft.i((.., .., .., 1i64));
+        let complex = Tensor::stack(&[real, imag], -1); // [batch, n_bins, frames, 2]
+
+        // ISTFT
+        let n_fft = self.config.gen_istft_n_fft;
+        let hop = self.config.gen_istft_hop_size;
+        let window = Tensor::hann_window(n_fft, (Kind::Float, self.device));
+
+        complex.istft(
+            n_fft,
+            hop.into(),
+            n_fft.into(),
+            Some(&window),
+            false,
+            false,
+            true,
+            None::<i64>,
+            false,
+        )
+        // → waveform [batch, n_samples]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ISTFTNetVocoder — public wrapper that owns the VarStore
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "torch")]
 pub struct ISTFTNetVocoder {
-    model: Option<tch::CModule>,
-    fallback: SimplifiedVocoder,
+    net: ISTFTNet,
+    _vs: tch::nn::VarStore,
     device: Device,
 }
 
 #[cfg(feature = "torch")]
 impl ISTFTNetVocoder {
-    pub fn new(model_path: Option<&std::path::Path>, device: Device, sample_rate: i64) -> Result<Self> {
-        let model = if let Some(path) = model_path {
+    /// Create a new vocoder.
+    ///
+    /// * `weights_path` – optional path to a safetensors file; weights will be
+    ///   partially loaded when provided and the file exists.
+    /// * `device`       – computation device.
+    /// * `_sample_rate` – kept for API compatibility; not used internally.
+    pub fn new(
+        weights_path: Option<&std::path::Path>,
+        device: Device,
+        _sample_rate: i64,
+    ) -> Result<Self> {
+        let config = ISTFTNetConfig::default();
+        let mut vs = tch::nn::VarStore::new(device);
+        let net = ISTFTNet::new(&(vs.root() / "vocoder"), &config);
+
+        if let Some(path) = weights_path {
             if path.exists() {
-                log::info!("Loading ISTFTNet vocoder from {:?}", path);
-                Some(tch::CModule::load_on_device(path, device)?)
+                let unmatched = vs.load_partial(path)?;
+                if !unmatched.is_empty() {
+                    log::warn!(
+                        "Vocoder: some registered vars not found in weights: {:?}",
+                        unmatched
+                    );
+                }
             } else {
-                log::warn!("Vocoder model not found, using simplified vocoder");
-                None
+                log::warn!("Vocoder weights not found at {:?}, using random weights", path);
             }
-        } else {
-            None
-        };
-        
-        let fallback = SimplifiedVocoder::new(sample_rate);
-        
+        }
+
         Ok(Self {
-            model,
-            fallback,
+            net,
+            _vs: vs,
             device,
         })
     }
-    
+
+    /// Convert a mel-spectrogram to audio samples.
+    ///
+    /// `mel` is `[n_mels][n_frames]` (row-major: each inner Vec is one mel bin).
     pub fn mel_to_audio(&self, mel: &Vec<Vec<f32>>) -> Result<Vec<f32>> {
-        if let Some(ref model) = self.model {
-            // Use neural vocoder if available
-            self.neural_vocoder(model, mel)
-        } else {
-            // Fallback to Griffin-Lim
-            self.fallback.mel_to_waveform(mel)
-        }
-    }
-    
-    fn neural_vocoder(&self, model: &tch::CModule, mel: &Vec<Vec<f32>>) -> Result<Vec<f32>> {
-        // Convert mel to tensor
         let n_mels = mel.len();
-        let n_frames = mel[0].len();
-        
-        let mel_flat: Vec<f32> = mel.iter()
-            .flat_map(|row| row.iter().copied())
-            .collect();
-        
-        let mel_tensor = Tensor::from_slice(&mel_flat)
+        let n_frames = mel
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("empty mel-spectrogram"))?
+            .len();
+
+        let flat: Vec<f32> = mel.iter().flat_map(|r| r.iter().copied()).collect();
+        let mel_tensor = Tensor::of_slice(&flat)
             .to_device(self.device)
             .view([1, n_mels as i64, n_frames as i64]);
-        
-        // Run vocoder
-        let audio_tensor = model.forward_ts(&[mel_tensor])
-            .context("Failed to run vocoder forward pass")?;
-        
-        // Convert to Vec<f32>
-        let audio: Vec<f32> = audio_tensor
-            .squeeze()
-            .to_device(Device::Cpu)
-            .try_into()?;
-        
-        Ok(audio)
+
+        let audio = tch::no_grad(|| self.net.forward(&mel_tensor));
+        let audio_cpu = audio.squeeze_dim(0).to_device(Device::Cpu);
+        Ok(audio_cpu.try_into()?)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Non-torch stubs
+// ---------------------------------------------------------------------------
+
+#[cfg(not(feature = "torch"))]
+pub struct ISTFTNetConfig;
+
+#[cfg(not(feature = "torch"))]
+impl Default for ISTFTNetConfig {
+    fn default() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(feature = "torch"))]
+pub struct ISTFTNetVocoder;
+
+#[cfg(not(feature = "torch"))]
+impl ISTFTNetVocoder {
+    pub fn new(
+        _weights_path: Option<&std::path::Path>,
+        _device: i32,
+        _sample_rate: i64,
+    ) -> anyhow::Result<Self> {
+        anyhow::bail!("ISTFTNet requires --features torch")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "torch")]
+    #[test]
+    fn test_istftnet_output_is_1d_audio() {
+        use tch::{Device, Tensor};
+        let vs = tch::nn::VarStore::new(Device::Cpu);
+        let config = ISTFTNetConfig::default();
+        let net = ISTFTNet::new(&vs.root(), &config);
+        // mel: [1, 80, 10 frames]
+        let mel = Tensor::zeros(&[1, 80, 10], (tch::Kind::Float, Device::Cpu));
+        let audio = net.forward(&mel);
+        // Should be [1, n_samples]
+        assert_eq!(audio.size().len(), 2);
+        assert_eq!(audio.size()[0], 1);
+        assert!(audio.size()[1] > 0);
+    }
+
+    #[cfg(feature = "torch")]
+    #[test]
+    fn test_istftnet_no_nan_output() {
+        use tch::{Device, Tensor};
+        let vs = tch::nn::VarStore::new(Device::Cpu);
+        let config = ISTFTNetConfig::default();
+        let net = ISTFTNet::new(&vs.root(), &config);
+        let mel = Tensor::randn(&[1, 80, 20], (tch::Kind::Float, Device::Cpu));
+        let audio = net.forward(&mel);
+        let has_nan = audio.isnan().any().int64_value(&[]) != 0;
+        assert!(!has_nan, "ISTFTNet output contains NaN");
     }
 }
