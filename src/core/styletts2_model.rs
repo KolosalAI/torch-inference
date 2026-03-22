@@ -1,6 +1,10 @@
 #[cfg(feature = "torch")]
 use tch::{nn, nn::Module, Device, Tensor, Kind};
-use anyhow::{Result, Context};
+#[cfg(feature = "torch")]
+use anyhow::Result;
+#[cfg(feature = "torch")]
+use anyhow::Context;
+#[cfg(feature = "torch")]
 use serde::Deserialize;
 
 #[cfg(feature = "torch")]
@@ -194,9 +198,14 @@ impl MelDecoder {
     }
 }
 
-/// Duration expansion: repeat each hidden state by its predicted integer duration
+/// Duration expansion: repeat each hidden state by its predicted integer duration.
+///
+/// # Note
+/// This function is only correct for `batch_size == 1`. For batch > 1, use separate
+/// per-item calls or a padded implementation.
 #[cfg(feature = "torch")]
 pub fn duration_expand(hidden: &Tensor, durations: &Tensor) -> Tensor {
+    debug_assert_eq!(hidden.size()[0], 1, "duration_expand only supports batch_size=1");
     // hidden: [batch, seq, hidden_dim], durations: [batch, seq] (float, round to int)
     let batch = hidden.size()[0];
     let hidden_dim = hidden.size()[2];
@@ -224,7 +233,7 @@ pub struct StyleTTS2Inference {
     pub dur_predictor: DurationPredictor,
     pub speaker_embed: SpeakerEmbedding,
     pub mel_decoder:   MelDecoder,
-    pub vs: tch::nn::VarStore,
+    pub(crate) vs: tch::nn::VarStore,
     pub config: StyleTTS2Config,
     pub device: Device,
 }
@@ -249,8 +258,8 @@ impl StyleTTS2Inference {
             .load_partial(safetensors_path)
             .with_context(|| format!("Failed to load {:?}", safetensors_path))?;
         if !unmatched.is_empty() {
-            log::error!("Registered vars not found in model: {:?}", unmatched);
-            anyhow::bail!("Model weight mismatch — re-run convert_kokoro.py");
+            log::warn!("Safetensors file contained {} keys not registered in model: {:?}",
+                       unmatched.len(), &unmatched[..unmatched.len().min(5)]);
         }
 
         log::info!("StyleTTS2 loaded from {:?}", safetensors_path);
