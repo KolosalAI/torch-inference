@@ -124,6 +124,9 @@ impl TTSManager {
     /// clone for callers that only need to invoke one synchronous method.
     /// Do **not** use this when the result must be held across an `.await`
     /// boundary — use `get_engine` in that case.
+    /// Do **not** call back into this `TTSManager` from inside the closure:
+    /// the DashMap shard lock is held for the duration of `f`, and re-entrant
+    /// calls on the same shard will deadlock.
     pub fn with_engine<F, R>(&self, id: &str, f: F) -> Option<R>
     where
         F: FnOnce(&dyn TTSEngine) -> R,
