@@ -44,3 +44,68 @@ pub fn setup_logging() {
     
     info!("[START] Logging system initialized (level: {})", log_level);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Calling setup_logging multiple times must not panic.
+    /// env_logger uses try_init() with .ok(), so duplicate calls are silently
+    /// swallowed.
+    #[test]
+    fn test_setup_logging_does_not_panic() {
+        // First call – may or may not succeed depending on test ordering.
+        setup_logging();
+        // Second call – must also be a no-op, not a panic.
+        setup_logging();
+    }
+
+    /// Verify that an explicit RUST_LOG value is honoured without panicking.
+    #[test]
+    fn test_setup_logging_respects_rust_log_env() {
+        std::env::set_var("RUST_LOG", "debug");
+        setup_logging();
+        // Reset so other tests are unaffected.
+        std::env::remove_var("RUST_LOG");
+    }
+
+    /// Verify that an invalid RUST_LOG value falls back to Info without panicking.
+    #[test]
+    fn test_setup_logging_invalid_rust_log_fallback() {
+        std::env::set_var("RUST_LOG", "not_a_valid_level");
+        setup_logging();
+        std::env::remove_var("RUST_LOG");
+    }
+
+    /// Verify that RUST_LOG=trace does not panic.
+    #[test]
+    fn test_setup_logging_trace_level() {
+        std::env::set_var("RUST_LOG", "trace");
+        setup_logging();
+        std::env::remove_var("RUST_LOG");
+    }
+
+    /// Verify that RUST_LOG=warn does not panic.
+    #[test]
+    fn test_setup_logging_warn_level() {
+        std::env::set_var("RUST_LOG", "warn");
+        setup_logging();
+        std::env::remove_var("RUST_LOG");
+    }
+
+    /// Verify that RUST_LOG=error does not panic.
+    #[test]
+    fn test_setup_logging_error_level() {
+        std::env::set_var("RUST_LOG", "error");
+        setup_logging();
+        std::env::remove_var("RUST_LOG");
+    }
+
+    /// Verify that RUST_LOG=off does not panic.
+    #[test]
+    fn test_setup_logging_off_level() {
+        std::env::set_var("RUST_LOG", "off");
+        setup_logging();
+        std::env::remove_var("RUST_LOG");
+    }
+}
