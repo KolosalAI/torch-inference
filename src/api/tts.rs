@@ -202,6 +202,113 @@ pub async fn health_check(
     })))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_synthesis_request_defaults() {
+        let json = r#"{"text": "hello world"}"#;
+        let req: SynthesisRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.text, "hello world");
+        assert_eq!(req.speed, 1.0);
+        assert_eq!(req.pitch, 1.0);
+        assert!(req.engine.is_none());
+        assert!(req.voice.is_none());
+        assert!(req.language.is_none());
+    }
+
+    #[test]
+    fn test_synthesis_request_all_fields() {
+        let json = r#"{
+            "text": "hi",
+            "engine": "kokoro",
+            "voice": "af_sky",
+            "speed": 1.5,
+            "pitch": 0.8,
+            "language": "en"
+        }"#;
+        let req: SynthesisRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.text, "hi");
+        assert_eq!(req.engine.as_deref(), Some("kokoro"));
+        assert_eq!(req.voice.as_deref(), Some("af_sky"));
+        assert!((req.speed - 1.5).abs() < f32::EPSILON);
+        assert!((req.pitch - 0.8).abs() < f32::EPSILON);
+        assert_eq!(req.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn test_synthesis_response_serialization() {
+        let resp = SynthesisResponse {
+            audio_base64: "AAAA".to_string(),
+            sample_rate: 22050,
+            duration_secs: 1.5,
+            format: "wav".to_string(),
+            engine_used: "kokoro".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"audio_base64\""));
+        assert!(json.contains("22050"));
+        assert!(json.contains("\"wav\""));
+        assert!(json.contains("\"kokoro\""));
+    }
+
+    #[test]
+    fn test_engine_list_response_serialization() {
+        let resp = EngineListResponse {
+            engines: vec![EngineInfoResponse {
+                id: "kokoro".to_string(),
+                name: "Kokoro TTS".to_string(),
+                version: "1.0".to_string(),
+                languages: vec!["en".to_string(), "ja".to_string()],
+                voices_count: 5,
+            }],
+            total: 1,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["total"], 1);
+        assert_eq!(parsed["engines"][0]["id"], "kokoro");
+        assert_eq!(parsed["engines"][0]["voices_count"], 5);
+    }
+
+    #[test]
+    fn test_engine_info_response_serialization() {
+        let resp = EngineInfoResponse {
+            id: "test-engine".to_string(),
+            name: "Test Engine".to_string(),
+            version: "2.0".to_string(),
+            languages: vec!["en".to_string()],
+            voices_count: 3,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["id"], "test-engine");
+        assert_eq!(back["version"], "2.0");
+    }
+
+    #[test]
+    fn test_stats_response_serialization() {
+        use crate::core::tts_manager::TTSManagerStats;
+        let stats = TTSManagerStats {
+            total_engines: 2,
+            engine_ids: vec!["kokoro".to_string()],
+            cache_size: 10,
+            cache_capacity: 100,
+        };
+        let resp = StatsResponse { stats };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"total_engines\""));
+        assert!(json.contains("\"cache_size\""));
+    }
+
+    #[test]
+    fn test_default_speed_and_pitch_values() {
+        assert!((default_speed() - 1.0).abs() < f32::EPSILON);
+        assert!((default_pitch() - 1.0).abs() < f32::EPSILON);
+    }
+}
+
 /// Configure TTS routes
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(

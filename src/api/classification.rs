@@ -155,6 +155,97 @@ pub async fn get_classifier_info(
     })))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::image_classifier::{ClassificationResult, TopKResults};
+
+    #[test]
+    fn test_classify_request_serde_full() {
+        let json = r#"{"image_path":"/images/cat.jpg","top_k":3}"#;
+        let req: ClassifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.image_path.as_deref(), Some("/images/cat.jpg"));
+        assert_eq!(req.top_k, Some(3));
+    }
+
+    #[test]
+    fn test_classify_request_serde_minimal() {
+        let json = r#"{}"#;
+        let req: ClassifyRequest = serde_json::from_str(json).unwrap();
+        assert!(req.image_path.is_none());
+        assert!(req.top_k.is_none());
+    }
+
+    #[test]
+    fn test_classify_response_success_serialization() {
+        let top_k = TopKResults {
+            predictions: vec![
+                ClassificationResult {
+                    label: "cat".to_string(),
+                    confidence: 0.95,
+                    class_id: 281,
+                },
+                ClassificationResult {
+                    label: "dog".to_string(),
+                    confidence: 0.04,
+                    class_id: 207,
+                },
+            ],
+            inference_time_ms: 12.3,
+        };
+        let resp = ClassifyResponse {
+            success: true,
+            results: Some(top_k),
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["success"], true);
+        assert_eq!(back["results"]["predictions"][0]["label"], "cat");
+        assert!((back["results"]["inference_time_ms"].as_f64().unwrap() - 12.3).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_classify_response_failure_serialization() {
+        let resp = ClassifyResponse {
+            success: false,
+            results: None,
+            error: Some("Classification failed".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["success"], false);
+        assert_eq!(back["error"], "Classification failed");
+        assert!(back["results"].is_null());
+    }
+
+    #[test]
+    fn test_classification_result_serde_roundtrip() {
+        let result = ClassificationResult {
+            label: "tabby_cat".to_string(),
+            confidence: 0.87,
+            class_id: 281,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ClassificationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.label, "tabby_cat");
+        assert_eq!(back.class_id, 281);
+        assert!((back.confidence - 0.87).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_top_k_results_serde_roundtrip() {
+        let results = TopKResults {
+            predictions: vec![],
+            inference_time_ms: 5.0,
+        };
+        let json = serde_json::to_string(&results).unwrap();
+        let back: TopKResults = serde_json::from_str(&json).unwrap();
+        assert!(back.predictions.is_empty());
+        assert!((back.inference_time_ms - 5.0).abs() < 1e-5);
+    }
+}
+
 // Configure routes
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(

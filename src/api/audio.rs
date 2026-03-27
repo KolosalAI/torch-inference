@@ -280,3 +280,127 @@ fn base64_encode(data: &[u8]) -> String {
     use base64::{Engine as _, engine::general_purpose};
     general_purpose::STANDARD.encode(data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_synthesize_request_serde_all_fields() {
+        let json = r#"{"text":"hello","model":"default","voice":"speaker1","speed":1.2,"pitch":0.9}"#;
+        let req: SynthesizeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.text, "hello");
+        assert_eq!(req.model.as_deref(), Some("default"));
+        assert_eq!(req.voice.as_deref(), Some("speaker1"));
+        assert!((req.speed.unwrap() - 1.2).abs() < 1e-5);
+        assert!((req.pitch.unwrap() - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_synthesize_request_serde_minimal() {
+        let json = r#"{"text":"test"}"#;
+        let req: SynthesizeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.text, "test");
+        assert!(req.model.is_none());
+        assert!(req.voice.is_none());
+        assert!(req.speed.is_none());
+        assert!(req.pitch.is_none());
+    }
+
+    #[test]
+    fn test_synthesize_response_serialization() {
+        let resp = SynthesizeResponse {
+            audio_base64: "base64data".to_string(),
+            sample_rate: 22050,
+            duration_secs: 2.5,
+            format: "wav".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["sample_rate"], 22050);
+        assert_eq!(back["format"], "wav");
+    }
+
+    #[test]
+    fn test_transcribe_request_serde() {
+        let json = r#"{"language":"en","timestamps":true}"#;
+        let req: TranscribeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.language.as_deref(), Some("en"));
+        assert_eq!(req.timestamps, Some(true));
+    }
+
+    #[test]
+    fn test_transcribe_request_serde_minimal() {
+        let json = r#"{}"#;
+        let req: TranscribeRequest = serde_json::from_str(json).unwrap();
+        assert!(req.language.is_none());
+        assert!(req.timestamps.is_none());
+    }
+
+    #[test]
+    fn test_transcribe_response_serialization() {
+        let resp = TranscribeResponse {
+            text: "hello world".to_string(),
+            language: Some("en".to_string()),
+            confidence: 0.95,
+            segments: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["text"], "hello world");
+        assert!((back["confidence"].as_f64().unwrap() - 0.95).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_transcript_segment_serialization() {
+        let seg = TranscriptSegment {
+            text: "hi".to_string(),
+            start: 0.0,
+            end: 1.5,
+            confidence: 0.9,
+        };
+        let json = serde_json::to_string(&seg).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["text"], "hi");
+        assert!((back["end"].as_f64().unwrap() - 1.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_audio_validation_response_serialization() {
+        let resp = AudioValidationResponse {
+            valid: true,
+            format: "wav".to_string(),
+            sample_rate: 44100,
+            channels: 2,
+            duration_secs: 3.0,
+            errors: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["valid"], true);
+        assert_eq!(back["channels"], 2);
+    }
+
+    #[test]
+    fn test_audio_health_response_serialization() {
+        let resp = AudioHealthResponse {
+            status: "ok".to_string(),
+            audio_backend: "Symphonia".to_string(),
+            supported_formats: vec!["wav".to_string(), "mp3".to_string()],
+            models_available: vec!["TTS: default".to_string()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["status"], "ok");
+        assert_eq!(back["supported_formats"][0], "wav");
+    }
+
+    #[test]
+    fn test_base64_encode_helper() {
+        let data = b"hello";
+        let encoded = base64_encode(data);
+        use base64::{Engine as _, engine::general_purpose};
+        let expected = general_purpose::STANDARD.encode(data);
+        assert_eq!(encoded, expected);
+    }
+}

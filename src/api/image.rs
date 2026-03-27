@@ -197,3 +197,127 @@ fn base64_encode(data: &[u8]) -> String {
     use base64::{Engine as _, engine::general_purpose};
     general_purpose::STANDARD.encode(data)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_security_level_from_string_valid() {
+        assert!(matches!(SecurityLevel::from_string("low").unwrap(), SecurityLevel::Low));
+        assert!(matches!(SecurityLevel::from_string("medium").unwrap(), SecurityLevel::Medium));
+        assert!(matches!(SecurityLevel::from_string("high").unwrap(), SecurityLevel::High));
+        assert!(matches!(SecurityLevel::from_string("maximum").unwrap(), SecurityLevel::Maximum));
+    }
+
+    #[test]
+    fn test_security_level_from_string_case_insensitive() {
+        assert!(matches!(SecurityLevel::from_string("LOW").unwrap(), SecurityLevel::Low));
+        assert!(matches!(SecurityLevel::from_string("High").unwrap(), SecurityLevel::High));
+        assert!(matches!(SecurityLevel::from_string("MAXIMUM").unwrap(), SecurityLevel::Maximum));
+    }
+
+    #[test]
+    fn test_security_level_from_string_invalid() {
+        let result = SecurityLevel::from_string("unknown");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid security level"));
+    }
+
+    #[test]
+    fn test_image_security_request_serde() {
+        let json = r#"{"security_level":"high"}"#;
+        let req: ImageSecurityRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.security_level, "high");
+    }
+
+    #[test]
+    fn test_image_process_response_serialization() {
+        let security_result = ImageSecurityResult {
+            is_safe: true,
+            security_level: SecurityLevel::Medium,
+            threats_detected: vec![],
+            confidence: 0.99,
+            sanitized: false,
+        };
+        let resp = ImageProcessResponse {
+            success: true,
+            image_base64: Some("iVBORw0KGgo=".to_string()),
+            security_result,
+            processing_time_ms: 42,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["success"], true);
+        assert_eq!(back["processing_time_ms"], 42);
+        assert!(back["image_base64"].as_str().is_some());
+    }
+
+    #[test]
+    fn test_image_validation_response_serialization() {
+        let security_result = ImageSecurityResult {
+            is_safe: false,
+            security_level: SecurityLevel::High,
+            threats_detected: vec![],
+            confidence: 0.75,
+            sanitized: false,
+        };
+        let resp = ImageValidationResponse { security_result };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["security_result"]["is_safe"], false);
+    }
+
+    #[test]
+    fn test_threat_type_stat_serialization() {
+        let stat = ThreatTypeStat {
+            threat_type: "AdversarialPattern".to_string(),
+            count: 5,
+        };
+        let json = serde_json::to_string(&stat).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["count"], 5);
+        assert_eq!(back["threat_type"], "AdversarialPattern");
+    }
+
+    #[test]
+    fn test_image_security_stats_serialization() {
+        let stats = ImageSecurityStats {
+            total_processed: 100,
+            threats_detected: 10,
+            threats_blocked: 8,
+            average_confidence: 0.9,
+            threat_types: vec![ThreatTypeStat {
+                threat_type: "InvalidFormat".to_string(),
+                count: 3,
+            }],
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["total_processed"], 100);
+        assert_eq!(back["threats_blocked"], 8);
+    }
+
+    #[test]
+    fn test_image_health_response_serialization() {
+        let resp = ImageHealthResponse {
+            status: "ok".to_string(),
+            image_backend: "image + imageproc".to_string(),
+            security_enabled: true,
+            supported_formats: vec!["jpg".to_string(), "png".to_string()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["status"], "ok");
+        assert_eq!(back["security_enabled"], true);
+        assert_eq!(back["supported_formats"][1], "png");
+    }
+
+    #[test]
+    fn test_base64_encode_helper() {
+        let data = b"test data";
+        let encoded = base64_encode(data);
+        use base64::{Engine as _, engine::general_purpose};
+        assert_eq!(encoded, general_purpose::STANDARD.encode(data));
+    }
+}
