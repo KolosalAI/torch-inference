@@ -4,6 +4,7 @@ use actix_web::{web, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use tokio::io::AsyncWriteExt;
 
 // ─── Global singletons ───────────────────────────────────────────────────────
 
@@ -502,6 +503,7 @@ async fn download_file_streaming(
     let mut reader = StreamReader::new(stream);
     let mut file = tokio::fs::File::create(dest).await?;
     tokio::io::copy(&mut reader, &mut file).await?;
+    file.flush().await?;
     Ok(())
 }
 
