@@ -613,11 +613,341 @@ mod tests {
             ..Default::default()
         };
         let guard = SystemGuard::new(config);
-        
+
         assert!(guard.check_cache_hit_rate(80.0).await.is_ok());
         guard.check_cache_hit_rate(50.0).await.ok();
-        
+
         let stats = guard.get_violation_stats().await;
         assert!(stats.total_violations > 0);
+    }
+
+    // ---- NEW TESTS ----
+
+    #[tokio::test]
+    async fn test_cache_hit_rate_above_threshold_no_violation() {
+        let config = GuardConfig {
+            min_cache_hit_rate: 60.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        assert!(guard.check_cache_hit_rate(75.0).await.is_ok());
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cache_hit_rate_exactly_at_threshold_no_violation() {
+        let config = GuardConfig {
+            min_cache_hit_rate: 60.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // exactly at threshold — NOT below, so no violation
+        assert!(guard.check_cache_hit_rate(60.0).await.is_ok());
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_worker_success_rate_violation() {
+        let config = GuardConfig {
+            min_worker_success_rate: 95.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        let result = guard.check_worker_success_rate(80.0).await;
+        assert!(result.is_err());
+        let violation = result.unwrap_err();
+        assert_eq!(violation.guard_name, "worker_success_rate");
+        assert_eq!(violation.severity, ViolationSeverity::High);
+        assert!((violation.value - 80.0).abs() < 1e-6);
+        assert!((violation.threshold - 95.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_worker_success_rate_ok() {
+        let config = GuardConfig {
+            min_worker_success_rate: 95.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        assert!(guard.check_worker_success_rate(100.0).await.is_ok());
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_memory_violation() {
+        let config = GuardConfig {
+            max_gpu_memory_percent: 90.0,
+            max_gpu_utilization_percent: 98.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        let result = guard.check_gpu_utilization(95.0, 50.0).await;
+        assert!(result.is_err());
+        let violation = result.unwrap_err();
+        assert_eq!(violation.guard_name, "gpu_memory");
+        assert_eq!(violation.severity, ViolationSeverity::Critical);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_utilization_high_but_memory_ok() {
+        let config = GuardConfig {
+            max_gpu_memory_percent: 90.0,
+            max_gpu_utilization_percent: 98.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Memory is fine, utilization is above limit — only a debug log, not an error
+        let result = guard.check_gpu_utilization(50.0, 99.0).await;
+        assert!(result.is_ok());
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_gpu_utilization_both_ok() {
+        let guard = SystemGuard::default();
+        assert!(guard.check_gpu_utilization(50.0, 50.0).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_memory_warning_threshold() {
+        let config = GuardConfig {
+            max_memory_mb: 1000,
+            memory_warning_threshold_percent: 80.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // 850 MB = 85% > 80% warning threshold but < 1000 MB limit
+        let result = guard.check_memory(850).await;
+        assert!(result.is_ok()); // returns Ok even for warning
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 1);
+        assert_eq!(stats.recent_violations, 1);
+        // The warning violation is Medium severity
+        assert_eq!(stats.by_severity.get(&ViolationSeverity::Medium).copied().unwrap_or(0), 1);
+    }
+
+    #[tokio::test]
+    async fn test_memory_below_warning_no_violation() {
+        let config = GuardConfig {
+            max_memory_mb: 1000,
+            memory_warning_threshold_percent: 80.0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        assert!(guard.check_memory(500).await.is_ok());
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_violation_stats_by_severity() {
+        let config = GuardConfig {
+            max_memory_mb: 100,
+            max_queue_depth: 10,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Critical violation (memory exceeds limit)
+        guard.check_memory(200).await.ok();
+        // High violation (queue depth exceeded)
+        guard.check_queue_depth(20).await.ok();
+
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 2);
+        assert_eq!(stats.critical_violations, 1);
+        assert_eq!(stats.by_severity.get(&ViolationSeverity::Critical).copied().unwrap_or(0), 1);
+        assert_eq!(stats.by_severity.get(&ViolationSeverity::High).copied().unwrap_or(0), 1);
+    }
+
+    #[tokio::test]
+    async fn test_violation_stats_by_guard_name() {
+        let config = GuardConfig {
+            max_queue_depth: 10,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        guard.check_queue_depth(20).await.ok();
+        guard.check_queue_depth(30).await.ok();
+
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.by_guard.get("queue_depth").copied().unwrap_or(0), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_full() {
+        let config = GuardConfig {
+            max_queue_depth: 10,
+            enable_auto_mitigation: true,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        guard.check_queue_depth(50).await.ok();
+        guard.set_guard_enabled("custom_guard", false).await;
+
+        let stats = guard.get_stats().await;
+        assert!(stats.violations.total_violations >= 1);
+        assert!(stats.mitigation_enabled);
+        assert!(!stats.auto_scale_enabled);
+        assert_eq!(stats.guard_states.get("custom_guard"), Some(&false));
+    }
+
+    #[tokio::test]
+    async fn test_is_guard_enabled_unknown_returns_true() {
+        let guard = SystemGuard::default();
+        // An unknown guard defaults to enabled (true)
+        assert!(guard.is_guard_enabled("nonexistent_guard").await);
+    }
+
+    #[tokio::test]
+    async fn test_guard_enable_disable_multiple() {
+        let guard = SystemGuard::default();
+
+        guard.set_guard_enabled("memory_limit", false).await;
+        guard.set_guard_enabled("queue_depth", false).await;
+        guard.set_guard_enabled("worker_rate", true).await;
+
+        assert!(!guard.is_guard_enabled("memory_limit").await);
+        assert!(!guard.is_guard_enabled("queue_depth").await);
+        assert!(guard.is_guard_enabled("worker_rate").await);
+    }
+
+    #[tokio::test]
+    async fn test_violation_history_limit() {
+        let config = GuardConfig {
+            max_queue_depth: 0, // every call violates
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Insert 1005 violations to exceed the 1000-entry cap
+        for _ in 0..1005 {
+            guard.check_queue_depth(1).await.ok();
+        }
+
+        let violations = guard.violations.read().await;
+        assert_eq!(violations.len(), 1000);
+        drop(violations);
+
+        let recent = guard.get_recent_violations(10).await;
+        assert_eq!(recent.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_get_recent_violations_limit_respected() {
+        let config = GuardConfig {
+            max_queue_depth: 0,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        for _ in 0..5 {
+            guard.check_queue_depth(1).await.ok();
+        }
+
+        let recent = guard.get_recent_violations(3).await;
+        assert_eq!(recent.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_reset_stats_clears_violations_and_counts() {
+        let config = GuardConfig {
+            max_memory_mb: 100,
+            max_queue_depth: 10,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        guard.check_memory(200).await.ok();  // critical
+        guard.check_queue_depth(20).await.ok(); // high
+        guard.record_error().await.ok();
+
+        guard.reset_stats().await;
+
+        let stats = guard.get_violation_stats().await;
+        assert_eq!(stats.total_violations, 0);
+        assert_eq!(stats.critical_violations, 0);
+        assert_eq!(stats.recent_violations, 0);
+        assert_eq!(guard.consecutive_errors.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_not_open_initially() {
+        let guard = SystemGuard::default();
+        assert!(!guard.is_circuit_open().await);
+    }
+
+    #[tokio::test]
+    async fn test_circuit_breaker_stats_reflected() {
+        let config = GuardConfig {
+            circuit_breaker_threshold: 2,
+            max_consecutive_errors: 1,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Each call to record_error that exceeds consecutive limit calls trigger_circuit_breaker
+        guard.record_error().await.ok(); // consecutive=1, ok
+        guard.record_error().await.ok(); // consecutive=2 > 1, triggers circuit_breaker (failures=1)
+        guard.record_error().await.ok(); // consecutive=3 > 1, triggers circuit_breaker (failures=2 >= threshold)
+
+        let stats = guard.get_violation_stats().await;
+        assert!(stats.circuit_breaker_open);
+        assert!(stats.circuit_failures >= 2);
+    }
+
+    #[tokio::test]
+    async fn test_violation_severity_low_and_medium() {
+        // Verify Low and Medium severity variants exist and are distinct
+        assert_ne!(ViolationSeverity::Low, ViolationSeverity::Medium);
+        assert_ne!(ViolationSeverity::Medium, ViolationSeverity::High);
+        assert_ne!(ViolationSeverity::High, ViolationSeverity::Critical);
+    }
+
+    #[tokio::test]
+    async fn test_guard_config_default_values() {
+        let config = GuardConfig::default();
+        assert_eq!(config.max_memory_mb, 8192);
+        assert_eq!(config.memory_warning_threshold_percent, 80.0);
+        assert_eq!(config.max_requests_per_second, 1000);
+        assert_eq!(config.max_queue_depth, 500);
+        assert_eq!(config.request_timeout_secs, 30);
+        assert_eq!(config.max_worker_idle_time_secs, 600);
+        assert_eq!(config.min_worker_success_rate, 95.0);
+        assert_eq!(config.min_cache_hit_rate, 60.0);
+        assert_eq!(config.max_cache_eviction_rate, 10.0);
+        assert_eq!(config.max_gpu_memory_percent, 90.0);
+        assert_eq!(config.max_gpu_utilization_percent, 98.0);
+        assert_eq!(config.max_error_rate, 5.0);
+        assert_eq!(config.max_consecutive_errors, 10);
+        assert_eq!(config.circuit_breaker_threshold, 50);
+        assert_eq!(config.circuit_breaker_timeout_secs, 60);
+        assert!(config.enable_auto_mitigation);
+        assert!(config.enable_auto_scaling);
+    }
+
+    #[tokio::test]
+    async fn test_system_guard_default() {
+        let guard = SystemGuard::default();
+        assert!(!guard.circuit_open.load(Ordering::Relaxed));
+        assert_eq!(guard.total_violations.load(Ordering::Relaxed), 0);
+        assert_eq!(guard.critical_violations.load(Ordering::Relaxed), 0);
+        assert_eq!(guard.consecutive_errors.load(Ordering::Relaxed), 0);
+        assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 0);
     }
 }

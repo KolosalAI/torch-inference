@@ -668,4 +668,361 @@ mod tests {
         assert_eq!(pool.config.min_workers, 2);
         assert_eq!(pool.config.max_workers, 16);
     }
+
+    // ---- NEW TESTS ----
+
+    #[tokio::test]
+    async fn test_worker_avg_processing_time_zero_tasks() {
+        let worker = Worker::new(0);
+        let stats = worker.get_stats().await;
+        assert_eq!(stats.tasks_processed, 0);
+        assert_eq!(stats.avg_processing_time_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn test_worker_update_last_active() {
+        let worker = Worker::new(0);
+        // Initially None
+        {
+            let last = worker.last_active.read().await;
+            assert!(last.is_none());
+        }
+        worker.update_last_active().await;
+        let stats = worker.get_stats().await;
+        assert!(stats.last_active.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_worker_state_transitions() {
+        let worker = Worker::new(1);
+        worker.set_state(WorkerState::Processing).await;
+        assert_eq!(worker.get_state().await, WorkerState::Processing);
+
+        worker.set_state(WorkerState::Paused).await;
+        assert_eq!(worker.get_state().await, WorkerState::Paused);
+
+        worker.set_state(WorkerState::Stopping).await;
+        assert_eq!(worker.get_state().await, WorkerState::Stopping);
+
+        worker.set_state(WorkerState::Stopped).await;
+        assert_eq!(worker.get_state().await, WorkerState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_worker_state_equality() {
+        assert_eq!(WorkerState::Idle, WorkerState::Idle);
+        assert_ne!(WorkerState::Idle, WorkerState::Processing);
+        assert_ne!(WorkerState::Paused, WorkerState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_worker_pool_config_default() {
+        let config = WorkerPoolConfig::default();
+        assert_eq!(config.min_workers, 2);
+        assert_eq!(config.max_workers, 16);
+        assert_eq!(config.scale_up_threshold, 10);
+        assert_eq!(config.scale_down_threshold, 2);
+        assert_eq!(config.worker_timeout_secs, 300);
+        assert_eq!(config.health_check_interval_secs, 30);
+        assert!(config.enable_auto_scaling);
+        assert!(!config.enable_zero_scaling);
+    }
+
+    #[tokio::test]
+    async fn test_add_worker_at_max_capacity_returns_error() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            max_workers: 2,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // At capacity — add_worker should fail
+        let result = pool.add_worker().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Maximum workers reached");
+    }
+
+    #[tokio::test]
+    async fn test_remove_idle_worker_at_min_returns_error() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            max_workers: 5,
+            enable_auto_scaling: false,
+            enable_zero_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // Already at min_workers — should fail
+        let result = pool.remove_idle_worker().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Minimum workers reached");
+    }
+
+    #[tokio::test]
+    async fn test_remove_idle_worker_with_no_idle_workers() {
+        let config = WorkerPoolConfig {
+            min_workers: 1,
+            max_workers: 5,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // Add an extra worker so we are above min, then set all to Processing
+        pool.add_worker().await.unwrap();
+        {
+            let workers = pool.workers.read().await;
+            for w in workers.iter() {
+                w.set_state(WorkerState::Processing).await;
+            }
+        }
+        // Clear idle list too
+        pool.idle_workers.lock().unwrap().clear();
+
+        let result = pool.remove_idle_worker().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "No idle workers to remove");
+    }
+
+    #[tokio::test]
+    async fn test_zero_scaling_initialization() {
+        let config = WorkerPoolConfig {
+            min_workers: 3,
+            max_workers: 10,
+            enable_auto_scaling: false,
+            enable_zero_scaling: true,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // With zero scaling, start with 0 workers
+        assert_eq!(pool.worker_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_zero_scaling_min_limit_is_zero() {
+        // With enable_zero_scaling=true, the pool starts with 0 workers.
+        // Attempting to remove while already at 0 should fail with "Minimum workers reached".
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            max_workers: 5,
+            enable_auto_scaling: false,
+            enable_zero_scaling: true,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // With zero_scaling the pool starts at 0 workers
+        assert_eq!(pool.worker_count().await, 0);
+
+        // Removing from an empty pool should fail: "Minimum workers reached" (len 0 <= min_limit 0)
+        let result = pool.remove_idle_worker().await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Minimum workers reached");
+    }
+
+    #[tokio::test]
+    async fn test_zero_scaling_add_then_verify_below_non_zero_min() {
+        // Verifies that zero_scaling overrides min_workers for the lower bound.
+        // Pool can be at 1 worker even when min_workers=2 if zero_scaling is enabled.
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            max_workers: 5,
+            enable_auto_scaling: false,
+            enable_zero_scaling: true,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+        assert_eq!(pool.worker_count().await, 0);
+
+        // Can add workers individually
+        pool.add_worker().await.unwrap();
+        pool.add_worker().await.unwrap();
+        assert_eq!(pool.worker_count().await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_active_worker_count() {
+        let config = WorkerPoolConfig {
+            min_workers: 3,
+            max_workers: 5,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        assert_eq!(pool.active_worker_count().await, 0);
+
+        // Acquire one worker (sets state to Processing)
+        let worker = pool.acquire_worker().await.unwrap();
+        assert_eq!(pool.active_worker_count().await, 1);
+
+        pool.release_worker(worker, 50).await;
+        assert_eq!(pool.active_worker_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_pool_stats_success_rate_with_failures() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // Process 4 tasks (via release) — 2 succeed recorded here via total_tasks
+        let w1 = pool.acquire_worker().await.unwrap();
+        pool.release_worker(w1, 100).await; // total_tasks=1
+        let w2 = pool.acquire_worker().await.unwrap();
+        pool.release_worker(w2, 100).await; // total_tasks=2
+
+        // Record 1 failure (failed_tasks)
+        pool.record_failure();
+
+        let stats = pool.get_stats().await;
+        assert_eq!(stats.total_tasks, 2);
+        assert_eq!(stats.failed_tasks, 1);
+        // success_rate = (2 - 1) / 2 * 100 = 50%
+        assert!((stats.success_rate - 50.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_pool_stats_success_rate_no_tasks() {
+        let pool = WorkerPool::new(WorkerPoolConfig {
+            enable_auto_scaling: false,
+            ..Default::default()
+        });
+        pool.initialize().await.unwrap();
+
+        let stats = pool.get_stats().await;
+        assert_eq!(stats.total_tasks, 0);
+        // With no tasks, success_rate should be 100.0
+        assert!((stats.success_rate - 100.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_pool_shutdown() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        pool.shutdown().await;
+
+        assert!(pool.shutdown.load(Ordering::Relaxed));
+        // All workers should be Stopped
+        let workers = pool.workers.read().await;
+        for w in workers.iter() {
+            assert_eq!(w.get_state().await, WorkerState::Stopped);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pool_pause_resume_only_idle_affected() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        // Set one worker to Processing manually so pause doesn't touch it
+        let worker = pool.acquire_worker().await.unwrap();
+        assert_eq!(worker.get_state().await, WorkerState::Processing);
+
+        pool.pause_all().await;
+
+        // The acquired (Processing) worker should still be Processing
+        assert_eq!(worker.get_state().await, WorkerState::Processing);
+
+        // Release the worker, then resume
+        pool.release_worker(worker, 10).await;
+        pool.resume_all().await;
+
+        let stats = pool.get_stats().await;
+        assert!(stats.worker_stats.iter().all(|s| s.state == WorkerState::Idle));
+    }
+
+    #[tokio::test]
+    async fn test_set_queue_size_updates_correctly() {
+        let pool = WorkerPool::new(WorkerPoolConfig {
+            enable_auto_scaling: false,
+            ..Default::default()
+        });
+
+        pool.set_queue_size(100);
+        assert_eq!(pool.queue_size.load(Ordering::Relaxed), 100);
+
+        pool.set_queue_size(0);
+        assert_eq!(pool.queue_size.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_acquire_release_cycles() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            max_workers: 5,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        for i in 1..=5u64 {
+            let w = pool.acquire_worker().await.unwrap();
+            pool.release_worker(w, i * 10).await;
+        }
+
+        let stats = pool.get_stats().await;
+        assert_eq!(stats.total_tasks, 5);
+        assert_eq!(stats.failed_tasks, 0);
+        assert!((stats.success_rate - 100.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn test_worker_pool_idle_workers_after_release() {
+        let config = WorkerPoolConfig {
+            min_workers: 2,
+            enable_auto_scaling: false,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+
+        let w = pool.acquire_worker().await.unwrap();
+        // Idle queue should have one fewer
+        assert_eq!(pool.idle_workers.lock().unwrap().len(), 1);
+
+        pool.release_worker(w, 50).await;
+        // Idle queue back to 2
+        assert_eq!(pool.idle_workers.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_worker_record_multiple_tasks_avg() {
+        let worker = Worker::new(5);
+        worker.record_task(100);
+        worker.record_task(200);
+        worker.record_task(300);
+
+        let stats = worker.get_stats().await;
+        assert_eq!(stats.tasks_processed, 3);
+        assert_eq!(stats.total_processing_time_ms, 600);
+        assert_eq!(stats.avg_processing_time_ms, 200);
+    }
 }
