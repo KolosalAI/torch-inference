@@ -559,6 +559,329 @@ mod tests {
         let result = download_file_streaming(&client, &server.uri(), &dest).await;
         assert!(result.is_err(), "should error on 404");
     }
+
+    // ── download_model_async – built-in model path ────────────────────────────
+
+    #[tokio::test]
+    async fn test_download_model_async_builtin_returns_ok() {
+        let model = ModelInfo {
+            name: "BuiltIn TTS".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "Built-in".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: "1".to_string(),
+            quality: "High".to_string(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: "tts".to_string(),
+            task: "tts".to_string(),
+        };
+        let result = download_model_async("builtin-model", &model).await;
+        assert!(result.is_ok(), "built-in model should return Ok without downloading");
+    }
+
+    // ── download_model_async – various model_type cache dir branches ──────────
+
+    #[tokio::test]
+    async fn test_download_model_async_model_type_classification_creates_dir() {
+        let model = ModelInfo {
+            name: "Classifier".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: "image-classification".to_string(),
+            task: "classification".to_string(),
+        };
+        let result = download_model_async("cls-model", &model).await;
+        assert!(result.is_ok());
+        assert!(std::path::Path::new("models/classification/cls-model").exists());
+        // Cleanup
+        let _ = std::fs::remove_dir_all("models/classification");
+    }
+
+    #[tokio::test]
+    async fn test_download_model_async_model_type_object_detection_creates_dir() {
+        let model = ModelInfo {
+            name: "Detector".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: "object-detection".to_string(),
+            task: "detection".to_string(),
+        };
+        let result = download_model_async("det-model", &model).await;
+        assert!(result.is_ok());
+        assert!(std::path::Path::new("models/detection/det-model").exists());
+        let _ = std::fs::remove_dir_all("models/detection");
+    }
+
+    #[tokio::test]
+    async fn test_download_model_async_model_type_segmentation_creates_dir() {
+        let model = ModelInfo {
+            name: "Segmenter".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: "segmentation".to_string(),
+            task: "segmentation".to_string(),
+        };
+        let result = download_model_async("seg-model", &model).await;
+        assert!(result.is_ok());
+        assert!(std::path::Path::new("models/segmentation/seg-model").exists());
+        let _ = std::fs::remove_dir_all("models/segmentation");
+    }
+
+    #[tokio::test]
+    async fn test_download_model_async_model_type_neural_network_creates_dir() {
+        let model = ModelInfo {
+            name: "Neural".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: "neural-network".to_string(),
+            task: "inference".to_string(),
+        };
+        let result = download_model_async("nn-model", &model).await;
+        assert!(result.is_ok());
+        assert!(std::path::Path::new("models/neural/nn-model").exists());
+        let _ = std::fs::remove_dir_all("models/neural");
+    }
+
+    #[tokio::test]
+    async fn test_download_model_async_model_type_other_creates_dir() {
+        let model = ModelInfo {
+            name: "Custom".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: "custom-type".to_string(),
+            task: "custom".to_string(),
+        };
+        let result = download_model_async("other-model", &model).await;
+        assert!(result.is_ok());
+        assert!(std::path::Path::new("models/other/other-model").exists());
+        let _ = std::fs::remove_dir_all("models/other");
+    }
+
+    #[tokio::test]
+    async fn test_download_model_async_empty_model_type_defaults_to_tts() {
+        let model = ModelInfo {
+            name: "DefaultTTS".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "Built-in".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Active".to_string(),
+            note: None,
+            model_type: String::new(), // empty → defaults to "tts"
+            task: String::new(),
+        };
+        let result = download_model_async("default-tts-model", &model).await;
+        assert!(result.is_ok());
+        assert!(std::path::Path::new("models/tts/default-tts-model").exists());
+        let _ = std::fs::remove_dir_all("models/tts/default-tts-model");
+    }
+
+    // ── download_model_async – non-HF, non-resolve URL (manual download path) ─
+
+    #[tokio::test]
+    async fn test_download_model_async_manual_download_url_logs_and_returns_ok() {
+        let model = ModelInfo {
+            name: "Manual".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "10MB".to_string(),
+            url: "https://some-other-site.example.com/model.zip".to_string(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Available".to_string(),
+            note: None,
+            model_type: "tts".to_string(),
+            task: "tts".to_string(),
+        };
+        // The "manual download" branch just logs a warning and returns Ok(()).
+        let result = download_model_async("manual-model", &model).await;
+        assert!(result.is_ok(), "manual download branch should return Ok");
+        let _ = std::fs::remove_dir_all("models/tts/manual-model");
+    }
+
+    // ── download_model_async – resolve URL with .onnx extension ──────────────
+
+    #[tokio::test]
+    async fn test_download_model_async_resolve_url_onnx_downloads_file() {
+        let server = MockServer::start().await;
+        let content = b"fake onnx bytes";
+
+        // Match any GET request on this mock server
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content.as_slice()))
+            .mount(&server)
+            .await;
+
+        // Build a URL that contains "resolve" and ends with ".onnx"
+        let url = format!("{}/resolve/main/model.onnx", server.uri());
+        let model = ModelInfo {
+            name: "ONNX Model".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "5MB".to_string(),
+            url: url.clone(),
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Available".to_string(),
+            note: None,
+            model_type: "tts".to_string(),
+            task: "tts".to_string(),
+        };
+
+        let result = download_model_async("onnx-resolve-model", &model).await;
+        assert!(result.is_ok(), "resolve URL onnx download should succeed: {:?}", result);
+        let dest = std::path::Path::new("models/tts/onnx-resolve-model/model.onnx");
+        assert!(dest.exists(), "model.onnx should be written to disk");
+        let _ = std::fs::remove_dir_all("models/tts/onnx-resolve-model");
+    }
+
+    // ── download_model_async – resolve URL with .pth extension ───────────────
+
+    #[tokio::test]
+    async fn test_download_model_async_resolve_url_pth_downloads_file() {
+        let server = MockServer::start().await;
+        let content = b"fake pth bytes";
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content.as_slice()))
+            .mount(&server)
+            .await;
+
+        let url = format!("{}/resolve/main/model.pth", server.uri());
+        let model = ModelInfo {
+            name: "PTH Model".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "5MB".to_string(),
+            url,
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Available".to_string(),
+            note: None,
+            model_type: "tts".to_string(),
+            task: "tts".to_string(),
+        };
+
+        let result = download_model_async("pth-resolve-model", &model).await;
+        assert!(result.is_ok(), "resolve URL pth download should succeed: {:?}", result);
+        let dest = std::path::Path::new("models/tts/pth-resolve-model/model.pth");
+        assert!(dest.exists(), "model.pth should be written to disk");
+        let _ = std::fs::remove_dir_all("models/tts/pth-resolve-model");
+    }
+
+    // ── download_model_async – resolve URL with unknown extension → .bin ─────
+
+    #[tokio::test]
+    async fn test_download_model_async_resolve_url_bin_extension() {
+        let server = MockServer::start().await;
+        let content = b"generic binary";
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content.as_slice()))
+            .mount(&server)
+            .await;
+
+        // URL contains "resolve" but ends with an unknown extension → maps to .bin
+        let url = format!("{}/resolve/main/weights.safetensors", server.uri());
+        let model = ModelInfo {
+            name: "BIN Model".to_string(),
+            score: 0.0,
+            rank: 1,
+            size: "5MB".to_string(),
+            url,
+            architecture: String::new(),
+            voices: String::new(),
+            quality: String::new(),
+            status: "Available".to_string(),
+            note: None,
+            model_type: "tts".to_string(),
+            task: "tts".to_string(),
+        };
+
+        let result = download_model_async("bin-resolve-model", &model).await;
+        assert!(result.is_ok(), "resolve URL bin download should succeed: {:?}", result);
+        let dest = std::path::Path::new("models/tts/bin-resolve-model/model.bin");
+        assert!(dest.exists(), "model.bin should be written to disk");
+        let _ = std::fs::remove_dir_all("models/tts/bin-resolve-model");
+    }
+
+    // ── download_files_concurrent – mixed success/failure ─────────────────────
+
+    #[tokio::test]
+    async fn test_download_files_concurrent_mixed_success_and_failure() {
+        let server = MockServer::start().await;
+        let content = b"good content";
+
+        Mock::given(method("GET"))
+            .and(path("/good.bin"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content.as_slice()))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/bad.bin"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let client = reqwest::Client::new();
+
+        let files = vec![
+            (format!("{}/good.bin", server.uri()), dir.path().join("good.bin")),
+            (format!("{}/bad.bin", server.uri()), dir.path().join("bad.bin")),
+        ];
+
+        // Should still return Ok even with a failure
+        let result = download_files_concurrent(&client, files).await;
+        assert!(result.is_ok(), "mixed results should still return Ok");
+        // good.bin should have been written
+        assert!(dir.path().join("good.bin").exists());
+    }
 }
 
 #[cfg(test)]
@@ -683,6 +1006,48 @@ mod model_info_tests {
         let json = r#"{"name": "M", "voices": 7}"#;
         let info: ModelInfo = serde_json::from_str(json).unwrap();
         assert_eq!(info.voices, "7");
+    }
+
+    #[test]
+    fn test_de_string_or_num_null_becomes_empty_string() {
+        let json = r#"{"name": "M", "voices": null}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.voices, "", "null voices should deserialize as empty string");
+    }
+
+    #[test]
+    fn test_de_string_or_num_bool_becomes_empty_string() {
+        let json = r#"{"name": "M", "voices": true}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.voices, "", "boolean voices should deserialize as empty string");
+    }
+
+    #[test]
+    fn test_de_f32_or_str_null_becomes_zero() {
+        let json = r#"{"name": "M", "score": null}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert!((info.score - 0.0).abs() < 1e-6, "null score should become 0.0");
+    }
+
+    #[test]
+    fn test_de_i32_or_str_null_becomes_zero() {
+        let json = r#"{"name": "M", "rank": null}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.rank, 0, "null rank should become 0");
+    }
+
+    #[test]
+    fn test_model_info_float_score_preserved() {
+        let json = r#"{"name": "M", "score": 99.9}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert!((info.score - 99.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_model_info_negative_rank() {
+        let json = r#"{"name": "M", "rank": -5}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.rank, -5);
     }
 }
 
@@ -1019,6 +1384,198 @@ mod api_endpoint_tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["error"], "Model not found");
+    }
+
+    // ── download_model handler – already_downloaded path ─────────────────────
+
+    /// A local download handler variant that accepts the registry via web::Data
+    /// so we can inject a test registry with a "Downloaded" model.
+    async fn download_model_data_handler(
+        data: web::Data<ModelRegistry>,
+        req: web::Json<DownloadRequest>,
+    ) -> actix_web::Result<HttpResponse> {
+        match data.get_model(&req.model_id) {
+            Some(model) => {
+                if model.status == "Downloaded" || model.status == "Active" {
+                    return Ok(HttpResponse::Ok().json(serde_json::json!({
+                        "status": "already_downloaded",
+                        "model": model
+                    })));
+                }
+                // For the test registry, all non-Downloaded models initiate download
+                // (we won't actually spawn — just return the response shape).
+                Ok(HttpResponse::Ok().json(serde_json::json!({
+                    "status": "download_initiated",
+                    "model": model,
+                    "message": format!("Download started for {}", model.name)
+                })))
+            }
+            None => Ok(HttpResponse::NotFound().json(serde_json::json!({
+                "error": "Model not found",
+                "model_id": req.model_id
+            }))),
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_download_endpoint_already_downloaded_returns_already_downloaded_status() {
+        let registry = make_test_registry(); // test-tts has status="Downloaded"
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route(
+                    "/api/models/download",
+                    web::post().to(download_model_data_handler),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/models/download")
+            .set_json(DownloadRequest {
+                model_id: "test-tts".to_string(),
+            })
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["status"], "already_downloaded");
+        assert_eq!(body["model"]["name"], "Test TTS");
+    }
+
+    #[actix_web::test]
+    async fn test_download_endpoint_available_model_initiates_download() {
+        let registry = make_test_registry(); // test-det has status="Available"
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route(
+                    "/api/models/download",
+                    web::post().to(download_model_data_handler),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/models/download")
+            .set_json(DownloadRequest {
+                model_id: "test-det".to_string(),
+            })
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["status"], "download_initiated");
+    }
+
+    // ── list_downloaded – with "Active" status ────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_list_downloaded_includes_active_status_models() {
+        // Build a registry that has one Active model (not only Downloaded).
+        let json = r#"{
+            "version": "1.0",
+            "updated": "2026-01-01T00:00:00Z",
+            "models": {
+                "active-model": {
+                    "name": "Active Model",
+                    "score": 90.0,
+                    "rank": 1,
+                    "size": "50 MB",
+                    "url": "Built-in",
+                    "architecture": "Neural TTS",
+                    "voices": "5",
+                    "quality": "High",
+                    "status": "Active",
+                    "model_type": "tts",
+                    "task": "text-to-speech"
+                },
+                "available-model": {
+                    "name": "Available Model",
+                    "score": 60.0,
+                    "rank": 2,
+                    "size": "30 MB",
+                    "url": "https://example.com",
+                    "architecture": "CNN",
+                    "voices": "1",
+                    "quality": "Medium",
+                    "status": "Available",
+                    "model_type": "tts",
+                    "task": "text-to-speech"
+                }
+            }
+        }"#;
+        let registry = ModelRegistry::from_json_str(json);
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route(
+                    "/api/models/downloaded",
+                    web::get().to(list_downloaded_handler),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/models/downloaded")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["count"], 1, "only Active model should be included");
+        assert!(body["models"]["active-model"].is_object());
+        assert!(body["models"].get("available-model").is_none());
+    }
+
+    // ── get_comparison – empty registry ───────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_get_comparison_endpoint_empty_registry() {
+        let registry = ModelRegistry::empty();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route(
+                    "/api/models/comparison",
+                    web::get().to(get_comparison_handler),
+                ),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/models/comparison")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["total_count"], 0);
+        assert!(body["models"].as_array().unwrap().is_empty());
+    }
+
+    // ── list_models – empty registry ──────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_list_models_endpoint_empty_registry() {
+        let registry = ModelRegistry::empty();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route("/api/models", web::get().to(list_models_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/models").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        // Empty registry still returns a valid JSON object with an empty models map
+        assert!(body["models"].is_object());
+        assert!(body["models"].as_object().unwrap().is_empty());
     }
 }
 

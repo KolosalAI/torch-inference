@@ -738,6 +738,265 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // ── infer_onnx – model registered but not loaded ──────────────────────────
+
+    #[tokio::test]
+    async fn test_infer_onnx_registered_but_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notloaded.onnx");
+        std::fs::write(&path, b"onnx placeholder").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("notloaded-onnx".to_string()))
+            .await
+            .unwrap();
+
+        // The model is in the registry but has not been loaded into loaded_onnx_models
+        let result = manager
+            .infer_onnx("notloaded-onnx", &serde_json::json!({"x": 1}))
+            .await;
+        assert!(result.is_err(), "should error when model not loaded");
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("not loaded") || err_str.contains("not found"),
+            "error message should indicate model is not loaded: {}",
+            err_str
+        );
+    }
+
+    // ── infer_registered – ONNX registered but not loaded ────────────────────
+
+    #[tokio::test]
+    async fn test_infer_registered_onnx_not_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reg-notloaded.onnx");
+        std::fs::write(&path, b"onnx bytes").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("reg-notloaded-onnx".to_string()))
+            .await
+            .unwrap();
+
+        // infer_registered routes through infer_onnx which should fail
+        let result = manager
+            .infer_registered("reg-notloaded-onnx", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err(), "should fail if ONNX model not loaded");
+    }
+
+    // ── infer_registered – PyTorch (no torch feature) ────────────────────────
+
+    #[cfg(not(feature = "torch"))]
+    #[tokio::test]
+    async fn test_infer_registered_pytorch_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pt-disabled.pt");
+        std::fs::write(&path, b"pt bytes").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("pt-disabled".to_string()))
+            .await
+            .unwrap();
+
+        let result = manager
+            .infer_registered("pt-disabled", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err(), "should fail with torch disabled");
+        assert!(result.unwrap_err().to_string().contains("disabled"));
+    }
+
+    // ── infer_registered – SafeTensors (unsupported format) ──────────────────
+
+    #[tokio::test]
+    async fn test_infer_registered_unsupported_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("weights.safetensors");
+        std::fs::write(&path, b"safetensors data").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("sf-model".to_string()))
+            .await
+            .unwrap();
+
+        let result = manager
+            .infer_registered("sf-model", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err(), "SafeTensors format should return an error");
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("Unsupported") || err_str.contains("format"),
+            "error should mention unsupported format: {}",
+            err_str
+        );
+    }
+
+    // ── list_by_format – with PyTorch model ───────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_by_format_pytorch() {
+        let dir = tempfile::tempdir().unwrap();
+        let pt_path = dir.path().join("mymodel.pt");
+        let onnx_path = dir.path().join("mymodel.onnx");
+        std::fs::write(&pt_path, b"pt data").unwrap();
+        std::fs::write(&onnx_path, b"onnx data").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&pt_path, Some("pt-only".to_string()))
+            .await
+            .unwrap();
+        manager
+            .register_model_from_path(&onnx_path, Some("onnx-only".to_string()))
+            .await
+            .unwrap();
+
+        let pytorch_models = manager.list_by_format(ModelFormat::PyTorch);
+        assert_eq!(pytorch_models.len(), 1);
+        assert_eq!(pytorch_models[0].id, "pt-only");
+
+        let onnx_models = manager.list_by_format(ModelFormat::ONNX);
+        assert_eq!(onnx_models.len(), 1);
+        assert_eq!(onnx_models[0].id, "onnx-only");
+    }
+
+    // ── list_by_format – SafeTensors ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_by_format_safetensors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("weights.safetensors");
+        std::fs::write(&path, b"sf data").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("sf-only".to_string()))
+            .await
+            .unwrap();
+
+        let sf_models = manager.list_by_format(ModelFormat::SafeTensors);
+        assert_eq!(sf_models.len(), 1);
+        assert_eq!(sf_models[0].id, "sf-only");
+
+        // Other formats should be empty
+        let onnx_models = manager.list_by_format(ModelFormat::ONNX);
+        assert!(onnx_models.is_empty());
+    }
+
+    // ── export_registry – non-empty ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_export_registry_with_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("export-model".to_string()))
+            .await
+            .unwrap();
+
+        let exported = manager.export_registry();
+        assert_eq!(exported["total"], 1);
+        assert!(
+            exported["models"].is_array() || exported["models"].is_object(),
+            "exported models should be a collection"
+        );
+    }
+
+    // ── get_registry_stats – multiple models ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_registry_stats_multiple_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let p1 = dir.path().join("a.onnx");
+        let p2 = dir.path().join("b.onnx");
+        std::fs::write(&p1, b"aaa").unwrap();
+        std::fs::write(&p2, b"bbbbb").unwrap();
+
+        let manager = default_manager();
+        manager.register_model_from_path(&p1, None).await.unwrap();
+        manager.register_model_from_path(&p2, None).await.unwrap();
+
+        let stats = manager.get_registry_stats();
+        assert_eq!(stats["total_models"], 2);
+        assert_eq!(stats["loaded_models"], 0);
+        let total_size = stats["total_size_mb"].as_f64().unwrap();
+        assert!(total_size >= 0.0, "total size should be non-negative");
+    }
+
+    // ── load_model_onnx – wrong format error ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_load_onnx_model_wrong_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mymodel.pt");
+        std::fs::write(&path, b"pt bytes").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("wrong-format".to_string()))
+            .await
+            .unwrap();
+
+        // Trying to load a PyTorch model as ONNX should fail
+        let result = manager.load_onnx_model("wrong-format").await;
+        assert!(result.is_err(), "loading a .pt model via load_onnx_model should fail");
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("not an ONNX model") || err_str.contains("ONNX"),
+            "error should mention ONNX: {}",
+            err_str
+        );
+    }
+
+    // ── load_onnx_model – model not in registry ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_load_onnx_model_not_in_registry() {
+        let manager = default_manager();
+        let result = manager.load_onnx_model("does-not-exist").await;
+        assert!(result.is_err(), "should fail for unregistered model");
+    }
+
+    // ── get_model_metadata – after registration ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_model_metadata_after_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.onnx");
+        std::fs::write(&path, b"meta content").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("meta-model".to_string()))
+            .await
+            .unwrap();
+
+        let meta = manager.get_model_metadata("meta-model").unwrap();
+        assert_eq!(meta.id, "meta-model");
+        assert_eq!(meta.format, ModelFormat::ONNX);
+    }
+
+    // ── list_available – with registry models only ────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_available_with_only_registry_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reg-only.onnx");
+        std::fs::write(&path, b"bytes").unwrap();
+
+        let manager = default_manager();
+        manager.register_model_from_path(&path, None).await.unwrap();
+
+        let available = manager.list_available();
+        assert!(available.contains(&"reg-only".to_string()));
+    }
+
     // ── load_pytorch_model disabled (no torch feature) ───────────────────────
 
     #[cfg(not(feature = "torch"))]
