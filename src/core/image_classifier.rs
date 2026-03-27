@@ -201,10 +201,25 @@ impl ImageClassifier {
     pub fn num_classes(&self) -> usize {
         self.labels.len()
     }
-    
+
     /// Get class label by index
     pub fn get_label(&self, class_id: usize) -> Option<&str> {
         self.labels.get(class_id).map(|s| s.as_str())
+    }
+
+    /// Construct a stub classifier for tests (no model loaded)
+    #[cfg(test)]
+    pub fn new_stub(labels: Vec<String>) -> Self {
+        Self {
+            #[cfg(not(feature = "torch"))]
+            model: (),
+            #[cfg(not(feature = "torch"))]
+            device: (),
+            labels,
+            input_size: (224, 224),
+            normalize_mean: vec![0.485, 0.456, 0.406],
+            normalize_std: vec![0.229, 0.224, 0.225],
+        }
     }
 }
 
@@ -258,10 +273,72 @@ pub mod models {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_load_labels() {
         let labels = load_imagenet_labels();
         assert_eq!(labels.len(), 1000);
+    }
+
+    #[test]
+    fn test_new_stub_num_classes() {
+        let labels = vec!["cat".to_string(), "dog".to_string()];
+        let clf = ImageClassifier::new_stub(labels.clone());
+        assert_eq!(clf.num_classes(), 2);
+    }
+
+    #[test]
+    fn test_new_stub_get_label() {
+        let labels = vec!["apple".to_string(), "banana".to_string()];
+        let clf = ImageClassifier::new_stub(labels);
+        assert_eq!(clf.get_label(0), Some("apple"));
+        assert_eq!(clf.get_label(1), Some("banana"));
+        assert_eq!(clf.get_label(99), None);
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_new_without_torch_returns_error() {
+        let path = std::path::Path::new("/nonexistent/model.pt");
+        let result = ImageClassifier::new(path, vec!["cat".to_string()], None, None);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("PyTorch feature not enabled") || msg.contains("torch"), "unexpected: {}", msg);
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_preprocess_image_without_torch_returns_error() {
+        let clf = ImageClassifier::new_stub(vec!["cat".to_string()]);
+        let path = std::path::Path::new("/tmp/test.jpg");
+        let result = clf.preprocess_image(path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_models_resnet50_config() {
+        let cfg = models::resnet50();
+        assert_eq!(cfg.name, "ResNet-50");
+        assert_eq!(cfg.input_size, (224, 224));
+        assert_eq!(cfg.num_classes, 1000);
+        assert!(cfg.url.contains("resnet50"));
+    }
+
+    #[test]
+    fn test_models_mobilenet_v2_config() {
+        let cfg = models::mobilenet_v2();
+        assert_eq!(cfg.name, "MobileNetV2");
+        assert_eq!(cfg.input_size, (224, 224));
+        assert_eq!(cfg.num_classes, 1000);
+        assert!(cfg.url.contains("mobilenet"));
+    }
+
+    #[test]
+    fn test_models_efficientnet_b0_config() {
+        let cfg = models::efficientnet_b0();
+        assert_eq!(cfg.name, "EfficientNet-B0");
+        assert_eq!(cfg.input_size, (224, 224));
+        assert_eq!(cfg.num_classes, 1000);
+        assert!(cfg.url.contains("efficientnet"));
     }
 }

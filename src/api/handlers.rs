@@ -819,6 +819,196 @@ mod tests {
         assert_eq!(resp_body["model_info"]["source"], "deduplication_cache");
     }
 
+    // ── predict: success path (lines 85-97) ──────────────────────────────────
+    // Register a loaded BaseModel so engine.infer() succeeds and exercises lines 85-97.
+
+    fn make_engine_with_loaded_model(model_name: &str) -> web::Data<Arc<InferenceEngine>> {
+        let cfg = Config::default();
+        let manager = Arc::new(ModelManager::new(&cfg, None));
+        // Synchronously register a loaded BaseModel using a separate runtime
+        let mgr_clone = manager.clone();
+        let model_name_owned = model_name.to_string();
+        // Use tokio block_in_place since we're inside an async context
+        // (called from actix_web::test which runs its own runtime)
+        let rt = tokio::runtime::Handle::current();
+        std::thread::spawn(move || {
+            rt.block_on(async {
+                use crate::models::manager::BaseModel;
+                let mut model = BaseModel::new(model_name_owned.clone());
+                model.load().await.unwrap();
+                mgr_clone.register_model(model_name_owned, model).await.unwrap();
+            });
+        })
+        .join()
+        .unwrap();
+        web::Data::new(Arc::new(InferenceEngine::new(manager, &cfg)))
+    }
+
+    #[actix_web::test]
+    async fn test_predict_with_loaded_model_returns_200() {
+        let monitor = make_monitor();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+        let cfg = Config::default();
+        let manager = Arc::new(ModelManager::new(&cfg, None));
+        {
+            use crate::models::manager::BaseModel;
+            let mut model = BaseModel::new("loaded-infer-model".to_string());
+            model.load().await.unwrap();
+            manager.register_model("loaded-infer-model".to_string(), model).await.unwrap();
+        }
+        let engine = web::Data::new(Arc::new(InferenceEngine::new(manager, &cfg)));
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "loaded-infer-model",
+            "inputs": {"data": [1, 2, 3]},
+            "priority": 0,
+            "timeout": null
+        });
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_predict_success_response_body_shape() {
+        let monitor = make_monitor();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+        let cfg = Config::default();
+        let manager = Arc::new(ModelManager::new(&cfg, None));
+        {
+            use crate::models::manager::BaseModel;
+            let mut model = BaseModel::new("echo-model".to_string());
+            model.load().await.unwrap();
+            manager.register_model("echo-model".to_string(), model).await.unwrap();
+        }
+        let engine = web::Data::new(Arc::new(InferenceEngine::new(manager, &cfg)));
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let inputs = serde_json::json!({"key": "value"});
+        let body = serde_json::json!({
+            "model_name": "echo-model",
+            "inputs": inputs,
+            "priority": 0,
+            "timeout": null
+        });
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp_body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(resp_body["success"], true);
+        assert!(resp_body["error"].is_null());
+        assert!(resp_body["processing_time"].is_number());
+        // result should be the echoed input (BaseModel::forward echoes inputs)
+        assert!(resp_body["result"].is_object());
+    }
+
+    // ── synthesize_tts: success path (lines 124-135) ──────────────────────────
+
+    #[actix_web::test]
+    async fn test_synthesize_tts_with_loaded_model_returns_200() {
+        let monitor = make_monitor();
+        let cfg = Config::default();
+        let manager = Arc::new(ModelManager::new(&cfg, None));
+        {
+            use crate::models::manager::BaseModel;
+            let mut model = BaseModel::new("tts-success-model".to_string());
+            model.load().await.unwrap();
+            manager.register_model("tts-success-model".to_string(), model).await.unwrap();
+        }
+        let engine = web::Data::new(Arc::new(InferenceEngine::new(manager, &cfg)));
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/synthesize", web::post().to(synthesize_tts))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "tts-success-model",
+            "text": "Hello world",
+            "voice": null,
+            "speed": 1.0,
+            "pitch": 1.0,
+            "volume": 1.0,
+            "language": "en",
+            "emotion": null,
+            "output_format": "wav"
+        });
+        let req = test::TestRequest::post()
+            .uri("/synthesize")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_synthesize_tts_success_response_body_shape() {
+        let monitor = make_monitor();
+        let cfg = Config::default();
+        let manager = Arc::new(ModelManager::new(&cfg, None));
+        {
+            use crate::models::manager::BaseModel;
+            let mut model = BaseModel::new("tts-body-model".to_string());
+            model.load().await.unwrap();
+            manager.register_model("tts-body-model".to_string(), model).await.unwrap();
+        }
+        let engine = web::Data::new(Arc::new(InferenceEngine::new(manager, &cfg)));
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/synthesize", web::post().to(synthesize_tts))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "tts-body-model",
+            "text": "Testing TTS",
+            "voice": null,
+            "speed": 1.0,
+            "pitch": 1.0,
+            "volume": 1.0,
+            "language": "en",
+            "emotion": null,
+            "output_format": "mp3"
+        });
+        let req = test::TestRequest::post()
+            .uri("/synthesize")
+            .set_json(&body)
+            .to_request();
+        let resp_body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(resp_body["success"], true);
+        assert!(resp_body["error"].is_null());
+        assert!(resp_body["audio_data"].is_string());
+        assert!(resp_body["processing_time"].is_number());
+        assert_eq!(resp_body["sample_rate"], 16000);
+    }
+
     // ── configure_routes ─────────────────────────────────────────────────────
 
     #[actix_web::test]

@@ -451,4 +451,181 @@ mod tests {
         let id = CorrelationId::new();
         let _span = create_inference_span("llama3", 0, &id);
     }
+
+    // ── Additional gap-closing tests ───────────────────────────────────────────
+
+    /// Exercises init_structured_logging with json=false AND a log_dir.
+    /// This path goes through the `else` branch (human-readable) which already
+    /// has no file-appender variant, but the subscriber creation lines are
+    /// still evaluated.
+    #[test]
+    fn test_init_structured_logging_plain_with_dir() {
+        let tmp = std::env::temp_dir();
+        let dir = tmp.to_string_lossy().to_string();
+        // json=false path — the subscriber is built from fmt_layer (lines 51-61).
+        // set_global_default may panic if already set; catch that.
+        let _ = std::panic::catch_unwind(|| {
+            init_structured_logging(Some(&dir), false);
+        });
+    }
+
+    /// Exercises CorrelationId::new (Default) producing distinct UUIDs.
+    #[test]
+    fn test_correlation_id_uniqueness() {
+        let ids: Vec<_> = (0..5).map(|_| CorrelationId::new().as_str().to_string()).collect();
+        // All five should be distinct
+        let set: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(set.len(), 5);
+    }
+
+    /// Exercises RequestMetrics fields directly.
+    #[test]
+    fn test_request_metrics_fields() {
+        let id = CorrelationId::from_header("test-id-abc");
+        let metrics = RequestMetrics::new(id);
+        // correlation_id is accessible
+        assert_eq!(metrics.correlation_id.as_str(), "test-id-abc");
+        // start_time was set (duration should be very small)
+        assert!(metrics.duration_ms() < 5000);
+    }
+
+    /// Exercises create_request_span with a DELETE verb.
+    #[test]
+    fn test_create_request_span_delete() {
+        let id = CorrelationId::new();
+        let _span = create_request_span("DELETE", "/api/models/123", &id);
+    }
+
+    /// Exercises create_inference_span with a large batch.
+    #[test]
+    fn test_create_inference_span_large_batch() {
+        let id = CorrelationId::new();
+        let _span = create_inference_span("gpt-4", 512, &id);
+    }
+
+    // ── Lines 272, 274, 282, 284: log_completion and log_error with a subscriber ─
+    // These lines are inside tracing::info!/error! calls. Without a subscriber,
+    // the events are created but not processed. Installing a no-op subscriber
+    // ensures the event bodies are evaluated (which exercises the lines).
+
+    fn with_noop_subscriber<F: FnOnce()>(f: F) {
+        // tracing::subscriber::with_default installs a subscriber only for this thread
+        // for the duration of the closure, without affecting other tests.
+        use tracing_subscriber::fmt;
+        let subscriber = fmt::Subscriber::builder()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(std::io::sink) // discard output
+            .finish();
+        let _ = tracing::subscriber::with_default(subscriber, f);
+    }
+
+    #[test]
+    fn test_log_completion_emits_event_with_subscriber() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            let metrics = RequestMetrics::new(id);
+            // Lines 272 and 274 are inside this call
+            metrics.log_completion(200, "/api/v1/infer");
+        });
+    }
+
+    #[test]
+    fn test_log_error_emits_event_with_subscriber() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            let metrics = RequestMetrics::new(id);
+            // Lines 282 and 284 are inside this call
+            metrics.log_error("something failed", "/api/v1/infer");
+        });
+    }
+
+    #[test]
+    fn test_log_completion_various_status_codes() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            let metrics = RequestMetrics::new(id);
+            for &status in &[200u16, 201, 400, 404, 500] {
+                metrics.log_completion(status, "/test");
+            }
+        });
+    }
+
+    // ── Lines 191, 206: correlation_id field inside info_span! macros ─────────
+    // tracing::info_span! field values are only evaluated when a subscriber is
+    // active and the span's level is enabled. We install a thread-local subscriber
+    // to ensure the field-value expressions on lines 191 and 206 are actually
+    // executed by the tracing machinery.
+
+    #[test]
+    fn test_create_request_span_with_active_subscriber_line_191() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            // Entering the span forces tracing to record all field values,
+            // including `correlation_id = %correlation_id.as_str()` on line 191.
+            let span = create_request_span("GET", "/api/health", &id);
+            let _guard = span.enter();
+            // Nothing further needed; entering exercised line 191.
+        });
+    }
+
+    #[test]
+    fn test_create_inference_span_with_active_subscriber_line_206() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            // Entering exercises `correlation_id = %correlation_id.as_str()` on line 206.
+            let span = create_inference_span("bert-base", 8, &id);
+            let _guard = span.enter();
+        });
+    }
+
+    #[test]
+    fn test_create_request_span_entered_multiple_times() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            for method in &["GET", "POST", "PUT", "DELETE"] {
+                let span = create_request_span(method, "/api/test", &id);
+                let _g = span.enter();
+            }
+        });
+    }
+
+    #[test]
+    fn test_create_inference_span_entered_multiple_times() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::new();
+            for batch in [1usize, 4, 16, 64] {
+                let span = create_inference_span("gpt2", batch, &id);
+                let _g = span.enter();
+            }
+        });
+    }
+
+    // ── Lines 272, 274, 282, 284: tracing event fields in log_completion / log_error ─
+    // These lines are the field expressions evaluated when a tracing event is
+    // created inside RequestMetrics::log_completion and RequestMetrics::log_error.
+    // A subscriber with TRACE level ensures all fields are evaluated.
+
+    #[test]
+    fn test_log_completion_fields_evaluated_with_subscriber() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::from_header("cid-line-272");
+            let metrics = RequestMetrics::new(id);
+            // log_completion emits tracing::info! with fields on lines 272-276.
+            // With an active subscriber all field expressions are evaluated.
+            metrics.log_completion(201, "/api/v2/predict");
+            metrics.log_completion(404, "/api/v2/missing");
+            metrics.log_completion(500, "/api/v2/error");
+        });
+    }
+
+    #[test]
+    fn test_log_error_fields_evaluated_with_subscriber() {
+        with_noop_subscriber(|| {
+            let id = CorrelationId::from_header("cid-line-282");
+            let metrics = RequestMetrics::new(id);
+            // log_error emits tracing::error! with fields on lines 282-286.
+            metrics.log_error("timeout", "/api/v2/infer");
+            metrics.log_error("out of memory", "/api/v2/infer");
+        });
+    }
 }

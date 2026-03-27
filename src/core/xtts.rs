@@ -197,3 +197,139 @@ impl TTSEngine for XTTSEngine {
         self.capabilities.supported_voices.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_cfg() -> serde_json::Value {
+        serde_json::json!({})
+    }
+
+    fn custom_cfg() -> serde_json::Value {
+        serde_json::json!({
+            "model_path": "/tmp/xtts/model.pth",
+            "config_path": "/tmp/xtts/config.json",
+            "sample_rate": 44100
+        })
+    }
+
+    // ── XTTSConfig serde ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_xtts_config_serialize_deserialize() {
+        let cfg = XTTSConfig {
+            model_path: std::path::PathBuf::from("/tmp/x.pth"),
+            config_path: std::path::PathBuf::from("/tmp/x.json"),
+            sample_rate: 24000,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("sample_rate"));
+        let back: XTTSConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 24000);
+        assert_eq!(back.model_path, std::path::PathBuf::from("/tmp/x.pth"));
+    }
+
+    #[test]
+    fn test_xtts_config_clone_debug() {
+        let cfg = XTTSConfig {
+            model_path: std::path::PathBuf::from("p"),
+            config_path: std::path::PathBuf::from("q"),
+            sample_rate: 22050,
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.sample_rate, 22050);
+        let dbg = format!("{:?}", cloned);
+        assert!(dbg.contains("XTTSConfig"));
+    }
+
+    // ── XTTSEngine::new ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_xtts_engine_new_with_empty_config() {
+        let result = XTTSEngine::new(&empty_cfg());
+        assert!(result.is_ok(), "should succeed: {:?}", result.err());
+        let engine = result.unwrap();
+        assert_eq!(engine.name(), "xtts");
+    }
+
+    #[test]
+    fn test_xtts_engine_new_default_sample_rate() {
+        let engine = XTTSEngine::new(&empty_cfg()).unwrap();
+        assert_eq!(engine.config.sample_rate, 24000);
+    }
+
+    #[test]
+    fn test_xtts_engine_new_with_custom_config() {
+        let engine = XTTSEngine::new(&custom_cfg()).unwrap();
+        assert_eq!(engine.config.sample_rate, 44100);
+        assert_eq!(engine.config.model_path, std::path::PathBuf::from("/tmp/xtts/model.pth"));
+    }
+
+    // ── capabilities & voices ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_xtts_engine_capabilities() {
+        let engine = XTTSEngine::new(&empty_cfg()).unwrap();
+        let caps = engine.capabilities();
+        assert_eq!(caps.name, "XTTS Multilingual TTS");
+        assert_eq!(caps.max_text_length, 2000);
+        assert!(!caps.supports_ssml);
+        assert!(caps.supports_streaming);
+        // 16 languages
+        assert_eq!(caps.supported_languages.len(), 16);
+        assert!(caps.supported_languages.contains(&"en".to_string()));
+        assert!(caps.supported_languages.contains(&"ja".to_string()));
+        assert!(caps.supported_languages.contains(&"zh-cn".to_string()));
+    }
+
+    #[test]
+    fn test_xtts_engine_list_voices() {
+        let engine = XTTSEngine::new(&empty_cfg()).unwrap();
+        let voices = engine.list_voices();
+        assert_eq!(voices.len(), 3);
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert!(ids.contains(&"xtts_v2_en_female"));
+        assert!(ids.contains(&"xtts_v2_en_male"));
+        assert!(ids.contains(&"xtts_v2_multilingual"));
+        // All voices should be Premium quality
+        for v in &voices {
+            assert_eq!(format!("{:?}", v.quality), "Premium");
+        }
+    }
+
+    // ── synthesize ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_xtts_synthesize_basic() {
+        let engine = XTTSEngine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let result = engine.synthesize("hello world", &params).await;
+        assert!(result.is_ok());
+        let audio = result.unwrap();
+        assert_eq!(audio.channels, 1);
+        assert_eq!(audio.sample_rate, 24000);
+        assert!(!audio.samples.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_xtts_synthesize_samples_clamped() {
+        let engine = XTTSEngine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let audio = engine.synthesize("clamp check text here", &params).await.unwrap();
+        for &s in &audio.samples {
+            assert!(s >= -1.0 && s <= 1.0, "sample out of range: {}", s);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_xtts_synthesize_custom_speed() {
+        let engine = XTTSEngine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams {
+            speed: 2.0,
+            ..Default::default()
+        };
+        let result = engine.synthesize("fast speech test", &params).await;
+        assert!(result.is_ok());
+    }
+}

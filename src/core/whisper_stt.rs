@@ -226,6 +226,53 @@ mod tests {
                 "Expected [FALLBACK] marker: {}", text);
     }
 
+    /// Exercises `transcribe_file` (lines 87-91) by writing a minimal WAV to a
+    /// temporary file and calling the method on it.
+    #[test]
+    fn test_transcribe_file_with_valid_wav() {
+        // Build a minimal WAV in memory using hound.
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = hound::WavWriter::new(&mut buf, spec).unwrap();
+            for _ in 0..160 { // 10ms of silence
+                writer.write_sample(0i16).unwrap();
+            }
+            writer.finalize().unwrap();
+        }
+        let wav_bytes = buf.into_inner();
+
+        // Write to a temp file.
+        let tmp_path = std::env::temp_dir().join("whisper_test_transcribe_file.wav");
+        std::fs::write(&tmp_path, &wav_bytes).expect("Failed to write temp WAV");
+
+        let config = WhisperConfig::default();
+        let engine = WhisperEngine::new(config).unwrap();
+        let result = engine.transcribe_file(&tmp_path);
+
+        // Clean up before assertion.
+        let _ = std::fs::remove_file(&tmp_path);
+
+        assert!(result.is_ok(), "transcribe_file should succeed on a valid WAV: {:?}", result);
+        let text = result.unwrap();
+        assert!(text.contains("[FALLBACK]"), "Expected fallback marker in: {}", text);
+    }
+
+    /// Exercises `transcribe_file` error path (line 89) by passing a nonexistent
+    /// file path — `std::fs::read` should return an error.
+    #[test]
+    fn test_transcribe_file_missing_path_returns_error() {
+        let config = WhisperConfig::default();
+        let engine = WhisperEngine::new(config).unwrap();
+        let result = engine.transcribe_file("/tmp/definitely_does_not_exist_xyz.wav");
+        assert!(result.is_err(), "transcribe_file with missing path must error");
+    }
+
     #[test]
     fn test_custom_config() {
         let config = WhisperConfig {

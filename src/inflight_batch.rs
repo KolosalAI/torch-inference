@@ -485,8 +485,376 @@ mod tests {
     async fn test_inflight_default() {
         let processor = InflightBatchProcessor::default();
         let stats = processor.get_stats();
-        
+
         assert_eq!(stats.processed_batches, 0);
         assert_eq!(stats.max_inflight_batches, 4);
+    }
+
+    // ── Additional coverage tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_try_form_batch_empty_queue_returns_none() {
+        // When the queue is completely empty, try_form_batch should return None
+        let processor = InflightBatchProcessor::new(10, 2, 0);
+        // No requests added — queue is empty
+        let batch = processor.try_form_batch().await;
+        assert!(batch.is_none(), "expected None for empty queue");
+    }
+
+    #[tokio::test]
+    async fn test_can_accept_batch_when_permits_available() {
+        let processor = InflightBatchProcessor::new(10, 3, 0);
+        assert!(processor.can_accept_batch());
+    }
+
+    #[tokio::test]
+    async fn test_can_accept_batch_when_no_permits() {
+        // Use a max of 1 inflight batch
+        let processor = Arc::new(InflightBatchProcessor::new(10, 1, 0));
+
+        // Add more than batch_size requests so batch forms immediately
+        for i in 0..20 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("req_{}", i),
+                model_name: "model1".to_string(),
+                inputs: vec![json!(i)],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(200),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        // Form the one allowed batch (takes the semaphore)
+        let _batch = processor.try_form_batch().await;
+        // Now the semaphore is exhausted
+        assert!(!processor.can_accept_batch());
+    }
+
+    #[tokio::test]
+    async fn test_try_form_batch_waits_for_timeout() {
+        // With a large timeout and a small queue (below max_batch_size),
+        // try_form_batch should return None while batch_timeout hasn't expired
+        let processor = InflightBatchProcessor::new(10, 2, 5000); // 5 second timeout
+
+        let (tx, _rx) = oneshot::channel();
+        processor.add_request(InflightRequest {
+            id: "req_1".to_string(),
+            model_name: "model1".to_string(),
+            inputs: vec![json!(1)],
+            priority: 1,
+            timestamp: Instant::now(), // just arrived
+            response_tx: tx,
+        }).await.unwrap();
+
+        // The request just arrived and queue is below batch size — should wait
+        let batch = processor.try_form_batch().await;
+        assert!(batch.is_none(), "should wait — timeout not expired");
+    }
+
+    #[tokio::test]
+    async fn test_inflight_count_starts_at_zero() {
+        let processor = InflightBatchProcessor::new(10, 2, 100);
+        assert_eq!(processor.inflight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_complete_batch_decrements_inflight() {
+        let processor = Arc::new(InflightBatchProcessor::new(2, 2, 0));
+
+        for i in 0..4 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("req_{}", i),
+                model_name: "model1".to_string(),
+                inputs: vec![json!(i)],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(100),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let batch = processor.try_form_batch().await.unwrap();
+        assert_eq!(processor.inflight_count(), 1);
+
+        processor.complete_batch(batch.len(), 10);
+        assert_eq!(processor.inflight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_avg_batch_size_zero_when_no_batches() {
+        let processor = InflightBatchProcessor::new(10, 2, 100);
+        let stats = processor.get_stats();
+        assert_eq!(stats.avg_batch_size, 0.0);
+        assert_eq!(stats.avg_latency_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_timeout_large_queue() {
+        let processor = InflightBatchProcessor::new(100, 4, 1000);
+
+        // Add 25 requests — should be in the "> 20" bucket → timeout / 16
+        for i in 0..25 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("req_{}", i),
+                model_name: "model1".to_string(),
+                inputs: vec![json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let timeout = processor.get_adaptive_timeout();
+        // 1000 / 16 = 62 ms
+        assert_eq!(timeout, Duration::from_millis(62));
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_timeout_medium_queue_11_to_20() {
+        let processor = InflightBatchProcessor::new(100, 4, 1000);
+
+        // Add 15 requests — in the 11..=20 bucket → timeout / 8
+        for i in 0..15 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("req_{}", i),
+                model_name: "model1".to_string(),
+                inputs: vec![json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let timeout = processor.get_adaptive_timeout();
+        assert_eq!(timeout, Duration::from_millis(125)); // 1000 / 8
+    }
+
+    #[tokio::test]
+    async fn test_clear_queue_sends_error_to_receivers() {
+        let processor = InflightBatchProcessor::new(10, 2, 100);
+
+        let (tx, rx) = oneshot::channel();
+        processor.add_request(InflightRequest {
+            id: "error_req".to_string(),
+            model_name: "model".to_string(),
+            inputs: vec![],
+            priority: 1,
+            timestamp: Instant::now(),
+            response_tx: tx,
+        }).await.unwrap();
+
+        processor.clear_queue().await;
+
+        // The receiver should get the error
+        let result = rx.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Queue cleared");
+    }
+
+    // ── Additional gap-closing tests ───────────────────────────────────────────
+
+    /// Exercises try_form_batch when the semaphore permit is acquired but the
+    /// queue is empty (lines 96-98): permit is obtained, then the empty-queue
+    /// guard fires and returns None.
+    #[tokio::test]
+    async fn test_try_form_batch_empty_queue_after_permit_acquired() {
+        // batch_timeout_ms = 0 so the "should_wait" guard won't block us.
+        let processor = InflightBatchProcessor::new(10, 2, 0);
+        // Queue is empty — permit can be acquired, but queue.is_empty() is true → None
+        let batch = processor.try_form_batch().await;
+        assert!(batch.is_none());
+        // Semaphore was not permanently consumed (the permit was dropped, not forgotten)
+        assert!(processor.can_accept_batch());
+    }
+
+    /// Exercises add_request with a request whose priority is lower than all
+    /// existing requests — it is inserted at the end (unwrap_or(queue.len())).
+    #[tokio::test]
+    async fn test_add_request_lowest_priority_inserts_at_end() {
+        let processor = InflightBatchProcessor::new(10, 2, 5000);
+
+        // Insert a high-priority request first.
+        let (tx1, _rx1) = oneshot::channel();
+        processor.add_request(InflightRequest {
+            id: "high".to_string(),
+            model_name: "m".to_string(),
+            inputs: vec![],
+            priority: 100,
+            timestamp: Instant::now(),
+            response_tx: tx1,
+        }).await.unwrap();
+
+        // Insert a low-priority request — it should go to the back.
+        let (tx2, _rx2) = oneshot::channel();
+        processor.add_request(InflightRequest {
+            id: "low".to_string(),
+            model_name: "m".to_string(),
+            inputs: vec![],
+            priority: 1,
+            timestamp: Instant::now(),
+            response_tx: tx2,
+        }).await.unwrap();
+
+        assert_eq!(processor.queue_depth(), 2);
+    }
+
+    /// Exercises complete_batch with total_wait_time_ms tracking variant and
+    /// verifies inflight_batches can't go below zero (sanity check).
+    #[tokio::test]
+    async fn test_complete_batch_stats_accumulate() {
+        let processor = Arc::new(InflightBatchProcessor::new(5, 2, 0));
+
+        // Enqueue and form two batches.
+        for i in 0..10 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("r{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(200),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let b1 = processor.try_form_batch().await.unwrap();
+        processor.complete_batch(b1.len(), 100);
+
+        let b2 = processor.try_form_batch().await.unwrap();
+        processor.complete_batch(b2.len(), 50);
+
+        let stats = processor.get_stats();
+        assert_eq!(stats.processed_batches, 2);
+        assert_eq!(stats.processed_requests, 10);
+        assert_eq!(stats.avg_latency_ms, 75); // (100 + 50) / 2
+        assert_eq!(stats.inflight_batches, 0);
+    }
+
+    /// Exercises get_adaptive_timeout for queue depth 6..=10 (timeout / 4).
+    #[tokio::test]
+    async fn test_adaptive_timeout_queue_6_to_10() {
+        let processor = InflightBatchProcessor::new(100, 4, 1000);
+
+        for i in 0..8 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("r{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now(),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        let timeout = processor.get_adaptive_timeout();
+        // queue_depth = 8, in range 6..=10 → 1000 / 4 = 250
+        assert_eq!(timeout, Duration::from_millis(250));
+    }
+
+    /// Exercises try_form_batch when queue has exactly max_batch_size items
+    /// and timeout hasn't expired — the "should_wait" condition uses
+    /// `queue.len() < max_batch_size` which is false, so it proceeds immediately.
+    #[tokio::test]
+    async fn test_try_form_batch_full_batch_forms_immediately() {
+        // max_batch_size = 3, timeout = 5000ms (would block), but queue has 3 items
+        let processor = InflightBatchProcessor::new(3, 2, 5000);
+
+        for i in 0..3 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("r{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now(), // just arrived — but batch is full
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        // queue.len() == max_batch_size (3 == 3) → should_wait = false → batch forms
+        let batch = processor.try_form_batch().await;
+        assert!(batch.is_some());
+        assert_eq!(batch.unwrap().len(), 3);
+    }
+
+    // ── Logger-enabled tests to cover log macro argument lines ────────────────
+    //
+    // The `log` crate's info!/debug! macros only evaluate their arguments when a
+    // logger with a matching level is installed.  Lines 123-126 (info! args in
+    // try_form_batch) and lines 143, 146 (debug! args in complete_batch) are
+    // skipped without an active logger.
+    // We use env_logger::Builder with TRACE level so every macro body fires.
+
+    fn init_logger() {
+        let _ = env_logger::Builder::new()
+            .filter_level(log::LevelFilter::Trace)
+            .is_test(true)
+            .try_init();
+    }
+
+    /// Covers lines 123-126: the info! arguments inside try_form_batch when a
+    /// batch is successfully formed.  Also covers lines 143/146: the debug!
+    /// arguments inside complete_batch.
+    #[tokio::test]
+    async fn test_try_form_batch_and_complete_with_logger_covers_log_lines() {
+        init_logger();
+
+        // batch_timeout_ms = 0 and max_batch_size = 3; add exactly 3 requests so
+        // the batch forms immediately (no waiting for timeout).
+        let processor = InflightBatchProcessor::new(3, 2, 0);
+
+        for i in 0..3 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("log-req-{i}"),
+                model_name: "model".to_string(),
+                inputs: vec![json!(i)],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(10),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        // try_form_batch: triggers info! at lines 122-127 (arguments on 123-126)
+        let batch = processor.try_form_batch().await.unwrap();
+        assert_eq!(batch.len(), 3);
+
+        // complete_batch: triggers debug! at lines 142-147 (arguments on 143, 146)
+        processor.complete_batch(batch.len(), 25);
+        assert_eq!(processor.inflight_count(), 0);
+    }
+
+    /// Additional logger-enabled test with multiple batches to ensure repeated
+    /// execution of the log macro argument lines.
+    #[tokio::test]
+    async fn test_multiple_batches_with_logger() {
+        init_logger();
+
+        let processor = Arc::new(InflightBatchProcessor::new(2, 4, 0));
+
+        for i in 0..6 {
+            let (tx, _rx) = oneshot::channel();
+            processor.add_request(InflightRequest {
+                id: format!("mb-{i}"),
+                model_name: "m".to_string(),
+                inputs: vec![],
+                priority: 1,
+                timestamp: Instant::now() - Duration::from_millis(50),
+                response_tx: tx,
+            }).await.unwrap();
+        }
+
+        for _ in 0..3 {
+            if let Some(batch) = processor.try_form_batch().await {
+                processor.complete_batch(batch.len(), 10);
+            }
+        }
+
+        let stats = processor.get_stats();
+        assert_eq!(stats.processed_batches, 3);
     }
 }

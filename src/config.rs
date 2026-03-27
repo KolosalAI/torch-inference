@@ -484,4 +484,28 @@ mod tests {
         assert_eq!(cloned.device.device_type, config.device.device_type);
         assert_eq!(cloned.batch.max_batch_size, config.batch.max_batch_size);
     }
+
+    /// Covers line 158: Config::load() returns Config::default() when
+    /// config.toml does not exist in the working directory.
+    /// Temporarily switches to a temp directory that has no config.toml.
+    #[test]
+    fn test_config_load_without_config_file() {
+        static DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = DIR_LOCK.lock().unwrap();
+
+        let temp_dir = std::env::temp_dir().join("torch_inference_test_no_config");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        // Remove any stale config.toml so the else branch is taken.
+        let _ = std::fs::remove_file(temp_dir.join("config.toml"));
+        let original = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        let result = Config::load();
+
+        std::env::set_current_dir(&original).unwrap();
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.server.port, 8000);
+    }
 }

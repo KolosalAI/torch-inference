@@ -612,6 +612,635 @@ fn benchmark_model_download_time(c: &mut Criterion) {
     group.finish();
 }
 
+// ============================================================================
+// TTS THROUGHPUT BENCHMARKS
+// Measures: chars/sec, words/sec, real-time factor (RTF)
+// RTF = synthesis_time / audio_duration  (lower is better, <1.0 means faster than real-time)
+// ============================================================================
+
+/// Text samples of varying lengths to stress-test throughput at different scales
+static TTS_TEXTS: &[(&str, &str)] = &[
+    ("short",  "Hello, world."),
+    ("medium", "The quick brown fox jumps over the lazy dog near the river bank."),
+    ("long",   "In the field of speech synthesis, the ability to generate natural-sounding \
+                audio from text is a critical benchmark for evaluating model quality and \
+                computational efficiency. This sentence provides a realistic workload \
+                representative of typical TTS usage in production systems."),
+    ("paragraph", "Text-to-speech technology has advanced significantly over the past decade. \
+                   Modern neural TTS systems can produce speech that is nearly indistinguishable \
+                   from human voice recordings. The Kokoro model, with its eighty-two million \
+                   parameters, represents a compact yet high-quality approach to neural speech \
+                   synthesis. Benchmarking throughput across various text lengths gives us \
+                   insight into how the model scales and where bottlenecks may exist."),
+];
+
+/// Voices for Kokoro torch engine (short IDs)
+#[cfg(feature = "torch")]
+static TTS_VOICES_TORCH: &[&str] = &["af", "am"];
+
+/// Voices for Kokoro ONNX engine (full IDs)
+static TTS_VOICES_ONNX: &[&str] = &["af_heart", "af_bella", "am_adam", "bm_george"];
+
+#[cfg(feature = "torch")]
+fn benchmark_tts_throughput(c: &mut Criterion) {
+    use torch_inference::core::kokoro_tts::KokoroEngine;
+    use torch_inference::core::tts_engine::{TTSEngine, SynthesisParams};
+    use criterion::Throughput;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let models = get_model_registry();
+
+    // Download Kokoro models
+    rt.block_on(async {
+        let handles: Vec<_> = models.iter()
+            .filter(|m| m.name.contains("kokoro") && m.file_extension == "pth")
+            .map(|config| {
+                let config = config.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = ensure_model_downloaded(&config).await {
+                        eprintln!("Warning: Failed to download {}: {}", config.name, e);
+                    }
+                })
+            })
+            .collect();
+        for h in handles { let _ = h.await; }
+    });
+
+    for model_config in models.iter().filter(|m| m.name.contains("kokoro") && m.file_extension == "pth") {
+        let model_file = model_config.model_file();
+        if !model_file.exists() {
+            eprintln!("Skipping {} - model file not available", model_config.name);
+            continue;
+        }
+
+        let config_json = serde_json::json!({
+            "model_path": model_file.to_str().unwrap(),
+            "sample_rate": 24000
+        });
+
+        let engine = match KokoroEngine::new(&config_json) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Failed to load {}: {}", model_config.name, e);
+                continue;
+            }
+        };
+
+        // Warmup
+        rt.block_on(async {
+            let params = SynthesisParams { voice: Some("af".to_string()), speed: 1.0, pitch: 1.0, language: None };
+            let _ = engine.synthesize("warmup", &params).await;
+        });
+
+        // --- Throughput by text length ---
+        {
+            let mut group = c.benchmark_group(format!("tts_throughput/{}", model_config.name));
+            group.sample_size(10);
+            group.measurement_time(Duration::from_secs(60));
+
+            for &(label, text) in TTS_TEXTS {
+                // Measure in bytes (chars) so criterion reports chars/sec
+                group.throughput(Throughput::Bytes(text.len() as u64));
+
+                group.bench_with_input(
+                    BenchmarkId::new("chars_per_sec", label),
+                    &(label, text),
+                    |b, &(_, txt)| {
+                        let params = SynthesisParams {
+                            voice: Some("af".to_string()),
+                            speed: 1.0,
+                            pitch: 1.0,
+                            language: None,
+                        };
+                        b.iter(|| {
+                            rt.block_on(async {
+                                black_box(engine.synthesize(txt, &params).await.ok())
+                            })
+                        });
+                    },
+                );
+            }
+
+            group.finish();
+        }
+
+        // --- Throughput by voice (fixed medium text) ---
+        {
+            let mut group = c.benchmark_group(format!("tts_throughput_by_voice/{}", model_config.name));
+            group.sample_size(10);
+            group.measurement_time(Duration::from_secs(60));
+
+            let text = TTS_TEXTS[1].1; // medium
+            group.throughput(Throughput::Bytes(text.len() as u64));
+
+            for &voice in TTS_VOICES_TORCH {
+                group.bench_with_input(
+                    BenchmarkId::new("voice", voice),
+                    &voice,
+                    |b, &v| {
+                        let params = SynthesisParams {
+                            voice: Some(v.to_string()),
+                            speed: 1.0,
+                            pitch: 1.0,
+                            language: None,
+                        };
+                        b.iter(|| {
+                            rt.block_on(async {
+                                black_box(engine.synthesize(text, &params).await.ok())
+                            })
+                        });
+                    },
+                );
+            }
+
+            group.finish();
+        }
+
+        // --- Real-time factor (RTF) measurement ---
+        // RTF = elapsed / audio_duration. We compute this outside criterion
+        // and emit it as a custom bench so the number appears in output.
+        {
+            let mut group = c.benchmark_group(format!("tts_rtf/{}", model_config.name));
+            group.sample_size(10);
+            group.measurement_time(Duration::from_secs(60));
+
+            for &(label, text) in TTS_TEXTS {
+                let word_count = text.split_whitespace().count() as u64;
+                // Report throughput in "words" (elements) so criterion shows words/sec
+                group.throughput(Throughput::Elements(word_count));
+
+                group.bench_with_input(
+                    BenchmarkId::new("words_per_sec", label),
+                    &(label, text),
+                    |b, &(_, txt)| {
+                        let params = SynthesisParams {
+                            voice: Some("af".to_string()),
+                            speed: 1.0,
+                            pitch: 1.0,
+                            language: None,
+                        };
+                        b.iter(|| {
+                            rt.block_on(async {
+                                black_box(engine.synthesize(txt, &params).await.ok())
+                            })
+                        });
+                    },
+                );
+            }
+
+            group.finish();
+        }
+    }
+}
+
+#[cfg(not(feature = "torch"))]
+fn benchmark_tts_throughput(_c: &mut Criterion) {
+    println!("Skipping TTS throughput benchmarks - torch feature not enabled");
+}
+
+// ============================================================================
+// KOKORO ONNX TTS THROUGHPUT BENCHMARKS
+// Always available — no torch feature required, uses ORT directly.
+//
+// Model dir: models/kokoro-82m/
+//   Required files:
+//     kokoro-v1_0.onnx  (or kokoro-v1.0.int8.onnx / kokoro-v1.0.onnx)
+//     voices/af_heart.bin, voices/am_adam.bin, voices/bf_emma.bin, voices/bm_george.bin
+//
+// Download sources (already in model_registry.json):
+//   ONNX model : https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.onnx
+//   INT8 model : https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx
+//   Voices     : https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/{voice_id}.bin
+// ============================================================================
+
+/// Files to download for each ONNX model dir, in (filename, url) pairs.
+/// The engine accepts any of the known filenames; list the one from HF first.
+static ONNX_DOWNLOADS: &[(&str, &str)] = &[
+    (
+        "kokoro-v1_0.onnx",
+        "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.onnx",
+    ),
+    (
+        "kokoro-v1.0.int8.onnx",
+        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx",
+    ),
+];
+
+static ONNX_VOICE_DOWNLOADS: &[(&str, &str)] = &[
+    ("af_heart", "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/af_heart.bin"),
+    ("af_bella", "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/af_bella.bin"),
+    ("am_adam",  "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/am_adam.bin"),
+    ("bm_george","https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/voices/bm_george.bin"),
+];
+
+async fn ensure_kokoro_onnx_downloaded(model_dir: &std::path::Path) {
+    // Ensure model dir exists
+    let _ = tokio::fs::create_dir_all(model_dir).await;
+    let voices_dir = model_dir.join("voices");
+    let _ = tokio::fs::create_dir_all(&voices_dir).await;
+
+    // Download ONNX model files (skip any that already exist)
+    for (filename, url) in ONNX_DOWNLOADS {
+        let dest = model_dir.join(filename);
+        if !dest.exists() {
+            if let Err(e) = download_file(url, &dest).await {
+                eprintln!("Warning: could not download {}: {}", filename, e);
+            }
+        }
+    }
+
+    // Download voice bin files (skip any that already exist)
+    for (voice_id, url) in ONNX_VOICE_DOWNLOADS {
+        let dest = voices_dir.join(format!("{}.bin", voice_id));
+        if !dest.exists() {
+            if let Err(e) = download_file(url, &dest).await {
+                eprintln!("Warning: could not download voice {}: {}", voice_id, e);
+            }
+        }
+    }
+}
+
+fn benchmark_tts_onnx_throughput(c: &mut Criterion) {
+    use torch_inference::core::kokoro_onnx::KokoroOnnxEngine;
+    use torch_inference::core::tts_engine::{TTSEngine, SynthesisParams};
+    use criterion::Throughput;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let model_dir = std::path::PathBuf::from("models/kokoro-82m");
+    let label = "kokoro-onnx";
+
+    // Ensure model files are present (downloads skipped if files already exist)
+    rt.block_on(ensure_kokoro_onnx_downloaded(&model_dir));
+
+    // Verify at least one ONNX model file is present before proceeding
+    let has_onnx = ONNX_DOWNLOADS.iter()
+        .any(|(filename, _)| model_dir.join(filename).exists());
+    if !has_onnx {
+        eprintln!("Skipping {} — no ONNX model file in {:?}", label, model_dir);
+        return;
+    }
+
+    let config_json = serde_json::json!({
+        "model_dir": model_dir.to_str().unwrap(),
+        "sample_rate": 24000
+    });
+
+    // Helper: creates a fresh engine and runs a warmup iteration.
+    // We create one engine per criterion group to prevent ORT/CoreML session state
+    // from leaking across group boundaries (which caused a mutex crash in group.finish()).
+    let make_engine = || -> Option<KokoroOnnxEngine> {
+        match KokoroOnnxEngine::new(&config_json) {
+            Ok(e) => {
+                rt.block_on(async {
+                    let warmup = SynthesisParams {
+                        voice: Some("af_heart".to_string()),
+                        speed: 1.0, pitch: 1.0, language: None,
+                    };
+                    let _ = e.synthesize("warmup", &warmup).await;
+                });
+                Some(e)
+            }
+            Err(e) => {
+                eprintln!("Failed to init {}: {}", label, e);
+                None
+            }
+        }
+    };
+
+    // --- Throughput by text length (chars/sec) ---
+    if let Some(engine) = make_engine() {
+        let mut group = c.benchmark_group(format!("tts_throughput/{}", label));
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
+
+        for &(text_label, text) in TTS_TEXTS {
+            group.throughput(Throughput::Bytes(text.len() as u64));
+            group.bench_with_input(
+                BenchmarkId::new("chars_per_sec", text_label),
+                &(text_label, text),
+                |b, &(_, txt)| {
+                    let params = SynthesisParams {
+                        voice: Some("af_heart".to_string()),
+                        speed: 1.0, pitch: 1.0, language: None,
+                    };
+                    b.iter(|| rt.block_on(async {
+                        black_box(engine.synthesize(txt, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // --- Throughput by voice (fixed medium text) ---
+    if let Some(engine) = make_engine() {
+        let mut group = c.benchmark_group(format!("tts_throughput_by_voice/{}", label));
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(60));
+
+        let text = TTS_TEXTS[1].1; // medium length
+        group.throughput(Throughput::Bytes(text.len() as u64));
+
+        for &voice in TTS_VOICES_ONNX {
+            group.bench_with_input(
+                BenchmarkId::new("voice", voice),
+                &voice,
+                |b, &v| {
+                    let params = SynthesisParams {
+                        voice: Some(v.to_string()),
+                        speed: 1.0, pitch: 1.0, language: None,
+                    };
+                    b.iter(|| rt.block_on(async {
+                        black_box(engine.synthesize(text, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // --- Words per second (RTF proxy) across text lengths ---
+    if let Some(engine) = make_engine() {
+        let mut group = c.benchmark_group(format!("tts_rtf/{}", label));
+        group.sample_size(10);
+        group.measurement_time(Duration::from_secs(120));
+
+        for &(text_label, text) in TTS_TEXTS {
+            let word_count = text.split_whitespace().count() as u64;
+            group.throughput(Throughput::Elements(word_count));
+            group.bench_with_input(
+                BenchmarkId::new("words_per_sec", text_label),
+                &(text_label, text),
+                |b, &(_, txt)| {
+                    let params = SynthesisParams {
+                        voice: Some("af_heart".to_string()),
+                        speed: 1.0, pitch: 1.0, language: None,
+                    };
+                    b.iter(|| rt.block_on(async {
+                        black_box(engine.synthesize(txt, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // --- INT8 vs Full ONNX comparison (only when both files are present) ---
+    // Both files live in the same dir; the engine picks whichever it finds first.
+    // We rename one aside temporarily so each variant gets an isolated session.
+    let full_onnx = model_dir.join("kokoro-v1_0.onnx");
+    let int8_onnx = model_dir.join("kokoro-v1.0.int8.onnx");
+    let text_medium = TTS_TEXTS[1].1;
+
+    if full_onnx.exists() && int8_onnx.exists() {
+        // Full ONNX
+        if let Some(engine_full) = make_engine() {
+            // INT8 ONNX — temporarily hide the full model so ORT picks int8
+            let full_tmp = model_dir.join("kokoro-v1_0.onnx.bak");
+            let _ = fs::rename(&full_onnx, &full_tmp);
+            let engine_int8 = make_engine();
+            let _ = fs::rename(&full_tmp, &full_onnx); // restore
+
+            if let Some(engine_int8) = engine_int8 {
+                let mut group = c.benchmark_group(format!("tts_quantization/{}", label));
+                group.sample_size(10);
+                group.measurement_time(Duration::from_secs(60));
+                group.throughput(Throughput::Bytes(text_medium.len() as u64));
+
+                group.bench_with_input(
+                    BenchmarkId::new("quantization", "full"),
+                    &"full",
+                    |b, _| {
+                        let params = SynthesisParams {
+                            voice: Some("af_heart".to_string()),
+                            speed: 1.0, pitch: 1.0, language: None,
+                        };
+                        b.iter(|| rt.block_on(async {
+                            black_box(engine_full.synthesize(text_medium, &params).await.ok())
+                        }));
+                    },
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("quantization", "int8"),
+                    &"int8",
+                    |b, _| {
+                        let params = SynthesisParams {
+                            voice: Some("af_heart".to_string()),
+                            speed: 1.0, pitch: 1.0, language: None,
+                        };
+                        b.iter(|| rt.block_on(async {
+                            black_box(engine_int8.synthesize(text_medium, &params).await.ok())
+                        }));
+                    },
+                );
+
+                group.finish();
+            }
+        }
+    }
+}
+
+// ============================================================================
+// MULTI-ENGINE TTS THROUGHPUT BENCHMARKS
+//
+// Covers all engine types available in the registry. Engines are divided into:
+//
+//  A) REAL neural inference (model weights required):
+//     - kokoro-onnx   → KokoroOnnxEngine   (ORT, no feature gate)
+//     - kokoro-v1.0   → KokoroEngine       (requires `torch` feature)
+//
+//  B) PARAMETRIC synthesis stubs (no model files needed):
+//     - bark          → BarkEngine         (multi-harmonic prosody model)
+//     - styletts2     → StyleTTS2Engine    (emotional prosody, 5 harmonics)
+//     - xtts-v2       → XTTSEngine        (formant synthesis, 16 languages)
+//     - vits          → VITSEngine        (VITS-style parametric)
+//
+//  Stub engines are useful for:
+//    • Benchmarking engine interface overhead (serialization, async dispatch)
+//    • Validating that throughput scales linearly with text length
+//    • Regression testing without GPU/large downloads
+//
+//  Registry models that need custom Python/Rust inference engines
+//  (F5-TTS, Parler-TTS, OuteTTS, Chatterbox, Sesame-CSM, CosyVoice2, etc.)
+//  are listed in model_registry.json for server-side download; benchmarks
+//  for these will be added as their Rust engines are implemented.
+// ============================================================================
+
+/// Defines one TTS engine entry for the stub benchmark.
+struct StubEngineEntry {
+    label: &'static str,
+    /// Registry model ID (informational)
+    registry_id: &'static str,
+    /// Voice to use in by-voice group
+    voice: &'static str,
+    engine: Box<dyn torch_inference::core::tts_engine::TTSEngine>,
+}
+
+fn make_stub_entries() -> Vec<StubEngineEntry> {
+    use torch_inference::core::bark_tts::BarkEngine;
+    use torch_inference::core::vits_tts::VITSEngine;
+    use torch_inference::core::styletts2::StyleTTS2Engine;
+    use torch_inference::core::xtts::XTTSEngine;
+
+    let mut entries = Vec::new();
+
+    if let Ok(e) = BarkEngine::new(&serde_json::json!({"sample_rate": 24000})) {
+        entries.push(StubEngineEntry {
+            label: "bark",
+            registry_id: "bark",
+            voice: "en_speaker_0",
+            engine: Box::new(e),
+        });
+    }
+    if let Ok(e) = StyleTTS2Engine::new(&serde_json::json!({"sample_rate": 24000})) {
+        entries.push(StubEngineEntry {
+            label: "styletts2",
+            registry_id: "styletts2",
+            voice: "en_US_default",
+            engine: Box::new(e),
+        });
+    }
+    if let Ok(e) = XTTSEngine::new(&serde_json::json!({"sample_rate": 24000})) {
+        entries.push(StubEngineEntry {
+            label: "xtts-v2",
+            registry_id: "xtts-v2",
+            voice: "en",
+            engine: Box::new(e),
+        });
+    }
+    if let Ok(e) = VITSEngine::new(&serde_json::json!({"sample_rate": 22050})) {
+        entries.push(StubEngineEntry {
+            label: "vits",
+            registry_id: "vits-vctk",
+            voice: "en_US_default",
+            engine: Box::new(e),
+        });
+    }
+
+    entries
+}
+
+fn benchmark_tts_engines(c: &mut Criterion) {
+    use torch_inference::core::tts_engine::{TTSEngine, SynthesisParams};
+    use criterion::Throughput;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let entries = make_stub_entries();
+
+    if entries.is_empty() {
+        println!("No stub TTS engines available");
+        return;
+    }
+
+    // --- Chars/sec across text lengths ---
+    for entry in &entries {
+        let mut group = c.benchmark_group(format!("tts_throughput/{}", entry.label));
+        group.sample_size(50);
+        group.measurement_time(Duration::from_secs(30));
+
+        for &(text_label, text) in TTS_TEXTS {
+            group.throughput(Throughput::Bytes(text.len() as u64));
+            let params = SynthesisParams {
+                voice: Some(entry.voice.to_string()),
+                speed: 1.0, pitch: 1.0, language: None,
+            };
+            group.bench_with_input(
+                BenchmarkId::new("chars_per_sec", text_label),
+                &text,
+                |b, txt| {
+                    b.iter(|| rt.block_on(async {
+                        black_box(entry.engine.synthesize(txt, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // --- Words/sec (RTF proxy) ---
+    for entry in &entries {
+        let mut group = c.benchmark_group(format!("tts_rtf/{}", entry.label));
+        group.sample_size(50);
+        group.measurement_time(Duration::from_secs(30));
+
+        for &(text_label, text) in TTS_TEXTS {
+            let wc = text.split_whitespace().count() as u64;
+            group.throughput(Throughput::Elements(wc));
+            let params = SynthesisParams {
+                voice: Some(entry.voice.to_string()),
+                speed: 1.0, pitch: 1.0, language: None,
+            };
+            group.bench_with_input(
+                BenchmarkId::new("words_per_sec", text_label),
+                &text,
+                |b, txt| {
+                    b.iter(|| rt.block_on(async {
+                        black_box(entry.engine.synthesize(txt, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // --- Cross-engine comparison at medium text ---
+    {
+        let mut group = c.benchmark_group("tts_engine_comparison");
+        group.sample_size(50);
+        group.measurement_time(Duration::from_secs(30));
+
+        let text = TTS_TEXTS[1].1; // medium
+        group.throughput(Throughput::Bytes(text.len() as u64));
+
+        for entry in &entries {
+            let params = SynthesisParams {
+                voice: Some(entry.voice.to_string()),
+                speed: 1.0, pitch: 1.0, language: None,
+            };
+            group.bench_with_input(
+                BenchmarkId::new("engine", entry.label),
+                &entry.label,
+                |b, _| {
+                    b.iter(|| rt.block_on(async {
+                        black_box(entry.engine.synthesize(text, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // --- Speed scale test (0.5×, 1.0×, 2.0×) on medium text ---
+    for entry in &entries {
+        let mut group = c.benchmark_group(format!("tts_speed_scale/{}", entry.label));
+        group.sample_size(50);
+        group.measurement_time(Duration::from_secs(20));
+
+        let text = TTS_TEXTS[1].1;
+        group.throughput(Throughput::Bytes(text.len() as u64));
+
+        for &speed in &[0.5f32, 1.0, 2.0] {
+            let params = SynthesisParams {
+                voice: Some(entry.voice.to_string()),
+                speed,
+                pitch: 1.0,
+                language: None,
+            };
+            group.bench_with_input(
+                BenchmarkId::new("speed", format!("{:.1}x", speed)),
+                &speed,
+                |b, _| {
+                    b.iter(|| rt.block_on(async {
+                        black_box(entry.engine.synthesize(text, &params).await.ok())
+                    }));
+                },
+            );
+        }
+        group.finish();
+    }
+}
+
 criterion_group!(
     benches,
     benchmark_model_loading,
@@ -619,6 +1248,9 @@ criterion_group!(
     benchmark_image_classification,
     benchmark_batch_inference,
     benchmark_memory_usage,
-    benchmark_model_download_time
+    benchmark_model_download_time,
+    benchmark_tts_throughput,
+    benchmark_tts_onnx_throughput,
+    benchmark_tts_engines
 );
 criterion_main!(benches);

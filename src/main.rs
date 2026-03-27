@@ -276,10 +276,20 @@ async fn main() -> std::io::Result<()> {
         }
     }
     
-    info!("[WARMUP] Warming up inference engine...");
-    let config_cloned = config.clone();
-    inference_engine.warmup(&config_cloned).await.expect("Warmup failed");
-    info!("[OK] Inference engine ready");
+    // Warmup runs in the background so the HTTP server becomes reachable
+    // (and /health returns 200) immediately rather than waiting for the first
+    // inference pass to complete.
+    info!("[WARMUP] Warming up inference engine (background)...");
+    {
+        let warmup_engine = inference_engine.clone();
+        let config_cloned = config.clone();
+        tokio::spawn(async move {
+            match warmup_engine.warmup(&config_cloned).await {
+                Ok(()) => info!("[OK] Inference engine warmup complete"),
+                Err(e) => log::warn!("[WARN] Inference engine warmup failed: {}", e),
+            }
+        });
+    }
     
     let addr = format!("{}:{}", config.server.host, config.server.port);
     info!("[SERVER] Starting HTTP server on {}...", addr);

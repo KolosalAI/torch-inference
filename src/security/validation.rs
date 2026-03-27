@@ -464,4 +464,39 @@ mod tests {
             assert!(!s.is_empty());
         }
     }
+
+    // ── Lines 82-83: path traversal check with ".." ─────────────────────────
+    // The regex allows dots, so ".." passes the pattern check but is caught by
+    // the explicit path-traversal check at lines 81-85.
+
+    #[test]
+    fn test_validate_model_name_double_dot_is_path_traversal() {
+        let validator = RequestValidator::default();
+        // ".." matches the regex [a-zA-Z0-9_\-\.]+ but should be rejected as path traversal
+        let result = validator.validate_model_name("..");
+        assert!(result.is_err(), "'..' should be rejected as path traversal");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("traversal") || err.contains("Malicious"),
+            "error should mention path traversal: {}", err
+        );
+    }
+
+    #[test]
+    fn test_validate_model_name_with_embedded_double_dot() {
+        let validator = RequestValidator::default();
+        // "model..evil" matches the regex but has ".." → path traversal
+        let result = validator.validate_model_name("model..evil");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("traversal") || err.contains("Malicious"));
+    }
+
+    #[test]
+    fn test_validate_model_name_single_dot_is_ok() {
+        // A single dot is allowed (e.g. "model_v1.0" already tested)
+        let validator = RequestValidator::default();
+        assert!(validator.validate_model_name("model.v1").is_ok());
+        assert!(validator.validate_model_name("v1.0.0").is_ok());
+    }
 }

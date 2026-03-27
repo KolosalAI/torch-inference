@@ -134,3 +134,99 @@ impl TTSEngine for WindowsSAPIEngine {
         self.capabilities.supported_voices.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── WindowsSAPIEngine::new ────────────────────────────────────────────────
+
+    #[test]
+    fn test_windows_sapi_engine_new_succeeds() {
+        let result = WindowsSAPIEngine::new();
+        assert!(result.is_ok(), "WindowsSAPIEngine::new should succeed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_windows_sapi_engine_name() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        assert_eq!(engine.name(), "windows-sapi");
+    }
+
+    // ── capabilities ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_windows_sapi_capabilities() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        let caps = engine.capabilities();
+        assert_eq!(caps.name, "Windows SAPI");
+        assert_eq!(caps.version, "1.0.0");
+        assert_eq!(caps.sample_rate, 22050);
+        assert_eq!(caps.max_text_length, 10000);
+        assert!(caps.supports_ssml);
+        assert!(!caps.supports_streaming);
+        assert!(caps.supported_languages.contains(&"en".to_string()));
+    }
+
+    // ── voices ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_windows_sapi_list_voices() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        let voices = engine.list_voices();
+        assert_eq!(voices.len(), 2);
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert!(ids.contains(&"david"));
+        assert!(ids.contains(&"zira"));
+    }
+
+    #[test]
+    fn test_windows_sapi_voice_genders() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        let voices = engine.list_voices();
+        let david = voices.iter().find(|v| v.id == "david").unwrap();
+        let zira = voices.iter().find(|v| v.id == "zira").unwrap();
+        assert_eq!(format!("{:?}", david.gender), "Male");
+        assert_eq!(format!("{:?}", zira.gender), "Female");
+    }
+
+    #[test]
+    fn test_windows_sapi_voice_quality_neural() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        let voices = engine.list_voices();
+        for v in &voices {
+            assert_eq!(format!("{:?}", v.quality), "Neural");
+        }
+    }
+
+    #[test]
+    fn test_windows_sapi_voice_language() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        let voices = engine.list_voices();
+        for v in &voices {
+            assert_eq!(v.language, "en-US");
+        }
+    }
+
+    // ── is_ready (default impl) ───────────────────────────────────────────────
+
+    #[test]
+    fn test_windows_sapi_is_ready() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        assert!(engine.is_ready());
+    }
+
+    // ── synthesize error path (PowerShell not available on non-Windows) ────────
+
+    #[tokio::test]
+    async fn test_windows_sapi_synthesize_fails_gracefully_on_non_windows() {
+        let engine = WindowsSAPIEngine::new().unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        // On non-Windows platforms powershell is unavailable, so this must err.
+        // On Windows it would try to run the script (may also err without the ps1 file).
+        let result = engine.synthesize("hello", &params).await;
+        // We just assert it doesn't panic; on non-Windows it will be Err.
+        #[cfg(not(target_os = "windows"))]
+        assert!(result.is_err());
+    }
+}

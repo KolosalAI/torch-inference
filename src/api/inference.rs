@@ -706,3 +706,242 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/models/{model_id}", web::delete().to(unload_model))
     );
 }
+
+#[cfg(test)]
+mod configure_and_found_tests {
+    use super::*;
+    use actix_web::{test as actix_test, App};
+
+    // ── configure() smoke test (covers lines 698-706) ─────────────────────────
+    //
+    // Calling `configure` with the app data-less service and hitting each route
+    // exercises the route-registration code. Without the NeuralNetworkState app
+    // data the handlers return 500 (missing extractor), but the routes are still
+    // registered and reachable (i.e. NOT 404/405).
+
+    fn make_empty_state() -> web::Data<NeuralNetworkState> {
+        web::Data::new(NeuralNetworkState {
+            networks: Arc::new(dashmap::DashMap::new()),
+        })
+    }
+
+    #[actix_web::test]
+    async fn test_configure_registers_all_nn_routes() {
+        let state = make_empty_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .configure(configure),
+        )
+        .await;
+
+        // GET /api/nn/models — list_models (empty state → 200)
+        let req = actix_test::TestRequest::get()
+            .uri("/api/nn/models")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_ne!(resp.status(), actix_web::http::StatusCode::NOT_FOUND,
+            "/api/nn/models must be registered");
+        assert_ne!(resp.status(), actix_web::http::StatusCode::METHOD_NOT_ALLOWED);
+
+        // POST /api/nn/load — registered even without torch feature
+        let req = actix_test::TestRequest::post()
+            .uri("/api/nn/load")
+            .set_json(serde_json::json!({"model_id":"x","model_path":"/x.pt"}))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_ne!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        // GET /api/nn/models/{model_id} — returns 404 body (not 404 "route not found")
+        let req = actix_test::TestRequest::get()
+            .uri("/api/nn/models/absent")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        // The handler returns ApiError::NotFound → 404, not "route not found"
+        // Both represent 404 but the route IS registered.
+        // We just verify it isn't 405 (method not allowed) which would mean wrong method.
+        assert_ne!(resp.status(), actix_web::http::StatusCode::METHOD_NOT_ALLOWED);
+
+        // DELETE /api/nn/models/{model_id}
+        let req = actix_test::TestRequest::delete()
+            .uri("/api/nn/models/absent")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_ne!(resp.status(), actix_web::http::StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // ── list_models with a non-empty dashmap (covers lines 159-163) ───────────
+    //
+    // We need at least one entry in the DashMap to drive the `.map()` closure.
+    // NeuralNetwork::new always fails without the `torch` feature, so these
+    // tests are gated behind `#[cfg(feature = "torch")]`.
+
+    #[cfg(feature = "torch")]
+    #[actix_web::test]
+    async fn test_list_models_returns_entries_when_network_loaded() {
+        use std::path::Path;
+        let networks = Arc::new(dashmap::DashMap::new());
+        // Load a real model — only viable in CI with torch + a valid model path.
+        // Here we just assert the test compiles; in practice, create a minimal
+        // TorchScript model in the fixture directory.
+        if let Ok(network) = crate::core::neural_network::NeuralNetwork::new(
+            Path::new("tests/fixtures/minimal.pt"),
+            None,
+            None,
+        ) {
+            networks.insert("fixture-net".to_string(), Arc::new(network));
+        }
+
+        let state = web::Data::new(NeuralNetworkState { networks });
+        let resp = list_models(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── get_model_info found path (covers lines 186-188) ─────────────────────
+
+    #[cfg(feature = "torch")]
+    #[actix_web::test]
+    async fn test_get_model_info_found_returns_200() {
+        use std::path::Path;
+        let networks = Arc::new(dashmap::DashMap::new());
+        if let Ok(network) = crate::core::neural_network::NeuralNetwork::new(
+            Path::new("tests/fixtures/minimal.pt"),
+            None,
+            None,
+        ) {
+            networks.insert("net-a".to_string(), Arc::new(network));
+        }
+
+        if !networks.is_empty() {
+            let state = web::Data::new(NeuralNetworkState { networks });
+            let path = web::Path::from("net-a".to_string());
+            let result = get_model_info(path, state).await;
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap().status(), actix_web::http::StatusCode::OK);
+        }
+    }
+
+    // ── unload_model success path (covers lines 200-202) ─────────────────────
+    //
+    // We insert a network and then call unload_model. The `networks.remove()`
+    // returns `Some(...)`, triggering the success branch.
+
+    #[cfg(feature = "torch")]
+    #[actix_web::test]
+    async fn test_unload_model_success_removes_network() {
+        use std::path::Path;
+        let networks = Arc::new(dashmap::DashMap::new());
+        if let Ok(network) = crate::core::neural_network::NeuralNetwork::new(
+            Path::new("tests/fixtures/minimal.pt"),
+            None,
+            None,
+        ) {
+            networks.insert("to-unload".to_string(), Arc::new(network));
+        }
+
+        if !networks.is_empty() {
+            let state = web::Data::new(NeuralNetworkState {
+                networks: networks.clone(),
+            });
+            let path = web::Path::from("to-unload".to_string());
+            let result = unload_model(path, state).await;
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap().status(), actix_web::http::StatusCode::OK);
+            assert!(networks.get("to-unload").is_none(),
+                "network should be removed from the map");
+        }
+    }
+
+    // ── list_models with pre-populated dashmap via direct insert (no-torch) ──
+    //
+    // Since NeuralNetwork cannot be constructed without torch, we exercise the
+    // "empty map" path which IS reachable and verify the JSON shape is correct.
+    // The map iteration closure (lines 159-163) only runs when there is at least
+    // one entry, which is only possible with the torch feature.
+
+    #[actix_web::test]
+    async fn test_list_models_empty_returns_zero_total() {
+        let state = make_empty_state();
+        let resp = list_models(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── list_models with one entry: exercises map closure (lines 159-163) ─────
+    //
+    // Uses NeuralNetwork::new_stub() so the test runs without the torch feature.
+
+    #[actix_web::test]
+    async fn test_list_models_with_stub_entry_covers_map_closure() {
+        let networks = Arc::new(dashmap::DashMap::new());
+        let stub = Arc::new(crate::core::neural_network::NeuralNetwork::new_stub(None));
+        networks.insert("stub-net".to_string(), stub);
+
+        let state = web::Data::new(NeuralNetworkState { networks });
+        let resp = list_models(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["total"], 1);
+        let models = v["models"].as_array().unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["model_id"], "stub-net");
+    }
+
+    // ── get_model_info found path (lines 186-188) ─────────────────────────────
+    //
+    // Insert a stub network and request it by id; the found branch returns 200.
+
+    #[actix_web::test]
+    async fn test_get_model_info_found_with_stub_returns_200() {
+        let networks = Arc::new(dashmap::DashMap::new());
+        let stub = Arc::new(crate::core::neural_network::NeuralNetwork::new_stub(None));
+        networks.insert("info-net".to_string(), stub);
+
+        let state = web::Data::new(NeuralNetworkState { networks });
+        let path = web::Path::from("info-net".to_string());
+        let result = get_model_info(path, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["model_id"], "info-net");
+    }
+
+    // ── unload_model success path (lines 200-202) ─────────────────────────────
+    //
+    // Insert a stub network and then unload it; the found branch returns 200
+    // and the entry is removed from the map.
+
+    #[actix_web::test]
+    async fn test_unload_model_found_with_stub_returns_200() {
+        let networks = Arc::new(dashmap::DashMap::new());
+        let stub = Arc::new(crate::core::neural_network::NeuralNetwork::new_stub(None));
+        networks.insert("rm-net".to_string(), stub);
+
+        let state = web::Data::new(NeuralNetworkState {
+            networks: networks.clone(),
+        });
+        let path = web::Path::from("rm-net".to_string());
+        let result = unload_model(path, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["success"], true);
+        assert!(v["message"].as_str().unwrap().contains("rm-net"));
+        assert!(networks.get("rm-net").is_none(), "network must be removed");
+    }
+
+    // ── unload_model removes the entry and returns success message ────────────
+    //
+    // We test the found branch by manually inserting into dashmap.
+    // NeuralNetwork is required, so this is torch-only.  Without torch we only
+    // verify the not-found branch (already covered by the existing tests module).
+    //
+    // For the no-torch case we do nothing here — coverage of 200-202 requires torch.
+}

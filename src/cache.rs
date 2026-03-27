@@ -830,4 +830,16 @@ mod tests {
         assert_eq!(stats_after.evictions, 10);
         assert_eq!(stats_after.size, 100); // Cache maintains max_size
     }
+
+    /// Covers line 132: evict_lru() early-return when data is empty.
+    /// A zero-capacity cache satisfies `data.len() >= max_size` (0 >= 0) on
+    /// every new insertion, so evict_lru() is called with an empty DashMap.
+    /// Inside evict_lru(), `cache_size = 0` → `take(0)` → `keys` is empty →
+    /// line 132 (`return;`) is executed.
+    #[test]
+    fn test_evict_lru_early_return_on_empty_cache() {
+        let cache = Cache::new(0);
+        // Inserting any key triggers evict_lru() with an empty data map.
+        let _ = cache.set("k".to_string(), serde_json::json!(1), 60);
+    }
 }

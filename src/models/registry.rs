@@ -1000,6 +1000,228 @@ mod tests {
         assert!(text.padding);
     }
 
+    // ── load_model_config – full field coverage (lines 224-239) ─────────────
+
+    /// Registers a model alongside a JSON config that contains preprocessing,
+    /// postprocessing, input_schema, and output_schema entries, driving every
+    /// branch inside load_model_config (lines 224, 227, 230-231, 233-234,
+    /// 236-237, 239).
+    #[tokio::test]
+    async fn test_register_with_full_config_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("full_cfg.onnx");
+        std::fs::write(&model_path, b"onnx bytes").unwrap();
+
+        // Write a config that fills all optional fields so every branch is hit.
+        let config_json = serde_json::json!({
+            "preprocessing": {
+                "image": null,
+                "audio": null,
+                "text": null,
+                "custom": null
+            },
+            "postprocessing": {
+                "output_type": "classification",
+                "threshold": 0.5,
+                "top_k": 3,
+                "custom": null
+            },
+            "input_schema": {"type": "array", "items": {"type": "number"}},
+            "output_schema": {"type": "object"}
+        });
+        let config_path = dir.path().join("full_cfg.json");
+        std::fs::write(&config_path, config_json.to_string()).unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry
+            .register_from_path(&model_path, None)
+            .await
+            .unwrap();
+
+        let meta = registry.get_model(&model_id).unwrap();
+        // postprocessing deserialized correctly
+        assert!(meta.postprocessing.is_some());
+        // schemas picked up
+        assert!(meta.input_schema.is_some());
+        assert!(meta.output_schema.is_some());
+    }
+
+    /// Verifies that a config JSON that omits preprocessing/postprocessing still
+    /// parses and returns None for those fields (lines 230-231, 233-234).
+    #[tokio::test]
+    async fn test_register_with_config_json_no_preprocessing() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("no_pre.onnx");
+        std::fs::write(&model_path, b"data").unwrap();
+
+        let config_json = serde_json::json!({
+            "input_schema": {"type": "tensor"},
+            "output_schema": {"type": "tensor"}
+        });
+        let config_path = dir.path().join("no_pre.json");
+        std::fs::write(&config_path, config_json.to_string()).unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry.register_from_path(&model_path, None).await.unwrap();
+        let meta = registry.get_model(&model_id).unwrap();
+        assert!(meta.preprocessing.is_none());
+        assert!(meta.postprocessing.is_none());
+        assert!(meta.input_schema.is_some());
+        assert!(meta.output_schema.is_some());
+    }
+
+    // ── scan_directory – Err arm (lines 265-266) ─────────────────────────────
+
+    /// A model file with a malformed companion JSON config causes
+    /// load_model_config (called from register_from_path) to return Err,
+    /// which propagates to scan_directory's Err arm (lines 265-266).
+    #[tokio::test]
+    async fn test_scan_directory_skips_model_with_invalid_json_config() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Good model — will be registered successfully.
+        let good_path = dir.path().join("good.onnx");
+        std::fs::write(&good_path, b"good data").unwrap();
+
+        // Model with malformed companion JSON config — register_from_path will
+        // call load_model_config which will fail to parse the JSON, causing
+        // register_from_path to return Err and triggering lines 265-266.
+        let bad_model_path = dir.path().join("bad.onnx");
+        std::fs::write(&bad_model_path, b"bad model bytes").unwrap();
+        let bad_config_path = dir.path().join("bad.json");
+        std::fs::write(&bad_config_path, b"{ invalid json {{{{").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        // scan_directory should succeed overall (returns Ok), but only register
+        // the good model; the bad one is skipped with a warn! log.
+        let registered = registry.scan_directory(dir.path()).await.unwrap();
+
+        assert!(registered.contains(&"good".to_string()));
+        assert!(!registered.contains(&"bad".to_string()));
+    }
+
+    // ── load_model_config called from register_from_path (line 178) ─────────
+    //
+    // Line 178 is the `self.load_model_config(&config_path).await?` call inside
+    // the `if config_path.exists()` branch of register_from_path.
+    // The tests below exercise every statement inside load_model_config
+    // (lines 224, 227, 230-231, 233-234, 236-237, 239) directly through
+    // register_from_path by providing a companion .json config file.
+
+    /// Registers a model with a config that supplies only input_schema /
+    /// output_schema (the get() calls at lines 236-237) but omits preprocessing
+    /// and postprocessing (the and_then() calls at lines 230-231, 233-234 return
+    /// None because the keys are absent).  This exercises lines 224, 227, 230,
+    /// 231, 233, 234, 236, 237, 239.
+    #[tokio::test]
+    async fn test_load_model_config_only_schemas_covers_lines_224_239() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("schema_only.onnx");
+        std::fs::write(&model_path, b"onnx bytes").unwrap();
+
+        let config = serde_json::json!({
+            "input_schema":  {"shape": [1, 3, 224, 224]},
+            "output_schema": {"shape": [1, 1000]}
+        });
+        std::fs::write(
+            dir.path().join("schema_only.json"),
+            config.to_string(),
+        )
+        .unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let id = registry
+            .register_from_path(&model_path, None)
+            .await
+            .unwrap();
+
+        let meta = registry.get_model(&id).unwrap();
+        // Lines 230-231: preprocessing key absent → None.
+        assert!(meta.preprocessing.is_none());
+        // Lines 233-234: postprocessing key absent → None.
+        assert!(meta.postprocessing.is_none());
+        // Lines 236-237: schemas present.
+        assert!(meta.input_schema.is_some());
+        assert!(meta.output_schema.is_some());
+    }
+
+    /// Registers a model with a config that supplies preprocessing AND
+    /// postprocessing (valid JSON for those keys) so the and_then() calls at
+    /// lines 230-231 and 233-234 both deserialise successfully.
+    #[tokio::test]
+    async fn test_load_model_config_with_preprocessing_and_postprocessing() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("full.onnx");
+        std::fs::write(&model_path, b"onnx").unwrap();
+
+        let config = serde_json::json!({
+            "preprocessing": {
+                "image": null,
+                "audio": null,
+                "text": null,
+                "custom": null
+            },
+            "postprocessing": {
+                "output_type": "classification",
+                "threshold": 0.5,
+                "top_k": 5,
+                "custom": null
+            },
+            "input_schema":  {"type": "tensor"},
+            "output_schema": {"type": "tensor"}
+        });
+        std::fs::write(
+            dir.path().join("full.json"),
+            config.to_string(),
+        )
+        .unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let id = registry
+            .register_from_path(&model_path, None)
+            .await
+            .unwrap();
+
+        let meta = registry.get_model(&id).unwrap();
+        // Lines 230-231: preprocessing deserialized.
+        assert!(meta.preprocessing.is_some());
+        // Lines 233-234: postprocessing deserialized.
+        assert!(meta.postprocessing.is_some());
+        // Lines 236-237: schemas present.
+        assert!(meta.input_schema.is_some());
+        assert!(meta.output_schema.is_some());
+    }
+
+    // ── scan_directory Err arm (lines 265-266) ────────────────────────────────
+    //
+    // When register_from_path returns Err (e.g. because the companion .json is
+    // malformed), scan_directory hits the `Err(e) => { warn!(...) }` arm.
+
+    /// Verifies the warn! path (lines 265-266) is executed by scanning a
+    /// directory that contains one good model and one model with a broken JSON
+    /// config.  The scan succeeds overall but only the good model is returned.
+    #[tokio::test]
+    async fn test_scan_directory_err_arm_lines_265_266() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("ok.onnx"), b"ok").unwrap();
+
+        std::fs::write(dir.path().join("broken.onnx"), b"broken").unwrap();
+        // Malformed JSON → load_model_config returns Err → scan hits lines 265-266.
+        std::fs::write(
+            dir.path().join("broken.json"),
+            b"not valid json }{",
+        )
+        .unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let registered = registry.scan_directory(dir.path()).await.unwrap();
+
+        // Good model registered; broken one skipped.
+        assert!(registered.contains(&"ok".to_string()));
+        assert!(!registered.contains(&"broken".to_string()));
+    }
+
     // ── ModelEntry struct ─────────────────────────────────────────────────────
 
     #[test]

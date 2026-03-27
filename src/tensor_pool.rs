@@ -196,10 +196,31 @@ mod tests {
         let shape1 = TensorShape::new(vec![2, 3, 4]);
         let shape2 = TensorShape::new(vec![2, 3, 4]);
         let shape3 = TensorShape::new(vec![2, 4, 3]);
-        
+
         assert_eq!(shape1, shape2);
         assert_ne!(shape1, shape3);
         assert_eq!(shape1.total_size, 24);
+    }
+
+    #[test]
+    fn test_tensor_pool_stats_zero_reuse_rate() {
+        // Fresh pool with no operations: total = 0, so reuse_rate should be 0.0 (line 86)
+        let pool = TensorPool::new(10);
+        let stats = pool.get_stats();
+        assert_eq!(stats.allocations, 0);
+        assert_eq!(stats.reuses, 0);
+        assert_eq!(stats.reuse_rate, 0.0);
+    }
+
+    #[test]
+    fn test_tensor_pool_default() {
+        // Exercises TensorPool::default() (lines 107-108)
+        let pool = TensorPool::default();
+        let shape = TensorShape::new(vec![2]);
+        let t = pool.acquire(shape.clone());
+        assert_eq!(t.len(), 2);
+        let stats = pool.get_stats();
+        assert_eq!(stats.allocations, 1);
     }
 
     #[test]

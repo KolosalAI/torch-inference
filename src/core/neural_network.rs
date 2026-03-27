@@ -197,6 +197,27 @@ impl NeuralNetwork {
         ()
     }
     
+    /// Construct a stub network for tests (no model loaded)
+    #[cfg(test)]
+    pub fn new_stub(metadata: Option<NetworkMetadata>) -> Self {
+        Self {
+            #[cfg(not(feature = "torch"))]
+            model: (),
+            #[cfg(not(feature = "torch"))]
+            device: (),
+            input_shapes: Vec::new(),
+            output_shapes: Vec::new(),
+            metadata: metadata.unwrap_or(NetworkMetadata {
+                name: "stub".to_string(),
+                task: "test".to_string(),
+                framework: "none".to_string(),
+                input_names: vec!["input".to_string()],
+                output_names: vec!["output".to_string()],
+                description: None,
+            }),
+        }
+    }
+
     /// Set input shapes (for validation)
     pub fn set_input_shapes(&mut self, shapes: Vec<Vec<i64>>) {
         self.input_shapes = shapes;
@@ -325,7 +346,7 @@ pub mod quantization {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_metadata_creation() {
         let metadata = NetworkMetadata {
@@ -336,8 +357,346 @@ mod tests {
             output_names: vec!["output".to_string()],
             description: Some("Test model".to_string()),
         };
-        
+
         assert_eq!(metadata.name, "test_model");
         assert_eq!(metadata.task, "classification");
+    }
+
+    // ── NetworkMetadata extended ──────────────────────────────────────────────
+
+    #[test]
+    fn test_network_metadata_serialize_deserialize() {
+        let meta = NetworkMetadata {
+            name: "my_net".to_string(),
+            task: "regression".to_string(),
+            framework: "pytorch".to_string(),
+            input_names: vec!["x".to_string()],
+            output_names: vec!["y".to_string()],
+            description: None,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("my_net"));
+        let back: NetworkMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "my_net");
+        assert_eq!(back.task, "regression");
+        assert!(back.description.is_none());
+    }
+
+    #[test]
+    fn test_network_metadata_clone_debug() {
+        let meta = NetworkMetadata {
+            name: "net".to_string(),
+            task: "detection".to_string(),
+            framework: "pytorch".to_string(),
+            input_names: vec!["in1".to_string(), "in2".to_string()],
+            output_names: vec!["out1".to_string()],
+            description: Some("desc".to_string()),
+        };
+        let cloned = meta.clone();
+        assert_eq!(cloned.input_names.len(), 2);
+        let dbg = format!("{:?}", cloned);
+        assert!(dbg.contains("NetworkMetadata"));
+    }
+
+    #[test]
+    fn test_network_metadata_description_some() {
+        let meta = NetworkMetadata {
+            name: "n".to_string(),
+            task: "t".to_string(),
+            framework: "f".to_string(),
+            input_names: vec![],
+            output_names: vec![],
+            description: Some("hello".to_string()),
+        };
+        assert_eq!(meta.description.as_deref(), Some("hello"));
+    }
+
+    // ── InferenceResult ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_inference_result_construction() {
+        let mut outputs = HashMap::new();
+        outputs.insert("logits".to_string(), vec![0.1_f32, 0.9]);
+        let result = InferenceResult {
+            outputs,
+            inference_time_ms: 12.5,
+            device: "cpu".to_string(),
+        };
+        assert_eq!(result.device, "cpu");
+        assert!((result.inference_time_ms - 12.5).abs() < 1e-6);
+        let logits = result.outputs.get("logits").unwrap();
+        assert_eq!(logits.len(), 2);
+    }
+
+    #[test]
+    fn test_inference_result_serialize_deserialize() {
+        let mut outputs = HashMap::new();
+        outputs.insert("out".to_string(), vec![1.0_f32]);
+        let ir = InferenceResult {
+            outputs,
+            inference_time_ms: 5.0,
+            device: "cuda:0".to_string(),
+        };
+        let json = serde_json::to_string(&ir).unwrap();
+        assert!(json.contains("cuda:0"));
+        let back: InferenceResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.device, "cuda:0");
+        assert!((back.inference_time_ms - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_inference_result_clone_debug() {
+        let mut outputs = HashMap::new();
+        outputs.insert("k".to_string(), vec![0.5_f32]);
+        let ir = InferenceResult {
+            outputs,
+            inference_time_ms: 1.0,
+            device: "cpu".to_string(),
+        };
+        let cloned = ir.clone();
+        assert_eq!(cloned.device, "cpu");
+        let dbg = format!("{:?}", cloned);
+        assert!(dbg.contains("InferenceResult"));
+    }
+
+    // ── NeuralNetwork without torch feature ──────────────────────────────────
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_new_without_torch_returns_error() {
+        let path = std::path::Path::new("/nonexistent/model.pt");
+        let result = NeuralNetwork::new(path, None, None);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("PyTorch") || msg.contains("torch"), "unexpected: {}", msg);
+    }
+
+    // Helper: constructs NeuralNetwork directly (only valid without `torch` feature).
+    #[cfg(not(feature = "torch"))]
+    fn make_test_network() -> NeuralNetwork {
+        NeuralNetwork {
+            model: (),
+            device: (),
+            input_shapes: vec![],
+            output_shapes: vec![],
+            metadata: NetworkMetadata {
+                name: "test".to_string(),
+                task: "test".to_string(),
+                framework: "none".to_string(),
+                input_names: vec!["in".to_string()],
+                output_names: vec!["out".to_string()],
+                description: None,
+            },
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_predict_without_torch_returns_error() {
+        let nn = make_test_network();
+        let result = nn.predict(&());
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("PyTorch") || msg.contains("torch"), "unexpected: {}", msg);
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_predict_multi_without_torch_returns_error() {
+        let nn = make_test_network();
+        let result = nn.predict_multi(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_predict_from_slice_without_torch_returns_error() {
+        let nn = make_test_network();
+        let result = nn.predict_from_slice(&[1.0_f32], &[1]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_metadata_accessor() {
+        let nn = make_test_network();
+        let meta = nn.metadata();
+        assert_eq!(meta.name, "test");
+        assert_eq!(meta.framework, "none");
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_device_accessor() {
+        let nn = make_test_network();
+        let _d: () = nn.device();
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_set_input_shapes() {
+        let mut nn = make_test_network();
+        nn.set_input_shapes(vec![vec![1, 128], vec![1, 64]]);
+        assert_eq!(nn.input_shapes.len(), 2);
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_neural_network_set_output_shapes() {
+        let mut nn = make_test_network();
+        nn.set_output_shapes(vec![vec![1, 10]]);
+        assert_eq!(nn.output_shapes.len(), 1);
+    }
+
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_batch_inference_new_and_predict_batch_error() {
+        let nn = make_test_network();
+        let bi = BatchInference::new(nn, 4);
+        assert_eq!(bi.batch_size, 4);
+        let result = bi.predict_batch(vec![]);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("PyTorch") || msg.contains("torch"), "unexpected: {}", msg);
+    }
+
+    // ── architectures module ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_mlp_config_construction() {
+        use super::architectures::{MLPConfig, Activation};
+        let cfg = MLPConfig {
+            input_size: 128,
+            hidden_sizes: vec![256, 128],
+            output_size: 10,
+            activation: Activation::ReLU,
+            dropout: Some(0.5),
+        };
+        assert_eq!(cfg.input_size, 128);
+        assert_eq!(cfg.hidden_sizes.len(), 2);
+        assert_eq!(cfg.output_size, 10);
+        assert!(cfg.dropout.is_some());
+        let dbg = format!("{:?}", cfg);
+        assert!(dbg.contains("MLPConfig"));
+    }
+
+    #[test]
+    fn test_activation_variants_debug() {
+        use super::architectures::Activation;
+        assert_eq!(format!("{:?}", Activation::ReLU), "ReLU");
+        assert_eq!(format!("{:?}", Activation::Sigmoid), "Sigmoid");
+        assert_eq!(format!("{:?}", Activation::Tanh), "Tanh");
+        assert!(format!("{:?}", Activation::LeakyReLU(0.01)).contains("LeakyReLU"));
+    }
+
+    #[test]
+    fn test_activation_clone() {
+        use super::architectures::Activation;
+        let a = Activation::LeakyReLU(0.2);
+        let b = a.clone();
+        assert!(format!("{:?}", b).contains("0.2"));
+    }
+
+    #[test]
+    fn test_cnn_config_construction() {
+        use super::architectures::{CNNConfig, ConvLayerConfig};
+        let cfg = CNNConfig {
+            input_channels: 3,
+            conv_layers: vec![
+                ConvLayerConfig { out_channels: 32, kernel_size: 3, stride: 1, padding: 1 },
+            ],
+            fc_layers: vec![512, 256],
+            output_size: 10,
+        };
+        assert_eq!(cfg.input_channels, 3);
+        assert_eq!(cfg.conv_layers.len(), 1);
+        assert_eq!(cfg.fc_layers.len(), 2);
+        let dbg = format!("{:?}", cfg);
+        assert!(dbg.contains("CNNConfig"));
+    }
+
+    #[test]
+    fn test_conv_layer_config_clone() {
+        use super::architectures::ConvLayerConfig;
+        let cl = ConvLayerConfig { out_channels: 64, kernel_size: 5, stride: 2, padding: 2 };
+        let cloned = cl.clone();
+        assert_eq!(cloned.out_channels, 64);
+        assert_eq!(cloned.kernel_size, 5);
+    }
+
+    #[test]
+    fn test_rnn_config_construction() {
+        use super::architectures::{RNNConfig, RNNType};
+        let cfg = RNNConfig {
+            input_size: 256,
+            hidden_size: 512,
+            num_layers: 2,
+            output_size: 10,
+            bidirectional: true,
+            rnn_type: RNNType::LSTM,
+        };
+        assert_eq!(cfg.input_size, 256);
+        assert_eq!(cfg.hidden_size, 512);
+        assert!(cfg.bidirectional);
+        let dbg = format!("{:?}", cfg);
+        assert!(dbg.contains("RNNConfig"));
+    }
+
+    #[test]
+    fn test_rnn_type_variants_debug() {
+        use super::architectures::RNNType;
+        assert_eq!(format!("{:?}", RNNType::LSTM), "LSTM");
+        assert_eq!(format!("{:?}", RNNType::GRU), "GRU");
+        assert_eq!(format!("{:?}", RNNType::RNN), "RNN");
+    }
+
+    #[test]
+    fn test_rnn_type_clone() {
+        use super::architectures::RNNType;
+        let t = RNNType::GRU;
+        let u = t.clone();
+        assert_eq!(format!("{:?}", u), "GRU");
+    }
+
+    // ── quantization module ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_quantization_type_variants_debug() {
+        use super::quantization::QuantizationType;
+        assert_eq!(format!("{:?}", QuantizationType::Dynamic), "Dynamic");
+        assert_eq!(format!("{:?}", QuantizationType::Static), "Static");
+        assert_eq!(format!("{:?}", QuantizationType::QAT), "QAT");
+    }
+
+    #[test]
+    fn test_quantization_type_clone() {
+        use super::quantization::QuantizationType;
+        let q = QuantizationType::Static;
+        let r = q.clone();
+        assert_eq!(format!("{:?}", r), "Static");
+    }
+
+    #[test]
+    fn test_quantization_config_construction() {
+        use super::quantization::{QuantizationConfig, QuantizationType};
+        let cfg = QuantizationConfig {
+            qtype: QuantizationType::Dynamic,
+            dtype: "qint8".to_string(),
+        };
+        assert_eq!(cfg.dtype, "qint8");
+        let dbg = format!("{:?}", cfg);
+        assert!(dbg.contains("QuantizationConfig"));
+    }
+
+    #[test]
+    fn test_quantization_config_clone() {
+        use super::quantization::{QuantizationConfig, QuantizationType};
+        let cfg = QuantizationConfig {
+            qtype: QuantizationType::QAT,
+            dtype: "quint8".to_string(),
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.dtype, "quint8");
+        assert_eq!(format!("{:?}", cloned.qtype), "QAT");
     }
 }

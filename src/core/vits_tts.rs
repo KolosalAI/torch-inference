@@ -1,5 +1,6 @@
 /// VITS (Variational Inference Text-to-Speech) TTS Engine
 /// Fast, high-quality neural TTS with multi-speaker support
+// Tests are at the bottom of this file.
 use anyhow::{Result, Context};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -154,5 +155,137 @@ impl TTSEngine for VITSEngine {
     
     fn list_voices(&self) -> Vec<VoiceInfo> {
         self.capabilities.supported_voices.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_cfg() -> serde_json::Value {
+        serde_json::json!({})
+    }
+
+    fn custom_cfg() -> serde_json::Value {
+        serde_json::json!({
+            "model_path": "/tmp/vits_model.pth",
+            "config_path": "/tmp/vits_config.json",
+            "sample_rate": 44100
+        })
+    }
+
+    // ── VITSConfig serde ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vits_config_serialize_deserialize() {
+        let cfg = VITSConfig {
+            model_path: std::path::PathBuf::from("/tmp/model.pth"),
+            config_path: std::path::PathBuf::from("/tmp/config.json"),
+            sample_rate: 22050,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("sample_rate"));
+        let back: VITSConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 22050);
+        assert_eq!(back.model_path, std::path::PathBuf::from("/tmp/model.pth"));
+    }
+
+    #[test]
+    fn test_vits_config_clone_and_debug() {
+        let cfg = VITSConfig {
+            model_path: std::path::PathBuf::from("a"),
+            config_path: std::path::PathBuf::from("b"),
+            sample_rate: 16000,
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.sample_rate, 16000);
+        let dbg = format!("{:?}", cloned);
+        assert!(dbg.contains("VITSConfig"));
+    }
+
+    // ── VITSEngine::new with defaults ─────────────────────────────────────────
+
+    #[test]
+    fn test_vits_engine_new_with_empty_config_uses_defaults() {
+        let result = VITSEngine::new(&empty_cfg());
+        assert!(result.is_ok(), "should succeed: {:?}", result.err());
+        let engine = result.unwrap();
+        assert_eq!(engine.name(), "vits");
+    }
+
+    #[test]
+    fn test_vits_engine_new_with_custom_paths() {
+        let result = VITSEngine::new(&custom_cfg());
+        assert!(result.is_ok());
+        let engine = result.unwrap();
+        assert_eq!(engine.config.sample_rate, 44100);
+        assert_eq!(engine.config.model_path, std::path::PathBuf::from("/tmp/vits_model.pth"));
+    }
+
+    #[test]
+    fn test_vits_engine_new_default_sample_rate() {
+        let engine = VITSEngine::new(&empty_cfg()).unwrap();
+        assert_eq!(engine.config.sample_rate, 22050);
+    }
+
+    // ── capabilities & voices ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_vits_engine_capabilities() {
+        let engine = VITSEngine::new(&empty_cfg()).unwrap();
+        let caps = engine.capabilities();
+        assert_eq!(caps.name, "VITS Neural TTS");
+        assert_eq!(caps.max_text_length, 1000);
+        assert!(!caps.supports_ssml);
+        assert!(!caps.supports_streaming);
+        assert!(caps.supported_languages.contains(&"en".to_string()));
+        assert!(caps.supported_languages.contains(&"zh".to_string()));
+        assert!(caps.supported_languages.contains(&"ja".to_string()));
+    }
+
+    #[test]
+    fn test_vits_engine_list_voices() {
+        let engine = VITSEngine::new(&empty_cfg()).unwrap();
+        let voices = engine.list_voices();
+        assert_eq!(voices.len(), 2);
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert!(ids.contains(&"vits_en_female"));
+        assert!(ids.contains(&"vits_en_male"));
+    }
+
+    // ── synthesize ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_vits_synthesize_short_text() {
+        let engine = VITSEngine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let result = engine.synthesize("hello world", &params).await;
+        assert!(result.is_ok());
+        let audio = result.unwrap();
+        assert_eq!(audio.channels, 1);
+        assert_eq!(audio.sample_rate, 22050);
+        assert!(!audio.samples.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_vits_synthesize_pitch_low() {
+        let engine = VITSEngine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams {
+            pitch: 0.8,
+            ..Default::default()
+        };
+        let result = engine.synthesize("test low pitch", &params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_vits_synthesize_pitch_high() {
+        let engine = VITSEngine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams {
+            pitch: 1.2,
+            ..Default::default()
+        };
+        let result = engine.synthesize("test high pitch", &params).await;
+        assert!(result.is_ok());
     }
 }

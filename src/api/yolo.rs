@@ -617,6 +617,226 @@ mod tests {
         assert_eq!(YoloSize::Medium.suffix(), "m");
         assert_eq!(YoloSize::Large.suffix(), "l");
     }
+
+    // ── configure (lines 623-629) and detect_objects entry (line 70) ─────────
+    // Registering all routes via configure() exercises each `.route(...)` line.
+    // Sending a request to /yolo/detect with an invalid query string causes
+    // actix to return 400 before Multipart is parsed, exercising line 70
+    // (the function is entered by the router) while avoiding actual multipart.
+
+    #[actix_web::test]
+    async fn test_configure_registers_all_yolo_routes() {
+        use actix_web::{test as actix_test, App};
+
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure),
+        )
+        .await;
+
+        // GET /yolo/models — always succeeds
+        let req = actix_test::TestRequest::get()
+            .uri("/yolo/models")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // GET /yolo/info?model_version=v8&model_size=n
+        let req = actix_test::TestRequest::get()
+            .uri("/yolo/info?model_version=v8&model_size=n")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // POST /yolo/download with valid JSON
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/download")
+            .set_json(serde_json::json!({"model_version": "v8", "model_size": "n"}))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // POST /yolo/detect with no body — just verify the app is set up correctly
+        // by confirming the other routes work (detect route coverage is in the other test).
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/download")
+            .set_json(serde_json::json!({"model_version": "v8", "model_size": "x"}))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // Confirm detect_objects is entered and returns error for invalid version query.
+    #[actix_web::test]
+    async fn test_detect_objects_via_http_invalid_version_returns_error() {
+        use actix_web::{test as actix_test, App};
+
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure),
+        )
+        .await;
+
+        // Invalid model_version — handler enters (line 70), parses query, returns BadRequest.
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/detect?model_version=v999&model_size=n")
+            .insert_header(("content-type", "multipart/form-data; boundary=boundary"))
+            .set_payload("")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        // ApiError::BadRequest maps to 400.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    // detect_objects — valid version but invalid size → BadRequest (covers line 79 + error at 80)
+    #[actix_web::test]
+    async fn test_detect_objects_invalid_size_returns_bad_request() {
+        use actix_web::{test as actix_test, App};
+
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure),
+        )
+        .await;
+
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/detect?model_version=v8&model_size=zzz")
+            .insert_header(("content-type", "multipart/form-data; boundary=tbd"))
+            .set_payload("")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    // detect_objects — valid version+size, model NOT on disk, empty multipart
+    // Covers: lines 79-80 (size parse ok), 83-84 (temp dir), 87 (loop header, no fields),
+    //         99-103 (model_name/model_path), 105 (exists check), 107 (cleanup), 109-110 (NotFound).
+    #[actix_web::test]
+    async fn test_detect_objects_no_model_on_disk_returns_not_found() {
+        use actix_web::{test as actix_test, App};
+
+        // Use a nonexistent models_dir so model_path.exists() == false.
+        let state = make_yolo_state(std::path::PathBuf::from(
+            "/nonexistent_models_dir_for_yolo_test_xyz",
+        ));
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure),
+        )
+        .await;
+
+        let boundary = "----yolotestbnd1";
+        // Empty multipart (no fields) — loop at line 87 simply won't iterate.
+        let body = format!("--{}--\r\n", boundary);
+
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/detect?model_version=v8&model_size=n")
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={}", boundary),
+            ))
+            .set_payload(body)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        // Model not found → 404.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+    }
+
+    // detect_objects — valid version+size, model IS on disk, multipart with a file field.
+    // Covers: lines 79-80, 83-84, 87, 88-94 (multipart field loop body),
+    //         99-103, 105, 115 (load_coco_names), 136-138 (no-torch InternalError).
+    #[actix_web::test]
+    async fn test_detect_objects_model_exists_no_torch_returns_internal_error() {
+        use actix_web::{test as actix_test, App};
+
+        // Create a real temp directory with the expected model file so model_path.exists() == true.
+        let tmp = std::env::temp_dir().join(format!(
+            "yolo_test_models_{}",
+            uuid::Uuid::new_v4()
+        ));
+        tokio::fs::create_dir_all(tmp.join("yolov8n")).await.unwrap();
+        tokio::fs::write(tmp.join("yolov8n").join("yolov8n.pt"), b"fake_model_data")
+            .await
+            .unwrap();
+
+        let state = make_yolo_state(tmp.clone());
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure),
+        )
+        .await;
+
+        let boundary = "----yolotestbnd2";
+        // Multipart with one file field — exercises lines 88-94.
+        let body = format!(
+            "--{b}\r\n\
+             Content-Disposition: form-data; name=\"image\"; filename=\"test.jpg\"\r\n\
+             Content-Type: image/jpeg\r\n\r\n\
+             FAKEJPEGDATA\r\n\
+             --{b}--\r\n",
+            b = boundary
+        );
+
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/detect?model_version=v8&model_size=n")
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={}", boundary),
+            ))
+            .set_payload(body)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+
+        // Without the `torch` feature, lines 136-138 fire: InternalError → 500.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Cleanup temp dir.
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    // detect_objects — valid v5+s, model NOT on disk (covers model_name construction for V5).
+    #[actix_web::test]
+    async fn test_detect_objects_v5_small_no_model_returns_not_found() {
+        use actix_web::{test as actix_test, App};
+
+        let state = make_yolo_state(std::path::PathBuf::from(
+            "/nonexistent_models_dir_for_yolo_test_v5",
+        ));
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure),
+        )
+        .await;
+
+        let boundary = "----yolotestbnd3";
+        let body = format!("--{}--\r\n", boundary);
+
+        let req = actix_test::TestRequest::post()
+            .uri("/yolo/detect?model_version=v5&model_size=s")
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={}", boundary),
+            ))
+            .set_payload(body)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+    }
 }
 
 /// Configure YOLO routes

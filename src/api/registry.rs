@@ -251,6 +251,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::test as actix_test;
 
     // ── ApiResponse ───────────────────────────────────────────────────────────
 
@@ -648,5 +649,121 @@ mod tests {
         let status = resp.status().as_u16();
         assert!(status == 400 || status == 500,
             "expected 400 or 500, got {status}");
+    }
+
+    // ── register_model success path ────────────────────────────────────────────
+    // Create a real temp .onnx file so register_model_from_path succeeds and
+    // we exercise lines 67-73 (the Ok branch).
+
+    #[actix_web::test]
+    async fn test_register_model_handler_success_with_onnx_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("my_model.onnx");
+        std::fs::write(&model_path, b"fake onnx content").unwrap();
+
+        let engine = make_engine();
+        let req = web::Json(RegisterModelRequest {
+            path: model_path.to_string_lossy().to_string(),
+            name: Some("my-onnx".to_string()),
+        });
+        let resp = register_model(engine, req).await.unwrap();
+        // Should be 200 OK with model_id and metadata in the response
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── get_model_metadata success path ───────────────────────────────────────
+    // Register a model first, then query its metadata to hit lines 114-115.
+
+    #[actix_web::test]
+    async fn test_get_model_metadata_handler_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("meta_model.onnx");
+        std::fs::write(&model_path, b"fake onnx content").unwrap();
+
+        let manager = Arc::new(crate::models::manager::ModelManager::new(&crate::config::Config::default(), None));
+        // Register via the manager directly
+        let model_id = manager
+            .register_model_from_path(&model_path, Some("meta-model".to_string()))
+            .await
+            .expect("registration should succeed");
+
+        let engine = Arc::new(crate::core::engine::InferenceEngine::new(manager, &crate::config::Config::default()));
+        let engine_data = web::Data::new(engine);
+        let path = web::Path::from(model_id.clone());
+        let resp = get_model_metadata(engine_data, path).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── configure function ────────────────────────────────────────────────────
+    // The configure() function registers routes on a ServiceConfig. We verify
+    // it completes without panicking by wiring it into an actix App.
+
+    #[actix_web::test]
+    async fn test_configure_registers_routes() {
+        let engine = make_engine();
+        let app = actix_test::init_service(
+            actix_web::App::new()
+                .app_data(engine.clone())
+                .configure(configure)
+        ).await;
+
+        // /registry/models should respond (empty list → 200)
+        let req = actix_test::TestRequest::get()
+            .uri("/registry/models")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK,
+            "configure() must register the /registry/models route");
+    }
+
+    #[actix_web::test]
+    async fn test_configure_stats_route() {
+        let engine = make_engine();
+        let app = actix_test::init_service(
+            actix_web::App::new()
+                .app_data(engine.clone())
+                .configure(configure)
+        ).await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/registry/stats")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK,
+            "configure() must register the /registry/stats route");
+    }
+
+    #[actix_web::test]
+    async fn test_configure_export_route() {
+        let engine = make_engine();
+        let app = actix_test::init_service(
+            actix_web::App::new()
+                .app_data(engine.clone())
+                .configure(configure)
+        ).await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/registry/export")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK,
+            "configure() must register the /registry/export route");
+    }
+
+    #[actix_web::test]
+    async fn test_configure_unknown_model_metadata_route() {
+        let engine = make_engine();
+        let app = actix_test::init_service(
+            actix_web::App::new()
+                .app_data(engine.clone())
+                .configure(configure)
+        ).await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/registry/models/does-not-exist")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND,
+            "GET /registry/models/{{id}} for unknown model should return 404");
     }
 }

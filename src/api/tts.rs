@@ -633,6 +633,66 @@ mod tests {
         assert!((req.speed - 0.5).abs() < f32::EPSILON);
         assert!((req.pitch - 2.0).abs() < f32::EPSILON);
     }
+
+    // ── configure_routes (lines 639-647) ──────────────────────────────────────
+    // Invoking configure_routes exercises every line of the function body.
+
+    #[actix_web::test]
+    async fn test_configure_routes_registers_all_tts_endpoints() {
+        use actix_web::{test as actix_test, App};
+
+        let state = make_tts_state("mock-tts");
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        // POST /tts/synthesize
+        let req = actix_test::TestRequest::post()
+            .uri("/tts/synthesize")
+            .set_json(serde_json::json!({"text": "hello"}))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // GET /tts/engines
+        let req = actix_test::TestRequest::get()
+            .uri("/tts/engines")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // GET /tts/engines/{id}/capabilities
+        let req = actix_test::TestRequest::get()
+            .uri("/tts/engines/mock-tts/capabilities")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // GET /tts/engines/{id}/voices
+        let req = actix_test::TestRequest::get()
+            .uri("/tts/engines/mock-tts/voices")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // GET /tts/stats
+        let req = actix_test::TestRequest::get()
+            .uri("/tts/stats")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        // GET /tts/health
+        let req = actix_test::TestRequest::get()
+            .uri("/tts/health")
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
 }
 
 /// Configure TTS routes

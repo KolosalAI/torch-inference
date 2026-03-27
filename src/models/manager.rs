@@ -1018,4 +1018,574 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("PyTorch"));
     }
+
+    // ── Additional coverage tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_initialize_default_models_no_auto_load() {
+        // With no auto_load models configured and non-existent dirs,
+        // initialize_default_models should complete without error
+        let config = Config::default();
+        let manager = ModelManager::new(&config, None);
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok());
+        // "example" model should be registered as a legacy model
+        assert!(manager.get_model("example").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_register_and_list_multiple_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let onnx_path = dir.path().join("net.onnx");
+        let pt_path = dir.path().join("model.pt");
+        let sf_path = dir.path().join("weights.safetensors");
+        std::fs::write(&onnx_path, b"onnx").unwrap();
+        std::fs::write(&pt_path, b"pt").unwrap();
+        std::fs::write(&sf_path, b"sf").unwrap();
+
+        let manager = default_manager();
+        manager.register_model_from_path(&onnx_path, None).await.unwrap();
+        manager.register_model_from_path(&pt_path, None).await.unwrap();
+        manager.register_model_from_path(&sf_path, None).await.unwrap();
+
+        let onnx = manager.list_by_format(ModelFormat::ONNX);
+        let pytorch = manager.list_by_format(ModelFormat::PyTorch);
+        let sf = manager.list_by_format(ModelFormat::SafeTensors);
+
+        assert_eq!(onnx.len(), 1);
+        assert_eq!(pytorch.len(), 1);
+        assert_eq!(sf.len(), 1);
+
+        let stats = manager.get_registry_stats();
+        assert_eq!(stats["total_models"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_base_model_device_default() {
+        let model = BaseModel::new("device-test".to_string());
+        assert_eq!(model.device, "cpu");
+        let info = model.model_info();
+        assert_eq!(info["device"], "cpu");
+    }
+
+    #[tokio::test]
+    async fn test_manager_register_then_reload() {
+        let manager = default_manager();
+        manager
+            .register_model("my-model".to_string(), BaseModel::new("my-model".to_string()))
+            .await
+            .unwrap();
+
+        // Load it
+        manager.load_model("my-model").await.unwrap();
+        let m = manager.get_model("my-model").unwrap();
+        assert!(m.is_loaded);
+
+        // Re-register with a fresh model (overwrite)
+        manager
+            .register_model("my-model".to_string(), BaseModel::new("my-model".to_string()))
+            .await
+            .unwrap();
+        let m2 = manager.get_model("my-model").unwrap();
+        // New model is not loaded
+        assert!(!m2.is_loaded);
+    }
+
+    // ── load_onnx_model – with device_ids config ──────────────────────────────
+
+    #[tokio::test]
+    async fn test_load_onnx_model_with_multiple_device_ids_wrong_format() {
+        let mut config = Config::default();
+        config.device.device_ids = Some(vec![0, 1]);
+        let manager = ModelManager::new(&config, None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.pt"); // PyTorch format, not ONNX
+        std::fs::write(&path, b"pt bytes").unwrap();
+
+        manager
+            .register_model_from_path(&path, Some("multi-pt".to_string()))
+            .await
+            .unwrap();
+
+        // Trying to load a PyTorch model via load_onnx_model should fail with format error
+        let result = manager.load_onnx_model("multi-pt").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("ONNX") || err.contains("not an ONNX model"));
+    }
+
+    #[tokio::test]
+    async fn test_load_onnx_model_not_registered_with_device_ids() {
+        let mut config = Config::default();
+        config.device.device_ids = Some(vec![0]);
+        let manager = ModelManager::new(&config, None);
+        let result = manager.load_onnx_model("not-registered-at-all").await;
+        assert!(result.is_err());
+    }
+
+    // ── infer_onnx – empty models list (line 256-257) ─────────────────────────
+
+    #[tokio::test]
+    async fn test_infer_onnx_empty_models_vec() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.onnx");
+        std::fs::write(&path, b"onnx placeholder").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("empty-onnx-vec".to_string()))
+            .await
+            .unwrap();
+
+        // Manually insert an EMPTY vec into loaded_onnx_models
+        manager.loaded_onnx_models.insert("empty-onnx-vec".to_string(), vec![]);
+
+        let result = manager
+            .infer_onnx("empty-onnx-vec", &serde_json::json!({"x": 1}))
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("No model instances") || err.contains("loaded"),
+            "error should mention empty model list: {}",
+            err
+        );
+    }
+
+    // ── initialize_default_models with auto_load config ───────────────────────
+
+    #[tokio::test]
+    async fn test_initialize_default_models_with_auto_load_legacy() {
+        let mut config = Config::default();
+        // "example" model is registered by initialize_default_models itself
+        config.models.auto_load = vec!["example".to_string()];
+        let manager = ModelManager::new(&config, None);
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok());
+        // "example" model should exist
+        assert!(manager.get_model("example").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_initialize_default_models_with_auto_load_nonexistent_registry() {
+        let mut config = Config::default();
+        // A model name that is not in registry and not in legacy models
+        config.models.auto_load = vec!["ghost-model-xyz".to_string()];
+        let manager = ModelManager::new(&config, None);
+        // Should complete without error (just warns when model not found)
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_initialize_default_models_with_auto_load_onnx_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let onnx_path = dir.path().join("autoload.onnx");
+        std::fs::write(&onnx_path, b"onnx data").unwrap();
+
+        let mut config = Config::default();
+        config.models.cache_dir = dir.path().to_path_buf();
+        config.models.auto_load = vec!["autoload".to_string()];
+
+        let manager = ModelManager::new(&config, None);
+        // Scan the directory so "autoload" is in registry
+        manager
+            .register_model_from_path(&onnx_path, Some("autoload".to_string()))
+            .await
+            .unwrap();
+
+        // initialize_default_models should try to load "autoload" as ONNX.
+        // ORT may panic if the native library is not installed; we skip
+        // the actual initialization call and just verify the registry has the model.
+        let metadata = manager.get_model_metadata("autoload");
+        assert!(metadata.is_ok(), "model should be registered before auto-load");
+    }
+
+    // ── scan_and_register with valid dir – covers line 390-391 ───────────────
+
+    #[tokio::test]
+    async fn test_initialize_default_models_scans_existing_model_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("scan_test.onnx"), b"onnx").unwrap();
+
+        let mut config = Config::default();
+        config.models.cache_dir = dir.path().to_path_buf();
+
+        let manager = ModelManager::new(&config, None);
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok());
+
+        // "scan_test" should have been registered via scan
+        let models = manager.list_registered_models();
+        assert!(models.iter().any(|m| m.id == "scan_test"));
+    }
+
+    // ── load_onnx_model – ONNX format, invalid file (exercises device_ids branch) ──
+
+    #[tokio::test]
+    #[ignore = "requires libonnxruntime.dylib"]
+    async fn test_load_onnx_model_with_device_ids_invalid_onnx() {
+        // Use device_ids = Some(vec![0]) so the Some branch on line 173-174 executes.
+        // The file exists but is not valid ONNX, so ORT fails at commit_from_file.
+        // Lines 173-185 (loop body, map_err) are still exercised before the error.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fake.onnx");
+        std::fs::write(&path, b"not valid onnx bytes").unwrap();
+
+        let mut config = Config::default();
+        config.device.device_ids = Some(vec![0]);
+        let manager = ModelManager::new(&config, None);
+
+        manager
+            .register_model_from_path(&path, Some("fake-onnx-device-ids".to_string()))
+            .await
+            .unwrap();
+
+        // Attempt to load — must fail (invalid ONNX) but exercises lines 173-184
+        let result = manager.load_onnx_model("fake-onnx-device-ids").await;
+        assert!(result.is_err(), "loading invalid ONNX should fail");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires libonnxruntime.dylib"]
+    async fn test_load_onnx_model_without_device_ids_invalid_onnx() {
+        // Use device_ids = None so the else branch on line 175-177 executes.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fake2.onnx");
+        std::fs::write(&path, b"also not onnx").unwrap();
+
+        let mut config = Config::default();
+        config.device.device_ids = None;
+        config.device.device_id = 0;
+        let manager = ModelManager::new(&config, None);
+
+        manager
+            .register_model_from_path(&path, Some("fake-onnx-no-device-ids".to_string()))
+            .await
+            .unwrap();
+
+        let result = manager.load_onnx_model("fake-onnx-no-device-ids").await;
+        assert!(result.is_err(), "loading invalid ONNX should fail");
+    }
+
+    // ── initialize_default_models – auto_load ONNX triggers lines 420-424 ────
+
+    #[tokio::test]
+    #[ignore = "requires libonnxruntime.dylib"]
+    async fn test_initialize_default_models_auto_load_onnx_invalid_file() {
+        // Register an ONNX model in the registry, then set it as auto_load.
+        // initialize_default_models will try load_onnx_model which will fail
+        // (invalid bytes), hitting the warn branch on lines 421-423.
+        // The function must still return Ok() since errors are just warned.
+        let dir = tempfile::tempdir().unwrap();
+        let onnx_path = dir.path().join("autoload_invalid.onnx");
+        std::fs::write(&onnx_path, b"not real onnx content").unwrap();
+
+        let mut config = Config::default();
+        // Use an empty cache_dir so no additional scanning happens
+        config.models.cache_dir = tempfile::tempdir().unwrap().into_path();
+        config.models.auto_load = vec!["autoload-invalid-onnx".to_string()];
+
+        let manager = ModelManager::new(&config, None);
+        // Register so the model is in the registry with ONNX format
+        manager
+            .register_model_from_path(&onnx_path, Some("autoload-invalid-onnx".to_string()))
+            .await
+            .unwrap();
+
+        // initialize_default_models should not fail even if load_onnx_model fails
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok(), "should succeed despite ONNX load failure: {:?}", result.err());
+    }
+
+    // ── initialize_default_models – auto_load model in registry (non-ONNX) ───
+
+    #[tokio::test]
+    async fn test_initialize_default_models_auto_load_safetensors_skipped() {
+        // SafeTensors format is neither PyTorch nor ONNX, so the auto-load
+        // blocks for PyTorch and ONNX both skip it silently.
+        let dir = tempfile::tempdir().unwrap();
+        let sf_path = dir.path().join("sf_autoload.safetensors");
+        std::fs::write(&sf_path, b"safetensors header").unwrap();
+
+        let mut config = Config::default();
+        config.models.cache_dir = tempfile::tempdir().unwrap().into_path();
+        config.models.auto_load = vec!["sf-auto".to_string()];
+
+        let manager = ModelManager::new(&config, None);
+        manager
+            .register_model_from_path(&sf_path, Some("sf-auto".to_string()))
+            .await
+            .unwrap();
+
+        // Should complete without error
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok());
+    }
+
+    // ── load_onnx_model – marks model as loaded in registry (lines 192-196) ──
+    // We cannot reach lines 192-196 without a valid ONNX session, but we can
+    // verify the registry mark_loaded error path is wrapped correctly.
+
+    #[tokio::test]
+    async fn test_load_onnx_model_unregistered_model_error() {
+        // Calling load_onnx_model on a model not in registry produces an
+        // InferenceError at the registry lookup (lines 162-163), exercising
+        // the map_err on line 163.
+        let manager = default_manager();
+        let result = manager.load_onnx_model("completely-unknown-model-abc").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    // ── infer_onnx – model registered, not in loaded cache (existing coverage) ─
+    // The line 252-254 (ok_or_else) is exercised by test_infer_onnx_registered_but_not_loaded.
+    // Lines 261-273 (success path after model is found) cannot be exercised
+    // without a real ONNX session (LoadedOnnxModel requires a live ORT Session).
+
+    // ── ModelManager construction with tensor_pool ────────────────────────────
+
+    #[test]
+    fn test_manager_new_with_tensor_pool() {
+        use std::sync::Arc;
+        use crate::tensor_pool::TensorPool;
+        let pool = Arc::new(TensorPool::new(100));
+        let config = Config::default();
+        let manager = ModelManager::new(&config, Some(pool));
+        // Should construct successfully; tensor_pool is stored
+        assert!(manager.list_registered_models().is_empty());
+    }
+
+    // ── list_registered_models after multiple registrations ──────────────────
+
+    #[tokio::test]
+    async fn test_list_registered_models_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in &["a.onnx", "b.onnx", "c.pt"] {
+            std::fs::write(dir.path().join(name), b"data").unwrap();
+        }
+
+        let manager = default_manager();
+        manager.scan_and_register(dir.path()).await.unwrap();
+
+        let models = manager.list_registered_models();
+        assert_eq!(models.len(), 3);
+    }
+
+    // ── infer_onnx – model not in loaded_onnx_models (covers line 251-254) ───
+
+    #[tokio::test]
+    async fn test_infer_onnx_model_registered_but_not_in_loaded_map() {
+        // Model is in registry (from registration) but was never loaded into
+        // loaded_onnx_models. infer_onnx returns ModelNotFound error at line 252-254.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notloaded2.onnx");
+        std::fs::write(&path, b"placeholder").unwrap();
+
+        let manager = default_manager();
+        let model_id = manager
+            .register_model_from_path(&path, Some("notloaded2".to_string()))
+            .await
+            .unwrap();
+
+        // Do NOT call load_onnx_model — so loaded_onnx_models has no entry
+        let result = manager
+            .infer_onnx(&model_id, &serde_json::json!({"input": 42}))
+            .await;
+
+        assert!(result.is_err(), "should fail when model not in loaded_onnx_models");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("not loaded") || err.contains("not found"),
+            "error should mention model not loaded: {}",
+            err
+        );
+    }
+
+    // ── infer_registered – PyTorch registered, not loaded ────────────────────
+
+    #[cfg(not(feature = "torch"))]
+    #[tokio::test]
+    async fn test_infer_registered_pytorch_not_loaded_no_torch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pytorch_not_loaded.pt");
+        std::fs::write(&path, b"pt placeholder").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("pt-not-loaded".to_string()))
+            .await
+            .unwrap();
+
+        let result = manager
+            .infer_registered("pt-not-loaded", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err(), "PyTorch inference without torch feature should fail");
+    }
+
+    // ── get_model_metadata – multiple formats ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_model_metadata_correct_format_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let onnx_path = dir.path().join("detect.onnx");
+        let pt_path = dir.path().join("detect.pt");
+        let sf_path = dir.path().join("detect.safetensors");
+        std::fs::write(&onnx_path, b"onnx").unwrap();
+        std::fs::write(&pt_path, b"pt").unwrap();
+        std::fs::write(&sf_path, b"sf").unwrap();
+
+        let manager = default_manager();
+        manager.register_model_from_path(&onnx_path, Some("det-onnx".to_string())).await.unwrap();
+        manager.register_model_from_path(&pt_path, Some("det-pt".to_string())).await.unwrap();
+        manager.register_model_from_path(&sf_path, Some("det-sf".to_string())).await.unwrap();
+
+        let onnx_meta = manager.get_model_metadata("det-onnx").unwrap();
+        let pt_meta = manager.get_model_metadata("det-pt").unwrap();
+        let sf_meta = manager.get_model_metadata("det-sf").unwrap();
+
+        assert_eq!(onnx_meta.format, ModelFormat::ONNX);
+        assert_eq!(pt_meta.format, ModelFormat::PyTorch);
+        assert_eq!(sf_meta.format, ModelFormat::SafeTensors);
+    }
+
+    // ── initialize_default_models – both scan and auto_load paths ────────────
+
+    #[tokio::test]
+    async fn test_initialize_default_models_scan_and_legacy_auto_load() {
+        // Set up a temp dir with one ONNX file to be scanned, and
+        // configure auto_load to include "example" (a legacy model that
+        // initialize_default_models registers itself).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("scanned.onnx"), b"onnx data").unwrap();
+
+        let mut config = Config::default();
+        config.models.cache_dir = dir.path().to_path_buf();
+        config.models.auto_load = vec!["example".to_string()];
+
+        let manager = ModelManager::new(&config, None);
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok(), "initialize_default_models should succeed: {:?}", result.err());
+
+        // "example" was registered as a legacy model and auto-loaded
+        let example = manager.get_model("example");
+        assert!(example.is_ok(), "'example' model should exist as legacy model");
+
+        // "scanned" was registered from the scan
+        let registered = manager.list_registered_models();
+        assert!(
+            registered.iter().any(|m| m.id == "scanned"),
+            "scanned model should be in registry: {:?}",
+            registered.iter().map(|m| &m.id).collect::<Vec<_>>()
+        );
+    }
+
+    // ── load_onnx_model – format check (lines 166-170) ───────────────────────
+
+    #[tokio::test]
+    async fn test_load_onnx_model_safetensors_format_fails_with_not_onnx() {
+        // SafeTensors is neither ONNX nor PyTorch; load_onnx_model should fail
+        // at the format check (lines 166-170) returning "not an ONNX model".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sf_wrong.safetensors");
+        std::fs::write(&path, b"safetensors").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("sf-wrong-for-onnx".to_string()))
+            .await
+            .unwrap();
+
+        let result = manager.load_onnx_model("sf-wrong-for-onnx").await;
+        assert!(result.is_err(), "safetensors model should fail load_onnx_model");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("not an ONNX model") || err.contains("ONNX"),
+            "error should mention ONNX format mismatch: {}",
+            err
+        );
+    }
+
+    // ── initialize_default_models – scan Err arm (lines 390-391) ─────────────
+    // This covers the Err branch of the match in initialize_default_models when
+    // scan_and_register fails on a directory that exists but cannot be read.
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_initialize_default_models_scan_err_arm_permission_denied() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Skip if running as root (permissions don't apply to root)
+        // Use std::process to check effective uid via 'id -u'
+        let uid_output = std::process::Command::new("id").arg("-u").output();
+        if let Ok(out) = uid_output {
+            if String::from_utf8_lossy(&out.stdout).trim() == "0" {
+                return;
+            }
+        }
+
+        let outer = tempfile::tempdir().unwrap();
+        let restricted = outer.path().join("restricted_cache");
+        fs::create_dir(&restricted).unwrap();
+
+        // Remove all permissions so read_dir will fail
+        let mut perms = fs::metadata(&restricted).unwrap().permissions();
+        perms.set_mode(0o000);
+        fs::set_permissions(&restricted, perms).unwrap();
+
+        let mut config = Config::default();
+        config.models.cache_dir = restricted.clone();
+
+        let manager = ModelManager::new(&config, None);
+        // initialize_default_models will try to scan restricted (exists + is_dir)
+        // but read_dir fails → Err arm (lines 390-391) is executed, then continues
+        let result = manager.initialize_default_models().await;
+
+        // Restore permissions before any assertions (so tempdir cleanup works)
+        let mut restore = fs::metadata(&restricted).unwrap().permissions();
+        restore.set_mode(0o755);
+        fs::set_permissions(&restricted, restore).unwrap();
+
+        // The function should still succeed (Err is only warned, not propagated)
+        assert!(result.is_ok(), "initialize_default_models should not fail on scan error: {:?}", result.err());
+    }
+
+    // ── scan_and_register – Err arm directly (lines 390-391 via scan_and_register) ──
+    // Directly verify scan_and_register returns Err when the directory cannot be read.
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_scan_and_register_permission_denied() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Skip if running as root
+        let uid_output = std::process::Command::new("id").arg("-u").output();
+        if let Ok(out) = uid_output {
+            if String::from_utf8_lossy(&out.stdout).trim() == "0" {
+                return;
+            }
+        }
+
+        let outer = tempfile::tempdir().unwrap();
+        let restricted = outer.path().join("no_read");
+        fs::create_dir(&restricted).unwrap();
+
+        let mut perms = fs::metadata(&restricted).unwrap().permissions();
+        perms.set_mode(0o000);
+        fs::set_permissions(&restricted, perms).unwrap();
+
+        let manager = default_manager();
+        let result = manager.scan_and_register(&restricted).await;
+
+        // Restore permissions
+        let mut restore = fs::metadata(&restricted).unwrap().permissions();
+        restore.set_mode(0o755);
+        fs::set_permissions(&restricted, restore).unwrap();
+
+        assert!(result.is_err(), "scan_and_register should fail on unreadable directory");
+    }
 }

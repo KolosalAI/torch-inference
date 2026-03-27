@@ -646,6 +646,72 @@ mod tests {
         web::Data::new(ModelDownloadState { manager })
     }
 
+    /// Create a ModelDownloadState backed by a temporary directory that already
+    /// contains a model subdirectory so the manager's model map is populated.
+    async fn make_download_state_with_model(model_name: &str) -> web::Data<ModelDownloadState> {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        // Create a subdirectory representing a downloaded model
+        let model_dir = dir.path().join(model_name);
+        std::fs::create_dir_all(&model_dir).expect("create model dir");
+        // Write a dummy file so the directory has non-zero size
+        std::fs::write(model_dir.join("model.bin"), b"fake model data").expect("write dummy");
+
+        let manager = Arc::new(
+            crate::models::download::ModelDownloadManager::new(dir.path())
+                .expect("create manager"),
+        );
+        // initialize() scans the cache dir and populates the models map
+        manager.initialize().await.expect("initialize manager");
+
+        // Keep the temp dir alive by leaking it (acceptable in tests)
+        std::mem::forget(dir);
+        web::Data::new(ModelDownloadState { manager })
+    }
+
+    // list_models — populated manager returns model list (lines 99-104)
+    #[actix_web::test]
+    async fn test_list_models_with_downloaded_model() {
+        let state = make_download_state_with_model("my-test-model-xyz").await;
+        let result = list_models(state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(body["total"].as_u64().unwrap_or(0) >= 1, "should have at least one model");
+        assert!(body["models"].as_array().map(|a| !a.is_empty()).unwrap_or(false));
+    }
+
+    // get_model_info — model found (lines 121-126)
+    #[actix_web::test]
+    async fn test_get_model_info_found() {
+        let state = make_download_state_with_model("info-model-abc").await;
+        let name = web::Path::from("info-model-abc".to_string());
+        let result = get_model_info(name, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["name"], "info-model-abc");
+        assert!(body["size_bytes"].is_number());
+        assert!(body["size_human"].is_string());
+    }
+
+    // delete_model — model exists → deleted successfully (lines 138-140)
+    #[actix_web::test]
+    async fn test_delete_model_success() {
+        let state = make_download_state_with_model("delete-model-xyz").await;
+        let name = web::Path::from("delete-model-xyz".to_string());
+        let result = delete_model(name, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["success"], true);
+    }
+
     // download_model — huggingface source missing repo_id → BadRequest
     #[actix_web::test]
     async fn test_download_model_huggingface_missing_repo_id() {
@@ -842,6 +908,7 @@ mod tests {
     // ── list_sota_models ──────────────────────────────────────────────────────
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_sota_models_with_registry_image_classification() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -882,6 +949,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_sota_models_registry_not_found_returns_empty() {
         let dir = tempfile::tempdir().unwrap();
         // No registry file — list_sota_models returns Ok with empty list
@@ -890,6 +958,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_sota_models_no_image_classification_models() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -915,6 +984,7 @@ mod tests {
     // ── download_sota_model error paths ───────────────────────────────────────
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_download_sota_model_registry_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let state = make_download_state();
@@ -926,6 +996,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_download_sota_model_model_not_in_registry() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -950,6 +1021,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_download_sota_model_builtin_returns_bad_request() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -974,6 +1046,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_download_sota_model_huggingface_url_starts_task() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -999,6 +1072,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_download_sota_model_plain_url_starts_task() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -1026,6 +1100,7 @@ mod tests {
     // ── list_available_models with registry ───────────────────────────────────
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_available_models_with_registry_returns_models() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -1079,6 +1154,7 @@ mod tests {
     }
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_available_models_with_registry_note_field() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{
@@ -1260,5 +1336,331 @@ mod tests {
         assert!(status_result.is_ok());
         let status_resp = status_result.unwrap();
         assert_eq!(status_resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── list_available_models error branches ──────────────────────────────────
+
+    /// When model_registry.json has invalid JSON → falls back to hardcoded list.
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_invalid_json_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_registry(dir.path(), "not valid json at all {{{{");
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    /// When model_registry.json has valid JSON but no "models" key → falls back.
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_no_models_key_falls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        write_temp_registry(dir.path(), r#"{"version": "1.0", "updated": "2024-01-01"}"#);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        // Fallback returns "hardcoded" source
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["source"], "hardcoded");
+    }
+
+    // ── list_sota_models with multiple Image Classification models (triggers sort) ──
+
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_sota_models_sorts_by_rank() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "resnet50": {
+                    "name": "ResNet-50",
+                    "architecture": "ResNet",
+                    "task": "Image Classification",
+                    "accuracy": "76.1%",
+                    "rank": 2,
+                    "size": "~100 MB",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                },
+                "efficientnet-b0": {
+                    "name": "EfficientNet-B0",
+                    "architecture": "EfficientNet",
+                    "task": "Image Classification",
+                    "accuracy": "77.1%",
+                    "rank": 1,
+                    "size": "~20 MB",
+                    "url": "https://huggingface.co/google/efficientnet-b0",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available",
+                    "note": "Top-1 accuracy on ImageNet"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let result = with_cwd(dir.path(), list_sota_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().unwrap();
+        // Sorted ascending by rank: rank 1 first
+        assert_eq!(models.len(), 2);
+        let first_rank = models[0]["rank"].as_u64().unwrap_or(999);
+        let second_rank = models[1]["rank"].as_u64().unwrap_or(999);
+        assert!(first_rank <= second_rank, "models should be sorted by rank");
+    }
+
+    // ── download_sota_model: HF URL with fewer than 5 path segments → URL source ──
+
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_download_sota_model_short_hf_url_uses_url_source() {
+        let dir = tempfile::tempdir().unwrap();
+        // URL starts with huggingface.co but has < 5 segments when split by '/'
+        // Format: https://huggingface.co/{org} — only 4 parts
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "short-hf": {
+                    "name": "Short HF Model",
+                    "url": "https://huggingface.co/google",
+                    "task": "Image Classification"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let state = make_download_state();
+        let model_id = web::Path::from("short-hf".to_string());
+
+        let result = with_cwd(dir.path(), || download_sota_model(model_id, state)).await;
+        // Should succeed — starts a download task with URL source
+        assert!(result.is_ok());
+    }
+
+    // ── list_available_models: task-inference branches ─────────────────────────
+    // Line 183-184: model has "accuracy" but no "task" → task = "image-classification"
+    // Line 186: model has neither task, voices, nor accuracy → "unknown"
+    // Line 195: "other" category
+    // Lines 230-231, 233-234, 236-237: image-classification specific fields
+    // Lines 260-261, 263, 266-268, 270: sorting closure with multiple same-task models
+
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_accuracy_only_infers_image_classification() {
+        let dir = tempfile::tempdir().unwrap();
+        // Model with "accuracy" but no "task" → should infer "image-classification" (lines 183-184)
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "acc-only-model": {
+                    "name": "AccuracyOnly",
+                    "accuracy": "80.0%",
+                    "url": "https://example.com/model.onnx",
+                    "size": "~50 MB",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().unwrap();
+        assert!(!models.is_empty());
+        let task = models[0]["task"].as_str().unwrap_or("");
+        assert_eq!(task, "image-classification");
+    }
+
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_unknown_task_when_no_classification_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        // Model with no task, no voices, no accuracy → "unknown" (line 186)
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "mystery-model": {
+                    "name": "Mystery",
+                    "architecture": "Custom",
+                    "url": "https://example.com/mystery.bin",
+                    "size": "~10 MB",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().unwrap();
+        assert!(!models.is_empty());
+        let task = models[0]["task"].as_str().unwrap_or("");
+        assert_eq!(task, "unknown");
+    }
+
+    /// A model with lowercase "image-classification" task, accuracy, rank, and dataset
+    /// triggers lines 229-238 (image-classification specific fields).
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_image_classification_lowercase_adds_specific_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "resnet50-cls": {
+                    "name": "ResNet-50",
+                    "architecture": "ResNet",
+                    "task": "image-classification",
+                    "accuracy": "76.1%",
+                    "rank": 1,
+                    "size": "~100 MB",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().unwrap();
+        assert!(!models.is_empty());
+        let m = &models[0];
+        // Lines 230-231: accuracy field added
+        assert!(m.get("accuracy").is_some(), "accuracy should be present");
+        // Lines 233-234: rank field added
+        assert!(m.get("rank").is_some(), "rank should be present");
+        // Lines 236-237: dataset field added
+        assert!(m.get("dataset").is_some(), "dataset should be present");
+    }
+
+    /// Two models with the same "image-classification" task and different ranks triggers
+    /// the sorting closure (lines 260-261, 263, 266-268, 270 – the Equal branch).
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_sorts_same_task_by_rank() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "rank2-model": {
+                    "name": "Rank2 Model",
+                    "task": "image-classification",
+                    "rank": 2,
+                    "url": "https://example.com/model2.onnx",
+                    "status": "Available"
+                },
+                "rank1-model": {
+                    "name": "Rank1 Model",
+                    "task": "image-classification",
+                    "rank": 1,
+                    "url": "https://example.com/model1.onnx",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        // After sorting by rank within same task, rank 1 should come first
+        let first_rank = models[0]["rank"].as_u64().unwrap_or(999);
+        let second_rank = models[1]["rank"].as_u64().unwrap_or(999);
+        assert!(first_rank <= second_rank, "should be sorted by rank ascending");
+    }
+
+    /// Two models with DIFFERENT tasks triggers the non-Equal branch (line 270).
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_sorts_different_tasks_alphabetically() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "zzz-model": {
+                    "name": "ZZZ Model",
+                    "task": "zero-shot-image-classification",
+                    "url": "https://example.com/zzz.onnx",
+                    "status": "Available"
+                },
+                "aaa-model": {
+                    "name": "AAA Model",
+                    "task": "automatic-speech-recognition",
+                    "url": "https://example.com/aaa.onnx",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2);
+        // ASR ("automatic-speech-recognition") < zero-shot alphabetically
+        let first_task = models[0]["task"].as_str().unwrap_or("");
+        let second_task = models[1]["task"].as_str().unwrap_or("");
+        assert!(first_task <= second_task, "tasks should be sorted alphabetically");
+    }
+
+    /// Short HuggingFace URL (< 5 path segments) falls back to full URL as repo_id (line 206).
+    #[actix_web::test]
+    #[serial_test::serial]
+    async fn test_list_available_models_short_hf_url_uses_full_url_as_repo_id() {
+        let dir = tempfile::tempdir().unwrap();
+        // URL: https://huggingface.co/google — only 4 segments → falls back to full URL
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "short-hf-model": {
+                    "name": "Short HF Model",
+                    "task": "image-classification",
+                    "url": "https://huggingface.co/google",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        // Should return model_registry source
+        assert_eq!(body["source"], "model_registry.json");
+        let models = body["models"].as_array().unwrap();
+        assert!(!models.is_empty());
+        // repo_id should be set (falls back to full URL per line 206)
+        assert!(models[0].get("repo_id").is_some());
     }
 }

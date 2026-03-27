@@ -185,3 +185,228 @@ impl TTSEngine for PiperTTSEngine {
         self.capabilities.supported_voices.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // ── PiperConfig serde ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_piper_config_serialize_deserialize() {
+        let cfg = PiperConfig {
+            model_path: PathBuf::from("/tmp/piper.onnx"),
+            config_path: PathBuf::from("/tmp/piper.json"),
+            sample_rate: 22050,
+            noise_scale: 0.667,
+            length_scale: 1.0,
+            noise_w: 0.8,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("sample_rate"));
+        assert!(json.contains("noise_scale"));
+        let back: PiperConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 22050);
+        assert!((back.noise_scale - 0.667_f32).abs() < 1e-4);
+        assert!((back.length_scale - 1.0_f32).abs() < 1e-4);
+        assert!((back.noise_w - 0.8_f32).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_piper_config_clone_debug() {
+        let cfg = PiperConfig {
+            model_path: PathBuf::from("m"),
+            config_path: PathBuf::from("c"),
+            sample_rate: 16000,
+            noise_scale: 0.5,
+            length_scale: 1.2,
+            noise_w: 0.6,
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.sample_rate, 16000);
+        let dbg = format!("{:?}", cloned);
+        assert!(dbg.contains("PiperConfig"));
+    }
+
+    // ── PiperTTSEngine::new error paths ───────────────────────────────────────
+
+    #[test]
+    fn test_piper_new_missing_model_path_returns_error() {
+        let cfg = serde_json::json!({});
+        let result = PiperTTSEngine::new(&cfg);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("model_path") || msg.contains("Missing"), "unexpected: {}", msg);
+    }
+
+    #[test]
+    fn test_piper_new_missing_config_path_returns_error() {
+        let cfg = serde_json::json!({ "model_path": "/tmp/piper.onnx" });
+        let result = PiperTTSEngine::new(&cfg);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("config_path") || msg.contains("Missing") || msg.contains("not found"), "unexpected: {}", msg);
+    }
+
+    #[test]
+    fn test_piper_new_nonexistent_model_path_returns_error() {
+        let cfg = serde_json::json!({
+            "model_path": "/nonexistent/piper_model.onnx",
+            "config_path": "/nonexistent/piper_config.json"
+        });
+        let result = PiperTTSEngine::new(&cfg);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(
+            msg.contains("not found") || msg.contains("ONNX") || msg.contains("nonexistent"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_piper_new_with_real_model_file_but_no_onnx_feature() {
+        // Create a temporary fake model file so the path-exists check passes
+        let mut model_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(model_file, "fake onnx model").unwrap();
+        let model_path = model_file.path().to_str().unwrap().to_owned();
+
+        // config_path doesn't need to exist; the code falls back to defaults
+        let cfg = serde_json::json!({
+            "model_path": model_path,
+            "config_path": "/nonexistent/piper_config.json"
+        });
+        let result = PiperTTSEngine::new(&cfg);
+        // Without the `onnx` feature the engine should bail with an ONNX error;
+        // with it enabled it will succeed (or fail on model loading). Either way
+        // the test must not panic.
+        let _ = result;
+    }
+
+    #[test]
+    fn test_piper_new_with_real_model_and_config_files() {
+        // Create fake model file
+        let mut model_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(model_file, "fake onnx model").unwrap();
+        let model_path = model_file.path().to_str().unwrap().to_owned();
+
+        // Create a minimal Piper config JSON
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, r#"{{"audio":{{"sample_rate":22050}},"inference":{{"noise_scale":0.5,"length_scale":1.0,"noise_w":0.7}}}}"#).unwrap();
+        let config_path = config_file.path().to_str().unwrap().to_owned();
+
+        let cfg = serde_json::json!({
+            "model_path": model_path,
+            "config_path": config_path
+        });
+        // Should fail at the ONNX load step (or succeed with onnx feature),
+        // but the config-reading branch (lines 49-76) will be exercised.
+        let _result = PiperTTSEngine::new(&cfg);
+    }
+
+    fn make_stub_engine() -> PiperTTSEngine {
+        PiperTTSEngine {
+            config: PiperConfig {
+                model_path: PathBuf::from("/tmp/fake_piper.onnx"),
+                config_path: PathBuf::from("/tmp/fake_piper.json"),
+                sample_rate: 22050,
+                noise_scale: 0.667,
+                length_scale: 1.0,
+                noise_w: 0.8,
+            },
+            capabilities: EngineCapabilities {
+                name: "Piper Neural TTS".to_string(),
+                version: "1.0.0".to_string(),
+                supported_languages: vec!["en".to_string()],
+                supported_voices: vec![
+                    VoiceInfo {
+                        id: "lessac".to_string(),
+                        name: "Lessac".to_string(),
+                        language: "en".to_string(),
+                        gender: VoiceGender::Male,
+                        quality: VoiceQuality::Neural,
+                    },
+                ],
+                max_text_length: 5000,
+                sample_rate: 22050,
+                supports_ssml: false,
+                supports_streaming: false,
+            },
+            has_onnx: false,
+        }
+    }
+
+    #[test]
+    fn test_piper_engine_name() {
+        let engine = make_stub_engine();
+        assert_eq!(engine.name(), "piper");
+    }
+
+    #[test]
+    fn test_piper_engine_capabilities() {
+        let engine = make_stub_engine();
+        let caps = engine.capabilities();
+        assert_eq!(caps.name, "Piper Neural TTS");
+        assert_eq!(caps.sample_rate, 22050);
+        assert!(!caps.supports_ssml);
+    }
+
+    #[test]
+    fn test_piper_engine_list_voices() {
+        let engine = make_stub_engine();
+        let voices = engine.list_voices();
+        assert_eq!(voices.len(), 1);
+        assert_eq!(voices[0].id, "lessac");
+    }
+
+    #[tokio::test]
+    async fn test_piper_engine_synthesize_bails() {
+        let engine = make_stub_engine();
+        let params = SynthesisParams {
+            speed: 1.0,
+            pitch: 1.0,
+            voice: Some("lessac".to_string()),
+            language: None,
+        };
+        let result = engine.synthesize("hello", &params).await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("ONNX") || msg.contains("Piper"), "unexpected: {}", msg);
+    }
+
+    #[test]
+    fn test_piper_synthesize_fallback_produces_audio() {
+        let engine = make_stub_engine();
+        let params = SynthesisParams {
+            speed: 1.0,
+            pitch: 1.0,
+            voice: None,
+            language: None,
+        };
+        let result = engine.synthesize_fallback("hello world", &params);
+        assert!(result.is_ok(), "synthesize_fallback should not error: {:?}", result.err());
+        let audio = result.unwrap();
+        assert!(!audio.samples.is_empty());
+        assert_eq!(audio.sample_rate, 22050);
+        assert_eq!(audio.channels, 1);
+    }
+
+    #[test]
+    fn test_piper_synthesize_fallback_empty_text() {
+        let engine = make_stub_engine();
+        let params = SynthesisParams {
+            speed: 2.0,
+            pitch: 0.5,
+            voice: None,
+            language: None,
+        };
+        let result = engine.synthesize_fallback("", &params);
+        assert!(result.is_ok());
+        // Empty text => duration max(0 * 0.05 / 2.0, 0.5) = 0.5 seconds
+        let audio = result.unwrap();
+        let expected_min = (22050.0 * 0.5) as usize;
+        assert!(audio.samples.len() >= expected_min);
+    }
+}

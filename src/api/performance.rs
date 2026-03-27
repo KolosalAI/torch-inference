@@ -247,9 +247,190 @@ pub async fn optimize_performance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix_web::{test, web, App};
+    use actix_web::http::StatusCode;
 
-    #[test]
-    fn test_resource_metrics_creation() {
+    fn make_performance_state() -> web::Data<PerformanceState> {
+        web::Data::new(PerformanceState {
+            monitor: Arc::new(Monitor::new()),
+            start_time: Instant::now(),
+        })
+    }
+
+    // ── get_performance_metrics ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_performance_metrics_returns_200() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance", web::get().to(get_performance_metrics))
+        ).await;
+        let req = test::TestRequest::get().uri("/performance").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_performance_metrics_response_shape() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance", web::get().to(get_performance_metrics))
+        ).await;
+        let req = test::TestRequest::get().uri("/performance").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["timestamp"].is_string());
+        assert!(body["system_info"].is_object());
+        assert!(body["process_info"].is_object());
+        assert!(body["runtime_info"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_get_performance_metrics_system_info_fields() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance", web::get().to(get_performance_metrics))
+        ).await;
+        let req = test::TestRequest::get().uri("/performance").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        let sys = &body["system_info"];
+        assert!(sys["cpu_count"].as_u64().unwrap() > 0);
+        assert!(sys["total_memory_mb"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_performance_metrics_runtime_info_fields() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance", web::get().to(get_performance_metrics))
+        ).await;
+        let req = test::TestRequest::get().uri("/performance").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        let rt = &body["runtime_info"];
+        assert!(rt["rust_version"].is_string());
+        assert_eq!(rt["actix_web_version"], "4.8");
+        assert!(rt["num_cpus"].as_u64().unwrap() > 0);
+    }
+
+    // ── profile_inference ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_profile_inference_default_model() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance/profile", web::post().to(profile_inference))
+        ).await;
+        let req = test::TestRequest::post()
+            .uri("/performance/profile")
+            .set_json(&serde_json::json!({}))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_profile_inference_with_model_name() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance/profile", web::post().to(profile_inference))
+        ).await;
+        let req = test::TestRequest::post()
+            .uri("/performance/profile")
+            .set_json(&serde_json::json!({"model": "my-model"}))
+            .to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["model_name"], "my-model");
+        assert!(body["total_time_ms"].as_f64().unwrap() >= 0.0);
+        assert!(body["pre_metrics"].is_object());
+        assert!(body["post_metrics"].is_object());
+        assert!(body["delta_metrics"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_profile_inference_no_model_uses_example() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance/profile", web::post().to(profile_inference))
+        ).await;
+        let req = test::TestRequest::post()
+            .uri("/performance/profile")
+            .set_json(&serde_json::json!({"model": null}))
+            .to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["model_name"], "example");
+    }
+
+    // ── optimize_performance ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_optimize_performance_returns_200() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance/optimize", web::post().to(optimize_performance))
+        ).await;
+        let req = test::TestRequest::post()
+            .uri("/performance/optimize")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_optimize_performance_response_body() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance/optimize", web::post().to(optimize_performance))
+        ).await;
+        let req = test::TestRequest::post()
+            .uri("/performance/optimize")
+            .to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["garbage_collected"], true);
+        assert_eq!(body["caches_cleared"], true);
+        assert!(body["memory_freed_mb"].as_f64().unwrap() >= 0.0);
+        assert!(body["optimizations_applied"].is_array());
+        let opts = body["optimizations_applied"].as_array().unwrap();
+        assert!(!opts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_optimize_performance_optimizations_content() {
+        let state = make_performance_state();
+        let app = test::init_service(
+            App::new()
+                .app_data(state.clone())
+                .route("/performance/optimize", web::post().to(optimize_performance))
+        ).await;
+        let req = test::TestRequest::post()
+            .uri("/performance/optimize")
+            .to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        let opts: Vec<&str> = body["optimizations_applied"].as_array().unwrap()
+            .iter().filter_map(|v| v.as_str()).collect();
+        assert!(opts.iter().any(|s| s.contains("Memory") || s.contains("cleanup") || s.contains("cache")));
+    }
+
+    // ── struct tests ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_resource_metrics_creation() {
         let metrics = ResourceMetrics {
             memory_mb: 100.0,
             cpu_percent: 50.0,
@@ -258,8 +439,8 @@ mod tests {
         assert_eq!(metrics.cpu_percent, 50.0);
     }
 
-    #[test]
-    fn test_resource_metrics_zero_values() {
+    #[tokio::test]
+    async fn test_resource_metrics_zero_values() {
         let metrics = ResourceMetrics {
             memory_mb: 0.0,
             cpu_percent: 0.0,
@@ -268,8 +449,8 @@ mod tests {
         assert_eq!(metrics.cpu_percent, 0.0);
     }
 
-    #[test]
-    fn test_resource_metrics_clone() {
+    #[tokio::test]
+    async fn test_resource_metrics_clone() {
         let metrics = ResourceMetrics {
             memory_mb: 256.5,
             cpu_percent: 75.3,
@@ -279,8 +460,8 @@ mod tests {
         assert_eq!(cloned.cpu_percent, metrics.cpu_percent);
     }
 
-    #[test]
-    fn test_resource_metrics_serialization() {
+    #[tokio::test]
+    async fn test_resource_metrics_serialization() {
         let metrics = ResourceMetrics {
             memory_mb: 512.0,
             cpu_percent: 25.0,
@@ -291,8 +472,8 @@ mod tests {
         assert_eq!(value["cpu_percent"], 25.0);
     }
 
-    #[test]
-    fn test_profile_request_no_model() {
+    #[tokio::test]
+    async fn test_profile_request_no_model() {
         let req = ProfileRequest {
             model: None,
             input_data: None,
@@ -301,8 +482,8 @@ mod tests {
         assert!(req.input_data.is_none());
     }
 
-    #[test]
-    fn test_profile_request_with_model() {
+    #[tokio::test]
+    async fn test_profile_request_with_model() {
         let req = ProfileRequest {
             model: Some("bert".to_string()),
             input_data: Some(serde_json::json!({"input": "hello"})),
@@ -311,8 +492,8 @@ mod tests {
         assert!(req.input_data.is_some());
     }
 
-    #[test]
-    fn test_optimization_result_struct() {
+    #[tokio::test]
+    async fn test_optimization_result_struct() {
         let result = OptimizationResult {
             garbage_collected: true,
             caches_cleared: false,
@@ -325,8 +506,8 @@ mod tests {
         assert_eq!(result.optimizations_applied.len(), 1);
     }
 
-    #[test]
-    fn test_optimization_result_memory_freed_nonnegative_logic() {
+    #[tokio::test]
+    async fn test_optimization_result_memory_freed_nonnegative_logic() {
         // Mirrors the .max(0.0) logic used in optimize_performance
         let pre_memory = 100.0_f64;
         let post_memory = 110.0_f64; // memory increased
@@ -338,8 +519,8 @@ mod tests {
         assert_eq!(freed2, 20.0);
     }
 
-    #[test]
-    fn test_profile_result_struct() {
+    #[tokio::test]
+    async fn test_profile_result_struct() {
         let pre = ResourceMetrics { memory_mb: 100.0, cpu_percent: 10.0 };
         let post = ResourceMetrics { memory_mb: 110.0, cpu_percent: 20.0 };
         let delta = ResourceMetrics {
@@ -359,8 +540,8 @@ mod tests {
         assert_eq!(result.delta_metrics.cpu_percent, 10.0);
     }
 
-    #[test]
-    fn test_system_info_struct() {
+    #[tokio::test]
+    async fn test_system_info_struct() {
         let info = SystemInfo {
             cpu_count: 8,
             total_memory_mb: 16384,
@@ -374,8 +555,8 @@ mod tests {
         assert_eq!(info.memory_usage_percent, 50.0);
     }
 
-    #[test]
-    fn test_process_info_struct() {
+    #[tokio::test]
+    async fn test_process_info_struct() {
         let info = ProcessInfo {
             pid: 12345,
             memory_mb: 64.0,
@@ -387,8 +568,8 @@ mod tests {
         assert_eq!(info.uptime_seconds, 3600);
     }
 
-    #[test]
-    fn test_runtime_info_struct() {
+    #[tokio::test]
+    async fn test_runtime_info_struct() {
         let info = RuntimeInfo {
             rust_version: "1.0.0".to_string(),
             actix_web_version: "4.8".to_string(),
@@ -398,8 +579,8 @@ mod tests {
         assert_eq!(info.num_cpus, 4);
     }
 
-    #[test]
-    fn test_performance_state_start_time() {
+    #[tokio::test]
+    async fn test_performance_state_start_time() {
         use crate::monitor::Monitor;
         use std::sync::Arc;
         let monitor = Arc::new(Monitor::new());

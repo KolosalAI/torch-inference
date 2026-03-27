@@ -177,3 +177,138 @@ impl TTSEngine for StyleTTS2Engine {
         self.capabilities.supported_voices.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_cfg() -> serde_json::Value {
+        serde_json::json!({})
+    }
+
+    fn custom_cfg() -> serde_json::Value {
+        serde_json::json!({
+            "model_path": "/tmp/styletts2/model.pth",
+            "config_path": "/tmp/styletts2/config.json",
+            "sample_rate": 48000
+        })
+    }
+
+    // ── StyleTTS2Config serde ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_styletts2_config_serialize_deserialize() {
+        let cfg = StyleTTS2Config {
+            model_path: std::path::PathBuf::from("/tmp/m.pth"),
+            config_path: std::path::PathBuf::from("/tmp/c.json"),
+            sample_rate: 24000,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("sample_rate"));
+        let back: StyleTTS2Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 24000);
+    }
+
+    #[test]
+    fn test_styletts2_config_clone_debug() {
+        let cfg = StyleTTS2Config {
+            model_path: std::path::PathBuf::from("a"),
+            config_path: std::path::PathBuf::from("b"),
+            sample_rate: 16000,
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.sample_rate, 16000);
+        let dbg = format!("{:?}", cloned);
+        assert!(dbg.contains("StyleTTS2Config"));
+    }
+
+    // ── StyleTTS2Engine::new ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_styletts2_engine_new_with_empty_config() {
+        let result = StyleTTS2Engine::new(&empty_cfg());
+        assert!(result.is_ok(), "should succeed: {:?}", result.err());
+        let engine = result.unwrap();
+        assert_eq!(engine.name(), "styletts2");
+    }
+
+    #[test]
+    fn test_styletts2_engine_new_default_sample_rate() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        assert_eq!(engine.config.sample_rate, 24000);
+    }
+
+    #[test]
+    fn test_styletts2_engine_new_with_custom_config() {
+        let engine = StyleTTS2Engine::new(&custom_cfg()).unwrap();
+        assert_eq!(engine.config.sample_rate, 48000);
+        assert_eq!(engine.config.model_path, std::path::PathBuf::from("/tmp/styletts2/model.pth"));
+    }
+
+    // ── capabilities & voices ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_styletts2_engine_capabilities() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        let caps = engine.capabilities();
+        assert_eq!(caps.name, "StyleTTS2 Expressive TTS");
+        assert_eq!(caps.max_text_length, 2000);
+        assert!(caps.supports_ssml);
+        assert!(!caps.supports_streaming);
+        assert!(caps.supported_languages.contains(&"en-US".to_string()));
+    }
+
+    #[test]
+    fn test_styletts2_engine_list_voices() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        let voices = engine.list_voices();
+        assert_eq!(voices.len(), 2);
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert!(ids.contains(&"styletts2_expressive"));
+        assert!(ids.contains(&"styletts2_natural"));
+        // Quality should be Premium for both
+        for v in &voices {
+            assert_eq!(format!("{:?}", v.quality), "Premium");
+        }
+    }
+
+    // ── synthesize ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_styletts2_synthesize_neutral_text() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let result = engine.synthesize("hello world", &params).await;
+        assert!(result.is_ok());
+        let audio = result.unwrap();
+        assert_eq!(audio.channels, 1);
+        assert_eq!(audio.sample_rate, 24000);
+        assert!(!audio.samples.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_styletts2_synthesize_exclamation() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let result = engine.synthesize("Amazing result!", &params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_styletts2_synthesize_question() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let result = engine.synthesize("Is this working?", &params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_styletts2_synthesize_samples_clamped() {
+        let engine = StyleTTS2Engine::new(&empty_cfg()).unwrap();
+        let params = crate::core::tts_engine::SynthesisParams::default();
+        let audio = engine.synthesize("check clamp", &params).await.unwrap();
+        for &s in &audio.samples {
+            assert!(s >= -1.0 && s <= 1.0, "sample out of range: {}", s);
+        }
+    }
+}
