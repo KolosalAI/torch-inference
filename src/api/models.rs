@@ -67,19 +67,19 @@ pub struct ModelRegistry {
 }
 
 fn de_f32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
-    let v = serde_json::Value::deserialize(d)?;
-    Ok(match &v {
-        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0) as f32,
-        _ => 0.0,
-    })
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Number(n) => Ok(n.as_f64().unwrap_or(0.0) as f32),
+        serde_json::Value::String(s) => Ok(s.parse::<f32>().unwrap_or(0.0)),
+        _ => Ok(0.0),
+    }
 }
 
 fn de_i32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
-    let v = serde_json::Value::deserialize(d)?;
-    Ok(match &v {
-        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) as i32,
-        _ => 0,
-    })
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Number(n) => Ok(n.as_i64().unwrap_or(0) as i32),
+        serde_json::Value::String(s) => Ok(s.parse::<i32>().unwrap_or(0)),
+        _ => Ok(0),
+    }
 }
 
 fn de_string_or_num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -114,7 +114,9 @@ impl ModelRegistry {
     /// the binary works without the file present at runtime.
     pub fn load() -> Self {
         let path = std::env::var("MODEL_REGISTRY_PATH")
-            .unwrap_or_else(|_| "model_registry.json".to_string());
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "model_registry.json".to_string());
 
         let data = std::fs::read_to_string(&path).unwrap_or_else(|_| {
             log::info!(
@@ -574,6 +576,8 @@ mod registry_tests {
         let model = registry.get_model("windows-sapi").unwrap();
         assert_eq!(model.score, 0.0);
         assert_eq!(model.rank, 0);
+        // Check de_string_or_num: integer 3 should become "3"
+        assert_eq!(model.voices, "3");
     }
 
     #[test]
