@@ -108,6 +108,8 @@ impl AudioProcessor {
         use symphonia::core::meta::MetadataOptions;
         use symphonia::core::probe::Hint;
 
+        // `Box<dyn MediaSource>` requires `'static`, so `Cursor<&[u8]>` cannot be used directly
+        // because the borrow would not satisfy the `'static` bound.  We must copy to an owned Vec.
         let cursor = Cursor::new(data.to_vec());
         let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
 
@@ -132,19 +134,27 @@ impl AudioProcessor {
         let sample_rate = codec_params.sample_rate
             .context("No sample rate in codec params")?;
 
-        let channels = codec_params.channels
+        let channels_u32 = codec_params.channels
             .map(|c| c.count() as u32)
             .unwrap_or(1);
+        let channels: u16 = u16::try_from(channels_u32)
+            .context("Channel count exceeds u16 range")?;
 
         let duration_secs = match (codec_params.n_frames, codec_params.sample_rate) {
             (Some(n_frames), Some(sr)) if sr > 0 => n_frames as f32 / sr as f32,
-            _ => 0.0,
+            _ => {
+                log::debug!(
+                    "Audio duration unavailable (n_frames={:?}, sample_rate={:?}); defaulting to 0.0 — this is normal for VBR MP3",
+                    codec_params.n_frames, codec_params.sample_rate
+                );
+                0.0
+            }
         };
 
         Ok(AudioMetadata {
             format,
             sample_rate,
-            channels: channels as u16,
+            channels,
             duration_secs,
             bits_per_sample: codec_params.bits_per_sample.unwrap_or(16) as u16,
         })
