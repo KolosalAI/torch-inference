@@ -258,6 +258,45 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 mod tests {
     use super::*;
     use actix_web::{test, App};
+    use std::sync::Arc;
+
+    use crate::config::Config;
+    use crate::core::engine::InferenceEngine;
+    use crate::models::manager::ModelManager;
+    use crate::monitor::Monitor;
+    use crate::middleware::RateLimiter;
+    use crate::dedup::RequestDeduplicator;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    fn make_monitor() -> web::Data<Arc<Monitor>> {
+        web::Data::new(Arc::new(Monitor::new()))
+    }
+
+    fn make_config() -> web::Data<Config> {
+        web::Data::new(Config::default())
+    }
+
+    fn make_model_manager() -> web::Data<Arc<ModelManager>> {
+        web::Data::new(Arc::new(ModelManager::new(&Config::default(), None)))
+    }
+
+    fn make_engine() -> web::Data<Arc<InferenceEngine>> {
+        let cfg = Config::default();
+        let manager = Arc::new(ModelManager::new(&cfg, None));
+        web::Data::new(Arc::new(InferenceEngine::new(manager, &cfg)))
+    }
+
+    fn make_rate_limiter() -> web::Data<Arc<RateLimiter>> {
+        // Very high limit so tests are never rate-limited
+        web::Data::new(Arc::new(RateLimiter::new(100_000, 60)))
+    }
+
+    fn make_deduplicator() -> web::Data<Arc<RequestDeduplicator>> {
+        web::Data::new(Arc::new(RequestDeduplicator::new(1000)))
+    }
+
+    // ── root ─────────────────────────────────────────────────────────────────
 
     #[actix_web::test]
     async fn test_root_returns_200() {
@@ -297,5 +336,403 @@ mod tests {
         let ts = body["timestamp"].as_str().unwrap();
         // RFC3339 timestamps contain 'T' separating date and time
         assert!(ts.contains('T'), "timestamp should be RFC3339 format");
+    }
+
+    // ── get_endpoint_stats ───────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_get_endpoint_stats_returns_200() {
+        let monitor = make_monitor();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .route("/endpoints", web::get().to(get_endpoint_stats))
+        ).await;
+        let req = test::TestRequest::get().uri("/endpoints").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+    }
+
+    #[actix_web::test]
+    async fn test_get_endpoint_stats_body_shape() {
+        let monitor = make_monitor();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .route("/endpoints", web::get().to(get_endpoint_stats))
+        ).await;
+        let req = test::TestRequest::get().uri("/endpoints").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["endpoints"].is_array());
+        assert!(body["count"].is_number());
+    }
+
+    #[actix_web::test]
+    async fn test_get_endpoint_stats_empty_initially() {
+        let monitor = make_monitor();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .route("/endpoints", web::get().to(get_endpoint_stats))
+        ).await;
+        let req = test::TestRequest::get().uri("/endpoints").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["count"], 0);
+        assert_eq!(body["endpoints"].as_array().unwrap().len(), 0);
+    }
+
+    // ── get_system_info ──────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_get_system_info_returns_200() {
+        let monitor = make_monitor();
+        let config = make_config();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(config.clone())
+                .route("/info", web::get().to(get_system_info))
+        ).await;
+        let req = test::TestRequest::get().uri("/info").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+    }
+
+    #[actix_web::test]
+    async fn test_get_system_info_body_has_server_and_health() {
+        let monitor = make_monitor();
+        let config = make_config();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(config.clone())
+                .route("/info", web::get().to(get_system_info))
+        ).await;
+        let req = test::TestRequest::get().uri("/info").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["server"].is_object());
+        assert!(body["device"].is_object());
+        assert!(body["batch"].is_object());
+        assert!(body["performance"].is_object());
+        assert!(body["health"].is_object());
+    }
+
+    #[actix_web::test]
+    async fn test_get_system_info_health_is_healthy() {
+        let monitor = make_monitor();
+        let config = make_config();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(config.clone())
+                .route("/info", web::get().to(get_system_info))
+        ).await;
+        let req = test::TestRequest::get().uri("/info").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        // A fresh Monitor with zero errors should report healthy
+        assert_eq!(body["health"]["healthy"], true);
+    }
+
+    // ── list_models ──────────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_list_models_returns_200() {
+        let monitor = make_monitor();
+        let models = make_model_manager();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(models.clone())
+                .route("/models", web::get().to(list_models))
+        ).await;
+        let req = test::TestRequest::get().uri("/models").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+    }
+
+    #[actix_web::test]
+    async fn test_list_models_body_shape() {
+        let monitor = make_monitor();
+        let models = make_model_manager();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(models.clone())
+                .route("/models", web::get().to(list_models))
+        ).await;
+        let req = test::TestRequest::get().uri("/models").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["models"].is_array());
+        assert!(body["total"].is_number());
+    }
+
+    #[actix_web::test]
+    async fn test_list_models_total_matches_array_length() {
+        let monitor = make_monitor();
+        let models = make_model_manager();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(models.clone())
+                .route("/models", web::get().to(list_models))
+        ).await;
+        let req = test::TestRequest::get().uri("/models").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        let arr_len = body["models"].as_array().unwrap().len() as u64;
+        assert_eq!(body["total"].as_u64().unwrap(), arr_len);
+    }
+
+    // ── get_stats ────────────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_get_stats_returns_200() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/stats", web::get().to(get_stats))
+        ).await;
+        let req = test::TestRequest::get().uri("/stats").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+    }
+
+    #[actix_web::test]
+    async fn test_get_stats_body_has_metrics_fields() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/stats", web::get().to(get_stats))
+        ).await;
+        let req = test::TestRequest::get().uri("/stats").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        // SystemMetrics fields
+        assert!(body["total_requests"].is_number());
+        assert!(body["total_errors"].is_number());
+        assert!(body["uptime_seconds"].is_number());
+    }
+
+    // ── health_check ─────────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_health_check_returns_200() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/health", web::get().to(health_check))
+        ).await;
+        let req = test::TestRequest::get().uri("/health").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success());
+    }
+
+    #[actix_web::test]
+    async fn test_health_check_body_shape() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/health", web::get().to(health_check))
+        ).await;
+        let req = test::TestRequest::get().uri("/health").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["healthy"].is_boolean());
+        assert!(body["uptime_seconds"].is_number());
+        assert!(body["active_requests"].is_number());
+        assert!(body["error_count"].is_number());
+        assert!(body["timestamp"].is_string());
+    }
+
+    #[actix_web::test]
+    async fn test_health_check_fresh_monitor_is_healthy() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/health", web::get().to(health_check))
+        ).await;
+        let req = test::TestRequest::get().uri("/health").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["healthy"], true);
+        assert_eq!(body["error_count"], 0);
+    }
+
+    // ── predict ──────────────────────────────────────────────────────────────
+    // The engine has no real model loaded, so it returns 500 — the error path
+    // is still a valid handler code path to cover.
+
+    #[actix_web::test]
+    async fn test_predict_with_unknown_model_returns_500() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "no-such-model",
+            "inputs": {"data": [1, 2, 3]},
+            "priority": 0,
+            "timeout": null
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 500);
+    }
+
+    #[actix_web::test]
+    async fn test_predict_error_response_body_shape() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "no-such-model",
+            "inputs": {"data": [1]},
+            "priority": 0,
+            "timeout": null
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp_body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(resp_body["success"], false);
+        assert!(resp_body["error"].is_string());
+    }
+
+    #[actix_web::test]
+    async fn test_predict_rate_limited_returns_429() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        // Limit of 0 means every request is rejected
+        let rate_limiter = web::Data::new(Arc::new(RateLimiter::new(0, 60)));
+        let deduplicator = make_deduplicator();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "any-model",
+            "inputs": {},
+            "priority": 0,
+            "timeout": null
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 429);
+    }
+
+    // ── synthesize_tts ───────────────────────────────────────────────────────
+    // The engine has no TTS model, so we expect 500 covering the error branch.
+
+    #[actix_web::test]
+    async fn test_synthesize_tts_with_unknown_model_returns_500() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/synthesize", web::post().to(synthesize_tts))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "no-such-tts-model",
+            "text": "Hello world",
+            "voice": null,
+            "speed": 1.0,
+            "pitch": 1.0,
+            "volume": 1.0,
+            "language": "en",
+            "emotion": null,
+            "output_format": "wav"
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/synthesize")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 500);
+    }
+
+    #[actix_web::test]
+    async fn test_synthesize_tts_error_response_body_shape() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .route("/synthesize", web::post().to(synthesize_tts))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": "no-such-tts-model",
+            "text": "Hi",
+            "voice": null,
+            "speed": 1.0,
+            "pitch": 1.0,
+            "volume": 1.0,
+            "language": "en",
+            "emotion": null,
+            "output_format": "mp3"
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/synthesize")
+            .set_json(&body)
+            .to_request();
+        let resp_body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(resp_body["success"], false);
+        assert!(resp_body["error"].is_string());
     }
 }
