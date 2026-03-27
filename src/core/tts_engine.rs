@@ -171,16 +171,288 @@ impl TTSEngine for TorchTTSEngine {
     fn name(&self) -> &str {
         "torch"
     }
-    
+
     fn capabilities(&self) -> &EngineCapabilities {
         &self.capabilities
     }
-    
+
     async fn synthesize(&self, _text: &str, _params: &SynthesisParams) -> Result<AudioData> {
         anyhow::bail!("PyTorch TTS engine requires a trained model. Please configure a model path.")
     }
-    
+
     fn list_voices(&self) -> Vec<VoiceInfo> {
         vec![]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ──────────────────────────── SynthesisParams ────────────────────────────
+
+    #[test]
+    fn test_synthesis_params_default_values() {
+        let p = SynthesisParams::default();
+        assert_eq!(p.speed, 1.0);
+        assert_eq!(p.pitch, 1.0);
+        assert!(p.voice.is_none());
+        assert!(p.language.is_none());
+    }
+
+    #[test]
+    fn test_synthesis_params_custom_values() {
+        let p = SynthesisParams {
+            speed: 1.5,
+            pitch: 0.8,
+            voice: Some("en-US-Wavenet-A".to_string()),
+            language: Some("en-US".to_string()),
+        };
+        assert_eq!(p.speed, 1.5);
+        assert_eq!(p.pitch, 0.8);
+        assert_eq!(p.voice.as_deref(), Some("en-US-Wavenet-A"));
+        assert_eq!(p.language.as_deref(), Some("en-US"));
+    }
+
+    #[test]
+    fn test_synthesis_params_clone() {
+        let p = SynthesisParams {
+            speed: 2.0,
+            pitch: 1.2,
+            voice: Some("v1".to_string()),
+            language: Some("fr".to_string()),
+        };
+        let q = p.clone();
+        assert_eq!(q.speed, p.speed);
+        assert_eq!(q.pitch, p.pitch);
+        assert_eq!(q.voice, p.voice);
+        assert_eq!(q.language, p.language);
+    }
+
+    // ──────────────────────────── VoiceGender ────────────────────────────────
+
+    #[test]
+    fn test_voice_gender_variants_debug() {
+        assert_eq!(format!("{:?}", VoiceGender::Male),    "Male");
+        assert_eq!(format!("{:?}", VoiceGender::Female),  "Female");
+        assert_eq!(format!("{:?}", VoiceGender::Neutral), "Neutral");
+    }
+
+    #[test]
+    fn test_voice_gender_clone() {
+        let g = VoiceGender::Female;
+        let h = g.clone();
+        assert_eq!(format!("{:?}", h), "Female");
+    }
+
+    // ──────────────────────────── VoiceQuality ───────────────────────────────
+
+    #[test]
+    fn test_voice_quality_variants_debug() {
+        assert_eq!(format!("{:?}", VoiceQuality::Standard), "Standard");
+        assert_eq!(format!("{:?}", VoiceQuality::High),     "High");
+        assert_eq!(format!("{:?}", VoiceQuality::Premium),  "Premium");
+        assert_eq!(format!("{:?}", VoiceQuality::Neural),   "Neural");
+    }
+
+    #[test]
+    fn test_voice_quality_clone() {
+        let q = VoiceQuality::Neural;
+        let r = q.clone();
+        assert_eq!(format!("{:?}", r), "Neural");
+    }
+
+    // ──────────────────────────── VoiceInfo ──────────────────────────────────
+
+    #[test]
+    fn test_voice_info_construction() {
+        let v = VoiceInfo {
+            id: "af_heart".to_string(),
+            name: "Heart".to_string(),
+            language: "en-US".to_string(),
+            gender: VoiceGender::Female,
+            quality: VoiceQuality::Neural,
+        };
+        assert_eq!(v.id, "af_heart");
+        assert_eq!(v.name, "Heart");
+        assert_eq!(v.language, "en-US");
+        assert_eq!(format!("{:?}", v.gender),  "Female");
+        assert_eq!(format!("{:?}", v.quality), "Neural");
+    }
+
+    #[test]
+    fn test_voice_info_clone() {
+        let v = VoiceInfo {
+            id: "id1".to_string(),
+            name: "Name1".to_string(),
+            language: "de".to_string(),
+            gender: VoiceGender::Male,
+            quality: VoiceQuality::High,
+        };
+        let w = v.clone();
+        assert_eq!(w.id, v.id);
+        assert_eq!(w.language, v.language);
+    }
+
+    // ──────────────────────────── EngineCapabilities ─────────────────────────
+
+    #[test]
+    fn test_engine_capabilities_construction() {
+        let caps = EngineCapabilities {
+            name: "test-engine".to_string(),
+            version: "2.0".to_string(),
+            supported_languages: vec!["en".to_string(), "fr".to_string()],
+            supported_voices: vec![],
+            max_text_length: 5000,
+            sample_rate: 22050,
+            supports_ssml: true,
+            supports_streaming: false,
+        };
+        assert_eq!(caps.name, "test-engine");
+        assert_eq!(caps.version, "2.0");
+        assert_eq!(caps.supported_languages.len(), 2);
+        assert_eq!(caps.max_text_length, 5000);
+        assert_eq!(caps.sample_rate, 22050);
+        assert!(caps.supports_ssml);
+        assert!(!caps.supports_streaming);
+    }
+
+    #[test]
+    fn test_engine_capabilities_clone() {
+        let caps = EngineCapabilities {
+            name: "c1".to_string(),
+            version: "1".to_string(),
+            supported_languages: vec!["en".to_string()],
+            supported_voices: vec![],
+            max_text_length: 1000,
+            sample_rate: 24000,
+            supports_ssml: false,
+            supports_streaming: true,
+        };
+        let c2 = caps.clone();
+        assert_eq!(c2.name, caps.name);
+        assert_eq!(c2.sample_rate, caps.sample_rate);
+        assert!(c2.supports_streaming);
+    }
+
+    // ──────────────────────────── TTSEngineFactory ───────────────────────────
+
+    #[test]
+    fn test_factory_available_engines_is_non_empty() {
+        let engines = TTSEngineFactory::available_engines();
+        assert!(!engines.is_empty());
+        assert!(engines.contains(&"torch"));
+        assert!(engines.contains(&"kokoro-onnx"));
+    }
+
+    #[test]
+    fn test_factory_create_unknown_engine_returns_err() {
+        let cfg = serde_json::json!({});
+        let result = TTSEngineFactory::create("nonexistent-engine-xyz", &cfg);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Unknown engine type"), "error message should mention unknown type: {msg}");
+    }
+
+    // ──────────────────────────── TorchTTSEngine ─────────────────────────────
+
+    #[test]
+    fn test_torch_engine_new_succeeds() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg);
+        assert!(engine.is_ok());
+    }
+
+    #[test]
+    fn test_torch_engine_name() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        assert_eq!(engine.name(), "torch");
+    }
+
+    #[test]
+    fn test_torch_engine_capabilities() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        let caps = engine.capabilities();
+        assert_eq!(caps.sample_rate, 24000);
+        assert_eq!(caps.max_text_length, 10000);
+        assert!(!caps.supports_ssml);
+        assert!(!caps.supports_streaming);
+        assert!(caps.supported_voices.is_empty());
+    }
+
+    #[test]
+    fn test_torch_engine_list_voices_is_empty() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        assert!(engine.list_voices().is_empty());
+    }
+
+    #[test]
+    fn test_torch_engine_is_ready_default_true() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        assert!(engine.is_ready());
+    }
+
+    #[tokio::test]
+    async fn test_torch_engine_synthesize_returns_err() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        let params = SynthesisParams::default();
+        let result = engine.synthesize("Hello", &params).await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("trained model"), "error should mention trained model: {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_torch_engine_warmup_ok() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        let result = engine.warmup().await;
+        assert!(result.is_ok());
+    }
+
+    // ──────────────────────── TTSEngine::validate_text ───────────────────────
+
+    #[test]
+    fn test_validate_text_empty_returns_err() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        let result = engine.validate_text("");
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("empty"), "error should mention empty: {msg}");
+    }
+
+    #[test]
+    fn test_validate_text_too_long_returns_err() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        // max_text_length is 10000
+        let long_text = "a".repeat(10001);
+        let result = engine.validate_text(&long_text);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("too long"), "error should mention too long: {msg}");
+    }
+
+    #[test]
+    fn test_validate_text_within_limit_ok() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        let result = engine.validate_text("Hello, world!");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_text_exactly_at_limit_ok() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        let at_limit = "a".repeat(10000);
+        let result = engine.validate_text(&at_limit);
+        assert!(result.is_ok());
     }
 }

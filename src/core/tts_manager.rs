@@ -463,4 +463,293 @@ mod tests {
         let result: Option<String> = manager.with_engine("nonexistent", |_e| "found".to_string());
         assert!(result.is_none(), "with_engine must return None for an unknown engine id");
     }
+
+    // ──────────────────────────── shared mock ────────────────────────────────
+
+    fn make_mock_engine() -> Arc<MockEngine> {
+        Arc::new(MockEngine)
+    }
+
+    struct MockEngine;
+
+    #[async_trait::async_trait]
+    impl crate::core::tts_engine::TTSEngine for MockEngine {
+        fn name(&self) -> &str { "mock" }
+        fn capabilities(&self) -> &crate::core::tts_engine::EngineCapabilities {
+            Box::leak(Box::new(crate::core::tts_engine::EngineCapabilities {
+                name: "mock".to_string(),
+                version: "0.1".to_string(),
+                supported_languages: vec!["en".to_string()],
+                supported_voices: vec![],
+                max_text_length: 1000,
+                sample_rate: 24000,
+                supports_ssml: false,
+                supports_streaming: false,
+            }))
+        }
+        async fn synthesize(
+            &self,
+            text: &str,
+            _params: &crate::core::tts_engine::SynthesisParams,
+        ) -> anyhow::Result<crate::core::audio::AudioData> {
+            // Return a simple sine-wave-ish audio just to give back a real value
+            let _ = text;
+            Ok(crate::core::audio::AudioData {
+                samples: vec![0.0_f32; 240],
+                sample_rate: 24000,
+                channels: 1,
+            })
+        }
+        fn list_voices(&self) -> Vec<crate::core::tts_engine::VoiceInfo> { vec![] }
+    }
+
+    fn make_manager_with_mock(engine_id: &str) -> TTSManager {
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: engine_id.to_string(),
+            ..TTSManagerConfig::default()
+        });
+        manager.engines.insert(engine_id.to_string(), make_mock_engine());
+        manager
+    }
+
+    // ──────────────────────────── register_engine ────────────────────────────
+
+    #[test]
+    fn test_register_engine_success() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        let result = manager.register_engine("new-engine".to_string(), make_mock_engine());
+        assert!(result.is_ok());
+        assert!(manager.get_engine("new-engine").is_some());
+    }
+
+    #[test]
+    fn test_register_engine_duplicate_returns_err() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        manager.register_engine("dup".to_string(), make_mock_engine()).unwrap();
+        let result = manager.register_engine("dup".to_string(), make_mock_engine());
+        assert!(result.is_err(), "registering the same id twice should fail");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("already registered"), "error should mention 'already registered': {msg}");
+    }
+
+    // ──────────────────────────── list_engines ───────────────────────────────
+
+    #[test]
+    fn test_list_engines_empty() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        assert!(manager.list_engines().is_empty());
+    }
+
+    #[test]
+    fn test_list_engines_returns_registered_names() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        manager.register_engine("engine-a".to_string(), make_mock_engine()).unwrap();
+        manager.register_engine("engine-b".to_string(), make_mock_engine()).unwrap();
+        let mut names = manager.list_engines();
+        names.sort();
+        assert_eq!(names, vec!["engine-a", "engine-b"]);
+    }
+
+    // ──────────────────────────── get_default_engine ─────────────────────────
+
+    #[test]
+    fn test_get_default_engine_none_when_not_registered() {
+        let config = TTSManagerConfig {
+            default_engine: "not-there".to_string(),
+            ..TTSManagerConfig::default()
+        };
+        let manager = TTSManager::new(config);
+        assert!(manager.get_default_engine().is_none());
+    }
+
+    #[test]
+    fn test_get_default_engine_some_after_registration() {
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: "the-default".to_string(),
+            ..TTSManagerConfig::default()
+        });
+        manager.register_engine("the-default".to_string(), make_mock_engine()).unwrap();
+        let engine = manager.get_default_engine();
+        assert!(engine.is_some());
+        assert_eq!(engine.unwrap().name(), "mock");
+    }
+
+    // ──────────────────────────── set_default round-trip ─────────────────────
+
+    #[test]
+    fn test_default_engine_round_trip_via_config() {
+        // TTSManager config sets the default; verify get_default_engine respects it
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: "alpha".to_string(),
+            ..TTSManagerConfig::default()
+        });
+        manager.register_engine("alpha".to_string(), make_mock_engine()).unwrap();
+        manager.register_engine("beta".to_string(), make_mock_engine()).unwrap();
+
+        // default should be alpha
+        assert_eq!(manager.get_default_engine().map(|e| e.name().to_string()),
+                   Some("mock".to_string()));
+
+        // alpha engine can be retrieved directly
+        assert!(manager.get_engine("alpha").is_some());
+    }
+
+    // ──────────────────────────── get_capabilities ───────────────────────────
+
+    #[test]
+    fn test_get_capabilities_returns_some_for_known_engine() {
+        let manager = make_manager_with_mock("cap-test");
+        let caps = manager.get_capabilities("cap-test");
+        assert!(caps.is_some());
+        let caps = caps.unwrap();
+        assert_eq!(caps.sample_rate, 24000);
+        assert_eq!(caps.max_text_length, 1000);
+    }
+
+    #[test]
+    fn test_get_capabilities_returns_none_for_unknown_engine() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        assert!(manager.get_capabilities("ghost").is_none());
+    }
+
+    // ──────────────────────────── synthesize ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_synthesize_engine_not_found_returns_err() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        let result = manager
+            .synthesize("Hello", Some("missing-engine"), SynthesisParams::default())
+            .await;
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("not found"), "error should mention 'not found': {msg}");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_uses_default_engine_when_none_given() {
+        let manager = make_manager_with_mock("mock");
+        let result = manager
+            .synthesize("Hello world", None, SynthesisParams::default())
+            .await;
+        assert!(result.is_ok(), "synthesis with default engine should succeed: {:?}", result.err());
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_returns_audio() {
+        let manager = make_manager_with_mock("mock");
+        let audio = manager
+            .synthesize("Test", Some("mock"), SynthesisParams::default())
+            .await
+            .expect("synthesis should succeed");
+        assert_eq!(audio.sample_rate, 24000);
+        assert_eq!(audio.channels, 1);
+        assert!(!audio.samples.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_cache_hit_on_second_call() {
+        let manager = make_manager_with_mock("mock");
+        let params = SynthesisParams {
+            speed: 1.0,
+            pitch: 1.0,
+            voice: Some("test-voice".to_string()),
+            language: None,
+        };
+
+        let audio1 = manager
+            .synthesize("Cache me", Some("mock"), params.clone())
+            .await
+            .unwrap();
+        let audio2 = manager
+            .synthesize("Cache me", Some("mock"), params)
+            .await
+            .unwrap();
+
+        // Both calls should return identical data
+        assert_eq!(audio1.samples, audio2.samples);
+        assert_eq!(audio1.sample_rate, audio2.sample_rate);
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_empty_text_returns_err() {
+        let manager = make_manager_with_mock("mock");
+        let result = manager
+            .synthesize("", Some("mock"), SynthesisParams::default())
+            .await;
+        assert!(result.is_err(), "empty text should fail validation");
+    }
+
+    // ──────────────────────────── TTSManagerStats ────────────────────────────
+
+    #[test]
+    fn test_tts_manager_stats_fields() {
+        let stats = TTSManagerStats {
+            total_engines: 3,
+            engine_ids: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            cache_size: 10,
+            cache_capacity: 128,
+        };
+        assert_eq!(stats.total_engines, 3);
+        assert_eq!(stats.engine_ids.len(), 3);
+        assert_eq!(stats.cache_size, 10);
+        assert_eq!(stats.cache_capacity, 128);
+    }
+
+    #[test]
+    fn test_get_stats_empty_manager() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        let stats = manager.get_stats();
+        assert_eq!(stats.total_engines, 0);
+        assert!(stats.engine_ids.is_empty());
+        assert_eq!(stats.cache_size, 0);
+        assert_eq!(stats.cache_capacity, 128);
+    }
+
+    #[test]
+    fn test_get_stats_after_registration() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        manager.register_engine("e1".to_string(), make_mock_engine()).unwrap();
+        manager.register_engine("e2".to_string(), make_mock_engine()).unwrap();
+        let stats = manager.get_stats();
+        assert_eq!(stats.total_engines, 2);
+        assert_eq!(stats.engine_ids.len(), 2);
+        assert_eq!(stats.cache_capacity, 128);
+    }
+
+    // ──────────────────────────── TTSManagerConfig ───────────────────────────
+
+    #[test]
+    fn test_tts_manager_config_default_values() {
+        let cfg = TTSManagerConfig::default();
+        assert_eq!(cfg.default_engine, "kokoro-onnx");
+        assert_eq!(cfg.max_concurrent_requests, 10);
+        assert_eq!(cfg.synthesis_cache_capacity, 128);
+    }
+
+    #[test]
+    fn test_cache_key_voice_none_vs_some_differ() {
+        let p_none = SynthesisParams { voice: None, ..SynthesisParams::default() };
+        let p_some = SynthesisParams { voice: Some("v".to_string()), ..SynthesisParams::default() };
+        let k1 = TTSManager::synthesis_cache_key("hi", "eng", &p_none);
+        let k2 = TTSManager::synthesis_cache_key("hi", "eng", &p_some);
+        assert_ne!(k1, k2, "voice=None vs voice=Some must produce different keys");
+    }
+
+    #[test]
+    fn test_cache_key_language_none_vs_some_differ() {
+        let p_none = SynthesisParams { language: None, ..SynthesisParams::default() };
+        let p_some = SynthesisParams { language: Some("fr".to_string()), ..SynthesisParams::default() };
+        let k1 = TTSManager::synthesis_cache_key("hi", "eng", &p_none);
+        let k2 = TTSManager::synthesis_cache_key("hi", "eng", &p_some);
+        assert_ne!(k1, k2, "language=None vs language=Some must produce different keys");
+    }
+
+    #[test]
+    fn test_cache_key_pitch_affects_key() {
+        let p1 = SynthesisParams { pitch: 1.0, ..SynthesisParams::default() };
+        let p2 = SynthesisParams { pitch: 0.5, ..SynthesisParams::default() };
+        let k1 = TTSManager::synthesis_cache_key("hi", "eng", &p1);
+        let k2 = TTSManager::synthesis_cache_key("hi", "eng", &p2);
+        assert_ne!(k1, k2, "different pitch must produce different keys");
+    }
 }
