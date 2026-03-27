@@ -966,4 +966,285 @@ mod tests {
         let back: TranscriptionResult = serde_json::from_str(&json).unwrap();
         assert_eq!(back.language, Some("en".to_string()));
     }
+
+    // ── Direct calls to private TTSModel methods (lines 165-212) ─────────
+
+    fn make_tts_model() -> TTSModel {
+        let config = TTSConfig {
+            model_path: std::path::PathBuf::from("/nonexistent/model.onnx"),
+            vocoder_path: None,
+            sample_rate: 16000,
+            max_text_length: 1000,
+        };
+        TTSModel::new(config).unwrap()
+    }
+
+    fn make_stt_model() -> STTModel {
+        let config = STTConfig {
+            model_path: std::path::PathBuf::from("/nonexistent/stt.onnx"),
+            sample_rate: 16000,
+            chunk_length_secs: 30.0,
+        };
+        STTModel::new(config).unwrap()
+    }
+
+    // Lines 165-170: tokenize_text
+    #[test]
+    fn test_tokenize_text_alphanumeric_and_whitespace() {
+        let model = make_tts_model();
+        let tokens = model.tokenize_text("hello world 123!").unwrap();
+        // '!' is not alphanumeric/whitespace so should be filtered out
+        // "hello world 123" → 15 chars kept
+        assert_eq!(tokens.len(), 15);
+        // First char 'h' == 104
+        assert_eq!(tokens[0], 'h' as i64);
+    }
+
+    #[test]
+    fn test_tokenize_text_empty() {
+        let model = make_tts_model();
+        let tokens = model.tokenize_text("").unwrap();
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn test_tokenize_text_only_special_chars_filtered() {
+        let model = make_tts_model();
+        let tokens = model.tokenize_text("!!!###$$$").unwrap();
+        assert!(tokens.is_empty());
+    }
+
+    // Lines 173-194: apply_parameters (speed, pitch, energy branches)
+    #[test]
+    fn test_apply_parameters_direct_identity() {
+        let model = make_tts_model();
+        let samples = vec![0.1f32, 0.2, 0.3, 0.4, 0.5];
+        let params = TTSParameters { speed: 1.0, pitch: 1.0, energy: 1.0 };
+        let result = model.apply_parameters(&samples, &params).unwrap();
+        assert_eq!(result, samples);
+    }
+
+    #[test]
+    fn test_apply_parameters_direct_speed_branch() {
+        let model = make_tts_model();
+        let samples: Vec<f32> = (0..100).map(|i| i as f32 * 0.01).collect();
+        let params = TTSParameters { speed: 2.0, pitch: 1.0, energy: 1.0 };
+        let result = model.apply_parameters(&samples, &params).unwrap();
+        // speed=2.0 → new_len = 100/2.0 = 50
+        assert_eq!(result.len(), 50);
+    }
+
+    #[test]
+    fn test_apply_parameters_direct_pitch_branch() {
+        let model = make_tts_model();
+        let samples = vec![1.0f32; 10];
+        let params = TTSParameters { speed: 1.0, pitch: 4.0, energy: 1.0 };
+        let result = model.apply_parameters(&samples, &params).unwrap();
+        // pitch=4.0 → each sample * sqrt(4.0) = 2.0
+        for &s in &result {
+            assert!((s - 2.0f32).abs() < 1e-5, "expected 2.0, got {}", s);
+        }
+    }
+
+    #[test]
+    fn test_apply_parameters_direct_energy_branch() {
+        let model = make_tts_model();
+        let samples = vec![1.0f32; 10];
+        let params = TTSParameters { speed: 1.0, pitch: 1.0, energy: 0.5 };
+        let result = model.apply_parameters(&samples, &params).unwrap();
+        // energy=0.5 → each sample * 0.5
+        for &s in &result {
+            assert!((s - 0.5f32).abs() < 1e-5, "expected 0.5, got {}", s);
+        }
+    }
+
+    #[test]
+    fn test_apply_parameters_direct_all_branches() {
+        let model = make_tts_model();
+        let samples: Vec<f32> = (0..200).map(|i| i as f32 * 0.01).collect();
+        let params = TTSParameters { speed: 1.5, pitch: 2.0, energy: 2.0 };
+        let result = model.apply_parameters(&samples, &params).unwrap();
+        // Just verify it runs without panic and returns a non-empty vec
+        assert!(!result.is_empty());
+    }
+
+    // Lines 196-211: simple_resample (same-length, upsample, downsample, out-of-bounds)
+    #[test]
+    fn test_simple_resample_direct_same_length() {
+        let model = make_tts_model();
+        let samples = vec![1.0f32, 2.0, 3.0];
+        let result = model.simple_resample(&samples, 3);
+        assert_eq!(result, samples);
+    }
+
+    #[test]
+    fn test_simple_resample_direct_downsample() {
+        let model = make_tts_model();
+        let samples: Vec<f32> = (0..10).map(|i| i as f32).collect();
+        let result = model.simple_resample(&samples, 5);
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], 0.0);
+    }
+
+    #[test]
+    fn test_simple_resample_direct_upsample_hits_else_branch() {
+        // Upsampling: new_len > samples.len() causes src_idx >= samples.len() → else branch (0.0)
+        let model = make_tts_model();
+        let samples = vec![1.0f32, 2.0, 3.0];
+        // new_len=10 with ratio=3/10=0.3 → last indices map past end
+        let result = model.simple_resample(&samples, 10);
+        assert_eq!(result.len(), 10);
+        // First few should be valid sample values; tail may be 0.0
+        assert_eq!(result[0], samples[0]);
+    }
+
+    #[test]
+    fn test_simple_resample_direct_empty_input() {
+        let model = make_tts_model();
+        let samples: Vec<f32> = vec![];
+        let result = model.simple_resample(&samples, 0);
+        assert!(result.is_empty());
+    }
+
+    // ── Direct calls to private STTModel methods (lines 336-389) ─────────
+
+    // Lines 336-341: to_mono
+    #[test]
+    fn test_to_mono_direct_stereo() {
+        let model = make_stt_model();
+        // interleaved stereo: [L0, R0, L1, R1, ...]
+        let stereo = vec![1.0f32, 3.0, 2.0, 4.0]; // frames: (1,3) and (2,4)
+        let mono = model.to_mono(&stereo, 2);
+        assert_eq!(mono.len(), 2);
+        assert!((mono[0] - 2.0f32).abs() < 1e-5); // (1+3)/2
+        assert!((mono[1] - 3.0f32).abs() < 1e-5); // (2+4)/2
+    }
+
+    #[test]
+    fn test_to_mono_direct_mono_passthrough() {
+        let model = make_stt_model();
+        let samples = vec![0.5f32, 0.6, 0.7];
+        let mono = model.to_mono(&samples, 1);
+        assert_eq!(mono, samples);
+    }
+
+    #[test]
+    fn test_to_mono_direct_empty() {
+        let model = make_stt_model();
+        let mono = model.to_mono(&[], 2);
+        assert!(mono.is_empty());
+    }
+
+    // Lines 343-360: extract_features
+    #[test]
+    fn test_extract_features_direct_basic() {
+        let model = make_stt_model();
+        let samples: Vec<f32> = (0..1024).map(|i| (i as f32) * 0.001).collect();
+        let features = model.extract_features(&samples).unwrap();
+        // hop_length=256 → ceil(1024/256)=4 chunks
+        assert!(!features.is_empty());
+        // Each feature chunk should be non-empty
+        for chunk in &features {
+            assert!(!chunk.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_extract_features_direct_short_input() {
+        let model = make_stt_model();
+        // Less than chunk_size=512 → one chunk
+        let samples = vec![0.5f32; 100];
+        let features = model.extract_features(&samples).unwrap();
+        assert_eq!(features.len(), 1);
+        assert_eq!(features[0].len(), 100);
+    }
+
+    #[test]
+    fn test_extract_features_direct_empty_input() {
+        let model = make_stt_model();
+        let features = model.extract_features(&[]).unwrap();
+        assert!(features.is_empty());
+    }
+
+    #[test]
+    fn test_extract_features_direct_normalized_mean_zero() {
+        let model = make_stt_model();
+        // All samples the same → mean == value → normalized == 0.0
+        let samples = vec![3.0f32; 512];
+        let features = model.extract_features(&samples).unwrap();
+        assert!(!features.is_empty());
+        let chunk = &features[0];
+        let max_abs = chunk.iter().map(|&x| x.abs()).fold(0.0f32, f32::max);
+        assert!(max_abs < 1e-5, "expected all zeros after normalization, max_abs={}", max_abs);
+    }
+
+    // Lines 363-371: decode_tokens
+    #[test]
+    fn test_decode_tokens_direct_ascii_range() {
+        let model = make_stt_model();
+        // 'h'=104, 'i'=105, both in (0, 128)
+        let tokens = vec![104i64, 105];
+        let text = model.decode_tokens(&tokens).unwrap();
+        assert_eq!(text, "hi");
+    }
+
+    #[test]
+    fn test_decode_tokens_direct_filters_out_of_range() {
+        let model = make_stt_model();
+        // 0 and 128 are filtered out; only 65 ('A') passes
+        let tokens = vec![0i64, 65, 128, -1, 200];
+        let text = model.decode_tokens(&tokens).unwrap();
+        assert_eq!(text, "A");
+    }
+
+    #[test]
+    fn test_decode_tokens_direct_empty() {
+        let model = make_stt_model();
+        let text = model.decode_tokens(&[]).unwrap();
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_decode_tokens_direct_whitespace_trimmed() {
+        let model = make_stt_model();
+        // space=32, 'a'=97, space=32
+        let tokens = vec![32i64, 97, 32];
+        let text = model.decode_tokens(&tokens).unwrap();
+        assert_eq!(text, "a");
+    }
+
+    // Lines 374-389: extract_segments_from_tokens
+    #[test]
+    fn test_extract_segments_from_tokens_direct_single_word() {
+        let model = make_stt_model();
+        let tokens = vec![1i64, 2, 3]; // _tokens unused in implementation
+        let segs = model.extract_segments_from_tokens(&tokens, "hello").unwrap();
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].text, "hello");
+        assert!((segs[0].start_time - 0.0f32).abs() < 1e-5);
+        assert!((segs[0].end_time - 0.5f32).abs() < 1e-5);
+        assert!((segs[0].confidence - 0.95f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_extract_segments_from_tokens_direct_multiple_words() {
+        let model = make_stt_model();
+        let tokens = vec![];
+        let segs = model.extract_segments_from_tokens(&tokens, "hello world foo").unwrap();
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0].text, "hello");
+        assert_eq!(segs[1].text, "world");
+        assert_eq!(segs[2].text, "foo");
+        // timing: word i → start=i*0.5, end=(i+1)*0.5
+        assert!((segs[1].start_time - 0.5f32).abs() < 1e-5);
+        assert!((segs[2].end_time - 1.5f32).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_extract_segments_from_tokens_direct_empty_text() {
+        let model = make_stt_model();
+        let tokens = vec![1i64];
+        let segs = model.extract_segments_from_tokens(&tokens, "").unwrap();
+        assert!(segs.is_empty());
+    }
 }
