@@ -485,4 +485,45 @@ mod tests {
         assert_eq!(manager.list_tts_models().len(), 0);
         assert_eq!(manager.list_stt_models().len(), 0);
     }
+
+    // ── TTSModel::simple_resample line 208: else branch (src_idx >= len) ─────
+
+    #[test]
+    fn test_simple_resample_else_branch_via_synthesize() {
+        let config = TTSConfig {
+            model_path: std::path::PathBuf::from("/nonexistent/model.onnx"),
+            vocoder_path: None,
+            sample_rate: 8000,
+            max_text_length: 1000,
+        };
+        let model = TTSModel::new(config).unwrap();
+        // speed=0.01 forces new_len >> sample_count so simple_resample hits
+        // the else branch (line 208) for out-of-bounds indices.
+        let params = TTSParameters { speed: 0.01, pitch: 1.0, energy: 1.0 };
+        let result = model.synthesize("hi", &params);
+        assert!(result.is_ok(), "synthesize should succeed: {:?}", result);
+        assert!(!result.unwrap().samples.is_empty());
+    }
+
+    // ── AudioModelManager::initialize_default_models lines 453, 463 ──────────
+
+    #[tokio::test]
+    async fn test_initialize_default_models_loads_tts_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tts_default.onnx"), b"dummy").unwrap();
+        let manager = AudioModelManager::new(dir.path());
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok(), "initialize_default_models should succeed: {:?}", result);
+        assert_eq!(manager.list_tts_models().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_initialize_default_models_loads_stt_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("stt_default.onnx"), b"dummy").unwrap();
+        let manager = AudioModelManager::new(dir.path());
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok(), "initialize_default_models should succeed: {:?}", result);
+        assert_eq!(manager.list_stt_models().len(), 1);
+    }
 }

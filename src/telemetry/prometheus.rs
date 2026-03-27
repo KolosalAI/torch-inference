@@ -317,4 +317,12 @@ mod tests {
         update_model_instances("model", 3);
         update_queue_depth("model", 5);
     }
+
+    /// Lines 225-226: the no-op init_metrics() when metrics feature is disabled.
+    #[test]
+    #[cfg(not(feature = "metrics"))]
+    fn test_init_metrics_no_op_returns_ok() {
+        let result = init_metrics();
+        assert!(result.is_ok());
+    }
 }

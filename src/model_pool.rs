@@ -463,4 +463,17 @@ mod tests {
         assert_eq!(stats.total_models, 0);
         assert_eq!(stats.total_instances, 0);
     }
+
+    /// Cover line 110: the `return None` path when the key exists in `instances`
+    /// but the vector is empty.  We insert an empty vec directly (private field
+    /// access is allowed because this test lives in the same module).
+    #[tokio::test]
+    async fn test_acquire_returns_none_when_instances_vec_is_empty() {
+        let pool = ModelPool::<MockModel>::new(3);
+        // Insert an empty vector for "empty_model" directly into the private field.
+        pool.instances.insert("empty_model".to_string(), Vec::new());
+        // acquire() must find the key, discover the empty vec, and return None.
+        let result = pool.acquire("empty_model").await;
+        assert!(result.is_none(), "expected None when instance list is empty");
+    }
 }

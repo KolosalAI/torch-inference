@@ -677,4 +677,33 @@ mod tests {
         assert_eq!(metrics.total_requests, 10000);
         assert_eq!(metrics.total_processed, 10000);
     }
+
+    /// Exercise the CAS retry loop at line 86 (min_latency update).
+    /// Many threads with small latency values maximize compare_exchange races.
+    #[test]
+    fn test_monitor_cas_retry_loop_for_min_latency() {
+        let monitor = Arc::new(Monitor::new());
+        let mut handles = vec![];
+
+        for t in 0..20_u64 {
+            let m = Arc::clone(&monitor);
+            handles.push(thread::spawn(move || {
+                for i in 1_u64..=50 {
+                    m.record_request_start();
+                    let latency = (t * 50 + i) % 100 + 1;
+                    m.record_request_end(latency, "/api/cas_test", true);
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, 1000);
+        assert_eq!(metrics.total_processed, 1000);
+        assert!(metrics.min_latency_ms >= 1.0);
+        assert!(metrics.max_latency_ms <= 100.0);
+    }
 }

@@ -188,4 +188,24 @@ mod tests {
         let response = err.error_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
+
+    #[test]
+    fn window_reset_after_expiry_lines_59_61() {
+        // window_seconds=0: the window expires after 0 seconds.
+        // First call: entry inserted, count=1 (count < max=100 branch).
+        // After sleeping 1 second: now - timestamp = 1 > window_seconds (0) → reset branch
+        // (lines 59-61): *count = 1, *timestamp = now → Ok(()).
+        let limiter = RateLimiter::new(100, 0);
+        let key = "window_reset_key";
+
+        // First request creates the entry via the count < max branch
+        assert!(limiter.is_allowed(key).is_ok());
+
+        // Sleep to ensure `now - timestamp > 0` (i.e., at least 1 second passes)
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // Second request: now - timestamp >= 1 > window_seconds (0) → window reset (lines 59-61)
+        let result = limiter.is_allowed(key);
+        assert!(result.is_ok(), "should be Ok after window expired (reset branch)");
+    }
 }

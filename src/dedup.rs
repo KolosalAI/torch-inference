@@ -272,4 +272,13 @@ mod tests {
         let key_b = dedup.generate_key("model", &serde_json::json!({"x": 2}));
         assert_ne!(key_a, key_b);
     }
+
+    #[test]
+    fn test_request_deduplicator_default() {
+        // Exercises RequestDeduplicator::default() (lines 131-132)
+        let dedup = RequestDeduplicator::default();
+        dedup.set("k".to_string(), serde_json::json!("v"), 60);
+        assert!(dedup.get("k").is_some());
+        assert_eq!(dedup.size(), 1);
+    }
 }

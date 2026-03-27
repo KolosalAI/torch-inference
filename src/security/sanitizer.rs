@@ -448,4 +448,16 @@ mod tests {
         assert!(sanitized[0].get("keep").is_some());
         assert!(sanitized[0].get("drop").is_none());
     }
+
+    #[test]
+    fn test_sanitize_image_input_too_large_string() {
+        // Exercises line 105: s.len() > 10_000_000 → Err("Image data too large")
+        let sanitizer = default_sanitizer();
+        // Create a base64-clean string (all 'A') longer than 10 MB
+        let large_data = "A".repeat(10_000_001);
+        let input = json!({"image": large_data});
+        let result = sanitizer.sanitize_input(&input);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Image data too large");
+    }
 }

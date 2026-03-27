@@ -346,4 +346,37 @@ mod tests {
         let back: KokoroConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.sample_rate, 24000);
     }
+
+    /// Cover line 225: `is_ready()` returns `true` when python_bridge is Some.
+    /// Constructed directly to inject a stub KokoroPythonBridge (unit struct
+    /// when python feature is disabled).
+    #[test]
+    #[cfg(not(feature = "torch"))]
+    fn test_is_ready_true_when_python_bridge_present() {
+        use crate::core::tts_engine::EngineCapabilities;
+        use crate::core::python_tts_bridge::KokoroPythonBridge;
+
+        let capabilities = EngineCapabilities {
+            name: "Kokoro TTS v1.0".to_string(),
+            version: "1.0.0".to_string(),
+            supported_languages: vec!["en-US".to_string()],
+            supported_voices: vec![],
+            max_text_length: 1000,
+            sample_rate: 24000,
+            supports_ssml: false,
+            supports_streaming: false,
+        };
+
+        let engine = KokoroEngine {
+            config: KokoroConfig {
+                model_path: std::path::PathBuf::from("/nonexistent/model.pth"),
+                sample_rate: 24000,
+            },
+            capabilities,
+            python_bridge: Some(KokoroPythonBridge),
+        };
+
+        // With a Some(bridge), is_ready() hits the `return true` at line 225.
+        assert!(engine.is_ready(), "is_ready() should be true when python_bridge is Some");
+    }
 }

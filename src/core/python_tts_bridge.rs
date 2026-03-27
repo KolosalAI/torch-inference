@@ -197,3 +197,49 @@ impl KokoroPythonBridge {
         Ok(vec![])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Line 183-185: new() bails without the python feature.
+    #[test]
+    fn test_kokoro_bridge_new_fails_without_python_feature() {
+        let result = KokoroPythonBridge::new();
+        assert!(result.is_err());
+        // Use .err().unwrap() instead of .unwrap_err() because KokoroPythonBridge
+        // doesn't implement Debug (it's a unit struct stub).
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("Python bridge unavailable") || msg.contains("python"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    /// Lines 187 / 193: synthesize() bails without the python feature.
+    #[test]
+    #[cfg(not(feature = "python"))]
+    fn test_kokoro_bridge_synthesize_bails_without_python_feature() {
+        // Construct the unit struct directly (bypassing new()).
+        let bridge = KokoroPythonBridge;
+        let result = bridge.synthesize("hello", Some("af_heart"), 1.0);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("Python bridge unavailable") || msg.contains("python"),
+            "unexpected error: {}",
+            msg
+        );
+    }
+
+    /// Lines 196-197: list_voices() returns an empty vec without the python feature.
+    #[test]
+    #[cfg(not(feature = "python"))]
+    fn test_kokoro_bridge_list_voices_empty_without_python_feature() {
+        let bridge = KokoroPythonBridge;
+        let result = bridge.list_voices();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+}

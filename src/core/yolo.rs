@@ -940,4 +940,26 @@ mod tests {
         assert_eq!(names[2], "car");
         assert_eq!(names[15], "cat");
     }
+
+    // ── Lines 253-254, 289-290: #[cfg(not(feature = "torch"))] stubs ─────────
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_preprocess_image_errors_without_torch() {
+        let detector = make_detector();
+        let result = detector.preprocess_image(std::path::Path::new("/img.jpg"));
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("feature") || msg.contains("torch") || msg.contains("PyTorch"), "{msg}");
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_detect_errors_without_torch() {
+        let detector = make_detector();
+        let result = detector.detect(std::path::Path::new("/img.jpg"));
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("feature") || msg.contains("torch") || msg.contains("PyTorch"), "{msg}");
+    }
 }

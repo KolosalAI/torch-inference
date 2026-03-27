@@ -543,4 +543,56 @@ mod tests {
         let loader = PyTorchModelLoader::new(Some("cpu".to_string()), None, None);
         assert_eq!(loader.device, "cpu");
     }
+
+    // ── Lines 462-463: #[cfg(not(feature = "torch"))] to_tensor returns Err ──
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_to_tensor_returns_err_without_torch_raw() {
+        let loader = PyTorchModelLoader::new(Some("cpu".to_string()), None, None);
+        let input = PreprocessedInput::Raw(serde_json::json!([1.0, 2.0, 3.0]));
+        let result = loader.to_tensor(&input);
+        assert!(result.is_err(), "to_tensor should error without torch feature");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("PyTorch") || msg.contains("torch") || msg.contains("enabled"),
+            "{msg}"
+        );
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_to_tensor_returns_err_without_torch_image() {
+        let loader = PyTorchModelLoader::new(Some("cpu".to_string()), None, None);
+        let input = PreprocessedInput::Image {
+            data: serde_json::json!("base64data"),
+            shape: Some((224, 224)),
+        };
+        let result = loader.to_tensor(&input);
+        assert!(result.is_err());
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_to_tensor_returns_err_without_torch_audio() {
+        let loader = PyTorchModelLoader::new(Some("cpu".to_string()), None, None);
+        let input = PreprocessedInput::Audio {
+            data: serde_json::json!([0.1, 0.2]),
+            sample_rate: Some(16000),
+        };
+        let result = loader.to_tensor(&input);
+        assert!(result.is_err());
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_to_tensor_returns_err_without_torch_text() {
+        let loader = PyTorchModelLoader::new(Some("cpu".to_string()), None, None);
+        let input = PreprocessedInput::Text {
+            data: serde_json::json!("hello"),
+            max_length: Some(128),
+        };
+        let result = loader.to_tensor(&input);
+        assert!(result.is_err());
+    }
 }

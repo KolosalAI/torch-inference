@@ -728,4 +728,36 @@ mod tests {
         let tokens = g2p.text_to_tokens("hello world").unwrap();
         assert!(tokens.contains(&16), "space token (16) missing: {:?}", tokens);
     }
+
+    // ── Line 468: is_punctuation else branch (empty string → false) ──────────
+
+    #[test]
+    fn test_is_punctuation_empty_string_returns_false() {
+        let g2p = MisakiG2P::new().unwrap();
+        // Empty → `if let Some(ch)` never matches → returns false (line 468)
+        assert!(!g2p.is_punctuation(""));
+    }
+
+    #[test]
+    fn test_is_punctuation_single_non_alpha_is_true() {
+        let g2p = MisakiG2P::new().unwrap();
+        assert!(g2p.is_punctuation("."));
+        assert!(g2p.is_punctuation(","));
+        assert!(g2p.is_punctuation("!"));
+    }
+
+    #[test]
+    fn test_is_punctuation_letter_is_false() {
+        let g2p = MisakiG2P::new().unwrap();
+        assert!(!g2p.is_punctuation("a"));
+        assert!(!g2p.is_punctuation("Z"));
+    }
+
+    #[test]
+    fn test_is_punctuation_multi_char_is_false() {
+        let g2p = MisakiG2P::new().unwrap();
+        // Two characters: chars.next().is_none() returns false
+        assert!(!g2p.is_punctuation(".."));
+        assert!(!g2p.is_punctuation("hi"));
+    }
 }

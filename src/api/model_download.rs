@@ -1153,6 +1153,85 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    // ── Lines 288-289: list_available_models Err branch (registry unreadable) ──
+
+    #[actix_web::test]
+    async fn test_list_available_models_registry_read_error_falls_back_to_hardcoded() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a *directory* named "model_registry.json" so that
+        // Path::exists() == true but fs::read_to_string returns an error.
+        std::fs::create_dir(dir.path().join("model_registry.json")).unwrap();
+
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok(), "should fall back to hardcoded list: {:?}", result);
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["source"], "hardcoded");
+    }
+
+    // ── Lines 490-492: list_sota_models sort_by closure (needs 2+ IC models) ─
+
+    #[actix_web::test]
+    async fn test_list_sota_models_sort_by_rank_with_multiple_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "resnet50": {
+                    "name": "ResNet-50",
+                    "architecture": "ResNet",
+                    "task": "Image Classification",
+                    "accuracy": "76.1%",
+                    "rank": 2,
+                    "size": "~100 MB",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                },
+                "efficientnet-b0": {
+                    "name": "EfficientNet-B0",
+                    "architecture": "EfficientNet",
+                    "task": "Image Classification",
+                    "accuracy": "77.1%",
+                    "rank": 1,
+                    "size": "~20 MB",
+                    "url": "https://huggingface.co/google/efficientnet-b0",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                },
+                "vit-base": {
+                    "name": "ViT Base",
+                    "architecture": "ViT",
+                    "task": "Image Classification",
+                    "accuracy": "81.8%",
+                    "size": "~330 MB",
+                    "url": "https://huggingface.co/google/vit-base-patch16-224",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let result = with_cwd(dir.path(), list_sota_models).await;
+        assert!(result.is_ok(), "list_sota_models should succeed: {:?}", result);
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let models = body["models"].as_array().expect("models array");
+        assert_eq!(models.len(), 3);
+        // After sort, lower rank comes first
+        let first_rank = models[0]["rank"].as_u64();
+        let second_rank = models[1]["rank"].as_u64();
+        if let (Some(r1), Some(r2)) = (first_rank, second_rank) {
+            assert!(r1 <= r2, "should be sorted by rank ascending: {} > {}", r1, r2);
+        }
+    }
+
     // ── get_download_status happy path ────────────────────────────────────────
 
     #[actix_web::test]

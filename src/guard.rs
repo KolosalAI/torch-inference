@@ -950,4 +950,74 @@ mod tests {
         assert_eq!(guard.consecutive_errors.load(Ordering::Relaxed), 0);
         assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 0);
     }
+
+    // ── reset_circuit_breaker direct coverage (lines 352-357) ────────────────
+    //
+    // reset_circuit_breaker is a private async fn on SystemGuard.  Tests in the
+    // same file can call private methods directly.  We open the circuit manually
+    // and then call reset_circuit_breaker() to exercise lines 352-357.
+    //
+    // Lines 327-328 (inside is_circuit_open) are skipped here because calling
+    // is_circuit_open() when the timeout has elapsed would cause a deadlock:
+    // is_circuit_open holds circuit_open_time.read() while reset_circuit_breaker
+    // tries to acquire circuit_open_time.write().
+
+    #[tokio::test]
+    async fn test_reset_circuit_breaker_clears_all_state() {
+        let config = GuardConfig {
+            circuit_breaker_threshold: 100,
+            max_consecutive_errors: 100,
+            circuit_breaker_timeout_secs: 60,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Manually open the circuit with a known state
+        guard.circuit_open.store(true, Ordering::Relaxed);
+        guard.circuit_failures.store(7, Ordering::Relaxed);
+        {
+            let mut t = guard.circuit_open_time.write().await;
+            *t = Some(Instant::now());
+        }
+
+        // Pre-conditions
+        assert!(guard.circuit_open.load(Ordering::Relaxed));
+        assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 7);
+        {
+            let t = guard.circuit_open_time.read().await;
+            assert!(t.is_some());
+        }
+
+        // Call reset_circuit_breaker directly — covers lines 352-357
+        guard.reset_circuit_breaker().await;
+
+        // Post-conditions: circuit is closed, failures zeroed, open_time cleared
+        assert!(!guard.circuit_open.load(Ordering::Relaxed), "circuit_open should be false after reset");
+        assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 0, "circuit_failures should be zero after reset");
+        {
+            let t = guard.circuit_open_time.read().await;
+            assert!(t.is_none(), "circuit_open_time should be None after reset");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reset_circuit_breaker_idempotent_when_already_closed() {
+        // Calling reset_circuit_breaker when circuit is already closed should be safe.
+        let guard = SystemGuard::default();
+        assert!(!guard.circuit_open.load(Ordering::Relaxed));
+
+        // Reset on a closed circuit — should not panic and state remains correct
+        guard.reset_circuit_breaker().await;
+
+        assert!(!guard.circuit_open.load(Ordering::Relaxed));
+        assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 0);
+        let t = guard.circuit_open_time.read().await;
+        assert!(t.is_none());
+    }
+
+    // NOTE: lines 327-328 (inside is_circuit_open when the timeout has elapsed)
+    // are not covered because is_circuit_open holds a tokio RwLock read guard
+    // on circuit_open_time across the if-let body, and reset_circuit_breaker
+    // (called at line 327) tries to acquire a write lock on the same RwLock —
+    // causing a deadlock.  This is a design limitation in the production code.
 }

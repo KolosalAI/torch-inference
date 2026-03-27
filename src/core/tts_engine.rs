@@ -455,4 +455,37 @@ mod tests {
         let result = engine.validate_text(&at_limit);
         assert!(result.is_ok());
     }
+
+    // ── Line 90: default TTSEngine::warmup returns Ok(()) ────────────────────
+
+    #[tokio::test]
+    async fn test_default_warmup_returns_ok_unit() {
+        let cfg = serde_json::json!({});
+        let engine = TorchTTSEngine::new(&cfg).unwrap();
+        // TorchTTSEngine doesn't override warmup(), calling the default (line 90)
+        let result = engine.warmup().await;
+        assert!(result.is_ok(), "default warmup must return Ok: {:?}", result);
+    }
+
+    // ── Line 125: Windows-SAPI bail on non-Windows ────────────────────────────
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_factory_create_windows_sapi_errors_on_non_windows() {
+        let cfg = serde_json::json!({});
+        let result = TTSEngineFactory::create("windows-sapi", &cfg);
+        assert!(result.is_err(), "windows-sapi should fail on non-Windows");
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Windows") || msg.contains("windows"), "{msg}");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_factory_create_sapi_alias_errors_on_non_windows() {
+        let cfg = serde_json::json!({});
+        let result = TTSEngineFactory::create("sapi", &cfg);
+        assert!(result.is_err(), "sapi should fail on non-Windows");
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("Windows") || msg.contains("windows"), "{msg}");
+    }
 }
