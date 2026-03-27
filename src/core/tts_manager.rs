@@ -2,7 +2,9 @@
 /// Manages multiple TTS engines and provides a unified interface
 use anyhow::{Result, Context};
 use dashmap::DashMap;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::path::PathBuf;
 
@@ -13,8 +15,14 @@ use super::audio::AudioData;
 pub struct TTSManagerConfig {
     pub default_engine: String,
     pub cache_dir: PathBuf,
+    #[serde(default = "default_max_concurrent")]
     pub max_concurrent_requests: usize,
+    #[serde(default = "default_synthesis_cache_capacity")]
+    pub synthesis_cache_capacity: usize,
 }
+
+fn default_max_concurrent() -> usize { 10 }
+fn default_synthesis_cache_capacity() -> usize { 128 }
 
 impl Default for TTSManagerConfig {
     fn default() -> Self {
@@ -22,6 +30,7 @@ impl Default for TTSManagerConfig {
             default_engine: "kokoro-onnx".to_string(),
             cache_dir: PathBuf::from("./cache/tts"),
             max_concurrent_requests: 10,
+            synthesis_cache_capacity: 128,
         }
     }
 }
@@ -30,17 +39,56 @@ impl Default for TTSManagerConfig {
 pub struct TTSManager {
     config: TTSManagerConfig,
     engines: DashMap<String, Arc<dyn TTSEngine>>,
-    request_semaphore: tokio::sync::Semaphore,
+    /// Content-addressed cache: key = hash(text + engine_id + params),
+    /// value = Arc<AudioData> so cache hits are O(1) pointer clones.
+    synthesis_cache: tokio::sync::Mutex<LruCache<u64, Arc<AudioData>>>,
 }
 
 impl TTSManager {
     pub fn new(config: TTSManagerConfig) -> Self {
-        let max_concurrent = config.max_concurrent_requests;
+        let cap = NonZeroUsize::new(config.synthesis_cache_capacity.max(1))
+            .expect("cache capacity is non-zero");
         Self {
+            synthesis_cache: tokio::sync::Mutex::new(LruCache::new(cap)),
             config,
             engines: DashMap::new(),
-            request_semaphore: tokio::sync::Semaphore::new(max_concurrent),
         }
+    }
+
+    /// FNV-1a 64-bit hash. Unlike `DefaultHasher`, this is stable across Rust
+    /// versions and process restarts — safe for use as a persistent cache key.
+    fn fnv1a_u64(data: &[u8]) -> u64 {
+        const OFFSET_BASIS: u64 = 14695981039346656037;
+        const PRIME: u64 = 1099511628211;
+        let mut hash = OFFSET_BASIS;
+        for &byte in data {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(PRIME);
+        }
+        hash
+    }
+
+    fn synthesis_cache_key(text: &str, engine_id: &str, params: &SynthesisParams) -> u64 {
+        // NUL bytes separate fields to prevent collisions like ("ab","c") == ("a","bc")
+        let mut buf = Vec::with_capacity(
+            text.len() + engine_id.len()
+                + params.voice.as_deref().map_or(0, |s| s.len())
+                + params.language.as_deref().map_or(0, |s| s.len())
+                + 4   // field separators
+                + 8   // speed f32 bits
+                + 8,  // pitch f32 bits
+        );
+        buf.extend_from_slice(text.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(engine_id.as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(params.voice.as_deref().unwrap_or("").as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(params.language.as_deref().unwrap_or("").as_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&params.speed.to_bits().to_le_bytes());
+        buf.extend_from_slice(&params.pitch.to_bits().to_le_bytes());
+        Self::fnv1a_u64(&buf)
     }
     
     /// Register a TTS engine
@@ -87,32 +135,47 @@ impl TTSManager {
         self.get_engine(engine_id).map(|e| e.capabilities().clone())
     }
     
-    /// Synthesize speech using a specific engine
-    pub async fn synthesize(&self, 
-        text: &str, 
-        engine_id: Option<&str>, 
+    /// Synthesize speech using a specific engine.
+    ///
+    /// Results are cached by content hash — repeated phrases with the same
+    /// engine/voice/speed/pitch are returned from memory, bypassing G2P and
+    /// ONNX inference entirely.  Concurrency is governed by each engine's own
+    /// internal session pool; the manager adds no extra serialization.
+    pub async fn synthesize(&self,
+        text: &str,
+        engine_id: Option<&str>,
         params: SynthesisParams
     ) -> Result<AudioData> {
-        // Acquire semaphore permit for rate limiting
-        let _permit = self.request_semaphore.acquire().await
-            .context("Failed to acquire request permit")?;
-        
-        // Get the engine
         let engine_id = engine_id.unwrap_or(&self.config.default_engine);
+        let cache_key = Self::synthesis_cache_key(text, engine_id, &params);
+
+        // Fast path: return cached AudioData (O(1) Arc clone, no inference).
+        {
+            let mut cache = self.synthesis_cache.lock().await;
+            if let Some(cached) = cache.get(&cache_key) {
+                log::debug!("TTS cache hit ({} chars, engine '{}')", text.len(), engine_id);
+                return Ok((**cached).clone());
+            }
+        }
+
         let engine = self.get_engine(engine_id)
             .ok_or_else(|| anyhow::anyhow!("Engine '{}' not found", engine_id))?;
-        
-        // Validate input
+
         engine.validate_text(text)?;
-        
-        // Synthesize
+
         log::info!("Synthesizing with engine '{}': {} characters", engine_id, text.len());
         let audio = engine.synthesize(text, &params).await
             .context("Synthesis failed")?;
-        
-        log::info!("Synthesis complete: {:.2}s audio generated", 
+
+        log::info!("Synthesis complete: {:.2}s audio generated",
             audio.samples.len() as f32 / audio.sample_rate as f32);
-        
+
+        // Store result; evicts LRU entry automatically when at capacity.
+        {
+            let mut cache = self.synthesis_cache.lock().await;
+            cache.put(cache_key, Arc::new(audio.clone()));
+        }
+
         Ok(audio)
     }
     
@@ -241,11 +304,16 @@ impl TTSManager {
     
     /// Get statistics
     pub fn get_stats(&self) -> TTSManagerStats {
+        let (cache_size, cache_capacity) = self.synthesis_cache
+            .try_lock()
+            .map(|c| (c.len(), c.cap().get()))
+            .unwrap_or((0, self.config.synthesis_cache_capacity));
+
         TTSManagerStats {
             total_engines: self.engines.len(),
             engine_ids: self.list_engines(),
-            available_permits: self.request_semaphore.available_permits(),
-            max_concurrent: self.config.max_concurrent_requests,
+            cache_size,
+            cache_capacity,
         }
     }
 }
@@ -254,44 +322,79 @@ impl TTSManager {
 pub struct TTSManagerStats {
     pub total_engines: usize,
     pub engine_ids: Vec<String>,
-    pub available_permits: usize,
-    pub max_concurrent: usize,
+    pub cache_size: usize,
+    pub cache_capacity: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_tts_manager_creation() {
         let config = TTSManagerConfig::default();
         let manager = TTSManager::new(config);
-        
+
         assert_eq!(manager.list_engines().len(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_load_demo_engine() {
         let config = TTSManagerConfig::default();
         let manager = TTSManager::new(config);
-        
+
         // Test that loading an unknown engine fails gracefully
         let demo_config = serde_json::json!({ "sample_rate": 24000 });
         let result = manager.load_engine("test".to_string(), "demo", demo_config).await;
-        
+
         assert!(result.is_err());
         assert_eq!(manager.list_engines().len(), 0);
     }
-    
+
     #[tokio::test]
     async fn test_synthesis() {
         let config = TTSManagerConfig::default();
         let manager = TTSManager::new(config);
-        
+
         let params = SynthesisParams::default();
         // Test that synthesis without an engine fails gracefully
         let result = manager.synthesize("Hello, world!", Some("nonexistent"), params).await;
-        
+
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_synthesis_cache_key_is_stable_across_calls() {
+        let params = SynthesisParams {
+            speed: 1.0,
+            pitch: 1.0,
+            voice: Some("af_heart".to_string()),
+            language: Some("en-US".to_string()),
+        };
+
+        let k1 = TTSManager::synthesis_cache_key("Hello world", "kokoro-onnx", &params);
+        let k2 = TTSManager::synthesis_cache_key("Hello world", "kokoro-onnx", &params);
+        assert_eq!(k1, k2, "same inputs must produce identical keys");
+
+        assert_eq!(k1, TTSManager::synthesis_cache_key("Hello world", "kokoro-onnx", &params),
+            "key must be deterministic");
+    }
+
+    #[test]
+    fn test_synthesis_cache_key_distinguishes_inputs() {
+        let params = SynthesisParams::default();
+
+        let k_text_a = TTSManager::synthesis_cache_key("Hello", "kokoro-onnx", &params);
+        let k_text_b = TTSManager::synthesis_cache_key("World", "kokoro-onnx", &params);
+        assert_ne!(k_text_a, k_text_b, "different text must produce different keys");
+
+        let k_engine_a = TTSManager::synthesis_cache_key("Hello", "kokoro-onnx", &params);
+        let k_engine_b = TTSManager::synthesis_cache_key("Hello", "piper", &params);
+        assert_ne!(k_engine_a, k_engine_b, "different engine must produce different keys");
+
+        let params_fast = SynthesisParams { speed: 2.0, ..SynthesisParams::default() };
+        let k_speed_a = TTSManager::synthesis_cache_key("Hello", "kokoro-onnx", &params);
+        let k_speed_b = TTSManager::synthesis_cache_key("Hello", "kokoro-onnx", &params_fast);
+        assert_ne!(k_speed_a, k_speed_b, "different speed must produce different keys");
     }
 }
