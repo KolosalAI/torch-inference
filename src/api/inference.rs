@@ -555,6 +555,143 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v["result"].is_null());
     }
+
+    // ── Additional serde tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_load_model_request_device_mps() {
+        let json = r#"{"model_id":"m","model_path":"/m.pt","device":"mps"}"#;
+        let req: LoadModelRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.device.as_deref(), Some("mps"));
+    }
+
+    #[test]
+    fn test_load_model_request_device_cuda() {
+        let json = r#"{"model_id":"m","model_path":"/m.pt","device":"cuda:0"}"#;
+        let req: LoadModelRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.device.as_deref(), Some("cuda:0"));
+    }
+
+    #[test]
+    fn test_batch_inference_response_zero_time() {
+        let resp = BatchInferenceResponse {
+            success: true,
+            results: vec![],
+            total_time_ms: 0.0,
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["success"], true);
+        assert!(v["error"].is_null());
+    }
+
+    #[test]
+    fn test_load_model_response_failure_serde() {
+        let resp = LoadModelResponse {
+            success: false,
+            model_id: "failed_model".to_string(),
+            message: "Failed to load".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["message"], "Failed to load");
+    }
+
+    #[test]
+    fn test_model_list_response_with_one_model() {
+        let meta = NetworkMetadata {
+            name: "TestNet".to_string(),
+            task: "classification".to_string(),
+            framework: "pytorch".to_string(),
+            input_names: vec!["input".to_string()],
+            output_names: vec!["output".to_string()],
+            description: None,
+        };
+        let resp = ModelListResponse {
+            models: vec![ModelInfoResponse {
+                model_id: "test-net".to_string(),
+                metadata: meta,
+            }],
+            total: 1,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["total"], 1);
+        assert_eq!(v["models"][0]["model_id"], "test-net");
+    }
+
+    #[test]
+    fn test_inference_request_empty_data() {
+        let json = r#"{"model_id":"net","input_data":[],"input_shape":[]}"#;
+        let req: InferenceRequest = serde_json::from_str(json).unwrap();
+        assert!(req.input_data.is_empty());
+        assert!(req.input_shape.is_empty());
+    }
+
+    #[test]
+    fn test_batch_input_empty_data() {
+        let json = r#"{"data":[],"shape":[]}"#;
+        let input: BatchInput = serde_json::from_str(json).unwrap();
+        assert!(input.data.is_empty());
+        assert!(input.shape.is_empty());
+    }
+
+    #[test]
+    fn test_batch_inference_request_empty_inputs() {
+        let json = r#"{"model_id":"net","inputs":[]}"#;
+        let req: BatchInferenceRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.model_id, "net");
+        assert!(req.inputs.is_empty());
+    }
+
+    #[test]
+    fn test_network_metadata_no_description() {
+        let meta = NetworkMetadata {
+            name: "Bare".to_string(),
+            task: "detection".to_string(),
+            framework: "onnx".to_string(),
+            input_names: vec![],
+            output_names: vec![],
+            description: None,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["description"].is_null());
+    }
+
+    // ── NeuralNetworkState construction ───────────────────────────────────────
+
+    #[test]
+    fn test_neural_network_state_starts_empty() {
+        let state = make_state_with_network("");
+        assert!(state.networks.is_empty());
+    }
+
+    // ── list_models + insert directly ─────────────────────────────────────────
+
+    // NOTE: NeuralNetwork::new always fails without the torch feature, so we
+    // cannot construct a NeuralNetwork to insert.  The list_models, get_model_info
+    // and unload_model "found" paths are therefore exercised only when the torch
+    // feature is active.  Without torch, we validate the empty-state behaviour
+    // which is already well covered above.
+
+    #[actix_web::test]
+    async fn test_list_models_handler_returns_ok_status() {
+        let state = make_state_with_network("");
+        let resp = list_models(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_unload_model_returns_not_found_for_missing() {
+        let state = make_state_with_network("");
+        let path = web::Path::from("not-loaded".to_string());
+        let result = unload_model(path, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::NotFound(_)));
+    }
 }
 
 // Configure routes

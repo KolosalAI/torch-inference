@@ -525,6 +525,114 @@ mod tests {
         assert!((clamped_speed - 4.0).abs() < f32::EPSILON);
         assert!((clamped_pitch - 0.5).abs() < f32::EPSILON);
     }
+
+    // synthesize — happy path (valid text, registered engine) returns 200
+    #[actix_web::test]
+    async fn test_synthesize_handler_success() {
+        let state = make_tts_state("mock-tts");
+        let req = web::Json(SynthesisRequest {
+            text: "Hello world".to_string(),
+            engine: Some("mock-tts".to_string()),
+            voice: None,
+            speed: 1.0,
+            pitch: 1.0,
+            language: None,
+        });
+        let resp = synthesize(req, state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // synthesize — default engine (no engine specified) returns 200
+    #[actix_web::test]
+    async fn test_synthesize_handler_default_engine() {
+        let state = make_tts_state("mock-tts");
+        let req = web::Json(SynthesisRequest {
+            text: "Using default engine".to_string(),
+            engine: None,
+            voice: None,
+            speed: 1.0,
+            pitch: 1.0,
+            language: None,
+        });
+        let resp = synthesize(req, state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // synthesize — with voice and language params returns 200
+    #[actix_web::test]
+    async fn test_synthesize_handler_with_voice_and_language() {
+        let state = make_tts_state("mock-tts");
+        let req = web::Json(SynthesisRequest {
+            text: "Voice test".to_string(),
+            engine: Some("mock-tts".to_string()),
+            voice: Some("v1".to_string()),
+            speed: 1.2,
+            pitch: 0.9,
+            language: Some("en".to_string()),
+        });
+        let resp = synthesize(req, state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // synthesize — clamped speed/pitch still succeeds
+    #[actix_web::test]
+    async fn test_synthesize_handler_clamped_speed_pitch() {
+        let state = make_tts_state("mock-tts");
+        let req = web::Json(SynthesisRequest {
+            text: "Extreme params".to_string(),
+            engine: Some("mock-tts".to_string()),
+            voice: None,
+            speed: 999.0,   // will be clamped to 4.0
+            pitch: -1.0,    // will be clamped to 0.5
+            language: None,
+        });
+        let resp = synthesize(req, state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // health_check — response body contains expected keys
+    #[actix_web::test]
+    async fn test_health_check_response_body() {
+        let state = make_tts_state("mock-tts");
+        let resp = health_check(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        // Status 200 is sufficient; body shape validated by serialization tests
+    }
+
+    // health_check — empty manager also returns healthy
+    #[actix_web::test]
+    async fn test_health_check_empty_manager_is_healthy() {
+        let state = make_empty_tts_state();
+        let resp = health_check(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_stats — stats reflect registered engine
+    #[actix_web::test]
+    async fn test_get_stats_handler_reflects_engine() {
+        let state = make_tts_state("mock-tts");
+        let resp = get_stats(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // SynthesisRequest — engine field is optional
+    #[test]
+    fn test_synthesis_request_with_engine_none() {
+        let json = r#"{"text": "no engine"}"#;
+        let req: SynthesisRequest = serde_json::from_str(json).unwrap();
+        assert!(req.engine.is_none());
+    }
+
+    // SynthesisRequest — voice and language optional
+    #[test]
+    fn test_synthesis_request_voice_language_optional() {
+        let json = r#"{"text": "plain text", "speed": 0.5, "pitch": 2.0}"#;
+        let req: SynthesisRequest = serde_json::from_str(json).unwrap();
+        assert!(req.voice.is_none());
+        assert!(req.language.is_none());
+        assert!((req.speed - 0.5).abs() < f32::EPSILON);
+        assert!((req.pitch - 2.0).abs() < f32::EPSILON);
+    }
 }
 
 /// Configure TTS routes

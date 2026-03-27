@@ -1008,4 +1008,131 @@ mod tests {
         assert!(!caps.supports_ssml);
         assert!(!caps.supports_streaming);
     }
+
+    // ──────────────────────────── synthesize: voice + language params ─────────
+
+    #[tokio::test]
+    async fn test_synthesize_with_voice_and_language_params() {
+        let manager = make_manager_with_mock("mock");
+        let params = SynthesisParams {
+            speed: 1.0,
+            pitch: 1.0,
+            voice: Some("af_sky".to_string()),
+            language: Some("en-US".to_string()),
+        };
+        let result = manager.synthesize("Hello with voice", Some("mock"), params).await;
+        assert!(result.is_ok(), "synthesis with voice+language should succeed: {:?}", result.err());
+        let audio = result.unwrap();
+        assert_eq!(audio.sample_rate, 24000);
+        assert!(!audio.samples.is_empty());
+    }
+
+    // ──────────────────────────── synthesize: same text different params ──────
+
+    #[tokio::test]
+    async fn test_synthesize_different_params_produce_separate_cache_entries() {
+        let manager = make_manager_with_mock("mock");
+        let params_a = SynthesisParams {
+            speed: 1.0,
+            pitch: 1.0,
+            voice: Some("voice-a".to_string()),
+            language: None,
+        };
+        let params_b = SynthesisParams {
+            speed: 1.5,
+            pitch: 0.8,
+            voice: Some("voice-b".to_string()),
+            language: Some("fr".to_string()),
+        };
+        manager.synthesize("shared text", Some("mock"), params_a).await.unwrap();
+        manager.synthesize("shared text", Some("mock"), params_b).await.unwrap();
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_size, 2, "different params must create separate cache entries");
+    }
+
+    // ──────────────────────────── synthesize: none engine, missing default ────
+
+    #[tokio::test]
+    async fn test_synthesize_none_engine_missing_default_returns_err() {
+        // Config says default = "kokoro-onnx", but nothing is registered
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: "kokoro-onnx".to_string(),
+            ..TTSManagerConfig::default()
+        });
+        let result = manager
+            .synthesize("hello", None, SynthesisParams::default())
+            .await;
+        assert!(result.is_err(), "no registered engine should fail");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("not found") || msg.contains("kokoro-onnx"),
+            "error should mention missing engine: {msg}");
+    }
+
+    // ──────────────────────────── synthesize: cache hit increments stats ──────
+
+    #[tokio::test]
+    async fn test_synthesize_cache_hit_does_not_grow_cache() {
+        let manager = make_manager_with_mock("mock");
+        let params = SynthesisParams::default();
+        // First call: miss — inserts into cache
+        manager.synthesize("repeated", Some("mock"), params.clone()).await.unwrap();
+        let stats_after_first = manager.get_stats();
+        // Second call: hit — should NOT change cache_size
+        manager.synthesize("repeated", Some("mock"), params).await.unwrap();
+        let stats_after_second = manager.get_stats();
+        assert_eq!(stats_after_first.cache_size, stats_after_second.cache_size,
+            "cache hit must not change cache_size");
+    }
+
+    // ──────────────────────────── get_engine returns correct engine ───────────
+
+    #[test]
+    fn test_get_engine_returns_some_for_registered_engine() {
+        let manager = make_manager_with_mock("get-test");
+        let engine = manager.get_engine("get-test");
+        assert!(engine.is_some());
+        assert_eq!(engine.unwrap().name(), "mock");
+    }
+
+    #[test]
+    fn test_get_engine_returns_none_for_unregistered_engine() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        assert!(manager.get_engine("absent").is_none());
+    }
+
+    // ──────────────────────────── TTSManagerStats: engine_ids list ───────────
+
+    #[test]
+    fn test_get_stats_engine_ids_contains_registered_name() {
+        let manager = make_manager_with_mock("tracked-engine");
+        let stats = manager.get_stats();
+        assert_eq!(stats.total_engines, 1);
+        assert!(stats.engine_ids.contains(&"tracked-engine".to_string()));
+    }
+
+    // ──────────────────────────── cache key: pitch = 1.0 vs 1.0000001 ────────
+
+    #[test]
+    fn test_cache_key_nearly_equal_pitch_differs() {
+        // f32 bit representation differs between 1.0 and 1.0000001
+        let p1 = SynthesisParams { pitch: 1.0_f32, ..SynthesisParams::default() };
+        let p2 = SynthesisParams { pitch: 1.0000001_f32, ..SynthesisParams::default() };
+        if p1.pitch.to_bits() != p2.pitch.to_bits() {
+            let k1 = TTSManager::synthesis_cache_key("text", "eng", &p1);
+            let k2 = TTSManager::synthesis_cache_key("text", "eng", &p2);
+            assert_ne!(k1, k2);
+        }
+        // If f32 representations are identical, keys will be equal — also fine.
+    }
+
+    // ──────────────────────────── TTSManagerConfig: custom cache_dir ─────────
+
+    #[test]
+    fn test_tts_manager_config_custom_cache_dir() {
+        let cfg = TTSManagerConfig {
+            cache_dir: PathBuf::from("/custom/tts/cache"),
+            ..TTSManagerConfig::default()
+        };
+        assert_eq!(cfg.cache_dir, PathBuf::from("/custom/tts/cache"));
+    }
 }

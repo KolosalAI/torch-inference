@@ -497,4 +497,156 @@ mod tests {
         let is_onnx = lower == "onnx";
         assert!(is_onnx);
     }
+
+    // ── Handler tests ──────────────────────────────────────────────────────────
+
+    use crate::core::engine::InferenceEngine;
+    use crate::models::manager::ModelManager;
+    use crate::config::Config;
+
+    fn make_engine() -> web::Data<Arc<InferenceEngine>> {
+        let manager = Arc::new(ModelManager::new(&Config::default(), None));
+        let engine = Arc::new(InferenceEngine::new(manager, &Config::default()));
+        web::Data::new(engine)
+    }
+
+    // list_registered_models — no format query returns all (empty list)
+    #[actix_web::test]
+    async fn test_list_registered_models_handler_empty() {
+        let engine = make_engine();
+        let query = web::Query(ListByFormatQuery { format: None });
+        let resp = list_registered_models(engine, query).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_registered_models — known format returns 200
+    #[actix_web::test]
+    async fn test_list_registered_models_handler_with_onnx_format() {
+        let engine = make_engine();
+        let query = web::Query(ListByFormatQuery { format: Some("onnx".to_string()) });
+        let resp = list_registered_models(engine, query).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_registered_models — known format PyTorch returns 200
+    #[actix_web::test]
+    async fn test_list_registered_models_handler_with_pytorch_format() {
+        let engine = make_engine();
+        let query = web::Query(ListByFormatQuery { format: Some("pth".to_string()) });
+        let resp = list_registered_models(engine, query).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_registered_models — unknown format returns 400
+    #[actix_web::test]
+    async fn test_list_registered_models_handler_unknown_format() {
+        let engine = make_engine();
+        let query = web::Query(ListByFormatQuery { format: Some("exotic_format".to_string()) });
+        let resp = list_registered_models(engine, query).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    // list_registered_models — "safetensors" format returns 200
+    #[actix_web::test]
+    async fn test_list_registered_models_handler_safetensors_format() {
+        let engine = make_engine();
+        let query = web::Query(ListByFormatQuery { format: Some("safetensors".to_string()) });
+        let resp = list_registered_models(engine, query).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_registered_models — "candle" format returns 200
+    #[actix_web::test]
+    async fn test_list_registered_models_handler_candle_format() {
+        let engine = make_engine();
+        let query = web::Query(ListByFormatQuery { format: Some("candle".to_string()) });
+        let resp = list_registered_models(engine, query).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_model_metadata — model not found returns 404
+    #[actix_web::test]
+    async fn test_get_model_metadata_handler_not_found() {
+        let engine = make_engine();
+        let path = web::Path::from("nonexistent-model".to_string());
+        let resp = get_model_metadata(engine, path).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+    }
+
+    // register_model — non-existent path returns 400
+    #[actix_web::test]
+    async fn test_register_model_handler_bad_path() {
+        let engine = make_engine();
+        let req = web::Json(RegisterModelRequest {
+            path: "/no/such/model.onnx".to_string(),
+            name: None,
+        });
+        let resp = register_model(engine, req).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    // scan_directory — non-existent directory returns 400
+    #[actix_web::test]
+    async fn test_scan_directory_handler_bad_path() {
+        let engine = make_engine();
+        let req = web::Json(ScanDirectoryRequest {
+            path: "/no/such/directory".to_string(),
+        });
+        let resp = scan_directory(engine, req).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    // scan_directory — empty directory returns 200 with 0 models
+    #[actix_web::test]
+    async fn test_scan_directory_handler_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = make_engine();
+        let req = web::Json(ScanDirectoryRequest {
+            path: dir.path().to_string_lossy().to_string(),
+        });
+        let resp = scan_directory(engine, req).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_registry_stats — always returns 200
+    #[actix_web::test]
+    async fn test_get_registry_stats_handler() {
+        let engine = make_engine();
+        let resp = get_registry_stats(engine).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // export_registry — always returns 200
+    #[actix_web::test]
+    async fn test_export_registry_handler() {
+        let engine = make_engine();
+        let resp = export_registry(engine).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // load_pytorch_model — model not registered returns bad request or internal error
+    #[actix_web::test]
+    async fn test_load_pytorch_model_handler_not_registered() {
+        let engine = make_engine();
+        let path = web::Path::from("ghost-model".to_string());
+        let resp = load_pytorch_model(engine, path).await.unwrap();
+        // Without torch feature returns 400; with torch and missing model returns 500
+        let status = resp.status().as_u16();
+        assert!(status == 400 || status == 500,
+            "expected 400 or 500, got {status}");
+    }
+
+    // infer_pytorch — unknown model returns bad request or internal error
+    #[actix_web::test]
+    async fn test_infer_pytorch_handler_missing_model() {
+        let engine = make_engine();
+        let req = web::Json(InferenceRequest {
+            model_id: "not-a-model".to_string(),
+            input: serde_json::json!({"x": 1}),
+        });
+        let resp = infer_pytorch(engine, req).await.unwrap();
+        let status = resp.status().as_u16();
+        assert!(status == 400 || status == 500,
+            "expected 400 or 500, got {status}");
+    }
 }
