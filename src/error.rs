@@ -149,4 +149,134 @@ mod tests {
         let error: InferenceError = serde_error.into();
         assert!(matches!(error, InferenceError::SerializationError(_)));
     }
+
+    // ===== Uncovered InferenceError variants =====
+
+    #[test]
+    fn test_inference_error_inference_failed() {
+        let error = InferenceError::InferenceFailed("inference crashed".to_string());
+        assert_eq!(error.to_string(), "Inference failed: inference crashed");
+    }
+
+    #[test]
+    fn test_inference_error_config_error() {
+        let error = InferenceError::ConfigError("missing key".to_string());
+        assert_eq!(error.to_string(), "Configuration error: missing key");
+    }
+
+    #[test]
+    fn test_inference_error_authentication_failed() {
+        let error = InferenceError::AuthenticationFailed("invalid token".to_string());
+        assert_eq!(error.to_string(), "Authentication failed: invalid token");
+    }
+
+    #[test]
+    fn test_inference_error_internal_error() {
+        let error = InferenceError::InternalError("panic occurred".to_string());
+        assert_eq!(error.to_string(), "Internal error: panic occurred");
+    }
+
+    #[test]
+    fn test_inference_error_gpu_error() {
+        let error = InferenceError::GpuError("CUDA out of memory".to_string());
+        assert_eq!(error.to_string(), "GPU error: CUDA out of memory");
+    }
+
+    #[test]
+    fn test_inference_error_io_error_display() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied");
+        let error: InferenceError = io_error.into();
+        let msg = error.to_string();
+        assert!(msg.starts_with("IO error:"));
+    }
+
+    #[test]
+    fn test_inference_error_serialization_error_display() {
+        let json_str = "not valid json at all ~~~";
+        let serde_error = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
+        let error: InferenceError = serde_error.into();
+        let msg = error.to_string();
+        assert!(msg.starts_with("Serialization error:"));
+    }
+
+    #[test]
+    fn test_inference_error_debug() {
+        let error = InferenceError::Timeout;
+        let debug = format!("{:?}", error);
+        assert!(debug.contains("Timeout"));
+    }
+
+    // ===== Uncovered ApiError variants =====
+
+    #[test]
+    fn test_api_error_display_bad_request() {
+        let error = ApiError::BadRequest("missing field".to_string());
+        assert_eq!(error.to_string(), "Bad request: missing field");
+    }
+
+    #[test]
+    fn test_api_error_display_not_found() {
+        let error = ApiError::NotFound("model not found".to_string());
+        assert_eq!(error.to_string(), "Not found: model not found");
+    }
+
+    #[test]
+    fn test_api_error_display_internal() {
+        let error = ApiError::InternalError("crash".to_string());
+        assert_eq!(error.to_string(), "Internal server error: crash");
+    }
+
+    #[test]
+    fn test_api_error_display_unauthorized() {
+        let error = ApiError::Unauthorized("expired token".to_string());
+        assert_eq!(error.to_string(), "Unauthorized: expired token");
+    }
+
+    #[test]
+    fn test_api_error_display_forbidden() {
+        let error = ApiError::Forbidden("no access".to_string());
+        assert_eq!(error.to_string(), "Forbidden: no access");
+    }
+
+    #[test]
+    fn test_api_error_debug() {
+        let error = ApiError::NotFound("x".to_string());
+        let debug = format!("{:?}", error);
+        assert!(debug.contains("NotFound"));
+    }
+
+    #[test]
+    fn test_api_error_error_response_bad_request() {
+        let error = ApiError::BadRequest("bad".to_string());
+        let response = error.error_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_api_error_error_response_not_found() {
+        let error = ApiError::NotFound("missing".to_string());
+        let response = error.error_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_api_error_error_response_internal() {
+        let error = ApiError::InternalError("oops".to_string());
+        let response = error.error_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_api_error_error_response_unauthorized() {
+        let error = ApiError::Unauthorized("no token".to_string());
+        let response = error.error_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_api_error_error_response_forbidden() {
+        let error = ApiError::Forbidden("denied".to_string());
+        let response = error.error_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }

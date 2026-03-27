@@ -454,9 +454,861 @@ pub struct CacheInfo {
 mod tests {
     use super::*;
 
+    // ===== DownloadStatus Tests =====
+
     #[test]
-    fn test_download_status() {
+    fn test_download_status_equality() {
         assert_eq!(DownloadStatus::Pending, DownloadStatus::Pending);
+        assert_eq!(DownloadStatus::Downloading, DownloadStatus::Downloading);
+        assert_eq!(DownloadStatus::Completed, DownloadStatus::Completed);
+        assert_eq!(DownloadStatus::Failed, DownloadStatus::Failed);
+        assert_eq!(DownloadStatus::Cancelled, DownloadStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_download_status_inequality() {
         assert_ne!(DownloadStatus::Pending, DownloadStatus::Completed);
+        assert_ne!(DownloadStatus::Downloading, DownloadStatus::Failed);
+        assert_ne!(DownloadStatus::Completed, DownloadStatus::Cancelled);
+        assert_ne!(DownloadStatus::Failed, DownloadStatus::Pending);
+        assert_ne!(DownloadStatus::Cancelled, DownloadStatus::Downloading);
+    }
+
+    #[test]
+    fn test_download_status_clone() {
+        let status = DownloadStatus::Downloading;
+        let cloned = status.clone();
+        assert_eq!(status, cloned);
+    }
+
+    #[test]
+    fn test_download_status_debug() {
+        let statuses = [
+            DownloadStatus::Pending,
+            DownloadStatus::Downloading,
+            DownloadStatus::Completed,
+            DownloadStatus::Failed,
+            DownloadStatus::Cancelled,
+        ];
+        for status in &statuses {
+            let debug_str = format!("{:?}", status);
+            assert!(!debug_str.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_download_status_serde_roundtrip() {
+        let statuses = [
+            DownloadStatus::Pending,
+            DownloadStatus::Downloading,
+            DownloadStatus::Completed,
+            DownloadStatus::Failed,
+            DownloadStatus::Cancelled,
+        ];
+        for status in &statuses {
+            let json = serde_json::to_string(status).unwrap();
+            let deserialized: DownloadStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*status, deserialized);
+        }
+    }
+
+    // ===== ModelSource Tests =====
+
+    #[test]
+    fn test_model_source_huggingface() {
+        let source = ModelSource::HuggingFace {
+            repo_id: "bert-base-uncased".to_string(),
+            revision: Some("main".to_string()),
+        };
+        match &source {
+            ModelSource::HuggingFace { repo_id, revision } => {
+                assert_eq!(repo_id, "bert-base-uncased");
+                assert_eq!(revision.as_deref(), Some("main"));
+            }
+            _ => panic!("Expected HuggingFace variant"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_huggingface_no_revision() {
+        let source = ModelSource::HuggingFace {
+            repo_id: "gpt2".to_string(),
+            revision: None,
+        };
+        match &source {
+            ModelSource::HuggingFace { repo_id, revision } => {
+                assert_eq!(repo_id, "gpt2");
+                assert!(revision.is_none());
+            }
+            _ => panic!("Expected HuggingFace variant"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_torchhub() {
+        let source = ModelSource::TorchHub {
+            repo: "pytorch/vision".to_string(),
+            model: "resnet50".to_string(),
+        };
+        match &source {
+            ModelSource::TorchHub { repo, model } => {
+                assert_eq!(repo, "pytorch/vision");
+                assert_eq!(model, "resnet50");
+            }
+            _ => panic!("Expected TorchHub variant"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_url() {
+        let source = ModelSource::Url {
+            url: "https://example.com/model.bin".to_string(),
+        };
+        match &source {
+            ModelSource::Url { url } => {
+                assert_eq!(url, "https://example.com/model.bin");
+            }
+            _ => panic!("Expected Url variant"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_local() {
+        let source = ModelSource::Local {
+            path: "/tmp/my_model".to_string(),
+        };
+        match &source {
+            ModelSource::Local { path } => {
+                assert_eq!(path, "/tmp/my_model");
+            }
+            _ => panic!("Expected Local variant"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_clone() {
+        let source = ModelSource::HuggingFace {
+            repo_id: "test-model".to_string(),
+            revision: None,
+        };
+        let cloned = source.clone();
+        match cloned {
+            ModelSource::HuggingFace { repo_id, .. } => assert_eq!(repo_id, "test-model"),
+            _ => panic!("Expected HuggingFace variant"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_debug() {
+        let source = ModelSource::Local { path: "/tmp/model".to_string() };
+        let debug_str = format!("{:?}", source);
+        assert!(debug_str.contains("Local"));
+    }
+
+    #[test]
+    fn test_model_source_serde_roundtrip_huggingface() {
+        let source = ModelSource::HuggingFace {
+            repo_id: "bert-base".to_string(),
+            revision: Some("v1".to_string()),
+        };
+        let json = serde_json::to_string(&source).unwrap();
+        let deserialized: ModelSource = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ModelSource::HuggingFace { repo_id, revision } => {
+                assert_eq!(repo_id, "bert-base");
+                assert_eq!(revision.as_deref(), Some("v1"));
+            }
+            _ => panic!("Expected HuggingFace"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_serde_roundtrip_url() {
+        let source = ModelSource::Url { url: "http://example.com/m.bin".to_string() };
+        let json = serde_json::to_string(&source).unwrap();
+        let deserialized: ModelSource = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ModelSource::Url { url } => assert_eq!(url, "http://example.com/m.bin"),
+            _ => panic!("Expected Url"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_serde_roundtrip_local() {
+        let source = ModelSource::Local { path: "/some/path".to_string() };
+        let json = serde_json::to_string(&source).unwrap();
+        let deserialized: ModelSource = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ModelSource::Local { path } => assert_eq!(path, "/some/path"),
+            _ => panic!("Expected Local"),
+        }
+    }
+
+    #[test]
+    fn test_model_source_serde_roundtrip_torchhub() {
+        let source = ModelSource::TorchHub {
+            repo: "pytorch/hub".to_string(),
+            model: "vgg16".to_string(),
+        };
+        let json = serde_json::to_string(&source).unwrap();
+        let deserialized: ModelSource = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            ModelSource::TorchHub { repo, model } => {
+                assert_eq!(repo, "pytorch/hub");
+                assert_eq!(model, "vgg16");
+            }
+            _ => panic!("Expected TorchHub"),
+        }
+    }
+
+    // ===== ModelMetadata Tests =====
+
+    #[test]
+    fn test_model_metadata_default() {
+        let meta = ModelMetadata::default();
+        assert!(meta.description.is_none());
+        assert!(meta.tags.is_empty());
+        assert!(meta.framework.is_none());
+        assert!(meta.task.is_none());
+        assert!(meta.license.is_none());
+    }
+
+    #[test]
+    fn test_model_metadata_with_values() {
+        let meta = ModelMetadata {
+            description: Some("A language model".to_string()),
+            tags: vec!["nlp".to_string(), "bert".to_string()],
+            framework: Some("pytorch".to_string()),
+            task: Some("text-classification".to_string()),
+            license: Some("MIT".to_string()),
+        };
+        assert_eq!(meta.description.as_deref(), Some("A language model"));
+        assert_eq!(meta.tags.len(), 2);
+        assert_eq!(meta.framework.as_deref(), Some("pytorch"));
+        assert_eq!(meta.task.as_deref(), Some("text-classification"));
+        assert_eq!(meta.license.as_deref(), Some("MIT"));
+    }
+
+    #[test]
+    fn test_model_metadata_clone() {
+        let meta = ModelMetadata {
+            description: Some("test".to_string()),
+            tags: vec!["tag1".to_string()],
+            framework: None,
+            task: None,
+            license: None,
+        };
+        let cloned = meta.clone();
+        assert_eq!(cloned.description, meta.description);
+        assert_eq!(cloned.tags, meta.tags);
+    }
+
+    #[test]
+    fn test_model_metadata_serde_roundtrip() {
+        let meta = ModelMetadata {
+            description: Some("test model".to_string()),
+            tags: vec!["vision".to_string()],
+            framework: Some("onnx".to_string()),
+            task: Some("image-classification".to_string()),
+            license: Some("Apache-2.0".to_string()),
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let deserialized: ModelMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.description, meta.description);
+        assert_eq!(deserialized.tags, meta.tags);
+        assert_eq!(deserialized.framework, meta.framework);
+        assert_eq!(deserialized.task, meta.task);
+        assert_eq!(deserialized.license, meta.license);
+    }
+
+    #[test]
+    fn test_model_metadata_serde_with_explicit_tags() {
+        // ModelMetadata requires `tags` to be present when deserializing from JSON
+        let json = r#"{"tags":[]}"#;
+        let meta: ModelMetadata = serde_json::from_str(json).unwrap();
+        assert!(meta.description.is_none());
+        assert!(meta.tags.is_empty());
+    }
+
+    // ===== DownloadTask Tests =====
+
+    fn make_download_task(status: DownloadStatus) -> DownloadTask {
+        DownloadTask {
+            id: "task-123".to_string(),
+            model_name: "my_model".to_string(),
+            source: ModelSource::HuggingFace {
+                repo_id: "test/model".to_string(),
+                revision: None,
+            },
+            status,
+            progress: 0.0,
+            total_size: None,
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        }
+    }
+
+    #[test]
+    fn test_download_task_construction() {
+        let task = make_download_task(DownloadStatus::Pending);
+        assert_eq!(task.id, "task-123");
+        assert_eq!(task.model_name, "my_model");
+        assert_eq!(task.status, DownloadStatus::Pending);
+        assert_eq!(task.progress, 0.0);
+        assert!(task.total_size.is_none());
+        assert_eq!(task.downloaded_size, 0);
+        assert!(task.error.is_none());
+        assert!(task.completed_at.is_none());
+    }
+
+    #[test]
+    fn test_download_task_clone() {
+        let task = make_download_task(DownloadStatus::Downloading);
+        let cloned = task.clone();
+        assert_eq!(task.id, cloned.id);
+        assert_eq!(task.model_name, cloned.model_name);
+        assert_eq!(task.status, cloned.status);
+    }
+
+    #[test]
+    fn test_download_task_with_progress() {
+        let mut task = make_download_task(DownloadStatus::Downloading);
+        task.progress = 50.0;
+        task.downloaded_size = 512;
+        task.total_size = Some(1024);
+        assert_eq!(task.progress, 50.0);
+        assert_eq!(task.downloaded_size, 512);
+        assert_eq!(task.total_size, Some(1024));
+    }
+
+    #[test]
+    fn test_download_task_with_error() {
+        let mut task = make_download_task(DownloadStatus::Failed);
+        task.error = Some("connection refused".to_string());
+        task.completed_at = Some(chrono::Utc::now());
+        assert_eq!(task.error.as_deref(), Some("connection refused"));
+        assert!(task.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_download_task_serde_roundtrip() {
+        let task = DownloadTask {
+            id: "roundtrip-task".to_string(),
+            model_name: "roundtrip_model".to_string(),
+            source: ModelSource::Url { url: "http://example.com/m.bin".to_string() },
+            status: DownloadStatus::Completed,
+            progress: 100.0,
+            total_size: Some(2048),
+            downloaded_size: 2048,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: Some(chrono::Utc::now()),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let deserialized: DownloadTask = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, task.id);
+        assert_eq!(deserialized.model_name, task.model_name);
+        assert_eq!(deserialized.status, DownloadStatus::Completed);
+        assert_eq!(deserialized.progress, 100.0);
+        assert_eq!(deserialized.total_size, Some(2048));
+        assert_eq!(deserialized.downloaded_size, 2048);
+    }
+
+    #[test]
+    fn test_download_task_debug() {
+        let task = make_download_task(DownloadStatus::Pending);
+        let debug_str = format!("{:?}", task);
+        assert!(debug_str.contains("DownloadTask"));
+        assert!(debug_str.contains("task-123"));
+    }
+
+    // ===== ModelInfo Tests =====
+
+    #[test]
+    fn test_model_info_construction() {
+        let info = ModelInfo {
+            name: "my_model".to_string(),
+            source: ModelSource::Local { path: "/tmp/model".to_string() },
+            local_path: PathBuf::from("/tmp/model"),
+            size_bytes: 1024 * 1024,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        assert_eq!(info.name, "my_model");
+        assert_eq!(info.size_bytes, 1024 * 1024);
+        assert_eq!(info.local_path, PathBuf::from("/tmp/model"));
+    }
+
+    #[test]
+    fn test_model_info_clone() {
+        let info = ModelInfo {
+            name: "cloned_model".to_string(),
+            source: ModelSource::Local { path: "/tmp/model".to_string() },
+            local_path: PathBuf::from("/tmp/model"),
+            size_bytes: 512,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        let cloned = info.clone();
+        assert_eq!(cloned.name, info.name);
+        assert_eq!(cloned.size_bytes, info.size_bytes);
+    }
+
+    #[test]
+    fn test_model_info_debug() {
+        let info = ModelInfo {
+            name: "debug_model".to_string(),
+            source: ModelSource::Local { path: "/tmp/model".to_string() },
+            local_path: PathBuf::from("/tmp/model"),
+            size_bytes: 0,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("ModelInfo"));
+    }
+
+    #[test]
+    fn test_model_info_serde_roundtrip() {
+        let info = ModelInfo {
+            name: "serde_model".to_string(),
+            source: ModelSource::HuggingFace {
+                repo_id: "org/model".to_string(),
+                revision: Some("v2".to_string()),
+            },
+            local_path: PathBuf::from("/cache/org/model"),
+            size_bytes: 4096,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata {
+                description: Some("serialized model".to_string()),
+                tags: vec!["test".to_string()],
+                framework: Some("pytorch".to_string()),
+                task: None,
+                license: None,
+            },
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: ModelInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, info.name);
+        assert_eq!(deserialized.size_bytes, info.size_bytes);
+        assert_eq!(deserialized.local_path, info.local_path);
+        assert_eq!(deserialized.metadata.description, info.metadata.description);
+    }
+
+    // ===== CacheInfo Tests =====
+
+    #[test]
+    fn test_cache_info_construction() {
+        let cache_info = CacheInfo {
+            cache_dir: PathBuf::from("/tmp/cache"),
+            total_size_bytes: 8192,
+            model_count: 2,
+            models: vec![],
+        };
+        assert_eq!(cache_info.cache_dir, PathBuf::from("/tmp/cache"));
+        assert_eq!(cache_info.total_size_bytes, 8192);
+        assert_eq!(cache_info.model_count, 2);
+        assert!(cache_info.models.is_empty());
+    }
+
+    #[test]
+    fn test_cache_info_clone() {
+        let cache_info = CacheInfo {
+            cache_dir: PathBuf::from("/tmp/cache"),
+            total_size_bytes: 100,
+            model_count: 1,
+            models: vec![],
+        };
+        let cloned = cache_info.clone();
+        assert_eq!(cloned.cache_dir, cache_info.cache_dir);
+        assert_eq!(cloned.total_size_bytes, cache_info.total_size_bytes);
+    }
+
+    #[test]
+    fn test_cache_info_debug() {
+        let cache_info = CacheInfo {
+            cache_dir: PathBuf::from("/tmp"),
+            total_size_bytes: 0,
+            model_count: 0,
+            models: vec![],
+        };
+        let debug_str = format!("{:?}", cache_info);
+        assert!(debug_str.contains("CacheInfo"));
+    }
+
+    #[test]
+    fn test_cache_info_serde_roundtrip() {
+        let cache_info = CacheInfo {
+            cache_dir: PathBuf::from("/models/cache"),
+            total_size_bytes: 1024,
+            model_count: 0,
+            models: vec![],
+        };
+        let json = serde_json::to_string(&cache_info).unwrap();
+        let deserialized: CacheInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.cache_dir, cache_info.cache_dir);
+        assert_eq!(deserialized.total_size_bytes, cache_info.total_size_bytes);
+        assert_eq!(deserialized.model_count, cache_info.model_count);
+    }
+
+    // ===== ModelDownloadManager Tests =====
+
+    #[test]
+    fn test_manager_new() {
+        let manager = ModelDownloadManager::new("/tmp/test_cache").unwrap();
+        assert_eq!(manager.cache_dir, PathBuf::from("/tmp/test_cache"));
+        assert_eq!(manager.max_concurrent_downloads, 3);
+    }
+
+    #[test]
+    fn test_manager_new_with_pathbuf() {
+        let path = PathBuf::from("/tmp/model_cache");
+        let manager = ModelDownloadManager::new(&path).unwrap();
+        assert_eq!(manager.cache_dir, path);
+    }
+
+    #[test]
+    fn test_manager_list_tasks_empty() {
+        let manager = ModelDownloadManager::new("/tmp/cache_test_empty").unwrap();
+        let tasks = manager.list_tasks();
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_manager_list_models_empty() {
+        let manager = ModelDownloadManager::new("/tmp/cache_test_models").unwrap();
+        let models = manager.list_models();
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_manager_get_task_not_found() {
+        let manager = ModelDownloadManager::new("/tmp/cache_test_task").unwrap();
+        let task = manager.get_task_status("nonexistent");
+        assert!(task.is_none());
+    }
+
+    #[test]
+    fn test_manager_get_model_not_found() {
+        let manager = ModelDownloadManager::new("/tmp/cache_test_model_lookup").unwrap();
+        let model = manager.get_model("nonexistent_model");
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn test_manager_get_cache_info_empty() {
+        let manager = ModelDownloadManager::new("/tmp/cache_info_test").unwrap();
+        let info = manager.get_cache_info();
+        assert_eq!(info.cache_dir, PathBuf::from("/tmp/cache_info_test"));
+        assert_eq!(info.total_size_bytes, 0);
+        assert_eq!(info.model_count, 0);
+        assert!(info.models.is_empty());
+    }
+
+    #[test]
+    fn test_manager_clone_shares_state() {
+        let manager = ModelDownloadManager::new("/tmp/cache_clone_test").unwrap();
+        let cloned = manager.clone();
+        assert_eq!(manager.cache_dir, cloned.cache_dir);
+        assert_eq!(manager.max_concurrent_downloads, cloned.max_concurrent_downloads);
+    }
+
+    #[test]
+    fn test_manager_update_task_status() {
+        let manager = ModelDownloadManager::new("/tmp/cache_status_test").unwrap();
+
+        // Insert a task manually
+        let task = DownloadTask {
+            id: "status-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Local { path: "/tmp".to_string() },
+            status: DownloadStatus::Pending,
+            progress: 0.0,
+            total_size: None,
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("status-task".to_string(), task);
+
+        manager.update_task_status("status-task", DownloadStatus::Downloading);
+        let updated = manager.get_task_status("status-task").unwrap();
+        assert_eq!(updated.status, DownloadStatus::Downloading);
+        assert!(updated.completed_at.is_none());
+    }
+
+    #[test]
+    fn test_manager_update_task_status_completed_sets_completed_at() {
+        let manager = ModelDownloadManager::new("/tmp/cache_completed_test").unwrap();
+
+        let task = DownloadTask {
+            id: "completed-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Local { path: "/tmp".to_string() },
+            status: DownloadStatus::Downloading,
+            progress: 99.0,
+            total_size: Some(1024),
+            downloaded_size: 1020,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("completed-task".to_string(), task);
+
+        manager.update_task_status("completed-task", DownloadStatus::Completed);
+        let updated = manager.get_task_status("completed-task").unwrap();
+        assert_eq!(updated.status, DownloadStatus::Completed);
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_manager_update_task_progress() {
+        let manager = ModelDownloadManager::new("/tmp/cache_progress_test").unwrap();
+
+        let task = DownloadTask {
+            id: "progress-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Local { path: "/tmp".to_string() },
+            status: DownloadStatus::Downloading,
+            progress: 0.0,
+            total_size: None,
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("progress-task".to_string(), task);
+
+        manager.update_task_progress("progress-task", 75.5, 768, Some(1024));
+        let updated = manager.get_task_status("progress-task").unwrap();
+        assert_eq!(updated.progress, 75.5);
+        assert_eq!(updated.downloaded_size, 768);
+        assert_eq!(updated.total_size, Some(1024));
+    }
+
+    #[test]
+    fn test_manager_update_task_error() {
+        let manager = ModelDownloadManager::new("/tmp/cache_error_test").unwrap();
+
+        let task = DownloadTask {
+            id: "error-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Url { url: "http://bad.example/".to_string() },
+            status: DownloadStatus::Downloading,
+            progress: 10.0,
+            total_size: None,
+            downloaded_size: 100,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("error-task".to_string(), task);
+
+        manager.update_task_error("error-task", "Connection timeout");
+        let updated = manager.get_task_status("error-task").unwrap();
+        assert_eq!(updated.status, DownloadStatus::Failed);
+        assert_eq!(updated.error.as_deref(), Some("Connection timeout"));
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[test]
+    fn test_manager_update_nonexistent_task_is_noop() {
+        let manager = ModelDownloadManager::new("/tmp/cache_noop_test").unwrap();
+        // These calls should not panic even if task doesn't exist
+        manager.update_task_status("ghost", DownloadStatus::Failed);
+        manager.update_task_progress("ghost", 50.0, 500, Some(1000));
+        manager.update_task_error("ghost", "some error");
+        assert!(manager.get_task_status("ghost").is_none());
+    }
+
+    #[test]
+    fn test_manager_get_cache_info_with_models() {
+        let manager = ModelDownloadManager::new("/tmp/cache_info_models_test").unwrap();
+
+        let model1 = ModelInfo {
+            name: "model_a".to_string(),
+            source: ModelSource::Local { path: "/tmp/model_a".to_string() },
+            local_path: PathBuf::from("/tmp/model_a"),
+            size_bytes: 1000,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        let model2 = ModelInfo {
+            name: "model_b".to_string(),
+            source: ModelSource::Local { path: "/tmp/model_b".to_string() },
+            local_path: PathBuf::from("/tmp/model_b"),
+            size_bytes: 2000,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+
+        manager.models.insert("model_a".to_string(), model1);
+        manager.models.insert("model_b".to_string(), model2);
+
+        let info = manager.get_cache_info();
+        assert_eq!(info.model_count, 2);
+        assert_eq!(info.total_size_bytes, 3000);
+        assert_eq!(info.models.len(), 2);
+    }
+
+    #[test]
+    fn test_manager_get_model_found() {
+        let manager = ModelDownloadManager::new("/tmp/cache_get_model_test").unwrap();
+
+        let model = ModelInfo {
+            name: "found_model".to_string(),
+            source: ModelSource::Local { path: "/tmp/found_model".to_string() },
+            local_path: PathBuf::from("/tmp/found_model"),
+            size_bytes: 500,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        manager.models.insert("found_model".to_string(), model);
+
+        let retrieved = manager.get_model("found_model");
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.name, "found_model");
+        assert_eq!(retrieved.size_bytes, 500);
+    }
+
+    #[test]
+    fn test_manager_list_tasks_returns_all() {
+        let manager = ModelDownloadManager::new("/tmp/cache_list_tasks_test").unwrap();
+
+        for i in 0..3 {
+            let task = DownloadTask {
+                id: format!("task-{}", i),
+                model_name: format!("model-{}", i),
+                source: ModelSource::Local { path: "/tmp".to_string() },
+                status: DownloadStatus::Pending,
+                progress: 0.0,
+                total_size: None,
+                downloaded_size: 0,
+                error: None,
+                started_at: chrono::Utc::now(),
+                completed_at: None,
+            };
+            manager.tasks.insert(format!("task-{}", i), task);
+        }
+
+        let tasks = manager.list_tasks();
+        assert_eq!(tasks.len(), 3);
+    }
+
+    #[test]
+    fn test_manager_list_models_returns_all() {
+        let manager = ModelDownloadManager::new("/tmp/cache_list_models_test").unwrap();
+
+        for i in 0..4 {
+            let model = ModelInfo {
+                name: format!("model_{}", i),
+                source: ModelSource::Local { path: format!("/tmp/model_{}", i) },
+                local_path: PathBuf::from(format!("/tmp/model_{}", i)),
+                size_bytes: i as u64 * 100,
+                downloaded_at: chrono::Utc::now(),
+                metadata: ModelMetadata::default(),
+            };
+            manager.models.insert(format!("model_{}", i), model);
+        }
+
+        let models = manager.list_models();
+        assert_eq!(models.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_manager_delete_model_not_found() {
+        let manager = ModelDownloadManager::new("/tmp/cache_delete_test").unwrap();
+        let result = manager.delete_model("nonexistent_model").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("nonexistent_model"));
+    }
+
+    #[tokio::test]
+    async fn test_manager_delete_model_without_local_dir() {
+        let manager = ModelDownloadManager::new("/tmp/cache_delete_no_dir_test").unwrap();
+
+        // Insert a model pointing to a path that doesn't actually exist on disk
+        let model = ModelInfo {
+            name: "ghost_model".to_string(),
+            source: ModelSource::Local { path: "/tmp/nonexistent_ghost_model".to_string() },
+            local_path: PathBuf::from("/tmp/nonexistent_ghost_model"),
+            size_bytes: 0,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        manager.models.insert("ghost_model".to_string(), model);
+
+        // Delete should succeed (path doesn't exist, so skip removal)
+        let result = manager.delete_model("ghost_model").await;
+        assert!(result.is_ok());
+        // Model should be removed from manager
+        assert!(manager.get_model("ghost_model").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_manager_initialize_creates_dir() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_test_init");
+        // Remove if already exists
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        let result = manager.initialize().await;
+        assert!(result.is_ok());
+        assert!(tmp_dir.exists());
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_manager_download_model_returns_task_id() {
+        let manager = ModelDownloadManager::new("/tmp/cache_dl_task_test").unwrap();
+
+        // Use a Local source — the background task will fail, but we get a task ID immediately
+        let task_id = manager.download_model(
+            "test_model".to_string(),
+            ModelSource::Local { path: "/nonexistent".to_string() },
+        ).await.unwrap();
+
+        assert!(!task_id.is_empty());
+
+        // Task should exist in the manager right after scheduling
+        let task = manager.get_task_status(&task_id);
+        assert!(task.is_some());
+        let task = task.unwrap();
+        assert_eq!(task.model_name, "test_model");
+        // Status is initially Pending (may transition in background)
+        assert!(
+            task.status == DownloadStatus::Pending || task.status == DownloadStatus::Downloading
+        );
+    }
+
+    #[tokio::test]
+    async fn test_manager_clone_shares_tasks_map() {
+        let manager = ModelDownloadManager::new("/tmp/cache_clone_share_test").unwrap();
+        let cloned = manager.clone();
+
+        // Insert a task in manager, should be visible in cloned
+        let task = DownloadTask {
+            id: "shared-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Local { path: "/tmp".to_string() },
+            status: DownloadStatus::Pending,
+            progress: 0.0,
+            total_size: None,
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("shared-task".to_string(), task);
+
+        let found = cloned.get_task_status("shared-task");
+        assert!(found.is_some());
     }
 }

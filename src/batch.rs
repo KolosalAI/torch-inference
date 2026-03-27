@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use log::{info, debug};
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -52,7 +52,7 @@ impl BatchProcessor {
     pub async fn add_request(&self, request: BatchRequest) -> Result<bool, String> {
         // Use block to release lock immediately
         let len = {
-            let mut batch = self.current_batch.lock().map_err(|_| "Lock poisoned".to_string())?;
+            let mut batch = self.current_batch.lock();
             
             if batch.len() >= self.max_batch_size {
                 return Err("Batch is full".to_string());
@@ -70,7 +70,7 @@ impl BatchProcessor {
 
     pub async fn should_process_batch(&self) -> bool {
         let (len, oldest_age) = {
-            let batch = self.current_batch.lock().unwrap();
+            let batch = self.current_batch.lock();
             if batch.is_empty() {
                 return false;
             }
@@ -115,7 +115,7 @@ impl BatchProcessor {
 
     pub async fn get_batch(&self) -> Vec<BatchRequest> {
         let mut requests = {
-            let mut batch = self.current_batch.lock().unwrap();
+            let mut batch = self.current_batch.lock();
             // Pre-allocate with exact capacity to avoid reallocation
             let capacity = batch.len();
             let mut requests = Vec::with_capacity(capacity);
@@ -154,11 +154,11 @@ impl BatchProcessor {
     }
 
     pub async fn get_batch_size(&self) -> usize {
-        self.current_batch.lock().unwrap().len()
+        self.current_batch.lock().len()
     }
 
     pub async fn clear_batch(&self) {
-        let mut batch = self.current_batch.lock().unwrap();
+        let mut batch = self.current_batch.lock();
         batch.clear();
         debug!("Batch cleared");
     }
@@ -674,7 +674,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_timeout_with_multiple_requests() {
         let processor = BatchProcessor::new(100, 100);
-        
+
         // Add requests over time
         for i in 0..5 {
             let request = BatchRequest {
@@ -687,10 +687,253 @@ mod tests {
             processor.add_request(request).await.unwrap();
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        
+
         // Wait for oldest to timeout
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         assert!(processor.should_process_batch().await);
+    }
+
+    // ===== Additional coverage tests =====
+
+    #[tokio::test]
+    async fn test_with_adaptive_batching_disabled() {
+        let processor = BatchProcessor::new(10, 200)
+            .with_adaptive_batching(false);
+
+        let request = BatchRequest {
+            id: "adapt_test".to_string(),
+            model_name: "model".to_string(),
+            inputs: vec![serde_json::json!(1)],
+            priority: 1,
+            timestamp: Instant::now(),
+        };
+        processor.add_request(request).await.unwrap();
+
+        // With adaptive disabled and 1 item the timeout is 200ms; should not trigger yet
+        assert!(!processor.should_process_batch().await);
+    }
+
+    #[tokio::test]
+    async fn test_with_adaptive_batching_enabled_high_queue() {
+        // With adaptive enabled and many items in queue (> 10), timeout is /8
+        // Use a base timeout large enough that base is slow, but /8 fires quickly.
+        let processor = BatchProcessor::new(1000, 800);
+
+        // Fill queue to > 10 so adaptive kicks in to /8 = 100ms
+        for i in 0..11 {
+            let request = BatchRequest {
+                id: format!("q_{}", i),
+                model_name: "model".to_string(),
+                inputs: vec![serde_json::json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+            };
+            processor.add_request(request).await.unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(processor.should_process_batch().await);
+    }
+
+    #[tokio::test]
+    async fn test_with_min_batch_size_not_reached() {
+        let processor = BatchProcessor::new(100, 50)
+            .with_min_batch_size(5);
+
+        // Add fewer than min_batch_size
+        for i in 0..3 {
+            let request = BatchRequest {
+                id: format!("min_{}", i),
+                model_name: "model".to_string(),
+                inputs: vec![serde_json::json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+            };
+            processor.add_request(request).await.unwrap();
+        }
+
+        // Even after timeout, min_batch_size not reached — should not process
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!processor.should_process_batch().await);
+    }
+
+    #[tokio::test]
+    async fn test_with_min_batch_size_reached() {
+        let processor = BatchProcessor::new(100, 50)
+            .with_min_batch_size(3);
+
+        for i in 0..3 {
+            let request = BatchRequest {
+                id: format!("min_ok_{}", i),
+                model_name: "model".to_string(),
+                inputs: vec![serde_json::json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+            };
+            processor.add_request(request).await.unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(processor.should_process_batch().await);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_initial() {
+        let processor = BatchProcessor::new(10, 100);
+        let stats = processor.get_stats();
+        assert_eq!(stats.processed_batches, 0);
+        assert_eq!(stats.avg_latency_ms, 0);
+        assert_eq!(stats.current_queue_depth, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_after_batch() {
+        let processor = BatchProcessor::new(10, 100);
+
+        let request = BatchRequest {
+            id: "stats_req".to_string(),
+            model_name: "model".to_string(),
+            inputs: vec![serde_json::json!(1)],
+            priority: 1,
+            timestamp: Instant::now(),
+        };
+        processor.add_request(request).await.unwrap();
+        let _batch = processor.get_batch().await;
+
+        let stats = processor.get_stats();
+        assert_eq!(stats.processed_batches, 1);
+        assert_eq!(stats.current_queue_depth, 0);
+    }
+
+    #[tokio::test]
+    async fn test_record_batch_latency() {
+        let processor = BatchProcessor::new(10, 100);
+
+        processor.record_batch_latency(50);
+        processor.record_batch_latency(100);
+
+        // Simulate a get_batch so processed_batches > 0 for avg
+        let request = BatchRequest {
+            id: "lat_req".to_string(),
+            model_name: "model".to_string(),
+            inputs: vec![serde_json::json!(1)],
+            priority: 1,
+            timestamp: Instant::now(),
+        };
+        processor.add_request(request).await.unwrap();
+        let _batch = processor.get_batch().await;
+        processor.record_batch_latency(75);
+
+        let stats = processor.get_stats();
+        // total_latency = 50 + 100 + 75 = 225, processed_batches = 1
+        assert_eq!(stats.avg_latency_ms, 225);
+    }
+
+    #[tokio::test]
+    async fn test_batch_stats_clone() {
+        let stats = BatchStats {
+            processed_batches: 5,
+            avg_latency_ms: 42,
+            current_queue_depth: 3,
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.processed_batches, 5);
+        assert_eq!(cloned.avg_latency_ms, 42);
+        assert_eq!(cloned.current_queue_depth, 3);
+    }
+
+    #[test]
+    fn test_batch_stats_debug() {
+        let stats = BatchStats {
+            processed_batches: 1,
+            avg_latency_ms: 10,
+            current_queue_depth: 0,
+        };
+        let debug = format!("{:?}", stats);
+        assert!(debug.contains("BatchStats"));
+    }
+
+    #[tokio::test]
+    async fn test_add_request_returns_true_when_full() {
+        // max_batch_size=1, so adding 1 item fills the batch → returns true
+        let processor = BatchProcessor::new(1, 100);
+        let request = BatchRequest {
+            id: "full_check".to_string(),
+            model_name: "model".to_string(),
+            inputs: vec![serde_json::json!(1)],
+            priority: 1,
+            timestamp: Instant::now(),
+        };
+        let result = processor.add_request(request).await.unwrap();
+        assert!(result); // batch is full after this add
+    }
+
+    #[tokio::test]
+    async fn test_add_request_returns_false_when_not_full() {
+        let processor = BatchProcessor::new(10, 100);
+        let request = BatchRequest {
+            id: "not_full".to_string(),
+            model_name: "model".to_string(),
+            inputs: vec![serde_json::json!(1)],
+            priority: 1,
+            timestamp: Instant::now(),
+        };
+        let result = processor.add_request(request).await.unwrap();
+        assert!(!result); // still space left
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_timeout_medium_queue() {
+        // Queue depth 3..=5 → timeout/2; use 400ms base → effective 200ms
+        let processor = BatchProcessor::new(1000, 400);
+
+        for i in 0..4 {
+            let request = BatchRequest {
+                id: format!("med_{}", i),
+                model_name: "model".to_string(),
+                inputs: vec![serde_json::json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+            };
+            processor.add_request(request).await.unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(220)).await;
+        assert!(processor.should_process_batch().await);
+    }
+
+    #[tokio::test]
+    async fn test_adaptive_timeout_high_queue_6_to_10() {
+        // Queue depth 6..=10 → timeout/4; use 400ms base → effective 100ms
+        let processor = BatchProcessor::new(1000, 400);
+
+        for i in 0..8 {
+            let request = BatchRequest {
+                id: format!("high_{}", i),
+                model_name: "model".to_string(),
+                inputs: vec![serde_json::json!(i)],
+                priority: 1,
+                timestamp: Instant::now(),
+            };
+            processor.add_request(request).await.unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert!(processor.should_process_batch().await);
+    }
+
+    #[tokio::test]
+    async fn test_batch_request_debug() {
+        let request = BatchRequest {
+            id: "debug_req".to_string(),
+            model_name: "debug_model".to_string(),
+            inputs: vec![serde_json::json!({"key": "value"})],
+            priority: 3,
+            timestamp: Instant::now(),
+        };
+        let debug = format!("{:?}", request);
+        assert!(debug.contains("BatchRequest"));
+        assert!(debug.contains("debug_req"));
     }
 }
