@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::path::Path;
 use anyhow::{Result, Context, bail};
 
@@ -102,38 +102,64 @@ impl AudioProcessor {
         })
     }
 
-    fn validate_mp3(&self, _data: &[u8]) -> Result<AudioMetadata> {
-        // Basic MP3 validation
-        // For full validation, we'd need a proper MP3 decoder
+    fn probe_metadata_with_symphonia(&self, data: &[u8], format: AudioFormat) -> Result<AudioMetadata> {
+        use symphonia::core::formats::FormatOptions;
+        use symphonia::core::io::MediaSourceStream;
+        use symphonia::core::meta::MetadataOptions;
+        use symphonia::core::probe::Hint;
+
+        let cursor = Cursor::new(data.to_vec());
+        let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+        let mut hint = Hint::new();
+        match &format {
+            AudioFormat::Mp3 => { hint.with_extension("mp3"); }
+            AudioFormat::Flac => { hint.with_extension("flac"); }
+            AudioFormat::Ogg => { hint.with_extension("ogg"); }
+            AudioFormat::Wav => { hint.with_extension("wav"); }
+        }
+
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+            .context("Failed to probe audio format")?;
+
+        let format_reader = probed.format;
+        let track = format_reader.default_track()
+            .context("No default track found in audio data")?;
+
+        let codec_params = &track.codec_params;
+
+        let sample_rate = codec_params.sample_rate
+            .context("No sample rate in codec params")?;
+
+        let channels = codec_params.channels
+            .map(|c| c.count() as u32)
+            .unwrap_or(1);
+
+        let duration_secs = match (codec_params.n_frames, codec_params.sample_rate) {
+            (Some(n_frames), Some(sr)) if sr > 0 => n_frames as f32 / sr as f32,
+            _ => 0.0,
+        };
+
         Ok(AudioMetadata {
-            format: AudioFormat::Mp3,
-            sample_rate: 44100, // Default assumption
-            channels: 2,
-            duration_secs: 0.0,
-            bits_per_sample: 16,
+            format,
+            sample_rate,
+            channels: channels as u16,
+            duration_secs,
+            bits_per_sample: codec_params.bits_per_sample.unwrap_or(16) as u16,
         })
     }
 
-    fn validate_flac(&self, _data: &[u8]) -> Result<AudioMetadata> {
-        // Basic FLAC validation
-        Ok(AudioMetadata {
-            format: AudioFormat::Flac,
-            sample_rate: 44100,
-            channels: 2,
-            duration_secs: 0.0,
-            bits_per_sample: 16,
-        })
+    fn validate_mp3(&self, data: &[u8]) -> Result<AudioMetadata> {
+        self.probe_metadata_with_symphonia(data, AudioFormat::Mp3)
     }
 
-    fn validate_ogg(&self, _data: &[u8]) -> Result<AudioMetadata> {
-        // Basic OGG validation
-        Ok(AudioMetadata {
-            format: AudioFormat::Ogg,
-            sample_rate: 44100,
-            channels: 2,
-            duration_secs: 0.0,
-            bits_per_sample: 16,
-        })
+    fn validate_flac(&self, data: &[u8]) -> Result<AudioMetadata> {
+        self.probe_metadata_with_symphonia(data, AudioFormat::Flac)
+    }
+
+    fn validate_ogg(&self, data: &[u8]) -> Result<AudioMetadata> {
+        self.probe_metadata_with_symphonia(data, AudioFormat::Ogg)
     }
 
     /// Load audio from bytes
@@ -233,40 +259,98 @@ impl AudioProcessor {
         })
     }
 
-    /// Resample audio to target sample rate
+    /// Resample audio to `target_sample_rate` using rubato's FFT resampler.
+    ///
+    /// rubato's `FftFixedInOut` is SIMD-accelerated and alias-free, unlike the
+    /// previous linear-interpolation fallback.  It operates on per-channel
+    /// slices so multi-channel audio is handled correctly.
     pub fn resample(&self, audio: &AudioData, target_sample_rate: u32) -> Result<AudioData> {
         if audio.sample_rate == target_sample_rate {
             return Ok(audio.clone());
         }
 
-        // Simplified resampling using linear interpolation
-        // For production, use proper resampling library when rubato API is stable
-        let ratio = target_sample_rate as f64 / audio.sample_rate as f64;
-        let new_len = (audio.samples.len() as f64 * ratio) as usize;
-        let mut resampled_samples = Vec::with_capacity(new_len);
+        use rubato::{FftFixedInOut, Resampler};
 
-        for i in 0..new_len {
-            let src_pos = i as f64 / ratio;
-            let src_idx = src_pos as usize;
-            
-            if src_idx + 1 < audio.samples.len() {
-                let frac = src_pos - src_idx as f64;
-                let sample = audio.samples[src_idx] * (1.0 - frac as f32) + 
-                            audio.samples[src_idx + 1] * frac as f32;
-                resampled_samples.push(sample);
-            } else if src_idx < audio.samples.len() {
-                resampled_samples.push(audio.samples[src_idx]);
+        let channels  = audio.channels as usize;
+        let in_rate   = audio.sample_rate as usize;
+        let out_rate  = target_sample_rate as usize;
+
+        // Process in chunks of 1024 input frames.
+        let chunk_size = 1024usize;
+        let mut resampler = FftFixedInOut::<f32>::new(
+            in_rate,
+            out_rate,
+            chunk_size,
+            channels,
+        ).context("Failed to create FFT resampler")?;
+
+        // De-interleave: rubato expects [channel][frame] layout.
+        let total_frames = audio.samples.len() / channels;
+        let mut channel_bufs: Vec<Vec<f32>> = (0..channels)
+            .map(|c| {
+                (0..total_frames)
+                    .map(|f| audio.samples[f * channels + c])
+                    .collect()
+            })
+            .collect();
+
+        // Process full chunks, then flush the remainder.
+        let mut out_channels: Vec<Vec<f32>> = vec![Vec::new(); channels];
+        let mut pos = 0usize;
+
+        while pos + chunk_size <= total_frames {
+            let in_chunk: Vec<&[f32]> = channel_bufs.iter()
+                .map(|ch| &ch[pos..pos + chunk_size])
+                .collect();
+            let out = resampler.process(&in_chunk, None)
+                .context("Resampler error during full-chunk processing")?;
+            for (c, ch_out) in out.iter().enumerate() {
+                out_channels[c].extend_from_slice(ch_out);
+            }
+            pos += chunk_size;
+        }
+
+        // Flush remaining samples (zero-padded by rubato internally).
+        if pos < total_frames {
+            let in_partial: Vec<Vec<f32>> = channel_bufs.iter()
+                .map(|ch| ch[pos..].to_vec())
+                .collect();
+            let in_refs: Vec<&[f32]> = in_partial.iter().map(|v| v.as_slice()).collect();
+            let out = resampler.process_partial(Some(&in_refs), None)
+                .context("Resampler error during partial-chunk flush")?;
+            for (c, ch_out) in out.iter().enumerate() {
+                out_channels[c].extend_from_slice(ch_out);
+            }
+        } else {
+            // Flush resampler internal delay line even when input was chunk-aligned.
+            if let Ok(out) = resampler.process_partial(None::<&[&[f32]]>, None) {
+                for (c, ch_out) in out.iter().enumerate() {
+                    out_channels[c].extend_from_slice(ch_out);
+                }
+            }
+        }
+
+        // Re-interleave output frames.
+        let out_frames = out_channels[0].len();
+        let mut resampled = Vec::with_capacity(out_frames * channels);
+        for f in 0..out_frames {
+            for c in 0..channels {
+                resampled.push(out_channels[c][f]);
             }
         }
 
         Ok(AudioData {
-            samples: resampled_samples,
+            samples: resampled,
             sample_rate: target_sample_rate,
             channels: audio.channels,
         })
     }
 
-    /// Save audio as WAV (16-bit PCM for maximum compatibility)
+    /// Save audio as WAV (16-bit PCM for maximum compatibility).
+    ///
+    /// The output buffer is pre-allocated to the exact expected size:
+    ///   44-byte RIFF/WAV header + 2 bytes per sample (16-bit PCM).
+    /// This avoids the default `Vec::new()` growth / realloc sequence.
     pub fn save_wav(&self, audio: &AudioData) -> Result<Vec<u8>> {
         let spec = hound::WavSpec {
             channels: audio.channels,
@@ -275,11 +359,13 @@ impl AudioProcessor {
             sample_format: hound::SampleFormat::Int,
         };
 
-        let mut cursor = Cursor::new(Vec::new());
+        // 44-byte WAV header + 2 bytes per sample × channels
+        let estimated = 44 + audio.samples.len() * 2;
+        let mut cursor = Cursor::new(Vec::with_capacity(estimated));
         {
             let mut writer = hound::WavWriter::new(&mut cursor, spec)
                 .context("Failed to create WAV writer")?;
-            
+
             // Convert f32 samples (-1.0 to 1.0) to i16 (-32768 to 32767)
             for &sample in &audio.samples {
                 let sample_i16 = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
@@ -316,5 +402,26 @@ mod tests {
     fn test_audio_processor_creation() {
         let processor = AudioProcessor::new();
         assert_eq!(processor.default_sample_rate, 16000);
+    }
+
+    #[test]
+    fn test_validate_mp3_rejects_invalid_data() {
+        let audio_processor = AudioProcessor::new();
+        let result = audio_processor.validate_mp3(&[0u8; 16]);
+        assert!(result.is_err(), "validate_mp3 should reject invalid data, got Ok");
+    }
+
+    #[test]
+    fn test_validate_flac_rejects_invalid_data() {
+        let audio_processor = AudioProcessor::new();
+        let result = audio_processor.validate_flac(&[0u8; 16]);
+        assert!(result.is_err(), "validate_flac should reject invalid data, got Ok");
+    }
+
+    #[test]
+    fn test_validate_ogg_rejects_invalid_data() {
+        let audio_processor = AudioProcessor::new();
+        let result = audio_processor.validate_ogg(&[0u8; 16]);
+        assert!(result.is_err(), "validate_ogg should reject invalid data, got Ok");
     }
 }
