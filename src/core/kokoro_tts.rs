@@ -232,22 +232,118 @@ impl TTSEngine for KokoroEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tts_engine::{SynthesisParams, TTSEngine};
+
+    fn make_engine(model_path: &str, sample_rate: u64) -> KokoroEngine {
+        let config = serde_json::json!({
+            "model_path": model_path,
+            "sample_rate": sample_rate
+        });
+        KokoroEngine::new(&config).unwrap()
+    }
 
     #[tokio::test]
     async fn test_kokoro_returns_error_when_model_absent() {
-        let config = serde_json::json!({
-            "model_path": "/nonexistent/kokoro-v1_0.safetensors",
-            "sample_rate": 24000
-        });
-        let engine = KokoroEngine::new(&config).unwrap();
-        // Engine constructs OK (model loading is lazy) but synthesize fails
-        let params = crate::core::tts_engine::SynthesisParams::default();
+        let engine = make_engine("/nonexistent/kokoro-v1_0.safetensors", 24000);
+        let params = SynthesisParams::default();
         let result = engine.synthesize("hello", &params).await;
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        // Must NOT silently produce audio — must return an error
         assert!(msg.contains("unavailable") || msg.contains("not found") || msg.contains("failed")
                 || msg.contains("Kokoro") || msg.contains("TTS"),
                 "Unexpected error: {}", msg);
+    }
+
+    #[test]
+    fn test_kokoro_engine_name() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        assert_eq!(engine.name(), "kokoro");
+    }
+
+    #[test]
+    fn test_kokoro_engine_capabilities_sample_rate() {
+        let engine = make_engine("/nonexistent/model.pth", 22050);
+        assert_eq!(engine.capabilities().sample_rate, 22050);
+    }
+
+    #[test]
+    fn test_kokoro_engine_capabilities_name() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        let caps = engine.capabilities();
+        assert!(caps.name.contains("Kokoro"));
+    }
+
+    #[test]
+    fn test_kokoro_engine_default_sample_rate() {
+        // When no sample_rate is provided, should default to 24000
+        let config = serde_json::json!({ "model_path": "/nonexistent/model.pth" });
+        let engine = KokoroEngine::new(&config).unwrap();
+        assert_eq!(engine.capabilities().sample_rate, 24000);
+    }
+
+    #[test]
+    fn test_kokoro_engine_default_model_path() {
+        // When no model_path is provided, should use the built-in default
+        let config = serde_json::json!({});
+        let engine = KokoroEngine::new(&config).unwrap();
+        assert!(engine.config.model_path.to_string_lossy().contains("kokoro"));
+    }
+
+    #[test]
+    fn test_list_voices_not_empty() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        let voices = engine.list_voices();
+        assert!(!voices.is_empty(), "list_voices should return at least one voice");
+    }
+
+    #[test]
+    fn test_list_voices_contains_expected_ids() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        let voices = engine.list_voices();
+        let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
+        assert!(ids.contains(&"af"), "expected 'af' voice: {:?}", ids);
+        assert!(ids.contains(&"am"), "expected 'am' voice: {:?}", ids);
+    }
+
+    #[test]
+    fn test_is_ready_false_when_no_model() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        // No model file exists, no Python bridge expected in test env
+        // is_ready() should return false
+        assert!(!engine.is_ready());
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_empty_text_returns_error() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        let params = SynthesisParams::default();
+        let result = engine.synthesize("", &params).await;
+        assert!(result.is_err(), "empty text should fail");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("empty") || msg.contains("Text"),
+                "Unexpected error for empty text: {}", msg);
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_too_long_text_returns_error() {
+        let engine = make_engine("/nonexistent/model.pth", 24000);
+        let params = SynthesisParams::default();
+        // max_text_length is 1000; build a string of 1001 'a's
+        let long_text = "a".repeat(1001);
+        let result = engine.synthesize(&long_text, &params).await;
+        assert!(result.is_err(), "too-long text should fail");
+    }
+
+    #[test]
+    fn test_kokoro_config_debug_clone() {
+        let config = KokoroConfig {
+            model_path: std::path::PathBuf::from("/tmp/model.pth"),
+            sample_rate: 24000,
+        };
+        let cloned = config.clone();
+        let _ = format!("{:?}", cloned);
+        let json = serde_json::to_string(&config).unwrap();
+        let back: KokoroConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 24000);
     }
 }

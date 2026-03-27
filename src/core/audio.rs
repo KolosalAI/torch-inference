@@ -401,6 +401,47 @@ impl Default for AudioProcessor {
 mod tests {
     use super::*;
 
+    // ---- helpers --------------------------------------------------------
+
+    fn make_wav_bytes(sample_rate: u32, channels: u16) -> Vec<u8> {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(&mut buf, spec).unwrap();
+        // write one second worth of silence
+        for _ in 0..sample_rate {
+            for _ in 0..channels {
+                writer.write_sample(0i16).unwrap();
+            }
+        }
+        writer.finalize().unwrap();
+        buf.into_inner()
+    }
+
+    fn make_float_wav_bytes(sample_rate: u32, channels: u16) -> Vec<u8> {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let mut writer = hound::WavWriter::new(&mut buf, spec).unwrap();
+        for _ in 0..sample_rate {
+            for _ in 0..channels {
+                writer.write_sample(0.0f32).unwrap();
+            }
+        }
+        writer.finalize().unwrap();
+        buf.into_inner()
+    }
+
+    // ---- AudioFormat ----------------------------------------------------
+
     #[test]
     fn test_audio_format_from_extension() {
         assert!(matches!(AudioFormat::from_extension("wav"), Ok(AudioFormat::Wav)));
@@ -409,10 +450,207 @@ mod tests {
     }
 
     #[test]
+    fn test_audio_format_from_extension_all_variants() {
+        assert!(matches!(AudioFormat::from_extension("wav"), Ok(AudioFormat::Wav)));
+        assert!(matches!(AudioFormat::from_extension("WAV"), Ok(AudioFormat::Wav)));
+        assert!(matches!(AudioFormat::from_extension("mp3"), Ok(AudioFormat::Mp3)));
+        assert!(matches!(AudioFormat::from_extension("MP3"), Ok(AudioFormat::Mp3)));
+        assert!(matches!(AudioFormat::from_extension("flac"), Ok(AudioFormat::Flac)));
+        assert!(matches!(AudioFormat::from_extension("FLAC"), Ok(AudioFormat::Flac)));
+        assert!(matches!(AudioFormat::from_extension("ogg"), Ok(AudioFormat::Ogg)));
+        assert!(matches!(AudioFormat::from_extension("OGG"), Ok(AudioFormat::Ogg)));
+        assert!(AudioFormat::from_extension("aac").is_err());
+        assert!(AudioFormat::from_extension("").is_err());
+        assert!(AudioFormat::from_extension("txt").is_err());
+    }
+
+    #[test]
+    fn test_audio_format_from_path() {
+        let wav = std::path::Path::new("audio.wav");
+        assert!(matches!(AudioFormat::from_path(wav), Ok(AudioFormat::Wav)));
+
+        let mp3 = std::path::Path::new("audio.mp3");
+        assert!(matches!(AudioFormat::from_path(mp3), Ok(AudioFormat::Mp3)));
+
+        let flac = std::path::Path::new("track.flac");
+        assert!(matches!(AudioFormat::from_path(flac), Ok(AudioFormat::Flac)));
+
+        let ogg = std::path::Path::new("track.ogg");
+        assert!(matches!(AudioFormat::from_path(ogg), Ok(AudioFormat::Ogg)));
+
+        let no_ext = std::path::Path::new("noextension");
+        assert!(AudioFormat::from_path(no_ext).is_err());
+    }
+
+    #[test]
+    fn test_audio_format_debug_clone_serialize() {
+        let fmt = AudioFormat::Wav;
+        let cloned = fmt.clone();
+        let debug_str = format!("{:?}", cloned);
+        assert!(debug_str.contains("Wav"));
+
+        // Serialize / deserialize round-trip
+        let json = serde_json::to_string(&AudioFormat::Mp3).unwrap();
+        let back: AudioFormat = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, AudioFormat::Mp3));
+    }
+
+    // ---- AudioMetadata --------------------------------------------------
+
+    #[test]
+    fn test_audio_metadata_fields() {
+        let meta = AudioMetadata {
+            format: AudioFormat::Wav,
+            sample_rate: 44100,
+            channels: 2,
+            duration_secs: 3.5,
+            bits_per_sample: 16,
+        };
+        assert_eq!(meta.sample_rate, 44100);
+        assert_eq!(meta.channels, 2);
+        assert!((meta.duration_secs - 3.5).abs() < 1e-6);
+        assert_eq!(meta.bits_per_sample, 16);
+
+        // debug + clone
+        let _ = format!("{:?}", meta.clone());
+    }
+
+    #[test]
+    fn test_audio_metadata_serde() {
+        let meta = AudioMetadata {
+            format: AudioFormat::Flac,
+            sample_rate: 48000,
+            channels: 1,
+            duration_secs: 1.0,
+            bits_per_sample: 24,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        let back: AudioMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 48000);
+        assert_eq!(back.channels, 1);
+    }
+
+    // ---- AudioData ------------------------------------------------------
+
+    #[test]
+    fn test_audio_data_fields() {
+        let audio = AudioData {
+            samples: vec![0.0f32, 0.5, -0.5],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        assert_eq!(audio.samples.len(), 3);
+        assert_eq!(audio.sample_rate, 16000);
+        assert_eq!(audio.channels, 1);
+
+        let cloned = audio.clone();
+        assert_eq!(cloned.samples, audio.samples);
+
+        let _ = format!("{:?}", audio);
+    }
+
+    #[test]
+    fn test_audio_data_serde() {
+        let audio = AudioData {
+            samples: vec![0.1, 0.2, -0.1],
+            sample_rate: 22050,
+            channels: 2,
+        };
+        let json = serde_json::to_string(&audio).unwrap();
+        let back: AudioData = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sample_rate, 22050);
+        assert_eq!(back.channels, 2);
+    }
+
+    // ---- AudioProcessor creation ----------------------------------------
+
+    #[test]
     fn test_audio_processor_creation() {
         let processor = AudioProcessor::new();
         assert_eq!(processor.default_sample_rate, 16000);
     }
+
+    #[test]
+    fn test_audio_processor_with_sample_rate() {
+        let processor = AudioProcessor::with_sample_rate(44100);
+        assert_eq!(processor.default_sample_rate, 44100);
+    }
+
+    #[test]
+    fn test_audio_processor_default() {
+        let processor = AudioProcessor::default();
+        assert_eq!(processor.default_sample_rate, 16000);
+    }
+
+    // ---- validate_audio magic-bytes routing -----------------------------
+
+    #[test]
+    fn test_validate_audio_too_short() {
+        let processor = AudioProcessor::new();
+        assert!(processor.validate_audio(&[0u8; 3]).is_err());
+        assert!(processor.validate_audio(&[]).is_err());
+    }
+
+    #[test]
+    fn test_validate_audio_unknown_format() {
+        let processor = AudioProcessor::new();
+        // Data that doesn't match any magic bytes
+        let bad = [0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+        assert!(processor.validate_audio(&bad).is_err());
+    }
+
+    #[test]
+    fn test_validate_audio_wav_magic_bytes() {
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_wav_bytes(16000, 1);
+        let result = processor.validate_audio(&wav_bytes);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        let meta = result.unwrap();
+        assert_eq!(meta.sample_rate, 16000);
+        assert_eq!(meta.channels, 1);
+    }
+
+    #[test]
+    fn test_validate_audio_mp3_id3_header() {
+        let processor = AudioProcessor::new();
+        // ID3 magic header followed by 13 zero bytes
+        let mut data = vec![b'I', b'D', b'3'];
+        data.extend_from_slice(&[0u8; 13]);
+        // Should attempt MP3 validation and fail (no real MP3 data) — error is expected
+        let result = processor.validate_audio(&data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_audio_mp3_sync_word() {
+        let processor = AudioProcessor::new();
+        // MP3 sync word: 0xFF 0xE0 pattern
+        let data = vec![0xFFu8, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let result = processor.validate_audio(&data);
+        assert!(result.is_err()); // invalid MP3 data, but correct routing
+    }
+
+    #[test]
+    fn test_validate_audio_flac_magic_bytes() {
+        let processor = AudioProcessor::new();
+        // fLaC magic + some zeros (invalid FLAC but tests routing)
+        let mut data = b"fLaC".to_vec();
+        data.extend_from_slice(&[0u8; 20]);
+        let result = processor.validate_audio(&data);
+        assert!(result.is_err()); // invalid FLAC data, but routing is exercised
+    }
+
+    #[test]
+    fn test_validate_audio_ogg_magic_bytes() {
+        let processor = AudioProcessor::new();
+        // OggS magic + zeros
+        let mut data = b"OggS".to_vec();
+        data.extend_from_slice(&[0u8; 20]);
+        let result = processor.validate_audio(&data);
+        assert!(result.is_err()); // invalid Ogg data, but routing is exercised
+    }
+
+    // ---- validate_wav / validate_mp3/flac/ogg ---------------------------
 
     #[test]
     fn test_validate_mp3_rejects_invalid_data() {
@@ -433,5 +671,175 @@ mod tests {
         let audio_processor = AudioProcessor::new();
         let result = audio_processor.validate_ogg(&[0u8; 16]);
         assert!(result.is_err(), "validate_ogg should reject invalid data, got Ok");
+    }
+
+    // ---- load_audio / load_wav ------------------------------------------
+
+    #[test]
+    fn test_load_audio_wav_mono() {
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_wav_bytes(16000, 1);
+        let result = processor.load_audio(&wav_bytes);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        let audio = result.unwrap();
+        assert_eq!(audio.sample_rate, 16000);
+        assert_eq!(audio.channels, 1);
+        // one second silence = 16000 samples
+        assert_eq!(audio.samples.len(), 16000);
+    }
+
+    #[test]
+    fn test_load_audio_wav_stereo() {
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_wav_bytes(44100, 2);
+        let result = processor.load_audio(&wav_bytes);
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        let audio = result.unwrap();
+        assert_eq!(audio.channels, 2);
+        // stereo: 44100 frames * 2 channels
+        assert_eq!(audio.samples.len(), 44100 * 2);
+    }
+
+    #[test]
+    fn test_load_audio_wav_float_samples() {
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_float_wav_bytes(22050, 1);
+        let result = processor.load_audio(&wav_bytes);
+        assert!(result.is_ok(), "expected Ok for float WAV, got: {:?}", result);
+        let audio = result.unwrap();
+        assert_eq!(audio.sample_rate, 22050);
+        assert_eq!(audio.channels, 1);
+    }
+
+    #[test]
+    fn test_load_audio_invalid_data() {
+        let processor = AudioProcessor::new();
+        assert!(processor.load_audio(&[0u8; 4]).is_err());
+    }
+
+    // ---- validate_wav with real WAV data --------------------------------
+
+    #[test]
+    fn test_validate_wav_returns_correct_metadata() {
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_wav_bytes(8000, 2);
+        // Call validate_wav via the public validate_audio path
+        let meta = processor.validate_audio(&wav_bytes).unwrap();
+        assert_eq!(meta.sample_rate, 8000);
+        assert_eq!(meta.channels, 2);
+        assert!((meta.duration_secs - 1.0).abs() < 0.05);
+        assert_eq!(meta.bits_per_sample, 16);
+        assert!(matches!(meta.format, AudioFormat::Wav));
+    }
+
+    // ---- save_wav -------------------------------------------------------
+
+    #[test]
+    fn test_save_wav_round_trip() {
+        let processor = AudioProcessor::new();
+        let original = AudioData {
+            samples: vec![0.0f32, 0.25, -0.25, 0.5, -0.5, 1.0, -1.0],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let wav_bytes = processor.save_wav(&original).unwrap();
+
+        // The saved bytes must parse as a valid WAV file
+        let cursor = std::io::Cursor::new(&wav_bytes);
+        let reader = hound::WavReader::new(cursor).unwrap();
+        let spec = reader.spec();
+        assert_eq!(spec.sample_rate, 16000);
+        assert_eq!(spec.channels, 1);
+        assert_eq!(spec.bits_per_sample, 16);
+    }
+
+    #[test]
+    fn test_save_wav_starts_with_riff() {
+        let processor = AudioProcessor::new();
+        let audio = AudioData {
+            samples: vec![0.0f32; 100],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let bytes = processor.save_wav(&audio).unwrap();
+        assert!(bytes.len() > 44, "WAV file too short");
+        assert_eq!(&bytes[0..4], b"RIFF", "WAV must start with RIFF header");
+    }
+
+    #[test]
+    fn test_save_wav_clamps_samples() {
+        let processor = AudioProcessor::new();
+        // Samples outside [-1, 1] should be clamped, not panic
+        let audio = AudioData {
+            samples: vec![2.0f32, -3.0, 100.0, -100.0],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let result = processor.save_wav(&audio);
+        assert!(result.is_ok());
+    }
+
+    // ---- resample -------------------------------------------------------
+
+    #[test]
+    fn test_resample_same_rate_noop() {
+        let processor = AudioProcessor::new();
+        let audio = AudioData {
+            samples: vec![0.1f32, 0.2, -0.1, -0.2],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let result = processor.resample(&audio, 16000).unwrap();
+        assert_eq!(result.sample_rate, 16000);
+        // samples should be identical
+        assert_eq!(result.samples, audio.samples);
+    }
+
+    #[test]
+    fn test_resample_upsample() {
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_wav_bytes(16000, 1);
+        let audio = processor.load_audio(&wav_bytes).unwrap();
+        let result = processor.resample(&audio, 44100);
+        assert!(result.is_ok(), "upsampling failed: {:?}", result);
+        let resampled = result.unwrap();
+        assert_eq!(resampled.sample_rate, 44100);
+        assert_eq!(resampled.channels, 1);
+        // Output must have more samples than input
+        assert!(resampled.samples.len() > audio.samples.len());
+    }
+
+    #[test]
+    fn test_resample_to_higher_rate_mono() {
+        let processor = AudioProcessor::new();
+        // 16000 Hz mono → 24000 Hz (1.5× upsample, compatible with the chunk-size resampler)
+        let audio = AudioData {
+            samples: vec![0.0f32; 16000],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let result = processor.resample(&audio, 24000);
+        assert!(result.is_ok(), "upsample 16k→24k failed: {:?}", result);
+        let resampled = result.unwrap();
+        assert_eq!(resampled.sample_rate, 24000);
+        assert_eq!(resampled.channels, 1);
+        // More output frames than input for upsample
+        assert!(resampled.samples.len() > audio.samples.len());
+    }
+
+    #[test]
+    fn test_resample_stereo_noop() {
+        let processor = AudioProcessor::new();
+        // Same rate for stereo — must return identical data without touching rubato
+        let audio = AudioData {
+            samples: vec![0.1f32, -0.1, 0.2, -0.2],
+            sample_rate: 44100,
+            channels: 2,
+        };
+        let result = processor.resample(&audio, 44100);
+        assert!(result.is_ok());
+        let resampled = result.unwrap();
+        assert_eq!(resampled.channels, 2);
+        assert_eq!(resampled.samples, audio.samples);
     }
 }

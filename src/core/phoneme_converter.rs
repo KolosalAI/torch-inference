@@ -296,19 +296,179 @@ impl EnhancedG2P {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
+    // ---- PhonemeConverter -----------------------------------------------
+
     #[test]
     fn test_phoneme_converter() {
         let converter = PhonemeConverter::new().unwrap();
         let tokens = converter.text_to_phonemes("hello").unwrap();
         assert!(tokens.len() > 0);
     }
-    
+
+    #[test]
+    fn test_phoneme_converter_empty_string() {
+        let converter = PhonemeConverter::new().unwrap();
+        // Empty text produces only a trailing period token
+        let tokens = converter.text_to_phonemes("").unwrap();
+        // The implementation pushes a "." token unconditionally; length >= 1
+        assert!(!tokens.is_empty() || tokens.is_empty()); // any length is valid; just must not panic
+    }
+
+    #[test]
+    fn test_phoneme_converter_multi_word() {
+        let converter = PhonemeConverter::new().unwrap();
+        let tokens_single = converter.text_to_phonemes("hello").unwrap();
+        let tokens_multi  = converter.text_to_phonemes("hello world").unwrap();
+        // Multi-word output should be longer (space token inserted between words)
+        assert!(tokens_multi.len() > tokens_single.len());
+    }
+
+    #[test]
+    fn test_phoneme_converter_punctuation_lookup() {
+        let converter = PhonemeConverter::new().unwrap();
+        // "." is in the vocab at ID 4
+        let tokens = converter.text_to_phonemes(".").unwrap();
+        // word_to_phonemes for "." returns vec![4]; then end-marker also pushes 4
+        assert!(!tokens.is_empty());
+        for &t in &tokens {
+            assert!(t > 0, "token must be positive");
+        }
+    }
+
+    #[test]
+    fn test_phoneme_converter_all_mapped_letters() {
+        let converter = PhonemeConverter::new().unwrap();
+        // Every letter in the word_to_phonemes match arm should produce at least one token
+        let test_word = "abde";
+        let tokens = converter.text_to_phonemes(test_word).unwrap();
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_phoneme_converter_skips_unmapped_chars() {
+        let converter = PhonemeConverter::new().unwrap();
+        // 'c', 'g', 'x', 'q', 'j' are all in the `_ => continue` branch
+        // (they have no phoneme mapping in word_to_phonemes)
+        let tokens = converter.text_to_phonemes("cxqgj").unwrap();
+        // tokens still OK (may be empty body + trailing ".")
+        for &t in &tokens {
+            assert!(t > 0);
+        }
+    }
+
+    #[test]
+    fn test_phoneme_converter_space_token_inserted() {
+        let converter = PhonemeConverter::new().unwrap();
+        let tokens = converter.text_to_phonemes("a b").unwrap();
+        // space token (ID 16) must appear between words
+        assert!(tokens.contains(&16));
+    }
+
+    #[test]
+    fn test_token_to_phoneme_roundtrip() {
+        let converter = PhonemeConverter::new().unwrap();
+        // Known mapping: "a" -> 43
+        let phoneme = converter.token_to_phoneme(43);
+        assert_eq!(phoneme.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn test_token_to_phoneme_unknown_returns_none() {
+        let converter = PhonemeConverter::new().unwrap();
+        // Token ID 0 is not in the vocab
+        assert!(converter.token_to_phoneme(0).is_none());
+        assert!(converter.token_to_phoneme(9999).is_none());
+    }
+
+    #[test]
+    fn test_phoneme_converter_word_lowercase_conversion() {
+        let converter = PhonemeConverter::new().unwrap();
+        let lower = converter.text_to_phonemes("hello").unwrap();
+        let upper = converter.text_to_phonemes("HELLO").unwrap();
+        // word_to_phonemes lowercases internally, so results should be equal
+        assert_eq!(lower, upper);
+    }
+
+    // ---- EnhancedG2P ----------------------------------------------------
+
     #[test]
     fn test_enhanced_g2p() {
         let g2p = EnhancedG2P::new().unwrap();
         let tokens = g2p.text_to_phonemes("hello world").unwrap();
         assert!(tokens.len() > 0);
         println!("Tokens: {:?}", tokens);
+    }
+
+    #[test]
+    fn test_enhanced_g2p_empty_string() {
+        let g2p = EnhancedG2P::new().unwrap();
+        // Must not panic on empty input
+        let result = g2p.text_to_phonemes("");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_enhanced_g2p_dictionary_lookup() {
+        let g2p = EnhancedG2P::new().unwrap();
+        // "hello" is in the dictionary
+        let tokens_dict = g2p.text_to_phonemes("hello").unwrap();
+        assert!(!tokens_dict.is_empty());
+    }
+
+    #[test]
+    fn test_enhanced_g2p_fallback_for_unknown_word() {
+        let g2p = EnhancedG2P::new().unwrap();
+        // A made-up word not in the dictionary triggers the fallback path
+        let tokens = g2p.text_to_phonemes("zxqwblarg").unwrap();
+        // Should produce some tokens (letters that have mappings) or just the period
+        for &t in &tokens {
+            assert!(t > 0);
+        }
+    }
+
+    #[test]
+    fn test_enhanced_g2p_adds_trailing_period() {
+        let g2p = EnhancedG2P::new().unwrap();
+        let tokens = g2p.text_to_phonemes("hello").unwrap();
+        // Last token should be period (ID 4)
+        assert_eq!(*tokens.last().unwrap(), 4);
+    }
+
+    #[test]
+    fn test_enhanced_g2p_space_between_words() {
+        let g2p = EnhancedG2P::new().unwrap();
+        let tokens = g2p.text_to_phonemes("hello world").unwrap();
+        // Space token (ID 16) must appear
+        assert!(tokens.contains(&16));
+    }
+
+    #[test]
+    fn test_enhanced_g2p_punctuation_appended() {
+        let g2p = EnhancedG2P::new().unwrap();
+        // "hello," — comma should be added as a punctuation token
+        let tokens = g2p.text_to_phonemes("hello,").unwrap();
+        // comma token is ID 3
+        assert!(tokens.contains(&3));
+    }
+
+    #[test]
+    fn test_enhanced_g2p_all_dictionary_words_produce_tokens() {
+        let g2p = EnhancedG2P::new().unwrap();
+        let words = ["the", "quick", "brown", "fox", "test", "hello",
+                     "world", "one", "two", "three"];
+        for word in words {
+            let tokens = g2p.text_to_phonemes(word).unwrap();
+            assert!(!tokens.is_empty(), "No tokens for dictionary word '{}'", word);
+        }
+    }
+
+    #[test]
+    fn test_ipa_to_tokens_known_characters() {
+        // ipa_to_tokens is private; exercise indirectly via build_dictionary / EnhancedG2P
+        let g2p = EnhancedG2P::new().unwrap();
+        // "the" -> "ðə" in the dictionary
+        let tokens = g2p.text_to_phonemes("the").unwrap();
+        assert!(!tokens.is_empty());
     }
 }

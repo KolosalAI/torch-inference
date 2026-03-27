@@ -610,4 +610,122 @@ mod tests {
             assert!(t >= 1 && t <= 177, "Fallback token {} out of range", t);
         }
     }
+
+    // ---- Additional coverage for uncovered paths ----------------------
+
+    #[test]
+    fn test_empty_string_produces_period() {
+        let g2p = MisakiG2P::new().unwrap();
+        // Empty text: no words → tokens is empty before trailing "."
+        // The implementation adds a trailing "." when tokens.last() != Some(&4)
+        let tokens = g2p.text_to_tokens("").unwrap();
+        // period token (4) should be the last (and only) token
+        assert_eq!(tokens, vec![4]);
+    }
+
+    #[test]
+    fn test_sentence_ending_with_period_no_duplicate() {
+        let g2p = MisakiG2P::new().unwrap();
+        // A sentence that already ends with "." should not get a second period
+        let tokens = g2p.text_to_tokens("hello.").unwrap();
+        // Last two tokens must not both be 4
+        if tokens.len() >= 2 {
+            assert!(
+                !(tokens[tokens.len() - 1] == 4 && tokens[tokens.len() - 2] == 4),
+                "duplicate period found: {:?}", tokens
+            );
+        }
+    }
+
+    #[test]
+    fn test_punctuation_only() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.text_to_tokens("!").unwrap();
+        // "!" → token 5 in vocab; no space before first word
+        assert!(tokens.contains(&5));
+    }
+
+    #[test]
+    fn test_multiple_punctuation() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.text_to_tokens("hello, world!").unwrap();
+        assert!(!tokens.is_empty());
+        // comma (3) should appear
+        assert!(tokens.contains(&3), "comma token missing: {:?}", tokens);
+        // exclamation (5) should appear
+        assert!(tokens.contains(&5), "! token missing: {:?}", tokens);
+    }
+
+    #[test]
+    fn test_is_punctuation_via_text_to_tokens() {
+        let g2p = MisakiG2P::new().unwrap();
+        // Punctuation token must NOT get a space prepended (is_punctuation returns true)
+        let tokens_word_punct = g2p.text_to_tokens("hi,").unwrap();
+        // If comma got a space before it, space token 16 would appear between "hi" phonemes and ","
+        // Just verify no crash and tokens are valid
+        for &t in &tokens_word_punct {
+            assert!(t >= 1 && t <= 177, "token {} out of range", t);
+        }
+    }
+
+    #[test]
+    fn test_tokenize_apostrophe() {
+        let g2p = MisakiG2P::new().unwrap();
+        // Apostrophe is kept as part of the word in tokenize()
+        let tokens = g2p.text_to_tokens("don't").unwrap();
+        assert!(!tokens.is_empty());
+        for &t in &tokens {
+            assert!(t >= 1 && t <= 177, "token {} out of range", t);
+        }
+    }
+
+    #[test]
+    fn test_phoneme_string_to_tokens_unknown_char_skipped() {
+        let g2p = MisakiG2P::new().unwrap();
+        // A word whose IPA representation contains a character not in the vocab
+        // should silently skip that character. Exercise via a word not in the dict.
+        // 'ß' is not in PHONEME_VOCAB; the fallback letter_fallback() also skips it.
+        let tokens = g2p.text_to_tokens("ßtest").unwrap();
+        // Just must not panic; tokens for 't','e','s','t' should appear
+        assert!(!tokens.is_empty());
+    }
+
+    #[test]
+    fn test_letter_fallback_x_produces_ks() {
+        let g2p = MisakiG2P::new().unwrap();
+        // 'x' maps to "ks" (two chars) in letter_fallback
+        // Use a word not in the dictionary that starts with 'x'
+        let tokens = g2p.text_to_tokens("xray").unwrap();
+        // k token = 53; s token = 61 — both should appear
+        assert!(tokens.contains(&53) || tokens.contains(&61),
+            "expected k(53) or s(61) from 'x' expansion: {:?}", tokens);
+    }
+
+    #[test]
+    fn test_number_words_all_produce_tokens() {
+        let g2p = MisakiG2P::new().unwrap();
+        for word in ["one", "two", "three", "four", "five",
+                     "six", "seven", "eight", "nine", "ten"] {
+            let tokens = g2p.text_to_tokens(word).unwrap();
+            assert!(!tokens.is_empty(), "empty tokens for '{}'", word);
+            for &t in &tokens {
+                assert!(t >= 1 && t <= 177, "token {} out of range for '{}'", t, word);
+            }
+        }
+    }
+
+    #[test]
+    fn test_space_not_prepended_to_first_word() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.text_to_tokens("hello").unwrap();
+        // Space token is 16; it must NOT be the first token
+        assert_ne!(tokens[0], 16, "space should not be first token: {:?}", tokens);
+    }
+
+    #[test]
+    fn test_space_inserted_between_words() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.text_to_tokens("hello world").unwrap();
+        assert!(tokens.contains(&16), "space token (16) missing: {:?}", tokens);
+    }
 }
