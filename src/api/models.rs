@@ -14,7 +14,7 @@ use tokio::io::AsyncWriteExt;
 static REGISTRY: OnceLock<ModelRegistry> = OnceLock::new();
 
 fn get_registry() -> &'static ModelRegistry {
-    REGISTRY.get_or_init(ModelRegistry::build)
+    REGISTRY.get_or_init(ModelRegistry::load)
 }
 
 /// A single reqwest::Client with an internal connection pool, shared across
@@ -35,19 +35,28 @@ fn get_http_client() -> &'static reqwest::Client {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub name: String,
+    #[serde(default, deserialize_with = "de_f32_or_str")]
     pub score: f32,
+    #[serde(default, deserialize_with = "de_i32_or_str")]
     pub rank: i32,
+    #[serde(default)]
     pub size: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
     pub architecture: String,
+    #[serde(default, deserialize_with = "de_string_or_num")]
     pub voices: String,
+    #[serde(default)]
     pub quality: String,
+    #[serde(default)]
     pub status: String,
+    #[serde(default)]
     pub note: Option<String>,
     #[serde(default)]
-    pub model_type: String, // "tts", "image-classification", "neural-network"
+    pub model_type: String,
     #[serde(default)]
-    pub task: String, // "text-to-speech", "classification", "detection", etc.
+    pub task: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,334 +66,62 @@ pub struct ModelRegistry {
     pub models: HashMap<String, ModelInfo>,
 }
 
+fn de_f32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match &v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0) as f32,
+        _ => 0.0,
+    })
+}
+
+fn de_i32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match &v {
+        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) as i32,
+        _ => 0,
+    })
+}
+
+fn de_string_or_num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    })
+}
+
 impl ModelRegistry {
-    /// Build the registry.  Only called once via `get_registry()`.
-    fn build() -> Self {
-        let mut models = HashMap::new();
-        
-        // Fish Speech v1.5
-        models.insert("fish-speech-1.5".to_string(), ModelInfo {
-            name: "Fish Speech v1.5".to_string(),
-            score: 57.1,
-            rank: 8,
-            size: "~1 GB".to_string(),
-            url: "https://huggingface.co/fishaudio/fish-speech-1.5".to_string(),
-            architecture: "VQGAN + Llama".to_string(),
-            voices: "Multi".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Requires git-lfs".to_string()),
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // XTTS v2
-        models.insert("xtts-v2".to_string(), ModelInfo {
-            name: "XTTS v2".to_string(),
-            score: 56.1,
-            rank: 9,
-            size: "~2 GB".to_string(),
-            url: "https://huggingface.co/coqui/XTTS-v2".to_string(),
-            architecture: "Transformer + HiFiGAN".to_string(),
-            voices: "Voice Cloning".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Coqui TTS".to_string()),
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // StyleTTS 2
-        models.insert("styletts2".to_string(), ModelInfo {
-            name: "StyleTTS 2".to_string(),
-            score: 49.0,
-            rank: 12,
-            size: "~500 MB".to_string(),
-            url: "https://huggingface.co/yl4579/StyleTTS2-LJSpeech".to_string(),
-            architecture: "StyleTTS2".to_string(),
-            voices: "Single".to_string(),
-            quality: "Medium-High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Expressive TTS with voice cloning".to_string()),
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // MetaVoice
-        models.insert("metavoice".to_string(), ModelInfo {
-            name: "MetaVoice".to_string(),
-            score: 49.1,
-            rank: 11,
-            size: "~1 GB".to_string(),
-            url: "https://huggingface.co/metavoiceio/metavoice-1B-v0.1".to_string(),
-            architecture: "Transformer".to_string(),
-            voices: "Multi".to_string(),
-            quality: "Medium-High".to_string(),
-            status: "Available".to_string(),
-            note: None,
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // OpenVoice
-        models.insert("openvoice".to_string(), ModelInfo {
-            name: "OpenVoice".to_string(),
-            score: 43.1,
-            rank: 14,
-            size: "~600 MB".to_string(),
-            url: "https://huggingface.co/myshell-ai/OpenVoice".to_string(),
-            architecture: "VITS".to_string(),
-            voices: "Voice Cloning".to_string(),
-            quality: "Medium".to_string(),
-            status: "Available".to_string(),
-            note: None,
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // MeloTTS
-        models.insert("melotts".to_string(), ModelInfo {
-            name: "MeloTTS".to_string(),
-            score: 41.3,
-            rank: 15,
-            size: "~200 MB".to_string(),
-            url: "https://huggingface.co/myshell-ai/MeloTTS-English".to_string(),
-            architecture: "VITS".to_string(),
-            voices: "Multi-language".to_string(),
-            quality: "Medium".to_string(),
-            status: "Available".to_string(),
-            note: None,
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // Windows SAPI
-        models.insert("windows-sapi".to_string(), ModelInfo {
-            name: "Windows SAPI".to_string(),
-            score: 0.0,
-            rank: 0,
-            size: "Built-in".to_string(),
-            url: "Built-in".to_string(),
-            architecture: "Neural TTS".to_string(),
-            voices: "3".to_string(),
-            quality: "High".to_string(),
-            status: "Active".to_string(),
-            note: Some("Currently used for real speech".to_string()),
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // Piper Lessac voice
-        models.insert("piper_lessac".to_string(), ModelInfo {
-            name: "Piper (Lessac)".to_string(),
-            score: 0.0,
-            rank: 0,
-            size: "60 MB".to_string(),
-            url: "https://huggingface.co/rhasspy/piper-voices".to_string(),
-            architecture: "VITS (ONNX)".to_string(),
-            voices: "1".to_string(),
-            quality: "Medium".to_string(),
-            status: "Downloaded".to_string(),
-            note: None,
-            model_type: "tts".to_string(),
-            task: "text-to-speech".to_string(),
-        });
-        
-        // ============================================
-        // IMAGE CLASSIFICATION MODELS
-        // ============================================
-        
-        // ResNet-50
-        models.insert("resnet50".to_string(), ModelInfo {
-            name: "ResNet-50".to_string(),
-            score: 0.0,
-            rank: 100,
-            size: "98 MB".to_string(),
-            url: "https://download.pytorch.org/models/resnet50-0676ba61.pth".to_string(),
-            architecture: "ResNet-50".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("ImageNet pre-trained, 1000 classes".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // ResNet-18
-        models.insert("resnet18".to_string(), ModelInfo {
-            name: "ResNet-18".to_string(),
-            score: 0.0,
-            rank: 101,
-            size: "45 MB".to_string(),
-            url: "https://download.pytorch.org/models/resnet18-5c106cde.pth".to_string(),
-            architecture: "ResNet-18".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("ImageNet pre-trained, lightweight".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // MobileNet V2
-        models.insert("mobilenet-v2".to_string(), ModelInfo {
-            name: "MobileNet V2".to_string(),
-            score: 0.0,
-            rank: 102,
-            size: "14 MB".to_string(),
-            url: "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth".to_string(),
-            architecture: "MobileNetV2".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Fast mobile inference, ImageNet".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // EfficientNet B0
-        models.insert("efficientnet-b0".to_string(), ModelInfo {
-            name: "EfficientNet B0".to_string(),
-            score: 0.0,
-            rank: 103,
-            size: "20 MB".to_string(),
-            url: "https://download.pytorch.org/models/efficientnet_b0_rwightman-3dd342df.pth".to_string(),
-            architecture: "EfficientNet-B0".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Efficient architecture, ImageNet".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // VGG16
-        models.insert("vgg16".to_string(), ModelInfo {
-            name: "VGG16".to_string(),
-            score: 0.0,
-            rank: 104,
-            size: "528 MB".to_string(),
-            url: "https://download.pytorch.org/models/vgg16-397923af.pth".to_string(),
-            architecture: "VGG-16".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Classic CNN architecture, ImageNet".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // DenseNet-121
-        models.insert("densenet121".to_string(), ModelInfo {
-            name: "DenseNet-121".to_string(),
-            score: 0.0,
-            rank: 105,
-            size: "31 MB".to_string(),
-            url: "https://download.pytorch.org/models/densenet121-a639ec97.pth".to_string(),
-            architecture: "DenseNet-121".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Dense connections, ImageNet".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // Inception V3
-        models.insert("inception-v3".to_string(), ModelInfo {
-            name: "Inception V3".to_string(),
-            score: 0.0,
-            rank: 106,
-            size: "104 MB".to_string(),
-            url: "https://download.pytorch.org/models/inception_v3_google-1a9a5a14.pth".to_string(),
-            architecture: "Inception-V3".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Multi-scale features, ImageNet".to_string()),
-            model_type: "image-classification".to_string(),
-            task: "classification".to_string(),
-        });
-        
-        // ============================================
-        // OBJECT DETECTION MODELS
-        // ============================================
-        
-        // Faster R-CNN ResNet-50
-        models.insert("faster-rcnn-resnet50".to_string(), ModelInfo {
-            name: "Faster R-CNN ResNet-50".to_string(),
-            score: 0.0,
-            rank: 200,
-            size: "160 MB".to_string(),
-            url: "https://download.pytorch.org/models/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth".to_string(),
-            architecture: "Faster R-CNN + ResNet-50".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Object detection, COCO dataset".to_string()),
-            model_type: "object-detection".to_string(),
-            task: "detection".to_string(),
-        });
-        
-        // RetinaNet ResNet-50
-        models.insert("retinanet-resnet50".to_string(), ModelInfo {
-            name: "RetinaNet ResNet-50".to_string(),
-            score: 0.0,
-            rank: 201,
-            size: "145 MB".to_string(),
-            url: "https://download.pytorch.org/models/retinanet_resnet50_fpn_coco-eeacb38b.pth".to_string(),
-            architecture: "RetinaNet + ResNet-50".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Single-shot detector, COCO".to_string()),
-            model_type: "object-detection".to_string(),
-            task: "detection".to_string(),
-        });
-        
-        // ============================================
-        // SEGMENTATION MODELS
-        // ============================================
-        
-        // DeepLabV3 ResNet-50
-        models.insert("deeplabv3-resnet50".to_string(), ModelInfo {
-            name: "DeepLabV3 ResNet-50".to_string(),
-            score: 0.0,
-            rank: 300,
-            size: "163 MB".to_string(),
-            url: "https://download.pytorch.org/models/deeplabv3_resnet50_coco-cd0a2569.pth".to_string(),
-            architecture: "DeepLabV3 + ResNet-50".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Semantic segmentation, COCO".to_string()),
-            model_type: "segmentation".to_string(),
-            task: "segmentation".to_string(),
-        });
-        
-        // FCN ResNet-50
-        models.insert("fcn-resnet50".to_string(), ModelInfo {
-            name: "FCN ResNet-50".to_string(),
-            score: 0.0,
-            rank: 301,
-            size: "126 MB".to_string(),
-            url: "https://download.pytorch.org/models/fcn_resnet50_coco-1167a1af.pth".to_string(),
-            architecture: "FCN + ResNet-50".to_string(),
-            voices: "N/A".to_string(),
-            quality: "High".to_string(),
-            status: "Available".to_string(),
-            note: Some("Fully convolutional network, COCO".to_string()),
-            model_type: "segmentation".to_string(),
-            task: "segmentation".to_string(),
-        });
-        
-        Self {
-            version: "1.0".to_string(),
-            updated: chrono::Utc::now().to_rfc3339(),
-            models,
-        }
+    /// Parse a registry from a JSON string. Returns an empty registry on parse error.
+    pub fn from_json_str(s: &str) -> Self {
+        serde_json::from_str(s).unwrap_or_else(|e| {
+            log::warn!("Failed to parse model registry JSON: {}", e);
+            Self {
+                version: "0.0".to_string(),
+                updated: String::new(),
+                models: std::collections::HashMap::new(),
+            }
+        })
     }
-    
+
+    /// Load the registry from disk (path via MODEL_REGISTRY_PATH env var, default
+    /// `model_registry.json`). Falls back to the file embedded at compile-time so
+    /// the binary works without the file present at runtime.
+    fn load() -> Self {
+        let path = std::env::var("MODEL_REGISTRY_PATH")
+            .unwrap_or_else(|_| "model_registry.json".to_string());
+
+        let data = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+            log::info!(
+                "model_registry.json not found at '{}', using compiled-in copy",
+                path
+            );
+            include_str!("../../model_registry.json").to_string()
+        });
+
+        Self::from_json_str(&data)
+    }
+
     pub fn get_model(&self, model_id: &str) -> Option<&ModelInfo> {
         self.models.get(model_id)
     }
@@ -720,6 +457,72 @@ mod tests {
 
         let result = download_file_streaming(&client, &server.uri(), &dest).await;
         assert!(result.is_err(), "should error on 404");
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_registry_loads_from_json_str() {
+        let json = r#"{
+            "version": "1.0",
+            "updated": "2026-01-01T00:00:00Z",
+            "models": {
+                "test-model": {
+                    "name": "Test Model",
+                    "score": 50.0,
+                    "rank": 5,
+                    "size": "100 MB",
+                    "url": "https://example.com",
+                    "architecture": "Test",
+                    "voices": "1",
+                    "quality": "High",
+                    "status": "Available"
+                }
+            }
+        }"#;
+
+        let registry = ModelRegistry::from_json_str(json);
+        assert!(registry.get_model("test-model").is_some());
+        let model = registry.get_model("test-model").unwrap();
+        assert_eq!(model.name, "Test Model");
+        assert!((model.score - 50.0).abs() < 0.01);
+        assert_eq!(model.rank, 5);
+    }
+
+    #[test]
+    fn test_registry_handles_mixed_rank_type() {
+        let json = r#"{
+            "version": "1.0",
+            "updated": "2026-01-01T00:00:00Z",
+            "models": {
+                "windows-sapi": {
+                    "name": "Windows SAPI",
+                    "score": "N/A (Native)",
+                    "rank": "Production",
+                    "size": "Built-in",
+                    "url": "Built-in",
+                    "architecture": "Neural TTS",
+                    "voices": 3,
+                    "quality": "High",
+                    "status": "Active"
+                }
+            }
+        }"#;
+
+        let registry = ModelRegistry::from_json_str(json);
+        assert!(registry.get_model("windows-sapi").is_some());
+        let model = registry.get_model("windows-sapi").unwrap();
+        assert_eq!(model.score, 0.0);
+        assert_eq!(model.rank, 0);
+    }
+
+    #[test]
+    fn test_registry_from_json_str_invalid_json_returns_empty() {
+        let registry = ModelRegistry::from_json_str("not valid json {{{{");
+        assert_eq!(registry.models.len(), 0);
     }
 }
 
