@@ -293,14 +293,175 @@ mod tests {
     #[test]
     fn test_comprehensive_validation() {
         let validator = RequestValidator::default();
-        
+
         let result = validator.validate_request(
             "yolov8n",
             &[json!({"image": "base64data"})],
             Some(5),
             Some(5000),
         );
-        
+
         assert!(result.is_ok());
+    }
+
+    // ── additional coverage ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_request_validator_new_constructor() {
+        let validator = RequestValidator::new(512, 20, 64);
+        // model name > 64 chars should fail
+        let long_name = "a".repeat(65);
+        assert!(validator.validate_model_name(&long_name).is_err());
+    }
+
+    #[test]
+    fn test_validate_model_name_too_long() {
+        let validator = RequestValidator::default();
+        let long_name = "a".repeat(257);
+        let err = validator.validate_model_name(&long_name).unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("too long") || msg.contains("Invalid model name"));
+    }
+
+    #[test]
+    fn test_validate_model_name_backslash_path_traversal() {
+        let validator = RequestValidator::default();
+        // Backslash path traversal – caught by the allowed_model_pattern regex
+        // (backslash is not in [a-zA-Z0-9_\-\.]) so this returns InvalidModelName
+        let result = validator.validate_model_name("model\\path");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_inputs_empty() {
+        let validator = RequestValidator::default();
+        let result = validator.validate_inputs(&[]);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("empty") || msg.contains("Invalid value"));
+    }
+
+    #[test]
+    fn test_validate_priority_none() {
+        let validator = RequestValidator::default();
+        assert!(validator.validate_priority(None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_timeout_none() {
+        let validator = RequestValidator::default();
+        assert!(validator.validate_timeout(None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_timeout_exact_boundaries() {
+        let validator = RequestValidator::default();
+        // Exactly at the lower and upper boundaries
+        assert!(validator.validate_timeout(Some(100)).is_ok());
+        assert!(validator.validate_timeout(Some(300_000)).is_ok());
+        // One below lower boundary
+        assert!(validator.validate_timeout(Some(99)).is_err());
+        // One above upper boundary
+        assert!(validator.validate_timeout(Some(300_001)).is_err());
+    }
+
+    #[test]
+    fn test_validate_request_propagates_model_error() {
+        let validator = RequestValidator::default();
+        let result = validator.validate_request(
+            "",
+            &[json!({"x": 1})],
+            None,
+            None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_request_propagates_input_error() {
+        let validator = RequestValidator::default();
+        let result = validator.validate_request(
+            "valid-model",
+            &[], // empty inputs
+            None,
+            None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_request_propagates_priority_error() {
+        let validator = RequestValidator::default();
+        let result = validator.validate_request(
+            "valid-model",
+            &[json!(1)],
+            Some(100), // out of range
+            None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_request_propagates_timeout_error() {
+        let validator = RequestValidator::default();
+        let result = validator.validate_request(
+            "valid-model",
+            &[json!(1)],
+            None,
+            Some(10), // too small
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_malicious_pattern_sql_drop_table() {
+        let validator = RequestValidator::default();
+        let input = vec![json!("'; DROP TABLE users; --")];
+        assert!(validator.validate_inputs(&input).is_err());
+    }
+
+    #[test]
+    fn test_malicious_pattern_javascript_uri() {
+        let validator = RequestValidator::default();
+        let input = vec![json!("javascript:alert(1)")];
+        assert!(validator.validate_inputs(&input).is_err());
+    }
+
+    #[test]
+    fn test_malicious_pattern_backtick_injection() {
+        let validator = RequestValidator::default();
+        let input = vec![json!("`whoami`")];
+        assert!(validator.validate_inputs(&input).is_err());
+    }
+
+    #[test]
+    fn test_malicious_pattern_pipe() {
+        let validator = RequestValidator::default();
+        let input = vec![json!("cat /etc/passwd | base64")];
+        assert!(validator.validate_inputs(&input).is_err());
+    }
+
+    #[test]
+    fn test_malicious_pattern_sql_comment() {
+        let validator = RequestValidator::default();
+        let input = vec![json!("SELECT * FROM users -- comment")];
+        assert!(validator.validate_inputs(&input).is_err());
+    }
+
+    #[test]
+    fn test_validation_error_type_display() {
+        // Ensure all Display/Error variants format without panicking
+        let variants: Vec<Box<dyn std::fmt::Display>> = vec![
+            Box::new(ValidationErrorType::InputTooLarge(100, 50)),
+            Box::new(ValidationErrorType::TooManyInputs(10, 5)),
+            Box::new(ValidationErrorType::InvalidModelName("bad".to_string())),
+            Box::new(ValidationErrorType::InvalidValue("v".to_string())),
+            Box::new(ValidationErrorType::MaliciousPattern("p".to_string())),
+            Box::new(ValidationErrorType::ValidationFailed("f".to_string())),
+        ];
+        for v in variants {
+            let s = format!("{}", v);
+            assert!(!s.is_empty());
+        }
     }
 }
