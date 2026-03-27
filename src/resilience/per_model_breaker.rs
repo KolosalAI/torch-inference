@@ -186,3 +186,304 @@ impl Default for CircuitBreakerRegistry {
         Self::new(CircuitBreakerConfig::default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    // ── CircuitBreakerConfig ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_config_default_values() {
+        let cfg = CircuitBreakerConfig::default();
+        assert_eq!(cfg.failure_threshold, 5);
+        assert_eq!(cfg.success_threshold, 2);
+        assert_eq!(cfg.timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 1,
+            timeout: Duration::from_secs(10),
+        };
+        let cloned = cfg.clone();
+        assert_eq!(cloned.failure_threshold, 3);
+        assert_eq!(cloned.success_threshold, 1);
+        assert_eq!(cloned.timeout, Duration::from_secs(10));
+    }
+
+    // ── CircuitBreakerError ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_error_open_display() {
+        let err: CircuitBreakerError<String> = CircuitBreakerError::Open;
+        assert_eq!(format!("{}", err), "Circuit breaker is open");
+    }
+
+    #[test]
+    fn test_error_inner_display() {
+        let err: CircuitBreakerError<String> = CircuitBreakerError::Inner("inner error".to_string());
+        assert_eq!(format!("{}", err), "inner error");
+    }
+
+    #[test]
+    fn test_error_debug() {
+        let err: CircuitBreakerError<String> = CircuitBreakerError::Open;
+        let s = format!("{:?}", err);
+        assert!(s.contains("Open"));
+    }
+
+    // ── CircuitState ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_circuit_state_equality() {
+        assert_eq!(CircuitState::Closed, CircuitState::Closed);
+        assert_eq!(CircuitState::Open, CircuitState::Open);
+        assert_eq!(CircuitState::HalfOpen, CircuitState::HalfOpen);
+        assert_ne!(CircuitState::Closed, CircuitState::Open);
+    }
+
+    #[test]
+    fn test_circuit_state_copy() {
+        let s = CircuitState::Closed;
+        let s2 = s; // Copy
+        assert_eq!(s, s2);
+    }
+
+    // ── CircuitBreaker ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_new_breaker_is_closed() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_call_success_stays_closed() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        let result = cb.call(async { Ok::<_, String>("ok") }).await;
+        assert!(result.is_ok());
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_call_failure_increments_count() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        // One failure – still closed
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_breaker_opens_after_threshold() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        for _ in 0..3 {
+            let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        }
+
+        assert_eq!(cb.get_state().await, CircuitState::Open);
+    }
+
+    #[tokio::test]
+    async fn test_open_breaker_rejects_calls() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        for _ in 0..2 {
+            let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        }
+
+        assert_eq!(cb.get_state().await, CircuitState::Open);
+
+        // Should immediately return CircuitBreakerError::Open without executing f
+        let result = cb.call(async { Ok::<(), String>(()) }).await;
+        match result {
+            Err(CircuitBreakerError::Open) => {}
+            other => panic!("Expected Open error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_open_transitions_to_half_open_after_timeout() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_millis(50),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        for _ in 0..2 {
+            let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        }
+        assert_eq!(cb.get_state().await, CircuitState::Open);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // First call after timeout should attempt execution (HalfOpen)
+        let _ = cb.call(async { Ok::<(), String>(()) }).await;
+        // After a success it may close or stay half-open; either way it is no longer Open
+        let state = cb.get_state().await;
+        assert_ne!(state, CircuitState::Open);
+    }
+
+    #[tokio::test]
+    async fn test_half_open_closes_after_enough_successes() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_millis(50),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        for _ in 0..2 {
+            let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        }
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Two successes should close the breaker
+        let _ = cb.call(async { Ok::<(), String>(()) }).await;
+        let _ = cb.call(async { Ok::<(), String>(()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_success_in_closed_resets_failure_count() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 1,
+            timeout: Duration::from_secs(60),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        // Two failures (below threshold)
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+
+        // A success should reset the failure counter
+        let _ = cb.call(async { Ok::<(), String>(()) }).await;
+
+        // Now we need 3 new failures to open
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Open);
+    }
+
+    #[tokio::test]
+    async fn test_inner_error_is_propagated() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        let result: Result<(), CircuitBreakerError<String>> =
+            cb.call(async { Err("my inner error".to_string()) }).await;
+        match result {
+            Err(CircuitBreakerError::Inner(msg)) => assert_eq!(msg, "my inner error"),
+            other => panic!("Expected Inner error, got {:?}", other),
+        }
+    }
+
+    // ── CircuitBreakerRegistry ────────────────────────────────────────────────
+
+    #[test]
+    fn test_registry_default() {
+        let _registry = CircuitBreakerRegistry::default();
+    }
+
+    #[test]
+    fn test_registry_get_or_create_returns_same_breaker() {
+        let registry = CircuitBreakerRegistry::new(CircuitBreakerConfig::default());
+        let b1 = registry.get_or_create("model-a");
+        let b2 = registry.get_or_create("model-a");
+        // Same Arc – pointer equality
+        assert!(Arc::ptr_eq(&b1, &b2));
+    }
+
+    #[test]
+    fn test_registry_different_keys_are_independent() {
+        let registry = CircuitBreakerRegistry::new(CircuitBreakerConfig::default());
+        let b1 = registry.get_or_create("model-a");
+        let b2 = registry.get_or_create("model-b");
+        assert!(!Arc::ptr_eq(&b1, &b2));
+    }
+
+    #[tokio::test]
+    async fn test_registry_get_all_states_empty() {
+        let registry = CircuitBreakerRegistry::new(CircuitBreakerConfig::default());
+        let states = registry.get_all_states().await;
+        assert!(states.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_registry_get_all_states_with_entries() {
+        let registry = CircuitBreakerRegistry::new(CircuitBreakerConfig::default());
+        registry.get_or_create("alpha");
+        registry.get_or_create("beta");
+
+        let states = registry.get_all_states().await;
+        assert_eq!(states.len(), 2);
+
+        let names: Vec<&str> = states.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+
+        for (_, state) in &states {
+            assert_eq!(*state, CircuitState::Closed);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_registry_state_reflects_breaker_state() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 2,
+            timeout: Duration::from_secs(60),
+        };
+        let registry = CircuitBreakerRegistry::new(cfg);
+        let breaker = registry.get_or_create("my-model");
+
+        // Open the breaker
+        let _ = breaker.call(async { Err::<(), String>("fail".to_string()) }).await;
+        let _ = breaker.call(async { Err::<(), String>("fail".to_string()) }).await;
+
+        let states = registry.get_all_states().await;
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].0, "my-model");
+        assert_eq!(states[0].1, CircuitState::Open);
+    }
+
+    #[tokio::test]
+    async fn test_registry_custom_config_is_applied() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 1,
+            success_threshold: 1,
+            timeout: Duration::from_secs(60),
+        };
+        let registry = CircuitBreakerRegistry::new(cfg);
+        let breaker = registry.get_or_create("fast-fail");
+
+        // Single failure should open the breaker
+        let _ = breaker.call(async { Err::<(), String>("fail".to_string()) }).await;
+        assert_eq!(breaker.get_state().await, CircuitState::Open);
+    }
+}

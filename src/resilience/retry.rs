@@ -246,4 +246,215 @@ mod tests {
         let delay = policy.calculate_delay(10);
         assert!(delay <= Duration::from_secs(5));
     }
+
+    // ── Additional coverage ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_default_policy_fields() {
+        let policy = RetryPolicy::default();
+        assert_eq!(policy.max_retries, 3);
+        assert_eq!(policy.base_delay, Duration::from_millis(100));
+        assert_eq!(policy.max_delay, Duration::from_secs(30));
+        assert_eq!(policy.multiplier, 2.0);
+        assert!(policy.jitter);
+    }
+
+    #[test]
+    fn test_new_overrides_max_retries() {
+        let policy = RetryPolicy::new(7);
+        assert_eq!(policy.max_retries, 7);
+        // Other fields come from Default
+        assert_eq!(policy.base_delay, Duration::from_millis(100));
+    }
+
+    #[test]
+    fn test_with_delays_constructor() {
+        let policy = RetryPolicy::with_delays(
+            5,
+            Duration::from_millis(50),
+            Duration::from_secs(10),
+        );
+        assert_eq!(policy.max_retries, 5);
+        assert_eq!(policy.base_delay, Duration::from_millis(50));
+        assert_eq!(policy.max_delay, Duration::from_secs(10));
+        // multiplier and jitter come from Default
+        assert_eq!(policy.multiplier, 2.0);
+        assert!(policy.jitter);
+    }
+
+    #[test]
+    fn test_delay_calculation_no_jitter_multiplier_one() {
+        // multiplier == 1.0 → every attempt has the same base delay
+        let policy = RetryPolicy {
+            max_retries: 5,
+            base_delay: Duration::from_millis(200),
+            max_delay: Duration::from_secs(10),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        assert_eq!(policy.calculate_delay(1), Duration::from_millis(200));
+        assert_eq!(policy.calculate_delay(3), Duration::from_millis(200));
+    }
+
+    #[test]
+    fn test_delay_with_jitter_is_in_reasonable_range() {
+        let policy = RetryPolicy {
+            max_retries: 3,
+            base_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(10),
+            multiplier: 2.0,
+            jitter: true,
+        };
+        // ±15 % around 100 ms → [85 ms, 115 ms]
+        for _ in 0..20 {
+            let d = policy.calculate_delay(1);
+            assert!(d <= Duration::from_millis(116), "jitter too high: {:?}", d);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_zero_retries_fails_immediately() {
+        // max_retries == 0: first failure returns the error with no sleep
+        let policy = RetryPolicy::new(0);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+
+        let result = policy
+            .execute(|| {
+                let c = calls2.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    Err::<i32, _>("fail")
+                }
+            })
+            .await;
+
+        assert_eq!(result, Err("fail"));
+        // Called exactly once (attempt 1 > max_retries 0 → return immediately)
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_success_on_last_allowed_retry() {
+        // Fails for max_retries attempts, succeeds on the final allowed retry
+        let policy = RetryPolicy {
+            max_retries: 3,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+
+        let result = policy
+            .execute(|| {
+                let c = calls2.clone();
+                async move {
+                    let n = c.fetch_add(1, Ordering::SeqCst);
+                    if n < 3 {
+                        Err("transient")
+                    } else {
+                        Ok(99)
+                    }
+                }
+            })
+            .await;
+
+        assert_eq!(result, Ok(99));
+        assert_eq!(calls.load(Ordering::SeqCst), 4); // initial + 3 retries
+    }
+
+    #[tokio::test]
+    async fn test_execute_if_retryable_error_exhausts_retries() {
+        let policy = RetryPolicy {
+            max_retries: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+
+        let result = policy
+            .execute_if(
+                || {
+                    let c = calls2.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Err::<i32, _>("retryable")
+                    }
+                },
+                |e| *e == "retryable",
+            )
+            .await;
+
+        assert_eq!(result, Err("retryable"));
+        // 1 initial attempt + 2 retries
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_execute_if_success_after_retryable_failures() {
+        let policy = RetryPolicy {
+            max_retries: 3,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(5),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+
+        let result = policy
+            .execute_if(
+                || {
+                    let c = calls2.clone();
+                    async move {
+                        let n = c.fetch_add(1, Ordering::SeqCst);
+                        if n < 2 { Err("retryable") } else { Ok(7) }
+                    }
+                },
+                |e| *e == "retryable",
+            )
+            .await;
+
+        assert_eq!(result, Ok(7));
+    }
+
+    #[tokio::test]
+    async fn test_execute_if_non_retryable_stops_immediately() {
+        let policy = RetryPolicy::new(5);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+
+        let result = policy
+            .execute_if(
+                || {
+                    let c = calls2.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Err::<i32, _>("permanent")
+                    }
+                },
+                |e| *e == "retryable",
+            )
+            .await;
+
+        assert_eq!(result, Err("permanent"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_execute_if_success_on_first_attempt() {
+        let policy = RetryPolicy::new(3);
+        let result = policy
+            .execute_if(
+                || async { Ok::<_, &str>(100) },
+                |_e| true,
+            )
+            .await;
+        assert_eq!(result, Ok(100));
+    }
 }
