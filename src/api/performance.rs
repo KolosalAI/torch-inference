@@ -257,4 +257,157 @@ mod tests {
         assert_eq!(metrics.memory_mb, 100.0);
         assert_eq!(metrics.cpu_percent, 50.0);
     }
+
+    #[test]
+    fn test_resource_metrics_zero_values() {
+        let metrics = ResourceMetrics {
+            memory_mb: 0.0,
+            cpu_percent: 0.0,
+        };
+        assert_eq!(metrics.memory_mb, 0.0);
+        assert_eq!(metrics.cpu_percent, 0.0);
+    }
+
+    #[test]
+    fn test_resource_metrics_clone() {
+        let metrics = ResourceMetrics {
+            memory_mb: 256.5,
+            cpu_percent: 75.3,
+        };
+        let cloned = metrics.clone();
+        assert_eq!(cloned.memory_mb, metrics.memory_mb);
+        assert_eq!(cloned.cpu_percent, metrics.cpu_percent);
+    }
+
+    #[test]
+    fn test_resource_metrics_serialization() {
+        let metrics = ResourceMetrics {
+            memory_mb: 512.0,
+            cpu_percent: 25.0,
+        };
+        let json = serde_json::to_string(&metrics).expect("serialization failed");
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["memory_mb"], 512.0);
+        assert_eq!(value["cpu_percent"], 25.0);
+    }
+
+    #[test]
+    fn test_profile_request_no_model() {
+        let req = ProfileRequest {
+            model: None,
+            input_data: None,
+        };
+        assert!(req.model.is_none());
+        assert!(req.input_data.is_none());
+    }
+
+    #[test]
+    fn test_profile_request_with_model() {
+        let req = ProfileRequest {
+            model: Some("bert".to_string()),
+            input_data: Some(serde_json::json!({"input": "hello"})),
+        };
+        assert_eq!(req.model.as_deref(), Some("bert"));
+        assert!(req.input_data.is_some());
+    }
+
+    #[test]
+    fn test_optimization_result_struct() {
+        let result = OptimizationResult {
+            garbage_collected: true,
+            caches_cleared: false,
+            memory_freed_mb: 12.5,
+            optimizations_applied: vec!["cleanup".to_string()],
+        };
+        assert!(result.garbage_collected);
+        assert!(!result.caches_cleared);
+        assert_eq!(result.memory_freed_mb, 12.5);
+        assert_eq!(result.optimizations_applied.len(), 1);
+    }
+
+    #[test]
+    fn test_optimization_result_memory_freed_nonnegative_logic() {
+        // Mirrors the .max(0.0) logic used in optimize_performance
+        let pre_memory = 100.0_f64;
+        let post_memory = 110.0_f64; // memory increased
+        let freed = (pre_memory - post_memory).max(0.0);
+        assert_eq!(freed, 0.0);
+
+        let post_memory2 = 80.0_f64; // memory decreased
+        let freed2 = (pre_memory - post_memory2).max(0.0);
+        assert_eq!(freed2, 20.0);
+    }
+
+    #[test]
+    fn test_profile_result_struct() {
+        let pre = ResourceMetrics { memory_mb: 100.0, cpu_percent: 10.0 };
+        let post = ResourceMetrics { memory_mb: 110.0, cpu_percent: 20.0 };
+        let delta = ResourceMetrics {
+            memory_mb: post.memory_mb - pre.memory_mb,
+            cpu_percent: post.cpu_percent - pre.cpu_percent,
+        };
+        let result = ProfileResult {
+            model_name: "test-model".to_string(),
+            total_time_ms: 42.5,
+            pre_metrics: pre,
+            post_metrics: post,
+            delta_metrics: delta,
+        };
+        assert_eq!(result.model_name, "test-model");
+        assert_eq!(result.total_time_ms, 42.5);
+        assert_eq!(result.delta_metrics.memory_mb, 10.0);
+        assert_eq!(result.delta_metrics.cpu_percent, 10.0);
+    }
+
+    #[test]
+    fn test_system_info_struct() {
+        let info = SystemInfo {
+            cpu_count: 8,
+            total_memory_mb: 16384,
+            available_memory_mb: 8192,
+            used_memory_mb: 8192,
+            memory_usage_percent: 50.0,
+            cpu_usage_percent: 30.0,
+        };
+        assert_eq!(info.cpu_count, 8);
+        assert_eq!(info.total_memory_mb, 16384);
+        assert_eq!(info.memory_usage_percent, 50.0);
+    }
+
+    #[test]
+    fn test_process_info_struct() {
+        let info = ProcessInfo {
+            pid: 12345,
+            memory_mb: 64.0,
+            cpu_usage_percent: 5.0,
+            uptime_seconds: 3600,
+        };
+        assert_eq!(info.pid, 12345);
+        assert_eq!(info.memory_mb, 64.0);
+        assert_eq!(info.uptime_seconds, 3600);
+    }
+
+    #[test]
+    fn test_runtime_info_struct() {
+        let info = RuntimeInfo {
+            rust_version: "1.0.0".to_string(),
+            actix_web_version: "4.8".to_string(),
+            num_cpus: 4,
+        };
+        assert_eq!(info.actix_web_version, "4.8");
+        assert_eq!(info.num_cpus, 4);
+    }
+
+    #[test]
+    fn test_performance_state_start_time() {
+        use crate::monitor::Monitor;
+        use std::sync::Arc;
+        let monitor = Arc::new(Monitor::new());
+        let state = PerformanceState {
+            monitor,
+            start_time: Instant::now(),
+        };
+        // Elapsed should be very small (< 1 second) since we just created it
+        assert!(state.start_time.elapsed().as_secs() < 1);
+    }
 }

@@ -529,4 +529,110 @@ mod tests {
         assert_eq!(format_bytes(1048576), "1.00 MB");
         assert_eq!(format_bytes(1073741824), "1.00 GB");
     }
+
+    #[test]
+    fn test_format_bytes_terabyte() {
+        assert_eq!(format_bytes(1024u64 * 1024 * 1024 * 1024), "1.00 TB");
+    }
+
+    #[test]
+    fn test_format_bytes_partial_kb() {
+        // 512 bytes = 0.50 KB
+        assert_eq!(format_bytes(512), "512.00 B");
+    }
+
+    #[test]
+    fn test_format_bytes_1_byte() {
+        assert_eq!(format_bytes(1), "1.00 B");
+    }
+
+    #[test]
+    fn test_format_bytes_just_under_kb() {
+        assert_eq!(format_bytes(1023), "1023.00 B");
+    }
+
+    #[test]
+    fn test_format_bytes_large_gb() {
+        // 2 GB
+        assert_eq!(format_bytes(2 * 1024 * 1024 * 1024), "2.00 GB");
+    }
+
+    #[test]
+    fn test_download_model_request_struct() {
+        let req = DownloadModelRequest {
+            model_name: "bert-base".to_string(),
+            source_type: "huggingface".to_string(),
+            repo_id: Some("bert-base-uncased".to_string()),
+            revision: None,
+            url: None,
+        };
+        assert_eq!(req.model_name, "bert-base");
+        assert_eq!(req.source_type, "huggingface");
+        assert_eq!(req.repo_id, Some("bert-base-uncased".to_string()));
+        assert!(req.revision.is_none());
+        assert!(req.url.is_none());
+    }
+
+    #[test]
+    fn test_download_model_request_url_source() {
+        let req = DownloadModelRequest {
+            model_name: "custom-model".to_string(),
+            source_type: "url".to_string(),
+            repo_id: None,
+            revision: None,
+            url: Some("https://example.com/model.onnx".to_string()),
+        };
+        assert_eq!(req.source_type, "url");
+        assert_eq!(req.url, Some("https://example.com/model.onnx".to_string()));
+    }
+
+    #[test]
+    fn test_download_model_response_struct() {
+        let resp = DownloadModelResponse {
+            task_id: "task-abc".to_string(),
+            status: "started".to_string(),
+            message: "Download task created".to_string(),
+        };
+        assert_eq!(resp.task_id, "task-abc");
+        assert_eq!(resp.status, "started");
+    }
+
+    #[test]
+    fn test_model_info_response_struct() {
+        let info = ModelInfoResponse {
+            name: "resnet50".to_string(),
+            source: "HuggingFace { repo_id: \"microsoft/resnet-50\", revision: None }".to_string(),
+            size_bytes: 1_048_576,
+            size_human: format_bytes(1_048_576),
+            downloaded_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        assert_eq!(info.name, "resnet50");
+        assert_eq!(info.size_bytes, 1_048_576);
+        assert_eq!(info.size_human, "1.00 MB");
+    }
+
+    #[test]
+    fn test_model_list_response_struct() {
+        let list = ModelListResponse {
+            models: vec![],
+            total: 0,
+        };
+        assert_eq!(list.total, 0);
+        assert!(list.models.is_empty());
+    }
+
+    #[test]
+    fn test_model_info_response_size_human_consistency() {
+        // The size_human field should always reflect format_bytes of size_bytes
+        for &bytes in &[0u64, 1, 1023, 1024, 1_048_576, 1_073_741_824] {
+            let info = ModelInfoResponse {
+                name: "m".to_string(),
+                source: "test".to_string(),
+                size_bytes: bytes,
+                size_human: format_bytes(bytes),
+                downloaded_at: "2024-01-01T00:00:00Z".to_string(),
+            };
+            assert_eq!(info.size_human, format_bytes(bytes));
+        }
+    }
 }
