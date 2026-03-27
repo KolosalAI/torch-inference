@@ -806,4 +806,380 @@ mod tests {
         assert_eq!(back["total"], 1);
         assert_eq!(back["models"][0]["name"], "m1");
     }
+
+    // ── list_sota_models / download_sota_model / list_available_models ─────────
+    //
+    // These handlers use `Path::new("model_registry.json")` (relative CWD).
+    // To avoid races between tests that change the CWD we protect all
+    // set_current_dir calls with a process-wide mutex.
+
+    use std::sync::Mutex as StdMutex;
+
+    static CWD_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn write_temp_registry(dir: &std::path::Path, content: &str) {
+        std::fs::write(dir.join("model_registry.json"), content).unwrap();
+    }
+
+    /// Run `f` with the working directory temporarily set to `dir`.
+    /// The CWD_LOCK is held for the whole duration so no other test can
+    /// interfere with the CWD.
+    async fn with_cwd<F, Fut, T>(dir: &std::path::Path, f: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        // Acquire the lock FIRST, then snapshot the CWD so no other test can
+        // change the directory between the snapshot and our own set_current_dir.
+        let _guard = CWD_LOCK.lock().unwrap();
+        let orig_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        let result = f().await;
+        std::env::set_current_dir(&orig_dir).unwrap();
+        result
+    }
+
+    // ── list_sota_models ──────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_list_sota_models_with_registry_image_classification() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "efficientnet-b0": {
+                    "name": "EfficientNet-B0",
+                    "architecture": "EfficientNet",
+                    "task": "Image Classification",
+                    "accuracy": "77.1%",
+                    "rank": 1,
+                    "size": "~20 MB",
+                    "url": "https://huggingface.co/google/efficientnet-b0",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                },
+                "resnet50": {
+                    "name": "ResNet-50",
+                    "architecture": "ResNet",
+                    "task": "Image Classification",
+                    "accuracy": "76.1%",
+                    "rank": 2,
+                    "size": "~100 MB",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available",
+                    "note": "classic baseline"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let result = with_cwd(dir.path(), list_sota_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_list_sota_models_registry_not_found_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        // No registry file — list_sota_models returns Ok with empty list
+        let result = with_cwd(dir.path(), list_sota_models).await;
+        assert!(result.is_ok());
+    }
+
+    #[actix_web::test]
+    async fn test_list_sota_models_no_image_classification_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "whisper-base": {
+                    "name": "Whisper Base",
+                    "architecture": "Transformer",
+                    "task": "automatic-speech-recognition",
+                    "size": "~140 MB",
+                    "url": "https://huggingface.co/openai/whisper-base",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let result = with_cwd(dir.path(), list_sota_models).await;
+        assert!(result.is_ok());
+    }
+
+    // ── download_sota_model error paths ───────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_download_sota_model_registry_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = make_download_state();
+        let model_id = web::Path::from("some-model".to_string());
+
+        let result = with_cwd(dir.path(), || download_sota_model(model_id, state)).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::NotFound(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_download_sota_model_model_not_in_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "resnet50": {
+                    "name": "ResNet-50",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "task": "Image Classification"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let state = make_download_state();
+        let model_id = web::Path::from("nonexistent-model".to_string());
+
+        let result = with_cwd(dir.path(), || download_sota_model(model_id, state)).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::NotFound(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_download_sota_model_builtin_returns_bad_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "windows-sapi": {
+                    "name": "Windows SAPI",
+                    "url": "Built-in",
+                    "task": "text-to-speech"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let state = make_download_state();
+        let model_id = web::Path::from("windows-sapi".to_string());
+
+        let result = with_cwd(dir.path(), || download_sota_model(model_id, state)).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_download_sota_model_huggingface_url_starts_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "efficientnet-b0": {
+                    "name": "EfficientNet-B0",
+                    "url": "https://huggingface.co/google/efficientnet-b0/resolve/main/model.onnx",
+                    "task": "Image Classification"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let state = make_download_state();
+        let model_id = web::Path::from("efficientnet-b0".to_string());
+
+        let result = with_cwd(dir.path(), || download_sota_model(model_id, state)).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_download_sota_model_plain_url_starts_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "custom-model": {
+                    "name": "Custom Model",
+                    "url": "https://example.com/model.onnx",
+                    "task": "image-classification"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let state = make_download_state();
+        let model_id = web::Path::from("custom-model".to_string());
+
+        let result = with_cwd(dir.path(), || download_sota_model(model_id, state)).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── list_available_models with registry ───────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_list_available_models_with_registry_returns_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "resnet50": {
+                    "name": "ResNet-50",
+                    "architecture": "ResNet",
+                    "task": "Image Classification",
+                    "accuracy": "76.1%",
+                    "rank": 1,
+                    "size": "~100 MB",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available"
+                },
+                "kokoro-tts": {
+                    "name": "Kokoro TTS",
+                    "architecture": "StyleTTS2",
+                    "voices": "Multiple",
+                    "quality": "High",
+                    "size": "~300 MB",
+                    "url": "https://huggingface.co/hexgrad/Kokoro-82M",
+                    "status": "Available"
+                },
+                "whisper-base": {
+                    "name": "Whisper Base",
+                    "architecture": "Transformer",
+                    "task": "automatic-speech-recognition",
+                    "size": "~140 MB",
+                    "url": "https://huggingface.co/openai/whisper-base",
+                    "status": "Available"
+                },
+                "clip-vit-base": {
+                    "name": "CLIP ViT Base",
+                    "architecture": "ViT",
+                    "task": "zero-shot-image-classification",
+                    "size": "~350 MB",
+                    "url": "https://huggingface.co/openai/clip-vit-base-patch32",
+                    "status": "Available"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_list_available_models_with_registry_note_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry_json = r#"{
+            "version": "1.0",
+            "updated": "2024-01-01",
+            "models": {
+                "resnet50": {
+                    "name": "ResNet-50",
+                    "architecture": "ResNet",
+                    "task": "Image Classification",
+                    "accuracy": "76.1%",
+                    "rank": 1,
+                    "size": "~100 MB",
+                    "url": "https://huggingface.co/microsoft/resnet-50",
+                    "dataset": "ImageNet-1K",
+                    "status": "Available",
+                    "note": "This is a test note"
+                }
+            }
+        }"#;
+        write_temp_registry(dir.path(), registry_json);
+
+        let result = with_cwd(dir.path(), list_available_models).await;
+        assert!(result.is_ok());
+    }
+
+    // ── download_model happy paths ────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_download_model_huggingface_starts_task() {
+        let state = make_download_state();
+        let req = web::Json(DownloadModelRequest {
+            model_name: "test-hf-model".to_string(),
+            source_type: "huggingface".to_string(),
+            repo_id: Some("bert-base-uncased".to_string()),
+            revision: None,
+            url: None,
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_download_model_url_starts_task() {
+        let state = make_download_state();
+        let req = web::Json(DownloadModelRequest {
+            model_name: "test-url-model".to_string(),
+            source_type: "url".to_string(),
+            repo_id: None,
+            revision: None,
+            url: Some("https://example.com/model.onnx".to_string()),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_download_model_huggingface_with_revision() {
+        let state = make_download_state();
+        let req = web::Json(DownloadModelRequest {
+            model_name: "test-hf-rev-model".to_string(),
+            source_type: "huggingface".to_string(),
+            repo_id: Some("bert-base-uncased".to_string()),
+            revision: Some("v1.0".to_string()),
+            url: None,
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+    }
+
+    // ── get_download_status happy path ────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_get_download_status_found() {
+        let state = make_download_state();
+
+        // Start a download to create a task
+        let req = web::Json(DownloadModelRequest {
+            model_name: "status-test-model".to_string(),
+            source_type: "url".to_string(),
+            repo_id: None,
+            revision: None,
+            url: Some("https://example.com/model.onnx".to_string()),
+        });
+        let download_result = download_model(req, state.clone()).await;
+        assert!(download_result.is_ok());
+
+        // Extract the task_id from the response body
+        let resp = download_result.unwrap();
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let task_id = body["task_id"].as_str().unwrap().to_string();
+
+        // Now query the status
+        let status_result = get_download_status(web::Path::from(task_id), state).await;
+        assert!(status_result.is_ok());
+        let status_resp = status_result.unwrap();
+        assert_eq!(status_resp.status(), actix_web::http::StatusCode::OK);
+    }
 }

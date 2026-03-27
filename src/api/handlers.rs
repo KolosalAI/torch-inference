@@ -735,4 +735,165 @@ mod tests {
         assert_eq!(resp_body["success"], false);
         assert!(resp_body["error"].is_string());
     }
+
+    // ── predict dedup cache-hit branch ────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_predict_dedup_cache_hit_returns_200() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+
+        // Pre-populate the cache using the same key the handler will generate.
+        let inputs = serde_json::json!({"data": [42]});
+        let model_name = "cached-model";
+        let cached_value = serde_json::json!({"output": "from_cache"});
+        let dedup_inner = deduplicator.get_ref();
+        let key = dedup_inner.generate_key(model_name, &inputs);
+        dedup_inner.set(key, cached_value.clone(), 60);
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": model_name,
+            "inputs": inputs,
+            "priority": 0,
+            "timeout": null
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_predict_dedup_cache_hit_body_shape() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+
+        let inputs = serde_json::json!({"text": "hello"});
+        let model_name = "dedup-model";
+        let cached_value = serde_json::json!({"result": "cached"});
+        let dedup_inner = deduplicator.get_ref();
+        let key = dedup_inner.generate_key(model_name, &inputs);
+        dedup_inner.set(key, cached_value.clone(), 60);
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .route("/predict", web::post().to(predict))
+        ).await;
+
+        let body = serde_json::json!({
+            "model_name": model_name,
+            "inputs": inputs,
+            "priority": 0,
+            "timeout": null
+        });
+
+        let req = test::TestRequest::post()
+            .uri("/predict")
+            .set_json(&body)
+            .to_request();
+        let resp_body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(resp_body["success"], true);
+        assert!(resp_body["error"].is_null());
+        // Cache hits report 0ms processing time and include model_info source field
+        assert_eq!(resp_body["processing_time"], 0.0);
+        assert_eq!(resp_body["model_info"]["source"], "deduplication_cache");
+    }
+
+    // ── configure_routes ─────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_configure_routes_registers_root() {
+        // configure_routes registers all routes; verify the "/" route works through it.
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let models = make_model_manager();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+        let config = make_config();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(models.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .app_data(config.clone())
+                .configure(configure_routes)
+        ).await;
+
+        let req = test::TestRequest::get().uri("/").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_configure_routes_health_endpoint() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let models = make_model_manager();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+        let config = make_config();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(models.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .app_data(config.clone())
+                .configure(configure_routes)
+        ).await;
+
+        let req = test::TestRequest::get().uri("/health").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_configure_routes_stats_endpoint() {
+        let monitor = make_monitor();
+        let engine = make_engine();
+        let models = make_model_manager();
+        let rate_limiter = make_rate_limiter();
+        let deduplicator = make_deduplicator();
+        let config = make_config();
+
+        let app = test::init_service(
+            App::new()
+                .app_data(monitor.clone())
+                .app_data(engine.clone())
+                .app_data(models.clone())
+                .app_data(rate_limiter.clone())
+                .app_data(deduplicator.clone())
+                .app_data(config.clone())
+                .configure(configure_routes)
+        ).await;
+
+        let req = test::TestRequest::get().uri("/stats").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
 }
