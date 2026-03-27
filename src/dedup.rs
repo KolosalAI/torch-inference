@@ -83,15 +83,15 @@ impl RequestDeduplicator {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
+        debug!("Deduplication entry set: {} (TTL: {}s)", key, ttl);
         self.cache.lock().put(
-            key.clone(),
+            key,
             DeduplicationEntry {
                 result: Arc::new(result),
                 timestamp: now,
                 ttl,
             },
         );
-        debug!("Deduplication entry set: {} (TTL: {}s)", key, ttl);
     }
 
     pub fn invalidate(&self, key: &str) {
