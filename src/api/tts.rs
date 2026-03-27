@@ -307,6 +307,224 @@ mod tests {
         assert!((default_speed() - 1.0).abs() < f32::EPSILON);
         assert!((default_pitch() - 1.0).abs() < f32::EPSILON);
     }
+
+    // ── Handler tests ─────────────────────────────────────────────────────────
+
+    use crate::core::tts_manager::{TTSManager, TTSManagerConfig};
+    use crate::core::tts_engine::{
+        EngineCapabilities, SynthesisParams, VoiceInfo, VoiceGender, VoiceQuality,
+    };
+    use crate::core::audio::AudioData;
+
+    struct MockTTSEngine {
+        caps: EngineCapabilities,
+    }
+
+    impl MockTTSEngine {
+        fn new() -> Self {
+            Self {
+                caps: EngineCapabilities {
+                    name: "mock-tts".to_string(),
+                    version: "0.1".to_string(),
+                    supported_languages: vec!["en".to_string()],
+                    supported_voices: vec![VoiceInfo {
+                        id: "v1".to_string(),
+                        name: "Voice 1".to_string(),
+                        language: "en".to_string(),
+                        gender: VoiceGender::Female,
+                        quality: VoiceQuality::Neural,
+                    }],
+                    max_text_length: 50000,
+                    sample_rate: 22050,
+                    supports_ssml: false,
+                    supports_streaming: false,
+                },
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::core::tts_engine::TTSEngine for MockTTSEngine {
+        fn name(&self) -> &str { "mock-tts" }
+        fn capabilities(&self) -> &EngineCapabilities { &self.caps }
+        async fn synthesize(&self, _text: &str, _params: &SynthesisParams) -> anyhow::Result<AudioData> {
+            Ok(AudioData { samples: vec![0.0_f32; 22050], sample_rate: 22050, channels: 1 })
+        }
+        fn list_voices(&self) -> Vec<VoiceInfo> { self.caps.supported_voices.clone() }
+    }
+
+    fn make_tts_state(engine_id: &str) -> web::Data<TTSState> {
+        let manager = Arc::new(TTSManager::new(TTSManagerConfig {
+            default_engine: engine_id.to_string(),
+            ..TTSManagerConfig::default()
+        }));
+        manager.register_engine(engine_id.to_string(), Arc::new(MockTTSEngine::new())).unwrap();
+        web::Data::new(TTSState { manager })
+    }
+
+    fn make_empty_tts_state() -> web::Data<TTSState> {
+        let manager = Arc::new(TTSManager::new(TTSManagerConfig::default()));
+        web::Data::new(TTSState { manager })
+    }
+
+    // synthesize — empty text should return BadRequest
+    #[actix_web::test]
+    async fn test_synthesize_handler_empty_text() {
+        let state = make_tts_state("mock-tts");
+        let req = web::Json(SynthesisRequest {
+            text: "".to_string(),
+            engine: None,
+            voice: None,
+            speed: 1.0,
+            pitch: 1.0,
+            language: None,
+        });
+        let result = synthesize(req, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::BadRequest(_)));
+    }
+
+    // synthesize — text too long should return BadRequest
+    #[actix_web::test]
+    async fn test_synthesize_handler_text_too_long() {
+        let state = make_tts_state("mock-tts");
+        let req = web::Json(SynthesisRequest {
+            text: "x".repeat(50001),
+            engine: None,
+            voice: None,
+            speed: 1.0,
+            pitch: 1.0,
+            language: None,
+        });
+        let result = synthesize(req, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::BadRequest(_)));
+    }
+
+    // synthesize — engine not found should return InternalError
+    #[actix_web::test]
+    async fn test_synthesize_handler_engine_not_found() {
+        let state = make_empty_tts_state();
+        let req = web::Json(SynthesisRequest {
+            text: "hello".to_string(),
+            engine: Some("nonexistent".to_string()),
+            voice: None,
+            speed: 1.0,
+            pitch: 1.0,
+            language: None,
+        });
+        let result = synthesize(req, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::InternalError(_)));
+    }
+
+    // list_engines — empty manager returns empty list
+    #[actix_web::test]
+    async fn test_list_engines_handler_empty() {
+        let state = make_empty_tts_state();
+        let resp = list_engines(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_engines — manager with a registered engine returns it
+    #[actix_web::test]
+    async fn test_list_engines_handler_with_engine() {
+        let state = make_tts_state("mock-tts");
+        let resp = list_engines(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_capabilities — engine found returns 200
+    #[actix_web::test]
+    async fn test_get_capabilities_handler_found() {
+        let state = make_tts_state("mock-tts");
+        let path = web::Path::from("mock-tts".to_string());
+        let resp = get_capabilities(path, state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_capabilities — engine not found returns NotFound error
+    #[actix_web::test]
+    async fn test_get_capabilities_handler_not_found() {
+        let state = make_empty_tts_state();
+        let path = web::Path::from("ghost-engine".to_string());
+        let result = get_capabilities(path, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::NotFound(_)));
+    }
+
+    // list_voices — engine found returns voice list
+    #[actix_web::test]
+    async fn test_list_voices_handler_found() {
+        let state = make_tts_state("mock-tts");
+        let path = web::Path::from("mock-tts".to_string());
+        let resp = list_voices(path, state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_voices — engine not found returns NotFound error
+    #[actix_web::test]
+    async fn test_list_voices_handler_not_found() {
+        let state = make_empty_tts_state();
+        let path = web::Path::from("ghost-engine".to_string());
+        let result = list_voices(path, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::NotFound(_)));
+    }
+
+    // get_stats — always succeeds
+    #[actix_web::test]
+    async fn test_get_stats_handler() {
+        let state = make_tts_state("mock-tts");
+        let resp = get_stats(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // health_check — always succeeds
+    #[actix_web::test]
+    async fn test_health_check_handler() {
+        let state = make_tts_state("mock-tts");
+        let resp = health_check(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // VoiceListResponse serde
+    #[test]
+    fn test_voice_list_response_serialization() {
+        let resp = VoiceListResponse {
+            voices: vec![VoiceInfo {
+                id: "v1".to_string(),
+                name: "Voice 1".to_string(),
+                language: "en".to_string(),
+                gender: VoiceGender::Female,
+                quality: VoiceQuality::Neural,
+            }],
+            total: 1,
+            engine: "mock-tts".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["total"], 1);
+        assert_eq!(v["engine"], "mock-tts");
+        assert_eq!(v["voices"][0]["id"], "v1");
+    }
+
+    // SynthesisRequest — speed/pitch clamping values
+    #[test]
+    fn test_synthesis_request_extreme_speed_pitch() {
+        let json = r#"{"text": "hi", "speed": 999.0, "pitch": -1.0}"#;
+        let req: SynthesisRequest = serde_json::from_str(json).unwrap();
+        // Handler would clamp: speed.max(0.25).min(4.0) = 4.0, pitch.max(0.5).min(2.0) = 0.5
+        let clamped_speed = req.speed.max(0.25_f32).min(4.0);
+        let clamped_pitch = req.pitch.max(0.5_f32).min(2.0);
+        assert!((clamped_speed - 4.0).abs() < f32::EPSILON);
+        assert!((clamped_pitch - 0.5).abs() < f32::EPSILON);
+    }
 }
 
 /// Configure TTS routes

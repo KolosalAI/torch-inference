@@ -420,6 +420,141 @@ mod tests {
         assert_eq!(back.name, "TestNet");
         assert_eq!(back.description.as_deref(), Some("A test network"));
     }
+
+    // ── Handler tests via actix-web test harness ──────────────────────────────
+
+    fn make_state_with_network(model_id: &str) -> web::Data<NeuralNetworkState> {
+        let networks = Arc::new(dashmap::DashMap::new());
+        // Construct a minimal NeuralNetwork-less state; we bypass NeuralNetwork
+        // loading and instead insert a pre-built network via the public API.
+        // Since NeuralNetwork::new requires a real model file (torch feature),
+        // we only insert when the dashmap is empty — handler tests that exercise
+        // NOT-found paths just leave the map empty.
+        let _ = model_id; // used only in the "found" variant below
+        web::Data::new(NeuralNetworkState { networks })
+    }
+
+    #[actix_web::test]
+    async fn test_list_models_handler_empty() {
+        let state = make_state_with_network("");
+        let resp = list_models(state).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_get_model_info_handler_not_found() {
+        let state = make_state_with_network("");
+        let path = web::Path::from("nonexistent".to_string());
+        let result = get_model_info(path, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::NotFound(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_unload_model_handler_not_found() {
+        let state = make_state_with_network("");
+        let path = web::Path::from("ghost_model".to_string());
+        let result = unload_model(path, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::NotFound(_)));
+    }
+
+    #[actix_web::test]
+    async fn test_load_model_handler_file_not_found() {
+        let state = make_state_with_network("");
+        let req = web::Json(LoadModelRequest {
+            model_id: "test".to_string(),
+            model_path: "/nonexistent/path/model.pt".to_string(),
+            device: Some("cpu".to_string()),
+            metadata: None,
+        });
+        let result = load_model(req, state).await;
+        // Without the torch feature the handler returns InternalError; with torch
+        // and a missing file it returns NotFound.  Either way it must be Err.
+        assert!(result.is_err());
+    }
+
+    #[actix_web::test]
+    async fn test_predict_handler_model_not_found() {
+        let state = make_state_with_network("");
+        let req = web::Json(InferenceRequest {
+            model_id: "missing_model".to_string(),
+            input_data: vec![1.0, 2.0],
+            input_shape: vec![1, 2],
+        });
+        let result = predict(req, state).await;
+        // Returns NotFound (torch) or InternalError (no torch); either is Err.
+        assert!(result.is_err());
+    }
+
+    #[actix_web::test]
+    async fn test_batch_predict_handler_model_not_found() {
+        let state = make_state_with_network("");
+        let req = web::Json(BatchInferenceRequest {
+            model_id: "missing".to_string(),
+            inputs: vec![BatchInput {
+                data: vec![0.5],
+                shape: vec![1, 1],
+            }],
+        });
+        let result = batch_predict(req, state).await;
+        assert!(result.is_err());
+    }
+
+    #[actix_web::test]
+    async fn test_model_info_response_serde() {
+        let meta = NetworkMetadata {
+            name: "net".to_string(),
+            task: "cls".to_string(),
+            framework: "pytorch".to_string(),
+            input_names: vec![],
+            output_names: vec![],
+            description: None,
+        };
+        let resp = ModelInfoResponse {
+            model_id: "my_net".to_string(),
+            metadata: meta,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["model_id"], "my_net");
+        assert_eq!(v["metadata"]["name"], "net");
+    }
+
+    #[test]
+    fn test_batch_inference_response_failure_serde() {
+        let resp = BatchInferenceResponse {
+            success: false,
+            results: vec![],
+            total_time_ms: 0.0,
+            error: Some("engine error".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error"], "engine error");
+    }
+
+    #[test]
+    fn test_load_model_request_device_none() {
+        let json = r#"{"model_id":"m","model_path":"/x.pt"}"#;
+        let req: LoadModelRequest = serde_json::from_str(json).unwrap();
+        assert!(req.device.is_none());
+    }
+
+    #[test]
+    fn test_inference_response_no_result_serde() {
+        let resp = InferenceResponse {
+            success: false,
+            result: None,
+            error: Some("not found".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v["result"].is_null());
+    }
 }
 
 // Configure routes

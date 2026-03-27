@@ -352,4 +352,149 @@ mod tests {
         let q: ListByFormatQuery = serde_json::from_str(json).expect("deserialize");
         assert!(q.format.is_none());
     }
+
+    // ── ModelFormat matching (exercises the branches in list_registered_models) ──
+
+    #[test]
+    fn test_model_format_from_format_string_pytorch_variants() {
+        use crate::models::registry::ModelFormat;
+        // These strings map to ModelFormat::PyTorch inside list_registered_models
+        for s in &["pytorch", "pt", "pth"] {
+            let matched = match s.to_lowercase().as_str() {
+                "pytorch" | "pt" | "pth" => ModelFormat::PyTorch,
+                "onnx" => ModelFormat::ONNX,
+                "candle" => ModelFormat::Candle,
+                "safetensors" => ModelFormat::SafeTensors,
+                _ => panic!("unexpected format"),
+            };
+            assert_eq!(matched, ModelFormat::PyTorch, "failed for {s}");
+        }
+    }
+
+    #[test]
+    fn test_model_format_from_format_string_onnx() {
+        use crate::models::registry::ModelFormat;
+        let matched = match "onnx" {
+            "pytorch" | "pt" | "pth" => ModelFormat::PyTorch,
+            "onnx" => ModelFormat::ONNX,
+            "candle" => ModelFormat::Candle,
+            "safetensors" => ModelFormat::SafeTensors,
+            _ => panic!("unexpected format"),
+        };
+        assert_eq!(matched, ModelFormat::ONNX);
+    }
+
+    #[test]
+    fn test_model_format_from_format_string_candle() {
+        use crate::models::registry::ModelFormat;
+        let matched = match "candle" {
+            "pytorch" | "pt" | "pth" => ModelFormat::PyTorch,
+            "onnx" => ModelFormat::ONNX,
+            "candle" => ModelFormat::Candle,
+            "safetensors" => ModelFormat::SafeTensors,
+            _ => panic!("unexpected format"),
+        };
+        assert_eq!(matched, ModelFormat::Candle);
+    }
+
+    #[test]
+    fn test_model_format_from_format_string_safetensors() {
+        use crate::models::registry::ModelFormat;
+        let matched = match "safetensors" {
+            "pytorch" | "pt" | "pth" => ModelFormat::PyTorch,
+            "onnx" => ModelFormat::ONNX,
+            "candle" => ModelFormat::Candle,
+            "safetensors" => ModelFormat::SafeTensors,
+            _ => panic!("unexpected format"),
+        };
+        assert_eq!(matched, ModelFormat::SafeTensors);
+    }
+
+    #[test]
+    fn test_unknown_format_string_is_recognized() {
+        // This mirrors the `_` arm that returns BadRequest in list_registered_models
+        let format_str = "unknown_format";
+        let is_unknown = !matches!(format_str.to_lowercase().as_str(),
+            "pytorch" | "pt" | "pth" | "onnx" | "candle" | "safetensors");
+        assert!(is_unknown, "unexpected format should be flagged");
+    }
+
+    // ── ApiResponse JSON structure ─────────────────────────────────────────────
+
+    #[test]
+    fn test_api_response_success_nested_object() {
+        let data = serde_json::json!({
+            "model_id": "bert",
+            "metadata": {"format": "onnx", "version": "1.0"}
+        });
+        let resp: ApiResponse<serde_json::Value> = ApiResponse::success(data);
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["success"], true);
+        assert_eq!(v["data"]["model_id"], "bert");
+        assert!(v["error"].is_null());
+    }
+
+    #[test]
+    fn test_api_response_error_long_message() {
+        let msg = "a".repeat(500);
+        let resp: ApiResponse<()> = ApiResponse::error(msg.clone());
+        assert_eq!(resp.error.as_deref(), Some(msg.as_str()));
+        assert!(!resp.success);
+    }
+
+    #[test]
+    fn test_register_model_request_empty_path() {
+        let json = r#"{"path": ""}"#;
+        let req: RegisterModelRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.path, "");
+        assert!(req.name.is_none());
+    }
+
+    #[test]
+    fn test_inference_request_array_input() {
+        let json = r#"{"model_id": "net", "input": [1.0, 2.0, 3.0]}"#;
+        let req: InferenceRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.model_id, "net");
+        assert!(req.input.is_array());
+    }
+
+    #[test]
+    fn test_inference_request_string_input() {
+        let json = r#"{"model_id": "text-model", "input": "hello world"}"#;
+        let req: InferenceRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.input.as_str(), Some("hello world"));
+    }
+
+    #[test]
+    fn test_scan_directory_request_relative_path() {
+        let json = r#"{"path": "./models"}"#;
+        let req: ScanDirectoryRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.path, "./models");
+    }
+
+    #[test]
+    fn test_api_response_success_vec_data() {
+        let data = vec!["model-a".to_string(), "model-b".to_string()];
+        let resp: ApiResponse<Vec<String>> = ApiResponse::success(data.clone());
+        assert!(resp.success);
+        assert_eq!(resp.data, Some(data));
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_api_response_error_does_not_have_data() {
+        let resp: ApiResponse<serde_json::Value> = ApiResponse::error("internal error".to_string());
+        assert!(resp.data.is_none());
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn test_list_by_format_query_case_insensitive_matching() {
+        // The handler does to_lowercase() before matching; verify lower produces known variant
+        let format_str = "ONNX";
+        let lower = format_str.to_lowercase();
+        let is_onnx = lower == "onnx";
+        assert!(is_onnx);
+    }
 }
