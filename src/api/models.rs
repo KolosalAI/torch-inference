@@ -328,7 +328,7 @@ async fn download_files_concurrent(
 ) -> anyhow::Result<()> {
     use futures::StreamExt;
 
-    futures::stream::iter(files)
+    let results: Vec<anyhow::Result<()>> = futures::stream::iter(files)
         .map(|(url, dest)| {
             let client = client.clone();
             async move {
@@ -336,18 +336,29 @@ async fn download_files_concurrent(
                 if let Some(parent) = dest.parent() {
                     if let Err(e) = tokio::fs::create_dir_all(parent).await {
                         log::warn!("  Failed to create directories for {:?}: {}", dest, e);
-                        return;
+                        return Err(anyhow::anyhow!("Failed to create directories for {:?}: {}", dest, e));
                     }
                 }
                 match download_file_streaming(&client, &url, &dest).await {
-                    Ok(()) => log::info!("  Downloaded {}", url),
-                    Err(e) => log::warn!("  Failed to download {}: {}", url, e),
+                    Ok(()) => {
+                        log::info!("  Downloaded {}", url);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        log::warn!("  Failed to download {}: {}", url, e);
+                        Err(e)
+                    }
                 }
             }
         })
         .buffer_unordered(8)
-        .collect::<Vec<_>>()
+        .collect()
         .await;
+
+    let failure_count = results.iter().filter(|r| r.is_err()).count();
+    if failure_count > 0 && failure_count == results.len() && !results.is_empty() {
+        log::warn!("All {} file downloads failed", failure_count);
+    }
 
     Ok(())
 }
@@ -387,6 +398,14 @@ async fn download_huggingface_repo(repo_id: &str, target_dir: &std::path::Path) 
             !path.ends_with(".txt") &&
             !path.contains("test") &&
             !path.contains("example")
+        })
+        .filter(|file_path| {
+            // Guard against path traversal
+            if file_path.contains("..") || std::path::Path::new(file_path.as_str()).is_absolute() {
+                log::warn!("Skipping suspicious path from HuggingFace API: {}", file_path);
+                return false;
+            }
+            true
         })
         .map(|file_path| {
             let url = format!(
@@ -437,32 +456,16 @@ mod tests {
     use wiremock::{MockServer, Mock, ResponseTemplate};
     use wiremock::matchers::{method, path};
 
-    /// Verify that download_huggingface_repo returns Ok immediately when the
-    /// HuggingFace API returns an empty file list (no files to download).
-    /// This is a structural test: it exercises the concurrent-download path
-    /// with zero tasks and confirms the function signature compiles correctly.
+    /// Verify that download_files_concurrent returns Ok(()) immediately when
+    /// given an empty file list (no files to download).
     #[tokio::test]
-    async fn test_download_huggingface_repo_empty_file_list() {
-        let server = MockServer::start().await;
-
-        // The function calls /api/models/<repo_id>/tree/main
-        Mock::given(method("GET"))
-            .and(path("/api/models/test-org/test-model/tree/main"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-            .mount(&server)
-            .await;
-
-        // We need to call the function but it uses a hard-coded huggingface.co URL.
-        // Instead, exercise via the internal helper with an empty vec to confirm
-        // the concurrent path compiles and short-circuits cleanly.
-        let dir = tempfile::tempdir().unwrap();
+    async fn test_download_files_concurrent_empty_vec() {
         let client = reqwest::Client::new();
         let files_to_download: Vec<(String, std::path::PathBuf)> = vec![];
 
         // Run the concurrent download with an empty set — must return Ok(())
-        let results = download_files_concurrent(&client, files_to_download).await;
-        assert!(results.is_ok(), "empty file list should return Ok");
-        let _ = server; // keep mock server alive
+        let result = download_files_concurrent(&client, files_to_download).await;
+        assert!(result.is_ok(), "empty file list should return Ok");
     }
 
     /// Verify that download_files_concurrent downloads all files concurrently
