@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::core::tts_manager::{TTSManager, TTSManagerStats};
-use crate::core::tts_engine::{SynthesisParams, EngineCapabilities, VoiceInfo};
+use crate::core::tts_engine::{SynthesisParams, VoiceInfo};
 use crate::core::audio::AudioProcessor;
 use crate::error::ApiError;
 
@@ -101,13 +101,15 @@ pub async fn synthesize(
         params
     ).await.map_err(|e| ApiError::InternalError(format!("Synthesis failed: {}", e)))?;
     
-    // Convert to WAV
-    let processor = AudioProcessor::new();
-    let wav_data = processor.save_wav(&audio)
+    // Convert to WAV — AudioProcessor is stateless; use Default to avoid a
+    // per-request heap allocation for the struct itself.
+    let wav_data = AudioProcessor::default()
+        .save_wav(&audio)
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
-    
-    // Encode to base64
-    let audio_base64 = base64::encode(&wav_data);
+
+    // Encode to base64 using the modern Engine API (base64 0.21+).
+    use base64::Engine as _;
+    let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&wav_data);
     let duration_secs = audio.samples.len() as f32 / audio.sample_rate as f32;
     
     let engine_used = if let Some(engine_id) = req.engine.as_deref() {
@@ -168,11 +170,10 @@ pub async fn list_voices(
     engine_id: web::Path<String>,
     state: web::Data<TTSState>,
 ) -> Result<HttpResponse, ApiError> {
-    let engine = state.manager.get_engine(&engine_id)
+    let voices = state.manager
+        .with_engine(&engine_id, |e| e.list_voices())
         .ok_or_else(|| ApiError::NotFound(format!("Engine '{}' not found", engine_id)))?;
-    
-    let voices = engine.list_voices();
-    
+
     Ok(HttpResponse::Ok().json(VoiceListResponse {
         total: voices.len(),
         voices,

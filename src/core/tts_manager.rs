@@ -119,20 +119,31 @@ impl TTSManager {
     pub fn get_engine(&self, id: &str) -> Option<Arc<dyn TTSEngine>> {
         self.engines.get(id).map(|e| e.clone())
     }
-    
+
+    /// Call a closure with a borrowed reference to an engine, avoiding an Arc
+    /// clone for callers that only need to invoke one synchronous method.
+    /// Do **not** use this when the result must be held across an `.await`
+    /// boundary — use `get_engine` in that case.
+    pub fn with_engine<F, R>(&self, id: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&dyn TTSEngine) -> R,
+    {
+        self.engines.get(id).map(|e| f(e.as_ref()))
+    }
+
     /// Get the default engine
     pub fn get_default_engine(&self) -> Option<Arc<dyn TTSEngine>> {
         self.get_engine(&self.config.default_engine)
     }
-    
+
     /// List all registered engines
     pub fn list_engines(&self) -> Vec<String> {
         self.engines.iter().map(|e| e.key().clone()).collect()
     }
-    
+
     /// Get engine capabilities
     pub fn get_capabilities(&self, engine_id: &str) -> Option<EngineCapabilities> {
-        self.get_engine(engine_id).map(|e| e.capabilities().clone())
+        self.with_engine(engine_id, |e| e.capabilities().clone())
     }
     
     /// Synthesize speech using a specific engine.
@@ -401,5 +412,52 @@ mod tests {
         let k_speed_a = TTSManager::synthesis_cache_key("Hello", "kokoro-onnx", &params);
         let k_speed_b = TTSManager::synthesis_cache_key("Hello", "kokoro-onnx", &params_fast);
         assert_ne!(k_speed_a, k_speed_b, "different speed must produce different keys");
+    }
+
+    #[test]
+    fn test_with_engine_calls_closure_and_returns_result() {
+        use std::sync::Arc;
+        use crate::core::tts_engine::{EngineCapabilities, VoiceInfo};
+
+        struct MockEngine;
+
+        #[async_trait::async_trait]
+        impl crate::core::tts_engine::TTSEngine for MockEngine {
+            fn name(&self) -> &str { "mock" }
+            fn capabilities(&self) -> &EngineCapabilities {
+                // Return a static reference via Box::leak — acceptable in tests
+                Box::leak(Box::new(EngineCapabilities {
+                    name: "mock".to_string(),
+                    version: "0.1".to_string(),
+                    supported_languages: vec!["en".to_string()],
+                    supported_voices: vec![],
+                    max_text_length: 1000,
+                    sample_rate: 24000,
+                    supports_ssml: false,
+                    supports_streaming: false,
+                }))
+            }
+            async fn synthesize(
+                &self,
+                _text: &str,
+                _params: &crate::core::tts_engine::SynthesisParams,
+            ) -> anyhow::Result<crate::core::audio::AudioData> {
+                anyhow::bail!("not implemented")
+            }
+            fn list_voices(&self) -> Vec<VoiceInfo> { vec![] }
+        }
+
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        manager.engines.insert("mock".to_string(), Arc::new(MockEngine));
+
+        let result: Option<String> = manager.with_engine("mock", |e| e.name().to_string());
+        assert_eq!(result, Some("mock".to_string()), "closure should fire and return engine name");
+    }
+
+    #[test]
+    fn test_with_engine_returns_none_for_unknown_engine() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        let result: Option<String> = manager.with_engine("nonexistent", |_e| "found".to_string());
+        assert!(result.is_none(), "with_engine must return None for an unknown engine id");
     }
 }
