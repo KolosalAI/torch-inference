@@ -191,7 +191,7 @@ pub async fn get_gpu_stats(
 
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    
+
     if bytes == 0 {
         return "0 B".to_string();
     }
@@ -205,4 +205,199 @@ fn format_bytes(bytes: u64) -> String {
     }
 
     format!("{:.2} {}", size, UNITS[unit_idx])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── format_bytes ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_bytes_zero() {
+        assert_eq!(format_bytes(0), "0 B");
+    }
+
+    #[test]
+    fn test_format_bytes_bytes() {
+        assert_eq!(format_bytes(512), "512.00 B");
+        assert_eq!(format_bytes(1), "1.00 B");
+        assert_eq!(format_bytes(1023), "1023.00 B");
+    }
+
+    #[test]
+    fn test_format_bytes_kilobytes() {
+        assert_eq!(format_bytes(1024), "1.00 KB");
+        assert_eq!(format_bytes(2048), "2.00 KB");
+        assert_eq!(format_bytes(1024 * 512), "512.00 KB");
+    }
+
+    #[test]
+    fn test_format_bytes_megabytes() {
+        let one_mb = 1024u64 * 1024;
+        assert_eq!(format_bytes(one_mb), "1.00 MB");
+        assert_eq!(format_bytes(one_mb * 10), "10.00 MB");
+    }
+
+    #[test]
+    fn test_format_bytes_gigabytes() {
+        let one_gb = 1024u64 * 1024 * 1024;
+        assert_eq!(format_bytes(one_gb), "1.00 GB");
+        assert_eq!(format_bytes(one_gb * 8), "8.00 GB");
+    }
+
+    #[test]
+    fn test_format_bytes_terabytes() {
+        let one_tb = 1024u64 * 1024 * 1024 * 1024;
+        assert_eq!(format_bytes(one_tb), "1.00 TB");
+    }
+
+    #[test]
+    fn test_format_bytes_large_tb() {
+        // Values larger than 1 TB should stay in TB (last unit)
+        let two_tb = 2u64 * 1024 * 1024 * 1024 * 1024;
+        assert_eq!(format_bytes(two_tb), "2.00 TB");
+    }
+
+    // ── struct construction ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_server_config_struct() {
+        let sc = ServerConfig {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            workers: 4,
+            max_connections: 1000,
+        };
+        assert_eq!(sc.host, "127.0.0.1");
+        assert_eq!(sc.port, 8080);
+        assert_eq!(sc.workers, 4);
+        assert_eq!(sc.max_connections, 1000);
+    }
+
+    #[test]
+    fn test_inference_config_struct() {
+        let ic = InferenceConfig {
+            default_batch_size: 1,
+            max_batch_size: 32,
+            timeout_secs: 30,
+            device: "cpu".to_string(),
+        };
+        assert_eq!(ic.default_batch_size, 1);
+        assert_eq!(ic.max_batch_size, 32);
+        assert_eq!(ic.timeout_secs, 30);
+        assert_eq!(ic.device, "cpu");
+    }
+
+    #[test]
+    fn test_cache_config_struct() {
+        let cc = CacheConfig {
+            enabled: true,
+            ttl_secs: 3600,
+            max_size_mb: 1024,
+        };
+        assert!(cc.enabled);
+        assert_eq!(cc.ttl_secs, 3600);
+        assert_eq!(cc.max_size_mb, 1024);
+    }
+
+    #[test]
+    fn test_feature_flags_struct() {
+        let ff = FeatureFlags {
+            cuda_enabled: false,
+            onnx_enabled: true,
+            torch_enabled: false,
+            audio_processing: true,
+            image_security: true,
+        };
+        assert!(!ff.cuda_enabled);
+        assert!(ff.onnx_enabled);
+        assert!(ff.audio_processing);
+        assert!(ff.image_security);
+    }
+
+    #[test]
+    fn test_runtime_details_struct() {
+        let rd = RuntimeDetails {
+            version: "1.2.3".to_string(),
+            build_date: "2026-03-27".to_string(),
+            rust_version: "1.75.0".to_string(),
+            uptime_secs: 42,
+        };
+        assert_eq!(rd.version, "1.2.3");
+        assert_eq!(rd.uptime_secs, 42);
+    }
+
+    #[test]
+    fn test_gpu_device_info_struct() {
+        let gd = GpuDeviceInfo {
+            id: 0,
+            name: "NVIDIA RTX 4090".to_string(),
+            total_memory: 1024 * 1024 * 1024 * 24,
+            total_memory_human: "24.00 GB".to_string(),
+            free_memory: 1024 * 1024 * 1024 * 20,
+            free_memory_human: "20.00 GB".to_string(),
+            utilization: Some(42),
+            temperature: Some(65),
+        };
+        assert_eq!(gd.id, 0);
+        assert_eq!(gd.name, "NVIDIA RTX 4090");
+        assert_eq!(gd.utilization, Some(42));
+        assert_eq!(gd.temperature, Some(65));
+    }
+
+    #[test]
+    fn test_gpu_info_details_no_devices() {
+        let gid = GpuInfoDetails {
+            available: false,
+            count: 0,
+            devices: vec![],
+        };
+        assert!(!gid.available);
+        assert_eq!(gid.count, 0);
+        assert!(gid.devices.is_empty());
+    }
+
+    #[test]
+    fn test_system_details_struct() {
+        let sd = SystemDetails {
+            os: "linux".to_string(),
+            arch: "x86_64".to_string(),
+            cpu_count: 8,
+            total_memory_bytes: 16 * 1024 * 1024 * 1024,
+            total_memory_human: "16.00 GB".to_string(),
+            hostname: Some("my-server".to_string()),
+        };
+        assert_eq!(sd.os, "linux");
+        assert_eq!(sd.cpu_count, 8);
+        assert_eq!(sd.hostname, Some("my-server".to_string()));
+    }
+
+    #[test]
+    fn test_config_response_serde() {
+        let cr = ConfigResponse {
+            server: ServerConfig {
+                host: "0.0.0.0".to_string(),
+                port: 8080,
+                workers: 2,
+                max_connections: 500,
+            },
+            inference: InferenceConfig {
+                default_batch_size: 1,
+                max_batch_size: 16,
+                timeout_secs: 60,
+                device: "cpu".to_string(),
+            },
+            cache: CacheConfig {
+                enabled: false,
+                ttl_secs: 0,
+                max_size_mb: 0,
+            },
+        };
+        let json = serde_json::to_string(&cr).expect("serialize failed");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse failed");
+        assert_eq!(v["server"]["port"], 8080);
+        assert_eq!(v["inference"]["device"], "cpu");
+        assert_eq!(v["cache"]["enabled"], false);
+    }
 }

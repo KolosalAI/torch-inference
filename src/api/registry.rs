@@ -247,3 +247,109 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/export", web::get().to(export_registry))
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ApiResponse ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_api_response_success_contains_data() {
+        let resp: ApiResponse<String> = ApiResponse::success("hello".to_string());
+        assert!(resp.success);
+        assert_eq!(resp.data, Some("hello".to_string()));
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_api_response_error_contains_message() {
+        let resp: ApiResponse<String> = ApiResponse::error("something went wrong".to_string());
+        assert!(!resp.success);
+        assert!(resp.data.is_none());
+        assert_eq!(resp.error, Some("something went wrong".to_string()));
+    }
+
+    #[test]
+    fn test_api_response_success_with_json_value() {
+        let data = serde_json::json!({"model_id": "abc", "status": "loaded"});
+        let resp: ApiResponse<serde_json::Value> = ApiResponse::success(data.clone());
+        assert!(resp.success);
+        assert_eq!(resp.data.unwrap(), data);
+    }
+
+    #[test]
+    fn test_api_response_error_with_unit_type() {
+        let resp: ApiResponse<()> = ApiResponse::error("not found".to_string());
+        assert!(!resp.success);
+        assert!(resp.data.is_none());
+        assert_eq!(resp.error.as_deref(), Some("not found"));
+    }
+
+    #[test]
+    fn test_api_response_success_serde() {
+        let resp: ApiResponse<u32> = ApiResponse::success(42u32);
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["success"], true);
+        assert_eq!(v["data"], 42);
+        assert!(v["error"].is_null());
+    }
+
+    #[test]
+    fn test_api_response_error_serde() {
+        let resp: ApiResponse<u32> = ApiResponse::error("oops".to_string());
+        let json = serde_json::to_string(&resp).expect("serialize");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(v["success"], false);
+        assert!(v["data"].is_null());
+        assert_eq!(v["error"], "oops");
+    }
+
+    // ── Request struct deserialization ────────────────────────────────────────
+
+    #[test]
+    fn test_register_model_request_deserialize_with_name() {
+        let json = r#"{"path": "/models/bert.pt", "name": "bert"}"#;
+        let req: RegisterModelRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.path, "/models/bert.pt");
+        assert_eq!(req.name, Some("bert".to_string()));
+    }
+
+    #[test]
+    fn test_register_model_request_deserialize_without_name() {
+        let json = r#"{"path": "/models/bert.onnx"}"#;
+        let req: RegisterModelRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.path, "/models/bert.onnx");
+        assert!(req.name.is_none());
+    }
+
+    #[test]
+    fn test_scan_directory_request_deserialize() {
+        let json = r#"{"path": "/models"}"#;
+        let req: ScanDirectoryRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.path, "/models");
+    }
+
+    #[test]
+    fn test_inference_request_deserialize() {
+        let json = r#"{"model_id": "bert-base", "input": {"tokens": [1, 2, 3]}}"#;
+        let req: InferenceRequest = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(req.model_id, "bert-base");
+        assert!(req.input.is_object());
+    }
+
+    #[test]
+    fn test_list_by_format_query_with_format() {
+        let json = r#"{"format": "onnx"}"#;
+        let q: ListByFormatQuery = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(q.format, Some("onnx".to_string()));
+    }
+
+    #[test]
+    fn test_list_by_format_query_without_format() {
+        let json = r#"{}"#;
+        let q: ListByFormatQuery = serde_json::from_str(json).expect("deserialize");
+        assert!(q.format.is_none());
+    }
+}

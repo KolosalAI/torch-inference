@@ -186,6 +186,130 @@ pub async fn health(
         uptime_seconds: health.uptime_seconds,
         checks,
     };
-    
+
     Ok(HttpResponse::Ok().json(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_health_check_struct_construction() {
+        let hc = HealthCheck {
+            status: "healthy".to_string(),
+            version: "1.0.0".to_string(),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            uptime_seconds: 3600,
+            checks: HashMap::new(),
+        };
+        assert_eq!(hc.status, "healthy");
+        assert_eq!(hc.version, "1.0.0");
+        assert_eq!(hc.uptime_seconds, 3600);
+        assert!(hc.checks.is_empty());
+    }
+
+    #[test]
+    fn test_component_health_with_message() {
+        let ch = ComponentHealth {
+            status: "up".to_string(),
+            message: Some("all good".to_string()),
+            latency_ms: 42,
+        };
+        assert_eq!(ch.status, "up");
+        assert_eq!(ch.message, Some("all good".to_string()));
+        assert_eq!(ch.latency_ms, 42);
+    }
+
+    #[test]
+    fn test_component_health_no_message() {
+        let ch = ComponentHealth {
+            status: "down".to_string(),
+            message: None,
+            latency_ms: 0,
+        };
+        assert_eq!(ch.status, "down");
+        assert!(ch.message.is_none());
+    }
+
+    #[test]
+    fn test_health_check_serde_roundtrip() {
+        let mut checks = HashMap::new();
+        checks.insert("db".to_string(), ComponentHealth {
+            status: "up".to_string(),
+            message: None,
+            latency_ms: 5,
+        });
+        let hc = HealthCheck {
+            status: "healthy".to_string(),
+            version: "2.0.0".to_string(),
+            timestamp: "2026-03-27T00:00:00Z".to_string(),
+            uptime_seconds: 100,
+            checks,
+        };
+        let json = serde_json::to_string(&hc).expect("serialization failed");
+        let deserialized: HealthCheck = serde_json::from_str(&json).expect("deserialization failed");
+        assert_eq!(deserialized.status, "healthy");
+        assert_eq!(deserialized.uptime_seconds, 100);
+        assert!(deserialized.checks.contains_key("db"));
+        assert_eq!(deserialized.checks["db"].status, "up");
+        assert_eq!(deserialized.checks["db"].latency_ms, 5);
+    }
+
+    #[test]
+    fn test_component_health_serde_roundtrip() {
+        let ch = ComponentHealth {
+            status: "degraded".to_string(),
+            message: Some("50% error rate".to_string()),
+            latency_ms: 1234,
+        };
+        let json = serde_json::to_string(&ch).expect("serialization failed");
+        let deserialized: ComponentHealth =
+            serde_json::from_str(&json).expect("deserialization failed");
+        assert_eq!(deserialized.status, "degraded");
+        assert_eq!(deserialized.message, Some("50% error rate".to_string()));
+        assert_eq!(deserialized.latency_ms, 1234);
+    }
+
+    #[test]
+    fn test_health_check_various_statuses() {
+        for status in &["healthy", "degraded", "unhealthy", "ready", "not_ready"] {
+            let hc = HealthCheck {
+                status: status.to_string(),
+                version: "1.0.0".to_string(),
+                timestamp: "2026-01-01T00:00:00Z".to_string(),
+                uptime_seconds: 0,
+                checks: HashMap::new(),
+            };
+            let json = serde_json::to_string(&hc).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed["status"], *status);
+        }
+    }
+
+    #[test]
+    fn test_health_check_multiple_component_checks() {
+        let mut checks = HashMap::new();
+        for (name, status) in &[
+            ("error_rate", "up"),
+            ("queue_depth", "degraded"),
+            ("response_time", "up"),
+        ] {
+            checks.insert(
+                name.to_string(),
+                ComponentHealth {
+                    status: status.to_string(),
+                    message: Some(format!("{} check", name)),
+                    latency_ms: 1,
+                },
+            );
+        }
+        // Not all are "up" — queue_depth is degraded
+        let all_up = checks.values().all(|c| c.status == "up");
+        assert!(!all_up);
+        // None are "down"
+        let any_down = checks.values().any(|c| c.status == "down");
+        assert!(!any_down);
+    }
 }

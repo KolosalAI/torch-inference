@@ -254,4 +254,48 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route("/logs/{log_file}", web::delete().to(crate::api::logging::clear_log_file));
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{test, App};
 
+    #[actix_web::test]
+    async fn test_root_returns_200() {
+        let app = test::init_service(App::new().route("/", web::get().to(root))).await;
+        let req = test::TestRequest::get().uri("/").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_root_response_body_contains_message() {
+        let app = test::init_service(App::new().route("/", web::get().to(root))).await;
+        let req = test::TestRequest::get().uri("/").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["message"], "PyTorch Inference Framework API");
+        assert_eq!(body["version"], "1.0.0");
+        assert_eq!(body["status"], "running");
+    }
+
+    #[actix_web::test]
+    async fn test_root_response_has_endpoints() {
+        let app = test::init_service(App::new().route("/", web::get().to(root))).await;
+        let req = test::TestRequest::get().uri("/").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["endpoints"].is_object());
+        assert_eq!(body["endpoints"]["health"], "/health");
+        assert_eq!(body["endpoints"]["inference"], "/predict");
+        assert_eq!(body["endpoints"]["models"], "/models");
+    }
+
+    #[actix_web::test]
+    async fn test_root_response_has_timestamp() {
+        let app = test::init_service(App::new().route("/", web::get().to(root))).await;
+        let req = test::TestRequest::get().uri("/").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert!(body["timestamp"].is_string());
+        let ts = body["timestamp"].as_str().unwrap();
+        // RFC3339 timestamps contain 'T' separating date and time
+        assert!(ts.contains('T'), "timestamp should be RFC3339 format");
+    }
+}
