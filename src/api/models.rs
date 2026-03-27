@@ -92,22 +92,27 @@ fn de_string_or_num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D:
 }
 
 impl ModelRegistry {
+    /// Return an empty registry with sensible zero-value metadata.
+    pub fn empty() -> Self {
+        Self {
+            version: "0.0".to_string(),
+            updated: String::new(),
+            models: HashMap::new(),
+        }
+    }
+
     /// Parse a registry from a JSON string. Returns an empty registry on parse error.
     pub fn from_json_str(s: &str) -> Self {
         serde_json::from_str(s).unwrap_or_else(|e| {
             log::warn!("Failed to parse model registry JSON: {}", e);
-            Self {
-                version: "0.0".to_string(),
-                updated: String::new(),
-                models: std::collections::HashMap::new(),
-            }
+            Self::empty()
         })
     }
 
     /// Load the registry from disk (path via MODEL_REGISTRY_PATH env var, default
     /// `model_registry.json`). Falls back to the file embedded at compile-time so
     /// the binary works without the file present at runtime.
-    fn load() -> Self {
+    pub fn load() -> Self {
         let path = std::env::var("MODEL_REGISTRY_PATH")
             .unwrap_or_else(|_| "model_registry.json".to_string());
 
@@ -463,6 +468,58 @@ mod tests {
 #[cfg(test)]
 mod registry_tests {
     use super::*;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn test_load_from_env_var_temp_file() {
+        let json = r#"{
+            "version": "2.0",
+            "updated": "2026-03-27T00:00:00Z",
+            "models": {
+                "env-model": {
+                    "name": "Env Model",
+                    "score": 99.0,
+                    "rank": 1,
+                    "size": "10 MB",
+                    "url": "https://example.com/env-model",
+                    "architecture": "Test",
+                    "voices": "1",
+                    "quality": "High",
+                    "status": "Available"
+                }
+            }
+        }"#;
+
+        let dir = tempfile::tempdir().unwrap();
+        let registry_path = dir.path().join("test_registry.json");
+        std::fs::write(&registry_path, json).unwrap();
+
+        std::env::set_var("MODEL_REGISTRY_PATH", registry_path.to_str().unwrap());
+        let registry = ModelRegistry::load();
+        std::env::remove_var("MODEL_REGISTRY_PATH");
+
+        assert!(
+            registry.get_model("env-model").is_some(),
+            "load() should read the registry from the env-var path"
+        );
+        assert_eq!(registry.get_model("env-model").unwrap().name, "Env Model");
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_falls_back_to_compiled_in_registry() {
+        // Make sure the env var points nowhere so load() falls back to include_str!
+        std::env::set_var("MODEL_REGISTRY_PATH", "/this/path/does/not/exist/registry.json");
+        let registry = ModelRegistry::load();
+        std::env::remove_var("MODEL_REGISTRY_PATH");
+
+        // The compiled-in model_registry.json should have at least one model.
+        assert!(
+            !registry.models.is_empty(),
+            "load() fallback to compiled-in registry should return non-empty models"
+        );
+    }
 
     #[test]
     fn test_registry_loads_from_json_str() {
