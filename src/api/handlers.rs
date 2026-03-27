@@ -63,15 +63,15 @@ pub async fn predict(
         return actix_web::error::ErrorTooManyRequests(e.message).error_response();
     }
 
-    // Check for duplicate request
+    // Check for duplicate request — cache returns Arc<Value>: O(1) clone, no data copy.
     let dedup_key = deduplicator.generate_key(&req.model_name, &req.inputs);
     if let Some(cached_result) = deduplicator.get(&dedup_key) {
         monitor.record_request_start(); // Record start to balance metrics
         monitor.record_request_end(0, "/predict", true); // 0ms latency for cache hit
-        
+
         return HttpResponse::Ok().json(InferenceResponse {
             success: true,
-            result: Some(cached_result),
+            result: Some((*cached_result).clone()),
             error: None,
             processing_time: Some(0.0),
             model_info: Some(serde_json::json!({"source": "deduplication_cache"})),
@@ -87,7 +87,7 @@ pub async fn predict(
             monitor.record_request_end(latency_ms, "/predict", true);
             
             // Cache result for deduplication (TTL 10s)
-            let _ = deduplicator.set(dedup_key, result.clone(), 10);
+            deduplicator.set(dedup_key, result.clone(), 10);
             
             HttpResponse::Ok().json(InferenceResponse {
                 success: true,
