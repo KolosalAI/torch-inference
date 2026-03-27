@@ -181,7 +181,7 @@ pub async fn list_downloaded_models() -> Result<HttpResponse> {
     })))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DownloadRequest {
     pub model_id: String,
 }
@@ -558,6 +558,467 @@ mod tests {
 
         let result = download_file_streaming(&client, &server.uri(), &dest).await;
         assert!(result.is_err(), "should error on 404");
+    }
+}
+
+#[cfg(test)]
+mod model_info_tests {
+    use super::*;
+
+    fn make_model_info(name: &str, rank: i32, status: &str) -> ModelInfo {
+        ModelInfo {
+            name: name.to_string(),
+            score: 80.0,
+            rank,
+            size: "100 MB".to_string(),
+            url: "https://example.com".to_string(),
+            architecture: "Transformer".to_string(),
+            voices: "2".to_string(),
+            quality: "High".to_string(),
+            status: status.to_string(),
+            note: None,
+            model_type: "tts".to_string(),
+            task: "text-to-speech".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_model_info_default_fields() {
+        let json = r#"{"name": "Minimal"}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.name, "Minimal");
+        assert!((info.score - 0.0).abs() < 1e-6);
+        assert_eq!(info.rank, 0);
+        assert_eq!(info.size, "");
+        assert_eq!(info.url, "");
+        assert_eq!(info.architecture, "");
+        assert_eq!(info.voices, "");
+        assert_eq!(info.quality, "");
+        assert_eq!(info.status, "");
+        assert!(info.note.is_none());
+        assert_eq!(info.model_type, "");
+        assert_eq!(info.task, "");
+    }
+
+    #[test]
+    fn test_model_info_full_construction() {
+        let m = make_model_info("MyModel", 3, "Available");
+        assert_eq!(m.name, "MyModel");
+        assert_eq!(m.rank, 3);
+        assert_eq!(m.status, "Available");
+        assert_eq!(m.model_type, "tts");
+    }
+
+    #[test]
+    fn test_model_info_serde_roundtrip() {
+        let m = make_model_info("RoundTrip", 2, "Downloaded");
+        let json = serde_json::to_string(&m).unwrap();
+        let back: ModelInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.name, "RoundTrip");
+        assert_eq!(back.rank, 2);
+        assert_eq!(back.status, "Downloaded");
+    }
+
+    #[test]
+    fn test_model_info_with_note() {
+        let json = r#"{
+            "name": "NoteModel",
+            "note": "https://config.example.com/config.json"
+        }"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.note, Some("https://config.example.com/config.json".to_string()));
+    }
+
+    #[test]
+    fn test_de_f32_or_str_numeric() {
+        let json = r#"{"name": "M", "score": 75.5}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert!((info.score - 75.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_de_f32_or_str_string_numeric() {
+        let json = r#"{"name": "M", "score": "88.0"}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert!((info.score - 88.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_de_f32_or_str_non_numeric_string_becomes_zero() {
+        let json = r#"{"name": "M", "score": "N/A"}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert!((info.score - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_de_i32_or_str_numeric() {
+        let json = r#"{"name": "M", "rank": 5}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.rank, 5);
+    }
+
+    #[test]
+    fn test_de_i32_or_str_string_numeric() {
+        let json = r#"{"name": "M", "rank": "10"}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.rank, 10);
+    }
+
+    #[test]
+    fn test_de_i32_or_str_non_numeric_string_becomes_zero() {
+        let json = r#"{"name": "M", "rank": "Production"}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.rank, 0);
+    }
+
+    #[test]
+    fn test_de_string_or_num_string() {
+        let json = r#"{"name": "M", "voices": "many"}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.voices, "many");
+    }
+
+    #[test]
+    fn test_de_string_or_num_integer() {
+        let json = r#"{"name": "M", "voices": 7}"#;
+        let info: ModelInfo = serde_json::from_str(json).unwrap();
+        assert_eq!(info.voices, "7");
+    }
+}
+
+#[cfg(test)]
+mod model_registry_unit_tests {
+    use super::*;
+
+    fn build_registry_json(models_json: &str) -> String {
+        format!(
+            r#"{{"version":"1.0","updated":"2026-01-01T00:00:00Z","models":{{{}}}}}"#,
+            models_json
+        )
+    }
+
+    fn model_entry(id: &str, name: &str, rank: i32, status: &str) -> String {
+        format!(
+            r#""{id}": {{"name":"{name}","score":70.0,"rank":{rank},"size":"50MB","url":"https://example.com","architecture":"T","voices":"1","quality":"High","status":"{status}","model_type":"tts","task":"tts"}}"#,
+            id = id,
+            name = name,
+            rank = rank,
+            status = status
+        )
+    }
+
+    #[test]
+    fn test_registry_empty_constructor() {
+        let reg = ModelRegistry::empty();
+        assert_eq!(reg.version, "0.0");
+        assert_eq!(reg.updated, "");
+        assert!(reg.models.is_empty());
+    }
+
+    #[test]
+    fn test_registry_from_json_str_invalid_returns_empty() {
+        let reg = ModelRegistry::from_json_str("not json at all");
+        assert_eq!(reg.version, "0.0");
+        assert!(reg.models.is_empty());
+    }
+
+    #[test]
+    fn test_registry_get_model_found() {
+        let json = build_registry_json(&model_entry("alpha", "Alpha", 1, "Available"));
+        let reg = ModelRegistry::from_json_str(&json);
+        let m = reg.get_model("alpha");
+        assert!(m.is_some());
+        assert_eq!(m.unwrap().name, "Alpha");
+    }
+
+    #[test]
+    fn test_registry_get_model_not_found_returns_none() {
+        let json = build_registry_json(&model_entry("alpha", "Alpha", 1, "Available"));
+        let reg = ModelRegistry::from_json_str(&json);
+        assert!(reg.get_model("does-not-exist").is_none());
+    }
+
+    #[test]
+    fn test_registry_list_models_sorted_by_rank() {
+        let entries = [
+            model_entry("m3", "Model3", 3, "Available"),
+            model_entry("m1", "Model1", 1, "Available"),
+            model_entry("m2", "Model2", 2, "Available"),
+        ]
+        .join(",");
+        let json = build_registry_json(&entries);
+        let reg = ModelRegistry::from_json_str(&json);
+        let list = reg.list_models();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].1.rank, 1);
+        assert_eq!(list[1].1.rank, 2);
+        assert_eq!(list[2].1.rank, 3);
+    }
+
+    #[test]
+    fn test_registry_list_models_empty() {
+        let reg = ModelRegistry::empty();
+        assert!(reg.list_models().is_empty());
+    }
+
+    #[test]
+    fn test_registry_get_downloaded_models_filters_correctly() {
+        let entries = [
+            model_entry("available-1", "Avail", 1, "Available"),
+            model_entry("downloaded-1", "Down", 2, "Downloaded"),
+            model_entry("active-1", "Active", 3, "Active"),
+        ]
+        .join(",");
+        let json = build_registry_json(&entries);
+        let reg = ModelRegistry::from_json_str(&json);
+        let downloaded = reg.get_downloaded_models();
+        assert_eq!(downloaded.len(), 2, "only Downloaded and Active should be returned");
+        let statuses: Vec<&str> = downloaded.iter().map(|(_, i)| i.status.as_str()).collect();
+        assert!(statuses.contains(&"Downloaded"));
+        assert!(statuses.contains(&"Active"));
+    }
+
+    #[test]
+    fn test_registry_get_downloaded_models_none_matching() {
+        let entries = model_entry("only-available", "OnlyAvail", 1, "Available");
+        let json = build_registry_json(&entries);
+        let reg = ModelRegistry::from_json_str(&json);
+        assert!(reg.get_downloaded_models().is_empty());
+    }
+
+    #[test]
+    fn test_registry_version_and_updated_fields() {
+        let json = r#"{"version":"3.1","updated":"2026-06-01T00:00:00Z","models":{}}"#;
+        let reg = ModelRegistry::from_json_str(json);
+        assert_eq!(reg.version, "3.1");
+        assert_eq!(reg.updated, "2026-06-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_registry_serde_roundtrip() {
+        let json = build_registry_json(&model_entry("rt-model", "RT", 1, "Available"));
+        let reg: ModelRegistry = serde_json::from_str(&json).unwrap();
+        let back_json = serde_json::to_string(&reg).unwrap();
+        let reg2: ModelRegistry = serde_json::from_str(&back_json).unwrap();
+        assert!(reg2.get_model("rt-model").is_some());
+    }
+}
+
+#[cfg(test)]
+mod api_endpoint_tests {
+    use super::*;
+    use actix_web::{test, web, App};
+
+    fn make_test_registry() -> ModelRegistry {
+        let json = r#"{
+            "version": "1.0",
+            "updated": "2026-01-01T00:00:00Z",
+            "models": {
+                "test-tts": {
+                    "name": "Test TTS",
+                    "score": 85.0,
+                    "rank": 1,
+                    "size": "120 MB",
+                    "url": "https://example.com/test-tts",
+                    "architecture": "Transformer",
+                    "voices": "3",
+                    "quality": "High",
+                    "status": "Downloaded",
+                    "model_type": "tts",
+                    "task": "text-to-speech"
+                },
+                "test-det": {
+                    "name": "Test Detection",
+                    "score": 72.0,
+                    "rank": 2,
+                    "size": "80 MB",
+                    "url": "https://example.com/test-det",
+                    "architecture": "CNN",
+                    "voices": "0",
+                    "quality": "Medium",
+                    "status": "Available",
+                    "model_type": "object-detection",
+                    "task": "detection"
+                }
+            }
+        }"#;
+        ModelRegistry::from_json_str(json)
+    }
+
+    /// Handler that returns the registry JSON directly (bypasses the global
+    /// singleton so tests are hermetic).
+    async fn list_models_handler(data: web::Data<ModelRegistry>) -> actix_web::Result<HttpResponse> {
+        Ok(HttpResponse::Ok().json(data.get_ref()))
+    }
+
+    async fn get_model_handler(
+        data: web::Data<ModelRegistry>,
+        path: web::Path<String>,
+    ) -> actix_web::Result<HttpResponse> {
+        let model_id = path.into_inner();
+        match data.get_model(&model_id) {
+            Some(m) => Ok(HttpResponse::Ok().json(m)),
+            None => Ok(HttpResponse::NotFound().json(serde_json::json!({
+                "error": "Model not found",
+                "model_id": model_id
+            }))),
+        }
+    }
+
+    async fn list_downloaded_handler(data: web::Data<ModelRegistry>) -> actix_web::Result<HttpResponse> {
+        let downloaded: HashMap<_, _> = data
+            .get_downloaded_models()
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "count": downloaded.len(),
+            "models": downloaded
+        })))
+    }
+
+    async fn get_comparison_handler(data: web::Data<ModelRegistry>) -> actix_web::Result<HttpResponse> {
+        let models = data.list_models();
+        let comparison: Vec<_> = models
+            .iter()
+            .map(|(id, info)| {
+                serde_json::json!({
+                    "id": id,
+                    "name": info.name,
+                    "score": info.score,
+                    "rank": info.rank,
+                    "size": info.size,
+                    "quality": info.quality,
+                    "status": info.status,
+                    "architecture": info.architecture
+                })
+            })
+            .collect();
+        Ok(HttpResponse::Ok().json(serde_json::json!({
+            "models": comparison,
+            "total_count": comparison.len()
+        })))
+    }
+
+    #[actix_web::test]
+    async fn test_list_models_endpoint_returns_200_with_models() {
+        let registry = make_test_registry();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route("/api/models", web::get().to(list_models_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/models").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body["models"].is_object());
+        assert!(body["models"]["test-tts"].is_object());
+    }
+
+    #[actix_web::test]
+    async fn test_get_model_endpoint_found() {
+        let registry = make_test_registry();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route("/api/models/{model_id}", web::get().to(get_model_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/models/test-tts").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["name"], "Test TTS");
+        assert_eq!(body["status"], "Downloaded");
+    }
+
+    #[actix_web::test]
+    async fn test_get_model_endpoint_not_found() {
+        let registry = make_test_registry();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route("/api/models/{model_id}", web::get().to(get_model_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/models/missing-model").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["error"], "Model not found");
+        assert_eq!(body["model_id"], "missing-model");
+    }
+
+    #[actix_web::test]
+    async fn test_list_downloaded_endpoint_returns_only_downloaded() {
+        let registry = make_test_registry();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route("/api/models/downloaded", web::get().to(list_downloaded_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/models/downloaded").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["count"], 1, "only one model has status=Downloaded");
+        assert!(body["models"]["test-tts"].is_object());
+        assert!(body["models"].get("test-det").is_none());
+    }
+
+    #[actix_web::test]
+    async fn test_get_comparison_endpoint_returns_sorted_list() {
+        let registry = make_test_registry();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(registry))
+                .route("/api/models/comparison", web::get().to(get_comparison_handler)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/models/comparison").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["total_count"], 2);
+        let models = body["models"].as_array().unwrap();
+        // Sorted by rank: test-tts (rank 1) should come before test-det (rank 2)
+        assert_eq!(models[0]["rank"], 1);
+        assert_eq!(models[1]["rank"], 2);
+    }
+
+    #[actix_web::test]
+    async fn test_download_endpoint_model_not_found() {
+        // Uses the global handler (which reads the global REGISTRY).
+        // We only test that the handler produces 404 for a nonexistent model_id.
+        let app = test::init_service(
+            App::new().route("/api/models/download", web::post().to(download_model)),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/api/models/download")
+            .set_json(DownloadRequest {
+                model_id: "absolutely-does-not-exist-xyz".to_string(),
+            })
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["error"], "Model not found");
     }
 }
 

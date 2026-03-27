@@ -517,7 +517,7 @@ mod tests {
     fn test_bbox_iou() {
         let bbox1 = BoundingBox { x1: 0.0, y1: 0.0, x2: 10.0, y2: 10.0 };
         let bbox2 = BoundingBox { x1: 5.0, y1: 5.0, x2: 15.0, y2: 15.0 };
-        
+
         let iou = bbox1.iou(&bbox2);
         assert!(iou > 0.0 && iou < 1.0);
     }
@@ -528,5 +528,416 @@ mod tests {
         assert_eq!(names.len(), 80);
         assert_eq!(names[0], "person");
         assert_eq!(names[79], "toothbrush");
+    }
+
+    // ─── YoloVersion ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_yolo_version_all_variants_from_str() {
+        // Case-insensitive aliases
+        assert_eq!(YoloVersion::from_str("yolov5"), Some(YoloVersion::V5));
+        assert_eq!(YoloVersion::from_str("V5"), Some(YoloVersion::V5));
+        assert_eq!(YoloVersion::from_str("v8"), Some(YoloVersion::V8));
+        assert_eq!(YoloVersion::from_str("yolov8"), Some(YoloVersion::V8));
+        assert_eq!(YoloVersion::from_str("v10"), Some(YoloVersion::V10));
+        assert_eq!(YoloVersion::from_str("yolov10"), Some(YoloVersion::V10));
+        assert_eq!(YoloVersion::from_str("v11"), Some(YoloVersion::V11));
+        assert_eq!(YoloVersion::from_str("yolov11"), Some(YoloVersion::V11));
+        assert_eq!(YoloVersion::from_str("yolo11"), Some(YoloVersion::V11));
+        assert_eq!(YoloVersion::from_str("v12"), Some(YoloVersion::V12));
+        assert_eq!(YoloVersion::from_str("yolov12"), Some(YoloVersion::V12));
+        assert_eq!(YoloVersion::from_str("yolo12"), Some(YoloVersion::V12));
+    }
+
+    #[test]
+    fn test_yolo_version_from_str_unknown_returns_none() {
+        assert_eq!(YoloVersion::from_str(""), None);
+        assert_eq!(YoloVersion::from_str("v99"), None);
+        assert_eq!(YoloVersion::from_str("yolov3"), None);
+        assert_eq!(YoloVersion::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_yolo_version_as_str() {
+        assert_eq!(YoloVersion::V5.as_str(), "YOLOv5");
+        assert_eq!(YoloVersion::V8.as_str(), "YOLOv8");
+        assert_eq!(YoloVersion::V10.as_str(), "YOLOv10");
+        assert_eq!(YoloVersion::V11.as_str(), "YOLOv11");
+        assert_eq!(YoloVersion::V12.as_str(), "YOLOv12");
+    }
+
+    #[test]
+    fn test_yolo_version_serde_roundtrip() {
+        let v = YoloVersion::V12;
+        let json = serde_json::to_string(&v).unwrap();
+        let back: YoloVersion = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, back);
+    }
+
+    #[test]
+    fn test_yolo_version_equality() {
+        assert_eq!(YoloVersion::V5, YoloVersion::V5);
+        assert_ne!(YoloVersion::V5, YoloVersion::V8);
+        assert_ne!(YoloVersion::V10, YoloVersion::V11);
+    }
+
+    // ─── YoloSize ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_yolo_size_suffix() {
+        assert_eq!(YoloSize::Nano.suffix(), "n");
+        assert_eq!(YoloSize::Small.suffix(), "s");
+        assert_eq!(YoloSize::Medium.suffix(), "m");
+        assert_eq!(YoloSize::Large.suffix(), "l");
+        assert_eq!(YoloSize::XLarge.suffix(), "x");
+    }
+
+    #[test]
+    fn test_yolo_size_from_suffix_all_variants() {
+        assert_eq!(YoloSize::from_suffix("n"), Some(YoloSize::Nano));
+        assert_eq!(YoloSize::from_suffix("s"), Some(YoloSize::Small));
+        assert_eq!(YoloSize::from_suffix("m"), Some(YoloSize::Medium));
+        assert_eq!(YoloSize::from_suffix("l"), Some(YoloSize::Large));
+        assert_eq!(YoloSize::from_suffix("x"), Some(YoloSize::XLarge));
+    }
+
+    #[test]
+    fn test_yolo_size_from_suffix_unknown_returns_none() {
+        assert_eq!(YoloSize::from_suffix(""), None);
+        assert_eq!(YoloSize::from_suffix("X"), None);
+        assert_eq!(YoloSize::from_suffix("xl"), None);
+        assert_eq!(YoloSize::from_suffix("nano"), None);
+    }
+
+    #[test]
+    fn test_yolo_size_serde_roundtrip() {
+        for size in [YoloSize::Nano, YoloSize::Small, YoloSize::Medium, YoloSize::Large, YoloSize::XLarge] {
+            let json = serde_json::to_string(&size).unwrap();
+            let back: YoloSize = serde_json::from_str(&json).unwrap();
+            assert_eq!(size, back);
+        }
+    }
+
+    #[test]
+    fn test_yolo_size_equality() {
+        assert_eq!(YoloSize::Nano, YoloSize::Nano);
+        assert_ne!(YoloSize::Nano, YoloSize::XLarge);
+    }
+
+    // ─── BoundingBox ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_bbox_dimensions() {
+        let bbox = BoundingBox { x1: 10.0, y1: 20.0, x2: 30.0, y2: 50.0 };
+        assert!((bbox.width() - 20.0).abs() < 1e-6);
+        assert!((bbox.height() - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_center() {
+        let bbox = BoundingBox { x1: 0.0, y1: 0.0, x2: 10.0, y2: 20.0 };
+        assert!((bbox.center_x() - 5.0).abs() < 1e-6);
+        assert!((bbox.center_y() - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_area() {
+        let bbox = BoundingBox { x1: 0.0, y1: 0.0, x2: 4.0, y2: 5.0 };
+        assert!((bbox.area() - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_area_zero_width() {
+        let bbox = BoundingBox { x1: 3.0, y1: 0.0, x2: 3.0, y2: 5.0 };
+        assert!((bbox.area() - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_iou_no_overlap() {
+        // Completely separate boxes should have IoU = 0
+        let bbox1 = BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let bbox2 = BoundingBox { x1: 2.0, y1: 2.0, x2: 3.0, y2: 3.0 };
+        assert!((bbox1.iou(&bbox2) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_iou_perfect_overlap() {
+        // Identical boxes should have IoU = 1
+        let bbox = BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert!((bbox.iou(&bbox) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_iou_partial_overlap() {
+        let bbox1 = BoundingBox { x1: 0.0, y1: 0.0, x2: 2.0, y2: 2.0 };
+        let bbox2 = BoundingBox { x1: 1.0, y1: 1.0, x2: 3.0, y2: 3.0 };
+        let iou = bbox1.iou(&bbox2);
+        // Intersection = 1x1 = 1; Union = 4 + 4 - 1 = 7
+        let expected = 1.0 / 7.0;
+        assert!((iou - expected).abs() < 1e-5, "Expected ~{:.4}, got {:.4}", expected, iou);
+    }
+
+    #[test]
+    fn test_bbox_iou_touching_edge_returns_zero() {
+        // Boxes that share only an edge have 0 area intersection
+        let bbox1 = BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let bbox2 = BoundingBox { x1: 1.0, y1: 0.0, x2: 2.0, y2: 1.0 };
+        assert!((bbox1.iou(&bbox2) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_bbox_serde_roundtrip() {
+        let bbox = BoundingBox { x1: 1.5, y1: 2.5, x2: 10.0, y2: 20.0 };
+        let json = serde_json::to_string(&bbox).unwrap();
+        let back: BoundingBox = serde_json::from_str(&json).unwrap();
+        assert!((bbox.x1 - back.x1).abs() < 1e-6);
+        assert!((bbox.y2 - back.y2).abs() < 1e-6);
+    }
+
+    // ─── Detection ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_detection_construction_and_serde() {
+        let det = Detection {
+            class_id: 0,
+            class_name: "person".to_string(),
+            confidence: 0.95,
+            bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 100.0, y2: 200.0 },
+        };
+        let json = serde_json::to_string(&det).unwrap();
+        let back: Detection = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.class_id, 0);
+        assert_eq!(back.class_name, "person");
+        assert!((back.confidence - 0.95).abs() < 1e-5);
+    }
+
+    // ─── YoloResults ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_yolo_results_serde_roundtrip() {
+        let results = YoloResults {
+            detections: vec![Detection {
+                class_id: 1,
+                class_name: "car".to_string(),
+                confidence: 0.8,
+                bbox: BoundingBox { x1: 10.0, y1: 10.0, x2: 50.0, y2: 50.0 },
+            }],
+            inference_time_ms: 12.5,
+            preprocessing_time_ms: 3.0,
+            postprocessing_time_ms: 1.5,
+            total_time_ms: 17.0,
+        };
+
+        let json = serde_json::to_string(&results).unwrap();
+        let back: YoloResults = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.detections.len(), 1);
+        assert_eq!(back.detections[0].class_name, "car");
+        assert!((back.inference_time_ms - 12.5).abs() < 1e-6);
+    }
+
+    // ─── YoloDetector::new (no-torch path) ──────────────────────────────────
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_yolo_detector_new_errors_without_torch() {
+        let result = YoloDetector::new(
+            std::path::Path::new("/nonexistent/model.pt"),
+            YoloVersion::V8,
+            YoloSize::Nano,
+            vec!["person".to_string()],
+            None,
+        );
+        assert!(result.is_err(), "new() should error when torch feature is disabled");
+        if let Err(e) = result {
+            let msg = format!("{}", e);
+            assert!(msg.contains("PyTorch") || msg.contains("torch"), "Error should mention torch: {}", msg);
+        }
+    }
+
+    // ─── NMS via YoloDetector helper ────────────────────────────────────────
+
+    fn make_detector() -> YoloDetector {
+        // Construct the struct directly to bypass model loading.
+        YoloDetector {
+            #[cfg(feature = "torch")]
+            model: unsafe { std::mem::zeroed() },
+            #[cfg(not(feature = "torch"))]
+            model: (),
+            #[cfg(feature = "torch")]
+            device: tch::Device::Cpu,
+            #[cfg(not(feature = "torch"))]
+            device: (),
+            version: YoloVersion::V8,
+            size: YoloSize::Nano,
+            class_names: load_coco_names(),
+            input_size: (640, 640),
+            conf_threshold: 0.25,
+            iou_threshold: 0.45,
+        }
+    }
+
+    #[test]
+    fn test_nms_empty_input_returns_empty() {
+        let detector = make_detector();
+        let result = detector.non_maximum_suppression(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_nms_single_detection_is_kept() {
+        let detector = make_detector();
+        let dets = vec![Detection {
+            class_id: 0,
+            class_name: "person".to_string(),
+            confidence: 0.9,
+            bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+        }];
+        let result = detector.non_maximum_suppression(dets);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_nms_suppresses_high_iou_same_class() {
+        let detector = make_detector();
+        // Two nearly identical boxes — lower confidence should be suppressed.
+        let dets = vec![
+            Detection {
+                class_id: 0,
+                class_name: "person".to_string(),
+                confidence: 0.9,
+                bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            },
+            Detection {
+                class_id: 0,
+                class_name: "person".to_string(),
+                confidence: 0.8,
+                bbox: BoundingBox { x1: 0.05, y1: 0.05, x2: 1.05, y2: 1.05 },
+            },
+        ];
+        let result = detector.non_maximum_suppression(dets);
+        assert_eq!(result.len(), 1, "high-IoU duplicate should be suppressed");
+        assert!((result[0].confidence - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_nms_keeps_different_class_same_location() {
+        let detector = make_detector();
+        // Same location but different class — both should be kept.
+        let dets = vec![
+            Detection {
+                class_id: 0,
+                class_name: "person".to_string(),
+                confidence: 0.9,
+                bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            },
+            Detection {
+                class_id: 1,
+                class_name: "bicycle".to_string(),
+                confidence: 0.85,
+                bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            },
+        ];
+        let result = detector.non_maximum_suppression(dets);
+        assert_eq!(result.len(), 2, "different classes at same location should both be kept");
+    }
+
+    #[test]
+    fn test_nms_keeps_non_overlapping_same_class() {
+        let detector = make_detector();
+        // Two boxes that do not overlap — both should survive NMS.
+        let dets = vec![
+            Detection {
+                class_id: 0,
+                class_name: "person".to_string(),
+                confidence: 0.9,
+                bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            },
+            Detection {
+                class_id: 0,
+                class_name: "person".to_string(),
+                confidence: 0.7,
+                bbox: BoundingBox { x1: 5.0, y1: 5.0, x2: 6.0, y2: 6.0 },
+            },
+        ];
+        let result = detector.non_maximum_suppression(dets);
+        assert_eq!(result.len(), 2, "non-overlapping boxes should both be kept");
+    }
+
+    #[test]
+    fn test_nms_output_sorted_by_confidence_descending() {
+        let detector = make_detector();
+        let dets = vec![
+            Detection {
+                class_id: 1,
+                class_name: "bicycle".to_string(),
+                confidence: 0.5,
+                bbox: BoundingBox { x1: 10.0, y1: 10.0, x2: 20.0, y2: 20.0 },
+            },
+            Detection {
+                class_id: 0,
+                class_name: "person".to_string(),
+                confidence: 0.95,
+                bbox: BoundingBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            },
+        ];
+        let result = detector.non_maximum_suppression(dets);
+        assert_eq!(result.len(), 2);
+        assert!(result[0].confidence >= result[1].confidence, "results should be sorted by confidence");
+    }
+
+    // ─── YoloDetector methods that do not require a model ───────────────────
+
+    #[test]
+    fn test_set_conf_threshold_clamps() {
+        let mut detector = make_detector();
+        detector.set_conf_threshold(1.5);
+        assert!((detector.conf_threshold - 1.0).abs() < 1e-6);
+        detector.set_conf_threshold(-0.5);
+        assert!((detector.conf_threshold - 0.0).abs() < 1e-6);
+        detector.set_conf_threshold(0.5);
+        assert!((detector.conf_threshold - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_set_iou_threshold_clamps() {
+        let mut detector = make_detector();
+        detector.set_iou_threshold(2.0);
+        assert!((detector.iou_threshold - 1.0).abs() < 1e-6);
+        detector.set_iou_threshold(-1.0);
+        assert!((detector.iou_threshold - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_set_input_size() {
+        let mut detector = make_detector();
+        detector.set_input_size(1280, 720);
+        assert_eq!(detector.input_size, (1280, 720));
+    }
+
+    #[test]
+    fn test_info_string_contains_expected_fields() {
+        let detector = make_detector();
+        let info = detector.info();
+        assert!(info.contains("YOLOv8"), "info should contain version");
+        assert!(info.contains("n"), "info should contain size suffix");
+        assert!(info.contains("80"), "info should contain class count");
+    }
+
+    // ─── load_coco_names ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_coco_names_all_strings_non_empty() {
+        let names = load_coco_names();
+        for name in &names {
+            assert!(!name.is_empty(), "COCO class name should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_coco_names_spot_checks() {
+        let names = load_coco_names();
+        assert_eq!(names[1], "bicycle");
+        assert_eq!(names[2], "car");
+        assert_eq!(names[15], "cat");
     }
 }
