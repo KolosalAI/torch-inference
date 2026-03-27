@@ -83,3 +83,154 @@ pub fn get_correlation_id(req: &actix_web::HttpRequest) -> CorrelationId {
         .cloned()
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{test as awtest, web, App, HttpResponse};
+
+    // ── CorrelationId unit tests ──────────────────────────────────────────────
+
+    #[::core::prelude::v1::test]
+    fn test_correlation_id_new_is_non_empty() {
+        let id = CorrelationId::new();
+        assert!(!id.as_str().is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_correlation_id_new_generates_unique_ids() {
+        let id1 = CorrelationId::new();
+        let id2 = CorrelationId::new();
+        assert_ne!(id1.as_str(), id2.as_str());
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_correlation_id_from_header_preserves_value() {
+        let raw = "my-custom-id-42";
+        let id = CorrelationId::from_header(raw);
+        assert_eq!(id.as_str(), raw);
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_correlation_id_from_header_empty_string() {
+        let id = CorrelationId::from_header("");
+        assert_eq!(id.as_str(), "");
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_correlation_id_clone() {
+        let id = CorrelationId::new();
+        let cloned = id.clone();
+        assert_eq!(id.as_str(), cloned.as_str());
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_correlation_id_default_is_non_empty() {
+        let id = CorrelationId::default();
+        assert!(!id.as_str().is_empty());
+    }
+
+    // ── get_correlation_id unit test ──────────────────────────────────────────
+
+    #[::core::prelude::v1::test]
+    fn test_get_correlation_id_returns_default_when_not_set() {
+        // Build a minimal HttpRequest without inserting a CorrelationId extension.
+        let req = awtest::TestRequest::get()
+            .uri("/")
+            .to_http_request();
+        // Should not panic and should return a freshly generated (non-empty) ID.
+        let id = get_correlation_id(&req);
+        assert!(!id.as_str().is_empty());
+    }
+
+    // ── Middleware integration tests ──────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_correlation_id_middleware_adds_header() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(CorrelationIdMiddleware)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let req = awtest::TestRequest::get().uri("/").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert!(
+            resp.headers().contains_key("x-correlation-id"),
+            "response must contain x-correlation-id header"
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_correlation_id_middleware_propagates_existing_header() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(CorrelationIdMiddleware)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let req = awtest::TestRequest::get()
+            .uri("/")
+            .insert_header(("X-Correlation-ID", "my-id-123"))
+            .to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        let header_val = resp
+            .headers()
+            .get("x-correlation-id")
+            .expect("x-correlation-id header missing")
+            .to_str()
+            .expect("header value is not valid UTF-8");
+
+        assert_eq!(header_val, "my-id-123");
+    }
+
+    #[actix_web::test]
+    async fn test_correlation_id_middleware_generates_new_id_when_absent() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(CorrelationIdMiddleware)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let req = awtest::TestRequest::get().uri("/").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        let header_val = resp
+            .headers()
+            .get("x-correlation-id")
+            .expect("x-correlation-id header missing")
+            .to_str()
+            .expect("header value is not valid UTF-8");
+
+        // The generated ID must be non-empty and must be a valid UUID v4.
+        assert!(!header_val.is_empty());
+        assert!(
+            uuid::Uuid::parse_str(header_val).is_ok(),
+            "auto-generated correlation id should be a valid UUID, got: {header_val}"
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_correlation_id_middleware_preserves_response_status() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(CorrelationIdMiddleware)
+                .route(
+                    "/created",
+                    web::post().to(|| async { HttpResponse::Created().finish() }),
+                ),
+        )
+        .await;
+
+        let req = awtest::TestRequest::post().uri("/created").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::CREATED);
+        assert!(resp.headers().contains_key("x-correlation-id"));
+    }
+}

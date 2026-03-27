@@ -105,3 +105,118 @@ where
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{test as awtest, web, App, HttpResponse};
+
+    // ── Middleware integration tests ──────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_request_logger_passes_through_200() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let req = awtest::TestRequest::get().uri("/").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_passes_through_404() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route(
+                    "/exists",
+                    web::get().to(|| async { HttpResponse::Ok().finish() }),
+                ),
+        )
+        .await;
+
+        // Call a path that has no registered route — actix returns 404.
+        let req = awtest::TestRequest::get().uri("/missing").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_post_method() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route(
+                    "/data",
+                    web::post().to(|| async { HttpResponse::Created().finish() }),
+                ),
+        )
+        .await;
+
+        let req = awtest::TestRequest::post().uri("/data").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::CREATED);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_delete_method() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route(
+                    "/item",
+                    web::delete().to(|| async { HttpResponse::NoContent().finish() }),
+                ),
+        )
+        .await;
+
+        let req = awtest::TestRequest::delete().uri("/item").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NO_CONTENT);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_with_correlation_id_header() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        )
+        .await;
+
+        let req = awtest::TestRequest::get()
+            .uri("/")
+            .insert_header(("X-Correlation-ID", "trace-abc-999"))
+            .to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_response_body_passes_through() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route(
+                    "/hello",
+                    web::get().to(|| async { HttpResponse::Ok().body("hello world") }),
+                ),
+        )
+        .await;
+
+        let req = awtest::TestRequest::get().uri("/hello").to_request();
+        let resp = awtest::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body = awtest::read_body(resp).await;
+        assert_eq!(body, "hello world");
+    }
+}
