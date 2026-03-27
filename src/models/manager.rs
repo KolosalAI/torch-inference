@@ -1588,4 +1588,102 @@ mod tests {
 
         assert!(result.is_err(), "scan_and_register should fail on unreadable directory");
     }
+
+    // ── load_onnx_model – empty device_ids list avoids ORT call ──────────────
+    // Setting device_ids = Some(vec![]) causes the Some branch (lines 173-174)
+    // to be taken, but the for loop body (line 181+, which calls ORT) never
+    // executes.  This exercises lines 173-174, 179, 189, 192-193, 195-196.
+
+    #[tokio::test]
+    async fn test_load_onnx_model_empty_device_ids_skips_ort() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty_devids.onnx");
+        std::fs::write(&path, b"onnx placeholder").unwrap();
+
+        let mut config = Config::default();
+        // Empty vec → Some branch is taken (line 173-174) but loop never executes
+        config.device.device_ids = Some(vec![]);
+        let manager = ModelManager::new(&config, None);
+
+        manager
+            .register_model_from_path(&path, Some("empty-devids-onnx".to_string()))
+            .await
+            .unwrap();
+
+        // With an empty device list the ONNX loader is never called, so this
+        // should succeed and the model should be marked as loaded in the registry.
+        let result = manager.load_onnx_model("empty-devids-onnx").await;
+        assert!(result.is_ok(), "load_onnx_model with empty device_ids should succeed: {:?}", result.err());
+
+        // Registry should reflect the model as loaded (lines 192-193 ran)
+        let stats = manager.get_registry_stats();
+        assert_eq!(stats["loaded_models"], 1, "model should be marked as loaded in registry");
+    }
+
+    // ── infer_onnx – model in loaded_onnx_models but empty vec (line 256-257) ─
+    // Re-confirm that inserting an empty vec triggers the "No model instances"
+    // error path at line 256-257 (different manager instance for isolation).
+
+    #[tokio::test]
+    async fn test_infer_onnx_empty_loaded_vec_no_ort() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("infer_empty.onnx");
+        std::fs::write(&path, b"placeholder").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, Some("infer-empty-onnx".to_string()))
+            .await
+            .unwrap();
+
+        // Simulate a state where the model was "loaded" but with no instances
+        manager.loaded_onnx_models.insert("infer-empty-onnx".to_string(), vec![]);
+
+        let result = manager
+            .infer_onnx("infer-empty-onnx", &serde_json::json!({"x": 0}))
+            .await;
+        assert!(result.is_err(), "empty loaded_onnx_models vec should fail");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("No model instances") || err.contains("loaded"),
+            "error should mention empty model instances: {}",
+            err
+        );
+    }
+
+    // ── initialize_default_models: auto-load ONNX with empty device_ids ──────
+    // With device_ids = Some(vec![]) the auto-load path for an ONNX model
+    // exercises lines 420-422 (get_model, format check, load call) and since
+    // load_onnx_model succeeds (no ORT call), the warn branch (line 423) is
+    // NOT taken.  Lines 420-422 are covered.
+
+    #[tokio::test]
+    async fn test_initialize_default_models_auto_load_onnx_empty_device_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let onnx_path = dir.path().join("autoload_edev.onnx");
+        std::fs::write(&onnx_path, b"onnx bytes").unwrap();
+
+        let mut config = Config::default();
+        // Use a separate temp dir for cache so no accidental scan conflicts
+        config.models.cache_dir = tempfile::tempdir().unwrap().into_path();
+        config.models.auto_load = vec!["autoload-edev".to_string()];
+        config.device.device_ids = Some(vec![]); // avoids ORT call
+
+        let manager = ModelManager::new(&config, None);
+        // Register so it appears in registry as ONNX format
+        manager
+            .register_model_from_path(&onnx_path, Some("autoload-edev".to_string()))
+            .await
+            .unwrap();
+
+        // initialize_default_models will try auto-loading "autoload-edev".
+        // It's not in legacy models → else branch → ONNX block →
+        // load_onnx_model("autoload-edev") succeeds with empty device_ids.
+        let result = manager.initialize_default_models().await;
+        assert!(result.is_ok(), "initialize_default_models should succeed: {:?}", result.err());
+
+        // Confirm the model was marked as loaded (loaded_models count increases)
+        let stats = manager.get_registry_stats();
+        assert_eq!(stats["loaded_models"], 1, "auto-loaded ONNX model should be marked loaded");
+    }
 }

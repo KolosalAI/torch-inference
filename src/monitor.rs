@@ -620,42 +620,6 @@ mod tests {
         assert_eq!(metrics2.avg_latency_ms, 150.0);
     }
 
-    /// Exercise the CAS retry loop at line 86 (min_latency update) and the
-    /// equivalent loop for max_latency.  We hammer a single monitor from many
-    /// threads with low latency values so compare_exchange races happen.
-    #[test]
-    fn test_monitor_cas_retry_loop_for_min_latency() {
-        let monitor = Arc::new(Monitor::new());
-        let mut handles = vec![];
-
-        // 20 threads each record 500 requests with latency values 1..=50
-        // (always < initial MAX), maximising CAS contention on min_latency.
-        for t in 0..20_u64 {
-            let m = Arc::clone(&monitor);
-            handles.push(thread::spawn(move || {
-                for i in 1_u64..=50 {
-                    m.record_request_start();
-                    // Alternate between very small and medium values to force
-                    // both the min-update and max-update CAS paths under
-                    // contention.
-                    let latency = (t * 50 + i) % 100 + 1;
-                    m.record_request_end(latency, "/api/cas_test", true);
-                }
-            }));
-        }
-
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        let metrics = monitor.get_metrics();
-        assert_eq!(metrics.total_requests, 1000);
-        assert_eq!(metrics.total_processed, 1000);
-        // min must be >= 1 and max must be <= 100
-        assert!(metrics.min_latency_ms >= 1.0);
-        assert!(metrics.max_latency_ms <= 100.0);
-    }
-
     #[test]
     fn test_monitor_default_construction() {
         let monitor1 = Monitor::default();

@@ -1252,4 +1252,117 @@ mod tests {
         let dbg = format!("{:?}", entry);
         assert!(dbg.contains("e1"));
     }
+
+    // ── Additional direct coverage for load_model_config (lines 178, 224-239) ─
+
+    /// Directly exercises load_model_config (line 178) and all internal lines
+    /// (224, 227, 230-231, 233-234, 236-237, 239) by registering a model that
+    /// has a companion JSON with every optional field populated.
+    #[tokio::test]
+    async fn test_load_model_config_all_fields_populated() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("all_fields.onnx");
+        std::fs::write(&model_path, b"onnx").unwrap();
+
+        // JSON with preprocessing, postprocessing, input_schema, output_schema all set.
+        let config = serde_json::json!({
+            "preprocessing": {
+                "image": {
+                    "resize": [224, 224],
+                    "to_tensor": true,
+                    "normalize": {"mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225]},
+                    "color_space": "RGB"
+                },
+                "audio": null,
+                "text": null,
+                "custom": null
+            },
+            "postprocessing": {
+                "output_type": "classification",
+                "threshold": 0.5,
+                "top_k": 5,
+                "custom": null
+            },
+            "input_schema": {"type": "array", "shape": [1, 3, 224, 224]},
+            "output_schema": {"type": "array", "shape": [1, 1000]}
+        });
+        std::fs::write(dir.path().join("all_fields.json"), config.to_string()).unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        // Line 178: load_model_config is called because .json companion exists.
+        let id = registry.register_from_path(&model_path, None).await.unwrap();
+        let meta = registry.get_model(&id).unwrap();
+
+        // Lines 230-231: preprocessing deserialized (Some).
+        assert!(meta.preprocessing.is_some());
+        let pre = meta.preprocessing.unwrap();
+        let img = pre.image.unwrap();
+        assert_eq!(img.resize, Some((224, 224)));
+        assert!(img.to_tensor);
+
+        // Lines 233-234: postprocessing deserialized (Some).
+        assert!(meta.postprocessing.is_some());
+        let post = meta.postprocessing.unwrap();
+        assert_eq!(post.threshold, Some(0.5));
+        assert_eq!(post.top_k, Some(5));
+
+        // Lines 236-237: schemas present.
+        assert!(meta.input_schema.is_some());
+        assert!(meta.output_schema.is_some());
+    }
+
+    /// Exercises load_model_config line 227: the JSON parse step.
+    /// Uses a minimal but valid JSON that is parseable.
+    #[tokio::test]
+    async fn test_load_model_config_minimal_valid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("minimal.onnx");
+        std::fs::write(&model_path, b"onnx").unwrap();
+
+        // Minimal JSON — only has output_schema; other keys absent.
+        let config = serde_json::json!({"output_schema": {"classes": 1000}});
+        std::fs::write(dir.path().join("minimal.json"), config.to_string()).unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let id = registry.register_from_path(&model_path, None).await.unwrap();
+        let meta = registry.get_model(&id).unwrap();
+
+        // preprocessing and postprocessing keys absent → None (lines 230-231, 233-234).
+        assert!(meta.preprocessing.is_none());
+        assert!(meta.postprocessing.is_none());
+        // output_schema present (line 237).
+        assert!(meta.output_schema.is_some());
+        // input_schema absent → None (line 236).
+        assert!(meta.input_schema.is_none());
+    }
+
+    /// Exercises scan_directory Err arm (lines 265-266) more directly:
+    /// a model whose companion JSON has a valid structure but postprocessing
+    /// field value that cannot be deserialized into PostprocessingConfig will
+    /// cause the and_then() at line 233-234 to return None (not Err), so the
+    /// registration succeeds with postprocessing=None.  To truly hit lines 265-266
+    /// we need register_from_path itself to return Err, which requires the JSON
+    /// to be syntactically invalid (causing serde_json::from_str to fail at line 227).
+    #[tokio::test]
+    async fn test_scan_directory_err_arm_via_broken_json_syntax() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Good model — registers fine.
+        std::fs::write(dir.path().join("good2.onnx"), b"good").unwrap();
+
+        // Model with a companion JSON that has invalid syntax.
+        std::fs::write(dir.path().join("bad2.onnx"), b"bad").unwrap();
+        // Invalid JSON triggers serde_json::from_str Err at line 227,
+        // causing load_model_config (line 224) to return Err via the `?`,
+        // which propagates from register_from_path (line 178),
+        // triggering scan_directory Err arm (lines 265-266).
+        std::fs::write(dir.path().join("bad2.json"), b"{{not json}}").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let registered = registry.scan_directory(dir.path()).await.unwrap();
+
+        // The broken model is skipped (warn! path), good one is registered.
+        assert!(registered.contains(&"good2".to_string()));
+        assert!(!registered.contains(&"bad2".to_string()));
+    }
 }

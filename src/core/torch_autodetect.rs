@@ -2032,4 +2032,125 @@ mod tests {
         // total_size is either the actual length or 0 — either is valid
         assert!(total_size == 0 || total_size > 0, "total_size should be a valid u64");
     }
+
+    // ===== Lines 447-456: auto_setup backend selection branches =====
+    //
+    // When no existing libtorch installation is found, auto_setup enters the
+    // backend-selection block (lines 447-456):
+    //   - line 447: if self.cuda_available     → Cuda branch (lines 448-449)
+    //   - line 450: else if self.metal_available → Metal branch (lines 451-452)
+    //   - line 453: else                        → Cpu branch  (lines 454-455)
+    //
+    // After selection, line 459 calls download_libtorch which will fail (no
+    // real network).  We use a broken HTTPS_PROXY so the network call fails
+    // immediately.  The backend-selection lines (447-456) execute regardless.
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_setup_cuda_branch_lines_447_449() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::any;
+
+        // Broken proxy so download_libtorch fails fast.
+        let mock_server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let old_libtorch = env::var("LIBTORCH").ok();
+        let old_https = env::var("HTTPS_PROXY").ok();
+        let old_https_lc = env::var("https_proxy").ok();
+
+        // Remove LIBTORCH so check_existing_installation() returns None.
+        env::remove_var("LIBTORCH");
+        env::set_var("HTTPS_PROXY", mock_server.uri());
+        env::set_var("https_proxy", mock_server.uri());
+
+        let mut detector = TorchLibAutoDetect::new();
+        // No real libtorch dir, so check_existing_installation returns None.
+        detector.libtorch_dir = std::path::PathBuf::from("/nonexistent/auto_setup_cuda_test");
+        // Set cuda_available = true to exercise lines 448-449.
+        detector.cuda_available = true;
+        detector.cuda_version = Some("12.1".to_string());
+
+        // auto_setup: detect_cuda/metal (Ok), check_existing = None,
+        // enters backend block (line 447), cuda_available=true → lines 448-449,
+        // then tries download_libtorch (line 459) which fails.
+        let result = detector.auto_setup().await;
+        // Expected: Err because download_libtorch fails (no network).
+        assert!(result.is_err(), "auto_setup should fail when download fails");
+
+        if let Some(v) = old_libtorch { env::set_var("LIBTORCH", v); } else { env::remove_var("LIBTORCH"); }
+        if let Some(v) = old_https { env::set_var("HTTPS_PROXY", v); } else { env::remove_var("HTTPS_PROXY"); }
+        if let Some(v) = old_https_lc { env::set_var("https_proxy", v); } else { env::remove_var("https_proxy"); }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_setup_metal_branch_lines_450_452() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::any;
+
+        let mock_server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let old_libtorch = env::var("LIBTORCH").ok();
+        let old_https = env::var("HTTPS_PROXY").ok();
+        let old_https_lc = env::var("https_proxy").ok();
+
+        env::remove_var("LIBTORCH");
+        env::set_var("HTTPS_PROXY", mock_server.uri());
+        env::set_var("https_proxy", mock_server.uri());
+
+        let mut detector = TorchLibAutoDetect::new();
+        detector.libtorch_dir = std::path::PathBuf::from("/nonexistent/auto_setup_metal_test");
+        // cuda not available, metal available → lines 450-452.
+        detector.cuda_available = false;
+        detector.metal_available = true;
+
+        let result = detector.auto_setup().await;
+        assert!(result.is_err(), "auto_setup should fail when download fails");
+
+        if let Some(v) = old_libtorch { env::set_var("LIBTORCH", v); } else { env::remove_var("LIBTORCH"); }
+        if let Some(v) = old_https { env::set_var("HTTPS_PROXY", v); } else { env::remove_var("HTTPS_PROXY"); }
+        if let Some(v) = old_https_lc { env::set_var("https_proxy", v); } else { env::remove_var("https_proxy"); }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_setup_cpu_branch_lines_454_455() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::any;
+
+        let mock_server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let old_libtorch = env::var("LIBTORCH").ok();
+        let old_https = env::var("HTTPS_PROXY").ok();
+        let old_https_lc = env::var("https_proxy").ok();
+
+        env::remove_var("LIBTORCH");
+        env::set_var("HTTPS_PROXY", mock_server.uri());
+        env::set_var("https_proxy", mock_server.uri());
+
+        let mut detector = TorchLibAutoDetect::new();
+        detector.libtorch_dir = std::path::PathBuf::from("/nonexistent/auto_setup_cpu_test");
+        // Neither cuda nor metal available → lines 453-455 (Cpu branch).
+        detector.cuda_available = false;
+        detector.metal_available = false;
+
+        let result = detector.auto_setup().await;
+        assert!(result.is_err(), "auto_setup should fail when download fails");
+
+        if let Some(v) = old_libtorch { env::set_var("LIBTORCH", v); } else { env::remove_var("LIBTORCH"); }
+        if let Some(v) = old_https { env::set_var("HTTPS_PROXY", v); } else { env::remove_var("HTTPS_PROXY"); }
+        if let Some(v) = old_https_lc { env::set_var("https_proxy", v); } else { env::remove_var("https_proxy"); }
+    }
 }

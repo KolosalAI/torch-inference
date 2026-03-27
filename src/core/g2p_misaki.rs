@@ -760,4 +760,123 @@ mod tests {
         assert!(!g2p.is_punctuation(".."));
         assert!(!g2p.is_punctuation("hi"));
     }
+
+    // ── letter_fallback: cover every uncovered match arm (lines 505-528) ──────
+    // Each test passes a word that is NOT in PRONUNCIATION_DICT so that
+    // letter_fallback is invoked.  The word is crafted so that it exercises
+    // only the specific match arms that were reported uncovered.
+
+    /// Lines 505 ('i') and 507 ('u'): vowel arms not hit by existing tests.
+    #[test]
+    fn test_letter_fallback_arms_i_u() {
+        let g2p = MisakiG2P::new().unwrap();
+        // "biufz" is not in the dict; letters i and u exercise lines 505, 507.
+        let tokens = g2p.letter_fallback("iu").unwrap();
+        // ɪ (U+026A) → token 102; ʌ (U+028C) → token 138
+        assert!(tokens.contains(&102), "expected ɪ (102) from 'i': {:?}", tokens);
+        assert!(tokens.contains(&138), "expected ʌ (138) from 'u': {:?}", tokens);
+    }
+
+    /// Lines 508 ('b') and 509 ('c'): consonant arms.
+    #[test]
+    fn test_letter_fallback_arms_b_c() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("bc").unwrap();
+        // b → token 44; c → k → token 53
+        assert!(tokens.contains(&44), "expected b (44) from 'b': {:?}", tokens);
+        assert!(tokens.contains(&53), "expected k (53) from 'c': {:?}", tokens);
+    }
+
+    /// Lines 511 ('f') and 512 ('g'): consonant arms.
+    #[test]
+    fn test_letter_fallback_arms_f_g() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("fg").unwrap();
+        // f → token 48; ɡ (U+0261) → token 92
+        assert!(tokens.contains(&48), "expected f (48) from 'f': {:?}", tokens);
+        assert!(tokens.contains(&92), "expected ɡ (92) from 'g': {:?}", tokens);
+    }
+
+    /// Lines 514 ('j') and 515 ('k'): consonant arms.
+    #[test]
+    fn test_letter_fallback_arms_j_k() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("jk").unwrap();
+        // ʤ (U+02A4) → token 82; k → token 53
+        assert!(tokens.contains(&82), "expected ʤ (82) from 'j': {:?}", tokens);
+        assert!(tokens.contains(&53), "expected k (53) from 'k': {:?}", tokens);
+    }
+
+    /// Line 517 ('m'): consonant arm.
+    #[test]
+    fn test_letter_fallback_arm_m() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("m").unwrap();
+        // m → token 55
+        assert!(tokens.contains(&55), "expected m (55) from 'm': {:?}", tokens);
+    }
+
+    /// Line 520 ('q'): consonant arm.
+    #[test]
+    fn test_letter_fallback_arm_q() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("q").unwrap();
+        // q → k → token 53
+        assert!(tokens.contains(&53), "expected k (53) from 'q': {:?}", tokens);
+    }
+
+    /// Lines 524 ('v') and 525 ('w'): consonant arms.
+    #[test]
+    fn test_letter_fallback_arms_v_w() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("vw").unwrap();
+        // v → token 64; w → token 65
+        assert!(tokens.contains(&64), "expected v (64) from 'v': {:?}", tokens);
+        assert!(tokens.contains(&65), "expected w (65) from 'w': {:?}", tokens);
+    }
+
+    /// Line 528 ('z'): consonant arm.
+    #[test]
+    fn test_letter_fallback_arm_z() {
+        let g2p = MisakiG2P::new().unwrap();
+        let tokens = g2p.letter_fallback("z").unwrap();
+        // z → token 68
+        assert!(tokens.contains(&68), "expected z (68) from 'z': {:?}", tokens);
+    }
+
+    /// Covers all uncovered letter_fallback arms in a single word not in the dict.
+    #[test]
+    fn test_letter_fallback_all_uncovered_arms_combined() {
+        let g2p = MisakiG2P::new().unwrap();
+        // Each letter exercises its specific match arm (lines 505-528).
+        // The string contains: i u b c f g j k m q v w z
+        let tokens = g2p.letter_fallback("iubcfgjkmqvwz").unwrap();
+        assert!(!tokens.is_empty(), "expected non-empty tokens: {:?}", tokens);
+    }
+
+    // ── Line 490: phoneme_string_to_tokens else branch ────────────────────────
+    // Reached when a character in the IPA string is NOT in PHONEME_VOCAB.
+    // We call the private method directly (accessible within the same module)
+    // with a string that contains the Unicode character U+FFFD (replacement
+    // character), which is not a Kokoro phoneme and thus not in the vocab.
+
+    /// Line 490: log::debug! fires when an IPA char is absent from the vocab.
+    #[test]
+    fn test_phoneme_string_to_tokens_missing_char_logs_and_skips() {
+        let g2p = MisakiG2P::new().unwrap();
+        // U+FFFD (REPLACEMENT CHARACTER) is guaranteed not to be in PHONEME_VOCAB.
+        // The else branch on line 490 should execute and the character is skipped.
+        let result = g2p.phoneme_string_to_tokens("\u{FFFD}").unwrap();
+        // The unknown character is skipped; result should be empty.
+        assert!(result.is_empty(), "expected no tokens for unknown phoneme char: {:?}", result);
+    }
+
+    /// Line 490: multiple unknown chars mixed with known ones — only known ones produce tokens.
+    #[test]
+    fn test_phoneme_string_to_tokens_mixed_known_unknown() {
+        let g2p = MisakiG2P::new().unwrap();
+        // 'h' (U+0068) → token 50; U+E000 (private use area) → not in vocab → skip
+        let result = g2p.phoneme_string_to_tokens("h\u{E000}").unwrap();
+        assert_eq!(result, vec![50], "expected only h(50) token: {:?}", result);
+    }
 }

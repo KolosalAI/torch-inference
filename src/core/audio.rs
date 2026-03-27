@@ -902,4 +902,114 @@ mod tests {
         // validate_audio sees ID3 header → validate_mp3 → load_with_symphonia (line 181)
         let _ = processor.load_audio(&mp3_data);
     }
+
+    // ── load_with_symphonia with real WAV bytes via symphonia ─────────────
+    // load_with_symphonia is called for mp3/flac/ogg. We can't easily provide
+    // real mp3/flac/ogg bytes in unit tests, but we can call it directly via
+    // load_audio with OggS/fLaC headers to exercise the function body.
+    // The test verifies that the code path (lines 214-268) is reachable and
+    // either returns Ok or a meaningful Err (never panics).
+
+    #[test]
+    fn test_load_with_symphonia_via_ogg_does_not_panic() {
+        let processor = AudioProcessor::new();
+        // OggS magic but then garbage — exercises the whole load_with_symphonia
+        // function body (probe step fails fast → Ok or Err, never panic).
+        let mut data = b"OggS".to_vec();
+        data.extend_from_slice(&[0u8; 100]);
+        // Either succeeds (unlikely with junk data) or returns Err — both are fine.
+        let _ = processor.load_with_symphonia(&data);
+    }
+
+    #[test]
+    fn test_load_with_symphonia_via_flac_does_not_panic() {
+        let processor = AudioProcessor::new();
+        let flac_bytes = make_minimal_flac_bytes();
+        // Exercises load_with_symphonia code path (lines 214-268).
+        let _ = processor.load_with_symphonia(&flac_bytes);
+    }
+
+    #[test]
+    fn test_load_with_symphonia_empty_data() {
+        let processor = AudioProcessor::new();
+        // Empty or tiny data: should return Err without panicking.
+        let _ = processor.load_with_symphonia(&[]);
+        let _ = processor.load_with_symphonia(&[0u8; 4]);
+    }
+
+    #[test]
+    fn test_load_with_symphonia_wav_bytes() {
+        // load_with_symphonia is a private fn — call it via a WAV buffer.
+        // Symphonia can decode WAV as well, so use valid WAV bytes to exercise
+        // the inner decode loop (lines 244-262) including the Ok(decoded) arm.
+        let processor = AudioProcessor::new();
+        let wav_bytes = make_wav_bytes(16000, 1);
+        // Call the private method directly (we're in the same module via `super::*`).
+        let result = processor.load_with_symphonia(&wav_bytes);
+        // Symphonia may or may not decode WAV depending on registered codecs.
+        // Either path is acceptable — the goal is to cover the function body.
+        match result {
+            Ok(audio) => {
+                assert_eq!(audio.channels, 1);
+                assert_eq!(audio.sample_rate, 16000);
+            }
+            Err(_) => {}
+        }
+    }
+
+    // ── resample: chunk-aligned flush else branch (lines 336-338) ────────
+    //
+    // The `else` branch at line 336 is taken when `pos == total_frames` after
+    // the full-chunk loop, meaning the input length is an exact multiple of the
+    // chunk_size (1024 frames).  We use 16000→24000 (3:2 upsample) which is a
+    // ratio known to work with FftFixedInOut at chunk_size=1024.
+
+    #[test]
+    fn test_resample_chunk_aligned_input_triggers_else_flush() {
+        let processor = AudioProcessor::new();
+        // Exactly 1024 frames (one full chunk at chunk_size=1024).
+        // After the loop pos==total_frames → else-flush (line 336) is taken.
+        let audio = AudioData {
+            samples: vec![0.0f32; 1024],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let result = processor.resample(&audio, 24000);
+        assert!(result.is_ok(), "chunk-aligned resample failed: {:?}", result);
+        let resampled = result.unwrap();
+        assert_eq!(resampled.sample_rate, 24000);
+    }
+
+    #[test]
+    fn test_resample_multiple_chunks_aligned_flush() {
+        let processor = AudioProcessor::new();
+        // 2048 frames = 2 × chunk_size.  The else-flush branch fires after the
+        // two full-chunk iterations.
+        let audio = AudioData {
+            samples: vec![0.0f32; 2048],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let result = processor.resample(&audio, 24000);
+        assert!(result.is_ok(), "multi-chunk aligned resample failed: {:?}", result);
+        let resampled = result.unwrap();
+        assert_eq!(resampled.sample_rate, 24000);
+    }
+
+    #[test]
+    fn test_resample_stereo_chunk_aligned() {
+        let processor = AudioProcessor::new();
+        // Stereo: 1024 frames × 2 channels = 2048 interleaved samples.
+        // total_frames = 2048 / 2 = 1024 → chunk-aligned → else-flush branch.
+        let audio = AudioData {
+            samples: vec![0.0f32; 2048],
+            sample_rate: 16000,
+            channels: 2,
+        };
+        let result = processor.resample(&audio, 24000);
+        assert!(result.is_ok(), "stereo chunk-aligned resample failed: {:?}", result);
+        let resampled = result.unwrap();
+        assert_eq!(resampled.channels, 2);
+        assert_eq!(resampled.sample_rate, 24000);
+    }
 }

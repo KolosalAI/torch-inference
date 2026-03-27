@@ -1,0 +1,36 @@
+{
+  "name": "torch-inference-api-tests",
+  "version": "1.0.0",
+  "description": "Jest integration tests for torch-inference server API endpoints",
+  "private": true,
+  "scripts": {
+    "test": "jest",
+    "test:ci": "jest --ci --reporters=default --reporters=./reporters/json-reporter.js",
+    "test:json": "jest --reporters=./reporters/json-reporter.js",
+    "test:coverage": "jest --coverage",
+    "test:health": "jest tests/health.test.js",
+    "test:tts": "jest tests/tts.test.js",
+    "test:audio": "jest tests/audio.test.js",
+    "test:models": "jest tests/models.test.js",
+    "test:registry": "jest tests/registry.test.js",
+    "test:inference": "jest tests/inference.test.js",
+    "test:image": "jest tests/image.test.js",
+    "test:system": "jest tests/system.test.js",
+    "test:performance": "jest tests/performance.test.js",
+    "test:logs": "jest tests/logs.test.js",
+    "test:nn": "jest tests/nn.test.js",
+    "test:classify": "jest tests/classify.test.js",
+    "test:yolo": "jest tests/yolo.test.js",
+    "test:api-models": "jest tests/api_models.test.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "form-data": "^4.0.1"
+  },
+  "devDependencies": {
+    "@jest/reporters": "^29.7.0",
+    "jest": "^29.7.0",
+    "jest-junit": "^16.0.0"
+  }
+}

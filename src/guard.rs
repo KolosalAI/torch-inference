@@ -1020,4 +1020,100 @@ mod tests {
     // on circuit_open_time across the if-let body, and reset_circuit_breaker
     // (called at line 327) tries to acquire a write lock on the same RwLock —
     // causing a deadlock.  This is a design limitation in the production code.
+
+    // ── check_request_rate coverage (lines 176-202) ───────────────────────────
+
+    /// Calling check_request_rate() once covers the basic path (lines 177-180, 202).
+    /// The elapsed time is < 1 s so the inner if-block is NOT entered.
+    #[tokio::test]
+    async fn test_check_request_rate_ok_within_window() {
+        let config = GuardConfig {
+            max_requests_per_second: 100,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // First call: increments counter, checks elapsed (< 1s), returns Ok
+        let result = guard.check_request_rate().await;
+        assert!(result.is_ok());
+        // Counter was incremented but NOT swapped yet (elapsed < 1s)
+        assert_eq!(guard.request_count.load(Ordering::Relaxed), 1);
+    }
+
+    /// If we set the window_start to > 1 second ago AND the accumulated count
+    /// is within the limit, the window resets and Ok is returned (lines 182-184, 186 false, 202).
+    #[tokio::test]
+    async fn test_check_request_rate_window_expired_count_within_limit() {
+        let config = GuardConfig {
+            max_requests_per_second: 100,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Pre-load the counter with a count that does NOT exceed the limit
+        guard.request_count.store(50, Ordering::Relaxed);
+
+        // Wind the window start back by 2 seconds so elapsed >= 1
+        {
+            let mut ws = guard.request_window_start.write().await;
+            *ws = Instant::now() - Duration::from_secs(2);
+        }
+
+        let result = guard.check_request_rate().await;
+        assert!(result.is_ok(), "50 req/s <= 100 req/s limit should be Ok");
+
+        // After the window reset the counter is swapped to 0 (line 183), then
+        // the single fetch_add at line 177 already happened before the swap.
+        // The swap returns the OLD value and sets count to 0.  No further
+        // fetch_add occurs after the swap, so count == 0 post-call.
+        assert_eq!(guard.request_count.load(Ordering::Relaxed), 0);
+    }
+
+    /// If we set the window_start to > 1 second ago AND the accumulated count
+    /// exceeds the limit, a violation is returned (lines 182-198).
+    #[tokio::test]
+    async fn test_check_request_rate_exceeds_limit_returns_violation() {
+        let config = GuardConfig {
+            max_requests_per_second: 10,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        // Pre-load the counter so that after the window-expiry swap it reads 500
+        // (swap returns the OLD value; the new fetch_add at line 177 adds 1 first,
+        // then the swap at line 183 reads that + whatever was pre-stored).
+        // We store 499 so fetch_add makes it 500, then swap reads 500 > 10.
+        guard.request_count.store(499, Ordering::Relaxed);
+
+        // Wind the window start back so elapsed >= 1
+        {
+            let mut ws = guard.request_window_start.write().await;
+            *ws = Instant::now() - Duration::from_secs(2);
+        }
+
+        let result = guard.check_request_rate().await;
+        assert!(result.is_err(), "500 req/s > 10 req/s limit should be an error");
+        let violation = result.unwrap_err();
+        assert_eq!(violation.guard_name, "request_rate");
+        assert_eq!(violation.severity, ViolationSeverity::High);
+        assert!(violation.value > 10.0);
+        assert!((violation.threshold - 10.0).abs() < 1e-6);
+    }
+
+    /// Multiple calls within a fresh window all return Ok; only the first call
+    /// that arrives after the 1-second window expires checks the rate.
+    #[tokio::test]
+    async fn test_check_request_rate_multiple_calls_within_window_all_ok() {
+        let config = GuardConfig {
+            max_requests_per_second: 1000,
+            ..Default::default()
+        };
+        let guard = SystemGuard::new(config);
+
+        for _ in 0..50 {
+            assert!(guard.check_request_rate().await.is_ok());
+        }
+        // All 50 increments land in the same window, none exceed 1000 req/s
+        assert_eq!(guard.request_count.load(Ordering::Relaxed), 50);
+    }
 }
