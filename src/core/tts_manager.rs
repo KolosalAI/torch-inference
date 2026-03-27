@@ -75,8 +75,8 @@ impl TTSManager {
                 + params.voice.as_deref().map_or(0, |s| s.len())
                 + params.language.as_deref().map_or(0, |s| s.len())
                 + 4   // field separators
-                + 8   // speed f32 bits
-                + 8,  // pitch f32 bits
+                + 4   // speed f32 bits (u32)
+                + 4,  // pitch f32 bits (u32)
         );
         buf.extend_from_slice(text.as_bytes());
         buf.push(0);
@@ -378,6 +378,11 @@ mod tests {
 
         assert_eq!(k1, TTSManager::synthesis_cache_key("Hello world", "kokoro-onnx", &params),
             "key must be deterministic");
+
+        // This value is computed by FNV-1a over the canonical buffer.
+        // If it ever changes, the synthesis cache is invalidated across deploys —
+        // update this constant intentionally, never accidentally.
+        assert_eq!(k1, 0xf7923ea9548525f4_u64, "hash must be stable across runs");
     }
 
     #[test]
