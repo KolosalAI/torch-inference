@@ -3,7 +3,33 @@
 use actix_web::{web, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::sync::OnceLock;
+
+// ─── Global singletons ───────────────────────────────────────────────────────
+
+/// The registry is built once and shared across all requests as a &'static
+/// reference.  This eliminates the ~50+ HashMap insertions that were previously
+/// executed on *every* API call.
+static REGISTRY: OnceLock<ModelRegistry> = OnceLock::new();
+
+fn get_registry() -> &'static ModelRegistry {
+    REGISTRY.get_or_init(ModelRegistry::build)
+}
+
+/// A single reqwest::Client with an internal connection pool, shared across
+/// all download operations.  Creating one per request discards the connection
+/// pool and forces a new TCP handshake on every download.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(8)
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .expect("Failed to build global HTTP client")
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -31,7 +57,8 @@ pub struct ModelRegistry {
 }
 
 impl ModelRegistry {
-    pub fn new() -> Self {
+    /// Build the registry.  Only called once via `get_registry()`.
+    fn build() -> Self {
         let mut models = HashMap::new();
         
         // Fish Speech v1.5
@@ -378,15 +405,14 @@ impl ModelRegistry {
 
 /// GET /api/models - List all models
 pub async fn list_models() -> Result<HttpResponse> {
-    let registry = ModelRegistry::new();
-    Ok(HttpResponse::Ok().json(registry))
+    Ok(HttpResponse::Ok().json(get_registry()))
 }
 
 /// GET /api/models/{model_id} - Get specific model info
 pub async fn get_model(path: web::Path<String>) -> Result<HttpResponse> {
     let model_id = path.into_inner();
-    let registry = ModelRegistry::new();
-    
+    let registry = get_registry();
+
     match registry.get_model(&model_id) {
         Some(model) => Ok(HttpResponse::Ok().json(model)),
         None => Ok(HttpResponse::NotFound().json(serde_json::json!({
@@ -398,12 +424,12 @@ pub async fn get_model(path: web::Path<String>) -> Result<HttpResponse> {
 
 /// GET /api/models/downloaded - List downloaded models
 pub async fn list_downloaded_models() -> Result<HttpResponse> {
-    let registry = ModelRegistry::new();
+    let registry = get_registry();
     let downloaded: HashMap<_, _> = registry.get_downloaded_models()
         .into_iter()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    
+
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "count": downloaded.len(),
         "models": downloaded
@@ -417,8 +443,8 @@ pub struct DownloadRequest {
 
 /// POST /api/models/download - Download a model
 pub async fn download_model(req: web::Json<DownloadRequest>) -> Result<HttpResponse> {
-    let registry = ModelRegistry::new();
-    
+    let registry = get_registry();
+
     match registry.get_model(&req.model_id) {
         Some(model) => {
             // Check if already downloaded
@@ -451,10 +477,35 @@ pub async fn download_model(req: web::Json<DownloadRequest>) -> Result<HttpRespo
     }
 }
 
+/// Download a single URL to disk using streaming, so the full file content
+/// is never held in memory. Memory usage is bounded to the I/O read buffer
+/// (~64 KB) regardless of file size.
+async fn download_file_streaming(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &std::path::Path,
+) -> anyhow::Result<()> {
+    use futures_util::TryStreamExt;
+    use tokio_util::io::StreamReader;
+
+    let response = client.get(url).send().await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "HTTP {} downloading {}",
+        response.status(),
+        url
+    );
+
+    let stream = response
+        .bytes_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+    let mut reader = StreamReader::new(stream);
+    let mut file = tokio::fs::File::create(dest).await?;
+    tokio::io::copy(&mut reader, &mut file).await?;
+    Ok(())
+}
+
 async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Result<()> {
-    use tokio::fs;
-    use tokio::io::AsyncWriteExt;
-    
     // Determine cache directory based on model type
     let model_type = if model.model_type.is_empty() {
         "tts"  // default to tts for backward compatibility
@@ -471,7 +522,7 @@ async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Resu
         _ => std::path::Path::new("models/other").join(model_id),
     };
     
-    fs::create_dir_all(&cache_dir).await?;
+    tokio::fs::create_dir_all(&cache_dir).await?;
     
     log::info!("Downloading {} ({}) from {}", model.name, model_type, model.url);
     
@@ -482,37 +533,22 @@ async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Resu
     
     // Check if URL is a direct file download (contains "resolve") or a repository
     if model.url.contains("resolve") {
-        // Direct file download
-        let client = reqwest::Client::new();
-        let response = client.get(&model.url).send().await?;
-        
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to download: HTTP {}", response.status());
-        }
-        
-        let extension = if model.url.ends_with(".pth") { "pth" } 
+        let extension = if model.url.ends_with(".pth") { "pth" }
                        else if model.url.ends_with(".onnx") { "onnx" }
                        else { "bin" };
-        
-        let filename = format!("model.{}", extension);
-        let filepath = cache_dir.join(&filename);
-        
-        let mut file = fs::File::create(&filepath).await?;
-        let bytes = response.bytes().await?;
-        file.write_all(&bytes).await?;
-        
-        log::info!("Downloaded {} ({} bytes) to {:?}", model.name, bytes.len(), filepath);
-        
-        // Download config if available  
+        let filepath = cache_dir.join(format!("model.{}", extension));
+        download_file_streaming(get_http_client(), &model.url, &filepath).await?;
+        log::info!("Downloaded {} to {:?}", model.name, filepath);
+
+        // Download config if available (small JSON — buffered path is fine)
         if let Some(config_url) = model.note.as_ref().and_then(|n| {
             if n.contains("http") { Some(n.as_str()) } else { None }
         }) {
-            let config_response = client.get(config_url).send().await?;
+            let config_response = get_http_client().get(config_url).send().await?;
             if config_response.status().is_success() {
                 let config_bytes = config_response.bytes().await?;
                 let config_path = cache_dir.join("config.json");
-                let mut config_file = fs::File::create(&config_path).await?;
-                config_file.write_all(&config_bytes).await?;
+                tokio::fs::write(&config_path, &config_bytes).await?;
                 log::info!("Downloaded config to {:?}", config_path);
             }
         }
@@ -537,9 +573,10 @@ async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Resu
 async fn download_huggingface_repo(repo_id: &str, target_dir: &std::path::Path) -> anyhow::Result<()> {
     use tokio::fs;
     use tokio::io::AsyncWriteExt;
-    
-    let client = reqwest::Client::new();
-    
+
+    // Reuse the global pooled client — avoids a new TCP handshake per repo file.
+    let client = get_http_client();
+
     // Get list of files in the repository
     let files_url = format!("https://huggingface.co/api/models/{}/tree/main", repo_id);
     
@@ -615,7 +652,7 @@ async fn download_huggingface_repo(repo_id: &str, target_dir: &std::path::Path) 
 
 /// GET /api/models/comparison - Get model comparison
 pub async fn get_model_comparison() -> Result<HttpResponse> {
-    let registry = ModelRegistry::new();
+    let registry = get_registry();
     let models = registry.list_models();
     
     let comparison: Vec<_> = models.iter()
@@ -637,6 +674,51 @@ pub async fn get_model_comparison() -> Result<HttpResponse> {
         "models": comparison,
         "total_count": comparison.len()
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::{MockServer, Mock, ResponseTemplate};
+    use wiremock::matchers::method;
+
+    #[tokio::test]
+    async fn test_download_file_streaming_writes_content() {
+        let server = MockServer::start().await;
+        let content = b"hello streaming world 1234567890";
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(content.as_slice()))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("model.bin");
+        let client = reqwest::Client::new();
+
+        download_file_streaming(&client, &server.uri(), &dest)
+            .await
+            .expect("streaming download should succeed");
+
+        assert_eq!(std::fs::read(&dest).unwrap(), content);
+    }
+
+    #[tokio::test]
+    async fn test_download_file_streaming_fails_on_http_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("missing.bin");
+        let client = reqwest::Client::new();
+
+        let result = download_file_streaming(&client, &server.uri(), &dest).await;
+        assert!(result.is_err(), "should error on 404");
+    }
 }
 
 // Configure routes

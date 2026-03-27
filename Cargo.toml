@@ -13,6 +13,7 @@ actix-files = "0.6"
 actix-multipart = "0.6"
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "net", "time", "sync", "fs", "io-util"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -35,7 +36,7 @@ fast_image_resize = "2.7"
 hound = "3.5"
 rodio = "0.17"
 rubato = "0.14"
-symphonia = { version = "0.5", features = ["all"] }
+symphonia = { version = "0.5", features = ["wav", "mp3", "flac", "pcm", "vorbis"] }
 
 # ML and inference
 onnxruntime = { version = "0.0.14", optional = true }
@@ -81,6 +82,7 @@ dotenv = "0.15"
 # Caching
 dashmap = "5.5"
 lru = "0.12"
+parking_lot = "0.12"
 
 # Compression
 flate2 = "1.0"
@@ -116,6 +118,7 @@ rstest = "0.18"
 test-case = "3.3"
 serial_test = "3.0"
 futures-util = "0.3"
+wiremock = "0.6"
 
 [features]
 default = ["jemalloc"]  # Use jemalloc by default for better performance
