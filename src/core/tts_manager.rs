@@ -752,4 +752,260 @@ mod tests {
         let k2 = TTSManager::synthesis_cache_key("hi", "eng", &p2);
         assert_ne!(k1, k2, "different pitch must produce different keys");
     }
+
+    // ──────────────────────────── TTSManagerConfig deserialization ───────────
+
+    #[test]
+    fn test_tts_manager_config_serde_uses_defaults() {
+        // Deserialize from a minimal JSON object — serde defaults should fill in
+        let json = r#"{"default_engine":"custom","cache_dir":"/tmp/tts"}"#;
+        let cfg: TTSManagerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.default_engine, "custom");
+        assert_eq!(cfg.max_concurrent_requests, 10);
+        assert_eq!(cfg.synthesis_cache_capacity, 128);
+    }
+
+    #[test]
+    fn test_tts_manager_config_serde_custom_values() {
+        let json = r#"{"default_engine":"piper","cache_dir":"/tmp","max_concurrent_requests":5,"synthesis_cache_capacity":64}"#;
+        let cfg: TTSManagerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.default_engine, "piper");
+        assert_eq!(cfg.max_concurrent_requests, 5);
+        assert_eq!(cfg.synthesis_cache_capacity, 64);
+    }
+
+    #[test]
+    fn test_tts_manager_config_debug_and_clone() {
+        let cfg = TTSManagerConfig::default();
+        let cloned = cfg.clone();
+        assert_eq!(cloned.default_engine, cfg.default_engine);
+        // Should not panic
+        let _ = format!("{:?}", cloned);
+    }
+
+    // ──────────────────────────── TTSManager custom capacity ─────────────────
+
+    #[test]
+    fn test_tts_manager_capacity_1_clamped() {
+        // Capacity of 1 should not panic (NonZeroUsize)
+        let cfg = TTSManagerConfig {
+            synthesis_cache_capacity: 1,
+            ..TTSManagerConfig::default()
+        };
+        let manager = TTSManager::new(cfg);
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_capacity, 1);
+    }
+
+    #[test]
+    fn test_tts_manager_capacity_0_clamped_to_1() {
+        // Capacity 0 is clamped to 1 via .max(1)
+        let cfg = TTSManagerConfig {
+            synthesis_cache_capacity: 0,
+            ..TTSManagerConfig::default()
+        };
+        let manager = TTSManager::new(cfg);
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_capacity, 1);
+    }
+
+    // ──────────────────────────── cache eviction at capacity ─────────────────
+
+    #[tokio::test]
+    async fn test_synthesize_cache_evicts_lru_at_capacity() {
+        // Capacity 1 means the second unique synthesis evicts the first
+        let cfg = TTSManagerConfig {
+            default_engine: "mock".to_string(),
+            synthesis_cache_capacity: 1,
+            ..TTSManagerConfig::default()
+        };
+        let manager = TTSManager::new(cfg);
+        manager.engines.insert("mock".to_string(), make_mock_engine());
+
+        let params = SynthesisParams::default();
+        // First synthesis — fills the single cache slot
+        manager.synthesize("first text", Some("mock"), params.clone()).await.unwrap();
+        // Second synthesis — evicts "first text" and fills with "second text"
+        manager.synthesize("second text", Some("mock"), params.clone()).await.unwrap();
+
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_size, 1, "LRU eviction should keep only 1 entry");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_cache_grows_up_to_capacity() {
+        let cfg = TTSManagerConfig {
+            default_engine: "mock".to_string(),
+            synthesis_cache_capacity: 4,
+            ..TTSManagerConfig::default()
+        };
+        let manager = TTSManager::new(cfg);
+        manager.engines.insert("mock".to_string(), make_mock_engine());
+
+        let params = SynthesisParams::default();
+        for i in 0..4 {
+            let text = format!("unique text number {}", i);
+            manager.synthesize(&text, Some("mock"), params.clone()).await.unwrap();
+        }
+
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_size, 4, "cache should hold exactly 4 unique entries");
+    }
+
+    // ──────────────────────────── get_stats with cache populated ─────────────
+
+    #[tokio::test]
+    async fn test_get_stats_reflects_populated_cache() {
+        let manager = make_manager_with_mock("mock");
+        let params = SynthesisParams::default();
+
+        manager.synthesize("hello", Some("mock"), params.clone()).await.unwrap();
+        manager.synthesize("world", Some("mock"), params.clone()).await.unwrap();
+
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_size, 2);
+        assert_eq!(stats.total_engines, 1);
+    }
+
+    // ──────────────────────────── text length validation ─────────────────────
+
+    #[tokio::test]
+    async fn test_synthesize_text_too_long_returns_err() {
+        // MockEngine declares max_text_length = 1000
+        let manager = make_manager_with_mock("mock");
+        let long_text = "a".repeat(1001);
+        let result = manager
+            .synthesize(&long_text, Some("mock"), SynthesisParams::default())
+            .await;
+        assert!(result.is_err(), "text exceeding max_text_length should fail");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("1001") || msg.contains("too long") || msg.contains("1000"),
+            "error should mention text length: {msg}");
+    }
+
+    // ──────────────────────────── list_voices via engine ─────────────────────
+
+    #[test]
+    fn test_with_engine_list_voices_returns_empty_for_mock() {
+        let manager = make_manager_with_mock("mock");
+        let voices = manager.with_engine("mock", |e| e.list_voices());
+        assert!(voices.is_some());
+        assert!(voices.unwrap().is_empty(), "mock engine has no voices");
+    }
+
+    #[test]
+    fn test_with_engine_is_ready_returns_true_for_mock() {
+        let manager = make_manager_with_mock("mock");
+        let ready = manager.with_engine("mock", |e| e.is_ready());
+        assert_eq!(ready, Some(true));
+    }
+
+    // ──────────────────────────── fnv1a hash edge cases ──────────────────────
+
+    #[test]
+    fn test_synthesis_cache_key_empty_text_and_engine() {
+        let params = SynthesisParams::default();
+        // Should not panic, and be deterministic
+        let k1 = TTSManager::synthesis_cache_key("", "", &params);
+        let k2 = TTSManager::synthesis_cache_key("", "", &params);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_synthesis_cache_key_empty_vs_nonempty_text() {
+        let params = SynthesisParams::default();
+        let k_empty = TTSManager::synthesis_cache_key("", "eng", &params);
+        let k_nonempty = TTSManager::synthesis_cache_key("a", "eng", &params);
+        assert_ne!(k_empty, k_nonempty);
+    }
+
+    #[test]
+    fn test_synthesis_cache_key_separator_prevents_concatenation_collision() {
+        // ("ab", "c") must differ from ("a", "bc") — the NUL separator prevents merging
+        let params = SynthesisParams::default();
+        let k1 = TTSManager::synthesis_cache_key("ab", "c", &params);
+        let k2 = TTSManager::synthesis_cache_key("a", "bc", &params);
+        assert_ne!(k1, k2, "NUL separator must prevent field-concatenation collisions");
+    }
+
+    // ──────────────────────────── TTSManagerStats serde ──────────────────────
+
+    #[test]
+    fn test_tts_manager_stats_serde_roundtrip() {
+        let stats = TTSManagerStats {
+            total_engines: 2,
+            engine_ids: vec!["kokoro-onnx".to_string(), "piper".to_string()],
+            cache_size: 5,
+            cache_capacity: 64,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let deser: TTSManagerStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.total_engines, 2);
+        assert_eq!(deser.engine_ids, stats.engine_ids);
+        assert_eq!(deser.cache_size, 5);
+        assert_eq!(deser.cache_capacity, 64);
+    }
+
+    #[test]
+    fn test_tts_manager_stats_debug_and_clone() {
+        let stats = TTSManagerStats {
+            total_engines: 1,
+            engine_ids: vec!["mock".to_string()],
+            cache_size: 0,
+            cache_capacity: 128,
+        };
+        let cloned = stats.clone();
+        assert_eq!(cloned.total_engines, stats.total_engines);
+        let _ = format!("{:?}", cloned);
+    }
+
+    // ──────────────────────────── synthesize: same params different engine ───
+
+    #[tokio::test]
+    async fn test_synthesize_different_engines_have_independent_caches() {
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: "mock1".to_string(),
+            ..TTSManagerConfig::default()
+        });
+        manager.engines.insert("mock1".to_string(), make_mock_engine());
+        manager.engines.insert("mock2".to_string(), make_mock_engine());
+
+        let params = SynthesisParams::default();
+        let a1 = manager.synthesize("hello", Some("mock1"), params.clone()).await.unwrap();
+        let a2 = manager.synthesize("hello", Some("mock2"), params.clone()).await.unwrap();
+
+        // Both return audio (same mock output), but they are cached separately
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_size, 2, "same text on two engines = 2 distinct cache entries");
+        assert_eq!(a1.sample_rate, a2.sample_rate);
+    }
+
+    // ──────────────────────────── synthesize: None engine falls back ─────────
+
+    #[tokio::test]
+    async fn test_synthesize_none_engine_uses_config_default() {
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: "mock".to_string(),
+            ..TTSManagerConfig::default()
+        });
+        manager.engines.insert("mock".to_string(), make_mock_engine());
+
+        // Pass None as engine_id — should use "mock" from config
+        let result = manager
+            .synthesize("hello default", None, SynthesisParams::default())
+            .await;
+        assert!(result.is_ok(), "None engine should use default: {:?}", result.err());
+    }
+
+    // ──────────────────────────── get_capabilities ──────────────────────────
+
+    #[test]
+    fn test_get_capabilities_sample_rate_and_max_length() {
+        let manager = make_manager_with_mock("cap-engine");
+        let caps = manager.get_capabilities("cap-engine").unwrap();
+        assert_eq!(caps.sample_rate, 24000);
+        assert_eq!(caps.max_text_length, 1000);
+        assert!(!caps.supports_ssml);
+        assert!(!caps.supports_streaming);
+    }
 }

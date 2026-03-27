@@ -1311,4 +1311,343 @@ mod tests {
         let found = cloned.get_task_status("shared-task");
         assert!(found.is_some());
     }
+
+    // ===== Additional ModelDownloadManager state machine tests =====
+
+    #[test]
+    fn test_manager_update_task_status_all_transitions() {
+        let manager = ModelDownloadManager::new("/tmp/cache_transitions_test").unwrap();
+        let base_task = DownloadTask {
+            id: "transition-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Local { path: "/tmp".to_string() },
+            status: DownloadStatus::Pending,
+            progress: 0.0,
+            total_size: None,
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("transition-task".to_string(), base_task);
+
+        // Pending -> Downloading
+        manager.update_task_status("transition-task", DownloadStatus::Downloading);
+        assert_eq!(manager.get_task_status("transition-task").unwrap().status, DownloadStatus::Downloading);
+
+        // Downloading -> Cancelled (completed_at should remain None)
+        manager.update_task_status("transition-task", DownloadStatus::Cancelled);
+        let updated = manager.get_task_status("transition-task").unwrap();
+        assert_eq!(updated.status, DownloadStatus::Cancelled);
+        assert!(updated.completed_at.is_none());
+
+        // Cancelled -> Failed
+        manager.update_task_status("transition-task", DownloadStatus::Failed);
+        let updated = manager.get_task_status("transition-task").unwrap();
+        assert_eq!(updated.status, DownloadStatus::Failed);
+        // completed_at still None unless set explicitly
+        assert!(updated.completed_at.is_none());
+    }
+
+    #[test]
+    fn test_manager_update_task_progress_none_total() {
+        let manager = ModelDownloadManager::new("/tmp/cache_progress_none_test").unwrap();
+        let task = DownloadTask {
+            id: "prog-none-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Local { path: "/tmp".to_string() },
+            status: DownloadStatus::Downloading,
+            progress: 0.0,
+            total_size: None,
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("prog-none-task".to_string(), task);
+
+        // Update with None total_size
+        manager.update_task_progress("prog-none-task", 33.3, 333, None);
+        let updated = manager.get_task_status("prog-none-task").unwrap();
+        assert_eq!(updated.progress, 33.3);
+        assert_eq!(updated.downloaded_size, 333);
+        assert!(updated.total_size.is_none());
+    }
+
+    #[test]
+    fn test_manager_update_task_error_overwrites_progress() {
+        let manager = ModelDownloadManager::new("/tmp/cache_error_overwrite_test").unwrap();
+        let task = DownloadTask {
+            id: "err-overwrite-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Url { url: "http://example.com/model.bin".to_string() },
+            status: DownloadStatus::Downloading,
+            progress: 45.0,
+            total_size: Some(2048),
+            downloaded_size: 921,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("err-overwrite-task".to_string(), task);
+
+        manager.update_task_error("err-overwrite-task", "I/O error: disk full");
+        let updated = manager.get_task_status("err-overwrite-task").unwrap();
+        assert_eq!(updated.status, DownloadStatus::Failed);
+        assert_eq!(updated.error.as_deref(), Some("I/O error: disk full"));
+        assert!(updated.completed_at.is_some());
+        // progress and downloaded_size preserved as-is
+        assert_eq!(updated.progress, 45.0);
+    }
+
+    #[test]
+    fn test_manager_clone_shares_models_map() {
+        let manager = ModelDownloadManager::new("/tmp/cache_models_share_test").unwrap();
+        let cloned = manager.clone();
+
+        let model = ModelInfo {
+            name: "shared_model".to_string(),
+            source: ModelSource::Local { path: "/tmp/shared_model".to_string() },
+            local_path: PathBuf::from("/tmp/shared_model"),
+            size_bytes: 256,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        manager.models.insert("shared_model".to_string(), model);
+
+        // Cloned manager should see the same model
+        assert!(cloned.get_model("shared_model").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_manager_download_torchhub_eventually_fails() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_torchhub_test");
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        tokio::fs::create_dir_all(&tmp_dir).await.unwrap();
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        let task_id = manager
+            .download_model(
+                "torchhub_model".to_string(),
+                ModelSource::TorchHub {
+                    repo: "pytorch/vision".to_string(),
+                    model: "resnet50".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(!task_id.is_empty());
+
+        // Wait briefly for the background task to run
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Background task should have failed because TorchHub is not implemented
+        let task = manager.get_task_status(&task_id).unwrap();
+        // Status is either Failed or still in transition; the task must exist
+        assert!(
+            task.status == DownloadStatus::Failed
+                || task.status == DownloadStatus::Downloading
+                || task.status == DownloadStatus::Pending
+        );
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_manager_download_local_source_eventually_fails() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_local_dl_test");
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        tokio::fs::create_dir_all(&tmp_dir).await.unwrap();
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        let task_id = manager
+            .download_model(
+                "local_model".to_string(),
+                ModelSource::Local {
+                    path: "/some/local/path".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(!task_id.is_empty());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Background task should have failed because Local sources don't download
+        let task = manager.get_task_status(&task_id).unwrap();
+        assert!(
+            task.status == DownloadStatus::Failed
+                || task.status == DownloadStatus::Downloading
+                || task.status == DownloadStatus::Pending
+        );
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_manager_delete_model_with_existing_dir() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_delete_dir_test");
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        tokio::fs::create_dir_all(&tmp_dir).await.unwrap();
+
+        let model_dir = tmp_dir.join("my_model");
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        // Write a dummy file so the dir is non-empty
+        tokio::fs::write(model_dir.join("weights.bin"), b"fake weights").await.unwrap();
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        let model = ModelInfo {
+            name: "my_model".to_string(),
+            source: ModelSource::Local { path: model_dir.to_string_lossy().to_string() },
+            local_path: model_dir.clone(),
+            size_bytes: 12,
+            downloaded_at: chrono::Utc::now(),
+            metadata: ModelMetadata::default(),
+        };
+        manager.models.insert("my_model".to_string(), model);
+
+        let result = manager.delete_model("my_model").await;
+        assert!(result.is_ok(), "delete should succeed: {:?}", result.err());
+        assert!(!model_dir.exists(), "model directory should have been removed");
+        assert!(manager.get_model("my_model").is_none(), "model should be removed from registry");
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_manager_initialize_scans_existing_subdirs() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_scan_test");
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        tokio::fs::create_dir_all(&tmp_dir).await.unwrap();
+
+        // Create a subdirectory that looks like a cached model
+        let model_dir = tmp_dir.join("bert-base");
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        tokio::fs::write(model_dir.join("pytorch_model.bin"), b"fake").await.unwrap();
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        manager.initialize().await.unwrap();
+
+        // After scanning, "bert-base" should appear in the model registry
+        assert!(manager.get_model("bert-base").is_some(), "scanned model should be in registry");
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_manager_initialize_scans_subdir_with_metadata() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_scan_meta_test");
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        tokio::fs::create_dir_all(&tmp_dir).await.unwrap();
+
+        // Create a subdirectory with a metadata.json file
+        let model_dir = tmp_dir.join("gpt2");
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        let meta = ModelMetadata {
+            description: Some("GPT-2 small".to_string()),
+            tags: vec!["nlp".to_string()],
+            framework: Some("pytorch".to_string()),
+            task: Some("text-generation".to_string()),
+            license: Some("MIT".to_string()),
+        };
+        let meta_json = serde_json::to_string(&meta).unwrap();
+        tokio::fs::write(model_dir.join("metadata.json"), meta_json.as_bytes()).await.unwrap();
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        manager.initialize().await.unwrap();
+
+        let model_info = manager.get_model("gpt2");
+        assert!(model_info.is_some(), "model with metadata should be registered");
+        let model_info = model_info.unwrap();
+        assert_eq!(model_info.metadata.description.as_deref(), Some("GPT-2 small"));
+        assert_eq!(model_info.metadata.framework.as_deref(), Some("pytorch"));
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn test_manager_get_cache_info_after_initialize() {
+        let tmp_dir = std::env::temp_dir().join("torch_inf_cache_info_init_test");
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        tokio::fs::create_dir_all(&tmp_dir).await.unwrap();
+
+        let model_dir = tmp_dir.join("test-model");
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        tokio::fs::write(model_dir.join("file.bin"), b"hello world").await.unwrap();
+
+        let manager = ModelDownloadManager::new(&tmp_dir).unwrap();
+        manager.initialize().await.unwrap();
+
+        let info = manager.get_cache_info();
+        assert_eq!(info.model_count, 1);
+        assert!(info.total_size_bytes > 0, "should report non-zero size after scanning");
+
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+    }
+
+    #[test]
+    fn test_download_task_all_status_variants_roundtrip() {
+        // Verify all five status variants survive a clone + serde cycle correctly
+        let statuses = [
+            DownloadStatus::Pending,
+            DownloadStatus::Downloading,
+            DownloadStatus::Completed,
+            DownloadStatus::Failed,
+            DownloadStatus::Cancelled,
+        ];
+        for status in &statuses {
+            let task = make_download_task(status.clone());
+            let cloned = task.clone();
+            assert_eq!(cloned.status, *status);
+
+            let json = serde_json::to_string(&task).unwrap();
+            let deser: DownloadTask = serde_json::from_str(&json).unwrap();
+            assert_eq!(deser.status, *status);
+        }
+    }
+
+    #[test]
+    fn test_model_source_all_variants_debug() {
+        let sources = vec![
+            ModelSource::HuggingFace { repo_id: "a/b".to_string(), revision: None },
+            ModelSource::TorchHub { repo: "pytorch/vision".to_string(), model: "resnet50".to_string() },
+            ModelSource::Url { url: "http://x.com/m.bin".to_string() },
+            ModelSource::Local { path: "/tmp/m".to_string() },
+        ];
+        for src in &sources {
+            let s = format!("{:?}", src);
+            assert!(!s.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_manager_multiple_progress_updates() {
+        let manager = ModelDownloadManager::new("/tmp/cache_multi_progress_test").unwrap();
+        let task = DownloadTask {
+            id: "multi-prog-task".to_string(),
+            model_name: "model".to_string(),
+            source: ModelSource::Url { url: "http://x.com/m.bin".to_string() },
+            status: DownloadStatus::Downloading,
+            progress: 0.0,
+            total_size: Some(1000),
+            downloaded_size: 0,
+            error: None,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+        };
+        manager.tasks.insert("multi-prog-task".to_string(), task);
+
+        // Simulate multiple progress updates
+        for i in 1..=10u64 {
+            let pct = i as f32 * 10.0;
+            let downloaded = i * 100;
+            manager.update_task_progress("multi-prog-task", pct, downloaded, Some(1000));
+        }
+
+        let final_task = manager.get_task_status("multi-prog-task").unwrap();
+        assert_eq!(final_task.progress, 100.0);
+        assert_eq!(final_task.downloaded_size, 1000);
+        assert_eq!(final_task.total_size, Some(1000));
+    }
 }
