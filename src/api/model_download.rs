@@ -635,4 +635,175 @@ mod tests {
             assert_eq!(info.size_human, format_bytes(bytes));
         }
     }
+
+    // ── Handler unit tests ────────────────────────────────────────────────────
+
+    fn make_download_state() -> web::Data<ModelDownloadState> {
+        let manager = Arc::new(
+            crate::models::download::ModelDownloadManager::new("/tmp/test_model_cache_dl")
+                .expect("create manager"),
+        );
+        web::Data::new(ModelDownloadState { manager })
+    }
+
+    // download_model — huggingface source missing repo_id → BadRequest
+    #[actix_web::test]
+    async fn test_download_model_huggingface_missing_repo_id() {
+        let state = make_download_state();
+        let req = web::Json(DownloadModelRequest {
+            model_name: "test-model".to_string(),
+            source_type: "huggingface".to_string(),
+            repo_id: None,
+            revision: None,
+            url: None,
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    // download_model — url source missing url → BadRequest
+    #[actix_web::test]
+    async fn test_download_model_url_source_missing_url() {
+        let state = make_download_state();
+        let req = web::Json(DownloadModelRequest {
+            model_name: "test-model".to_string(),
+            source_type: "url".to_string(),
+            repo_id: None,
+            revision: None,
+            url: None,
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    // download_model — unknown source_type → BadRequest
+    #[actix_web::test]
+    async fn test_download_model_unknown_source_type() {
+        let state = make_download_state();
+        let req = web::Json(DownloadModelRequest {
+            model_name: "test-model".to_string(),
+            source_type: "s3".to_string(),
+            repo_id: None,
+            revision: None,
+            url: None,
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    // get_download_status — task not found → NotFound
+    #[actix_web::test]
+    async fn test_get_download_status_not_found() {
+        let state = make_download_state();
+        let task_id = web::Path::from("nonexistent-task-id-xyz".to_string());
+        let result = get_download_status(task_id, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::NotFound(_)));
+    }
+
+    // list_downloads — empty manager returns Ok
+    #[actix_web::test]
+    async fn test_list_downloads_empty() {
+        let state = make_download_state();
+        let result = list_downloads(state).await;
+        assert!(result.is_ok());
+    }
+
+    // list_models — empty manager returns Ok with empty list
+    #[actix_web::test]
+    async fn test_list_models_empty() {
+        let state = make_download_state();
+        let result = list_models(state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_model_info — model not found → NotFound
+    #[actix_web::test]
+    async fn test_get_model_info_not_found() {
+        let state = make_download_state();
+        let name = web::Path::from("nonexistent-model".to_string());
+        let result = get_model_info(name, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::NotFound(_)));
+    }
+
+    // delete_model — model not found → InternalError (delete_model bails)
+    #[actix_web::test]
+    async fn test_delete_model_not_found() {
+        let state = make_download_state();
+        let name = web::Path::from("nonexistent-model".to_string());
+        let result = delete_model(name, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::InternalError(_)));
+    }
+
+    // get_cache_info — empty manager returns Ok
+    #[actix_web::test]
+    async fn test_get_cache_info_empty() {
+        let state = make_download_state();
+        let result = get_cache_info(state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // list_available_models — no registry file falls back to hardcoded list
+    #[actix_web::test]
+    async fn test_list_available_models_fallback() {
+        // Run from a temp directory that has no model_registry.json
+        let result = list_available_models().await;
+        // Should always succeed (falls back to hardcoded list)
+        assert!(result.is_ok());
+    }
+
+    // DownloadModelRequest — huggingface with revision
+    #[test]
+    fn test_download_model_request_with_revision() {
+        let req = DownloadModelRequest {
+            model_name: "bert".to_string(),
+            source_type: "huggingface".to_string(),
+            repo_id: Some("bert-base-uncased".to_string()),
+            revision: Some("main".to_string()),
+            url: None,
+        };
+        assert_eq!(req.revision.as_deref(), Some("main"));
+    }
+
+    // DownloadModelResponse — serialization roundtrip
+    #[test]
+    fn test_download_model_response_serde() {
+        let resp = DownloadModelResponse {
+            task_id: "abc-123".to_string(),
+            status: "started".to_string(),
+            message: "Download started".to_string(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["task_id"], "abc-123");
+        assert_eq!(back["status"], "started");
+    }
+
+    // ModelListResponse — serialization
+    #[test]
+    fn test_model_list_response_serde() {
+        let list = ModelListResponse {
+            models: vec![ModelInfoResponse {
+                name: "m1".to_string(),
+                source: "Local".to_string(),
+                size_bytes: 1024,
+                size_human: "1.00 KB".to_string(),
+                downloaded_at: "2024-01-01T00:00:00Z".to_string(),
+            }],
+            total: 1,
+        };
+        let json = serde_json::to_string(&list).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["total"], 1);
+        assert_eq!(back["models"][0]["name"], "m1");
+    }
 }

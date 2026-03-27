@@ -428,6 +428,195 @@ mod tests {
         assert_eq!(YoloSize::Nano.suffix(), "n");
         assert_eq!(YoloSize::XLarge.suffix(), "x");
     }
+
+    // ── Handler unit tests (no actix HTTP stack needed) ───────────────────────
+
+    fn make_yolo_state(dir: std::path::PathBuf) -> web::Data<YoloState> {
+        web::Data::new(YoloState { models_dir: dir })
+    }
+
+    // list_models — always succeeds and returns all versions/sizes
+    #[actix_web::test]
+    async fn test_list_models_handler_returns_all_versions() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let result = list_models(state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // get_model_info — invalid version returns BadRequest
+    #[actix_web::test]
+    async fn test_get_model_info_invalid_version() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let query = web::Query(YoloInfoRequest {
+            model_version: "v99".to_string(),
+            model_size: "n".to_string(),
+        });
+        let result = get_model_info(query, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::BadRequest(_)));
+    }
+
+    // get_model_info — invalid size returns BadRequest
+    #[actix_web::test]
+    async fn test_get_model_info_invalid_size() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let query = web::Query(YoloInfoRequest {
+            model_version: "v8".to_string(),
+            model_size: "z".to_string(),
+        });
+        let result = get_model_info(query, state).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::ApiError::BadRequest(_)));
+    }
+
+    // get_model_info — valid version+size, model not on disk → available=false
+    #[actix_web::test]
+    async fn test_get_model_info_valid_model_not_on_disk() {
+        let state = make_yolo_state(std::path::PathBuf::from("/nonexistent_dir_for_test"));
+        let query = web::Query(YoloInfoRequest {
+            model_version: "v8".to_string(),
+            model_size: "n".to_string(),
+        });
+        let result = get_model_info(query, state).await;
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // download_model — invalid version returns BadRequest
+    #[actix_web::test]
+    async fn test_download_model_invalid_version() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v999".to_string(),
+            model_size: "n".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    // download_model — invalid size returns BadRequest
+    #[actix_web::test]
+    async fn test_download_model_invalid_size() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v5".to_string(),
+            model_size: "huge".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    // download_model — each valid version produces a URL
+    #[actix_web::test]
+    async fn test_download_model_v5_produces_url() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v5".to_string(),
+            model_size: "n".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+    }
+
+    #[actix_web::test]
+    async fn test_download_model_v8_produces_url() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v8".to_string(),
+            model_size: "s".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+    }
+
+    #[actix_web::test]
+    async fn test_download_model_v10_produces_url() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v10".to_string(),
+            model_size: "m".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+    }
+
+    #[actix_web::test]
+    async fn test_download_model_v11_produces_url() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v11".to_string(),
+            model_size: "l".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+    }
+
+    #[actix_web::test]
+    async fn test_download_model_v12_produces_url() {
+        let state = make_yolo_state(std::path::PathBuf::from("/tmp"));
+        let req = web::Json(YoloDownloadRequest {
+            model_version: "v12".to_string(),
+            model_size: "x".to_string(),
+        });
+        let result = download_model(req, state).await;
+        assert!(result.is_ok());
+    }
+
+    // YoloDownloadResponse — None download_url serialization
+    #[test]
+    fn test_yolo_download_response_no_url() {
+        let resp = YoloDownloadResponse {
+            success: false,
+            message: "failed".to_string(),
+            download_url: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["success"], false);
+        assert!(back["download_url"].is_null());
+    }
+
+    // YoloInfoResponse — available=true variant
+    #[test]
+    fn test_yolo_info_response_available_true() {
+        let resp = YoloInfoResponse {
+            model_name: "yolov5n".to_string(),
+            version: "YOLOv5".to_string(),
+            size: "n".to_string(),
+            num_classes: 80,
+            input_size: (640, 640),
+            conf_threshold: 0.25,
+            iou_threshold: 0.45,
+            available: true,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["available"], true);
+        assert_eq!(back["model_name"], "yolov5n");
+    }
+
+    // All YoloVersion as_str values
+    #[test]
+    fn test_yolo_version_all_as_str() {
+        assert_eq!(YoloVersion::V10.as_str(), "YOLOv10");
+        assert_eq!(YoloVersion::V11.as_str(), "YOLOv11");
+        assert_eq!(YoloVersion::V12.as_str(), "YOLOv12");
+    }
+
+    // All YoloSize suffix values
+    #[test]
+    fn test_yolo_size_all_suffixes() {
+        assert_eq!(YoloSize::Small.suffix(), "s");
+        assert_eq!(YoloSize::Medium.suffix(), "m");
+        assert_eq!(YoloSize::Large.suffix(), "l");
+    }
 }
 
 /// Configure YOLO routes

@@ -160,6 +160,7 @@ mod tests {
     use super::*;
     use crate::core::image_classifier::{ClassificationResult, TopKResults};
 
+
     #[test]
     fn test_classify_request_serde_full() {
         let json = r#"{"image_path":"/images/cat.jpg","top_k":3}"#;
@@ -243,6 +244,139 @@ mod tests {
         let back: TopKResults = serde_json::from_str(&json).unwrap();
         assert!(back.predictions.is_empty());
         assert!((back.inference_time_ms - 5.0).abs() < 1e-5);
+    }
+
+    // ── Additional coverage tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_classify_request_only_image_path() {
+        let json = r#"{"image_path":"/tmp/test.jpg"}"#;
+        let req: ClassifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.image_path.as_deref(), Some("/tmp/test.jpg"));
+        assert!(req.top_k.is_none());
+    }
+
+    #[test]
+    fn test_classify_request_only_top_k() {
+        let json = r#"{"top_k":10}"#;
+        let req: ClassifyRequest = serde_json::from_str(json).unwrap();
+        assert!(req.image_path.is_none());
+        assert_eq!(req.top_k, Some(10));
+    }
+
+    #[test]
+    fn test_classify_response_success_no_results() {
+        // success=true but results=None (edge case)
+        let resp = ClassifyResponse {
+            success: true,
+            results: None,
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["success"], true);
+        assert!(back["results"].is_null());
+        assert!(back["error"].is_null());
+    }
+
+    #[test]
+    fn test_classify_response_with_error_string() {
+        let resp = ClassifyResponse {
+            success: false,
+            results: None,
+            error: Some("PyTorch not enabled".to_string()),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(back["error"], "PyTorch not enabled");
+    }
+
+    #[test]
+    fn test_classification_result_confidence_boundary() {
+        let result_zero = ClassificationResult {
+            label: "unknown".to_string(),
+            confidence: 0.0,
+            class_id: 0,
+        };
+        let result_one = ClassificationResult {
+            label: "cat".to_string(),
+            confidence: 1.0,
+            class_id: 281,
+        };
+        assert!((result_zero.confidence - 0.0).abs() < 1e-6);
+        assert!((result_one.confidence - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_top_k_results_multiple_predictions() {
+        let results = TopKResults {
+            predictions: vec![
+                ClassificationResult { label: "cat".to_string(), confidence: 0.8, class_id: 281 },
+                ClassificationResult { label: "dog".to_string(), confidence: 0.15, class_id: 207 },
+                ClassificationResult { label: "bird".to_string(), confidence: 0.05, class_id: 10 },
+            ],
+            inference_time_ms: 7.5,
+        };
+        assert_eq!(results.predictions.len(), 3);
+        assert_eq!(results.predictions[0].label, "cat");
+        assert_eq!(results.predictions[2].class_id, 10);
+    }
+
+    // ── Handler tests via direct function calls ───────────────────────────────
+    //
+    // We can only test handlers that return early before touching the model.
+    // ImageClassifier::new() always errors without the `torch` feature, so
+    // handler tests that need a live classifier are guarded by #[cfg(feature="torch")].
+
+    // classify_image_file: missing image_path returns BadRequest
+    // (We need a state even for this path, so skip if torch is unavailable)
+    #[cfg(feature = "torch")]
+    #[actix_web::test]
+    async fn test_classify_image_file_missing_path() {
+        // This test only runs when torch is available so we can construct the state.
+        // The early-return logic is independent of the actual model.
+        use std::path::Path;
+        let classifier = Arc::new(
+            ImageClassifier::new(
+                Path::new("/nonexistent_model_path"),
+                vec!["cat".to_string()],
+                None,
+                None,
+            )
+            .expect("classifier"),
+        );
+        let state = web::Data::new(ImageClassificationState { classifier });
+        let req = web::Json(ClassifyRequest {
+            image_path: None,
+            top_k: Some(5),
+        });
+        let result = classify_image_file(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::BadRequest(_)));
+    }
+
+    // classify_image_file: path not found returns NotFound
+    #[cfg(feature = "torch")]
+    #[actix_web::test]
+    async fn test_classify_image_file_path_not_found() {
+        use std::path::Path;
+        let classifier = Arc::new(
+            ImageClassifier::new(
+                Path::new("/nonexistent_model_path"),
+                vec!["cat".to_string()],
+                None,
+                None,
+            )
+            .expect("classifier"),
+        );
+        let state = web::Data::new(ImageClassificationState { classifier });
+        let req = web::Json(ClassifyRequest {
+            image_path: Some("/tmp/this_image_does_not_exist_xyz.jpg".to_string()),
+            top_k: Some(5),
+        });
+        let result = classify_image_file(req, state).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::ApiError::NotFound(_)));
     }
 }
 
