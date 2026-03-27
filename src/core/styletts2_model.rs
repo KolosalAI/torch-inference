@@ -325,6 +325,21 @@ impl StyleTTS2Inference {
 mod tests {
     use super::*;
 
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_styletts2_config_default_no_torch() {
+        let _config = StyleTTS2Config::default();
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_styletts2_inference_new_errors_without_torch() {
+        let result = StyleTTS2Inference::new(std::path::Path::new("/nonexistent"), 0);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("torch") || msg.contains("StyleTTS2"), "unexpected: {}", msg);
+    }
+
     #[cfg(feature = "torch")]
     #[test]
     fn test_text_encoder_output_shape() {

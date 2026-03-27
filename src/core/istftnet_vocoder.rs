@@ -331,6 +331,21 @@ impl ISTFTNetVocoder {
 mod tests {
     use super::*;
 
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_istftnet_config_default_no_torch() {
+        let _config = ISTFTNetConfig::default();
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_istftnet_vocoder_new_errors_without_torch() {
+        let result = ISTFTNetVocoder::new(None, 0, 22050);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("torch") || msg.contains("ISTFTNet"), "unexpected: {}", msg);
+    }
+
     #[cfg(feature = "torch")]
     #[test]
     fn test_istftnet_output_is_1d_audio() {

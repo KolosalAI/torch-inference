@@ -504,6 +504,14 @@ mod tests {
         assert!(detector.detect_cuda().is_ok());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_metal_detection_on_macos() {
+        let mut detector = TorchLibAutoDetect::new();
+        let result = detector.detect_metal();
+        assert!(result.is_ok(), "detect_metal should succeed on macOS: {:?}", result);
+    }
+
     #[tokio::test]
     async fn test_torch_info() {
         let info = get_torch_info();
