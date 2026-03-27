@@ -432,3 +432,331 @@ impl ModelManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    fn default_manager() -> ModelManager {
+        ModelManager::new(&Config::default(), None)
+    }
+
+    // ── BaseModel ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_base_model_new() {
+        let model = BaseModel::new("my-model".to_string());
+        assert_eq!(model.name, "my-model");
+        assert_eq!(model.device, "cpu");
+        assert!(!model.is_loaded);
+    }
+
+    #[tokio::test]
+    async fn test_base_model_load() {
+        let mut model = BaseModel::new("m".to_string());
+        assert!(!model.is_loaded);
+        model.load().await.unwrap();
+        assert!(model.is_loaded);
+    }
+
+    #[tokio::test]
+    async fn test_base_model_forward_not_loaded() {
+        let model = BaseModel::new("m".to_string());
+        let result = model.forward(&serde_json::json!({"x": 1})).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not loaded"));
+    }
+
+    #[tokio::test]
+    async fn test_base_model_forward_loaded() {
+        let mut model = BaseModel::new("m".to_string());
+        model.load().await.unwrap();
+        let input = serde_json::json!({"data": [1, 2, 3]});
+        let output = model.forward(&input).await.unwrap();
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_base_model_model_info() {
+        let model = BaseModel::new("info-test".to_string());
+        let info = model.model_info();
+        assert_eq!(info["name"], "info-test");
+        assert_eq!(info["device"], "cpu");
+        assert_eq!(info["loaded"], false);
+    }
+
+    #[test]
+    fn test_base_model_clone() {
+        let model = BaseModel::new("clone-test".to_string());
+        let cloned = model.clone();
+        assert_eq!(cloned.name, model.name);
+        assert_eq!(cloned.is_loaded, model.is_loaded);
+    }
+
+    // ── ModelManager construction ─────────────────────────────────────────────
+
+    #[test]
+    fn test_manager_new() {
+        let manager = default_manager();
+        // Freshly created manager has no models
+        assert!(manager.list_available().is_empty());
+        assert!(manager.list_registered_models().is_empty());
+    }
+
+    // ── list_available / list_registered_models ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_available_includes_legacy_and_registered() {
+        let manager = default_manager();
+
+        // Register a legacy BaseModel
+        let base = BaseModel::new("legacy-a".to_string());
+        manager
+            .register_model("legacy-a".to_string(), base)
+            .await
+            .unwrap();
+
+        let available = manager.list_available();
+        assert!(available.contains(&"legacy-a".to_string()));
+    }
+
+    // ── get_model – legacy path ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_model_not_found_legacy() {
+        let manager = default_manager();
+        let result = manager.get_model("ghost");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_model_found_legacy() {
+        let manager = default_manager();
+        manager
+            .register_model("alpha".to_string(), BaseModel::new("alpha".to_string()))
+            .await
+            .unwrap();
+        let model = manager.get_model("alpha").unwrap();
+        assert_eq!(model.name, "alpha");
+    }
+
+    // ── register_model (legacy) ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_register_model_legacy() {
+        let manager = default_manager();
+        let base = BaseModel::new("beta".to_string());
+        manager.register_model("beta".to_string(), base).await.unwrap();
+        assert!(manager.get_model("beta").is_ok());
+    }
+
+    // ── load_model (legacy) ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_load_model_legacy_not_found() {
+        let manager = default_manager();
+        let result = manager.load_model("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_model_legacy_success() {
+        let manager = default_manager();
+        manager
+            .register_model("gamma".to_string(), BaseModel::new("gamma".to_string()))
+            .await
+            .unwrap();
+        manager.load_model("gamma").await.unwrap();
+        let model = manager.get_model("gamma").unwrap();
+        assert!(model.is_loaded);
+    }
+
+    // ── get_model_metadata – registry path ───────────────────────────────────
+
+    #[test]
+    fn test_get_model_metadata_not_found() {
+        let manager = default_manager();
+        let result = manager.get_model_metadata("missing");
+        assert!(result.is_err());
+    }
+
+    // ── list_by_format ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_by_format_empty() {
+        let manager = default_manager();
+        let results = manager.list_by_format(ModelFormat::ONNX);
+        assert!(results.is_empty());
+    }
+
+    // ── get_registry_stats ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_registry_stats_empty() {
+        let manager = default_manager();
+        let stats = manager.get_registry_stats();
+        assert_eq!(stats["total_models"], 0);
+        assert_eq!(stats["loaded_models"], 0);
+    }
+
+    // ── export_registry ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_export_registry_empty() {
+        let manager = default_manager();
+        let exported = manager.export_registry();
+        assert_eq!(exported["total"], 0);
+    }
+
+    // ── register_model_from_path – error path ────────────────────────────────
+
+    #[tokio::test]
+    async fn test_register_model_from_path_nonexistent() {
+        let manager = default_manager();
+        let result = manager
+            .register_model_from_path(Path::new("/no/such/model.onnx"), None)
+            .await;
+        assert!(result.is_err());
+    }
+
+    // ── scan_and_register – error path ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_scan_and_register_nonexistent_dir() {
+        let manager = default_manager();
+        let result = manager
+            .scan_and_register(Path::new("/no/such/directory"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    // ── scan_and_register – empty directory ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_scan_and_register_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = default_manager();
+        let registered = manager.scan_and_register(dir.path()).await.unwrap();
+        assert!(registered.is_empty());
+    }
+
+    // ── scan_and_register + list_registered_models ───────────────────────────
+
+    #[tokio::test]
+    async fn test_scan_and_register_with_models() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("net.onnx"), b"onnx data").unwrap();
+
+        let manager = default_manager();
+        let registered = manager.scan_and_register(dir.path()).await.unwrap();
+        assert_eq!(registered.len(), 1);
+        assert!(registered.contains(&"net".to_string()));
+
+        let listed = manager.list_registered_models();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "net");
+    }
+
+    // ── register_model_from_path – success + metadata lookup ─────────────────
+
+    #[tokio::test]
+    async fn test_register_model_from_path_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scored.pt");
+        std::fs::write(&path, b"fake pt data").unwrap();
+
+        let manager = default_manager();
+        let model_id = manager
+            .register_model_from_path(&path, Some("scored-model".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(model_id, "scored-model");
+
+        let meta = manager.get_model_metadata("scored-model").unwrap();
+        assert_eq!(meta.format, ModelFormat::PyTorch);
+    }
+
+    // ── get_registry_stats after registering a model ─────────────────────────
+
+    #[tokio::test]
+    async fn test_get_registry_stats_after_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stat.onnx");
+        std::fs::write(&path, b"bytes").unwrap();
+
+        let manager = default_manager();
+        manager
+            .register_model_from_path(&path, None)
+            .await
+            .unwrap();
+
+        let stats = manager.get_registry_stats();
+        assert_eq!(stats["total_models"], 1);
+        assert_eq!(stats["loaded_models"], 0);
+    }
+
+    // ── list_available combines legacy + registry ─────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_available_combined() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reg.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let manager = default_manager();
+        // Register one legacy, one registry model
+        manager
+            .register_model("legacy".to_string(), BaseModel::new("legacy".to_string()))
+            .await
+            .unwrap();
+        manager.register_model_from_path(&path, None).await.unwrap();
+
+        let available = manager.list_available();
+        assert!(available.contains(&"legacy".to_string()));
+        assert!(available.contains(&"reg".to_string()));
+    }
+
+    // ── infer_onnx / infer_registered – model not loaded errors ──────────────
+
+    #[tokio::test]
+    async fn test_infer_onnx_model_not_in_registry() {
+        let manager = default_manager();
+        let result = manager
+            .infer_onnx("ghost", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_infer_registered_model_not_found() {
+        let manager = default_manager();
+        let result = manager
+            .infer_registered("missing", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+    }
+
+    // ── load_pytorch_model disabled (no torch feature) ───────────────────────
+
+    #[cfg(not(feature = "torch"))]
+    #[tokio::test]
+    async fn test_load_pytorch_model_disabled() {
+        let manager = default_manager();
+        let result = manager.load_pytorch_model("any").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("PyTorch"));
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[tokio::test]
+    async fn test_infer_pytorch_disabled() {
+        let manager = default_manager();
+        let result = manager
+            .infer_pytorch("any", &serde_json::json!({}))
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("PyTorch"));
+    }
+}

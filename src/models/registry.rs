@@ -398,13 +398,636 @@ pub struct RegistryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // ── ModelFormat ──────────────────────────────────────────────────────────
 
     #[test]
-    fn test_model_format_from_extension() {
+    fn test_model_format_from_extension_pytorch() {
         assert_eq!(ModelFormat::from_extension("pt"), Some(ModelFormat::PyTorch));
         assert_eq!(ModelFormat::from_extension("pth"), Some(ModelFormat::PyTorch));
+        assert_eq!(ModelFormat::from_extension("PT"), Some(ModelFormat::PyTorch));
+        assert_eq!(ModelFormat::from_extension("PTH"), Some(ModelFormat::PyTorch));
+    }
+
+    #[test]
+    fn test_model_format_from_extension_onnx() {
         assert_eq!(ModelFormat::from_extension("onnx"), Some(ModelFormat::ONNX));
+        assert_eq!(ModelFormat::from_extension("ONNX"), Some(ModelFormat::ONNX));
+    }
+
+    #[test]
+    fn test_model_format_from_extension_safetensors() {
         assert_eq!(ModelFormat::from_extension("safetensors"), Some(ModelFormat::SafeTensors));
+        assert_eq!(ModelFormat::from_extension("SAFETENSORS"), Some(ModelFormat::SafeTensors));
+    }
+
+    #[test]
+    fn test_model_format_from_extension_unknown() {
         assert_eq!(ModelFormat::from_extension("unknown"), None);
+        assert_eq!(ModelFormat::from_extension("bin"), None);
+        assert_eq!(ModelFormat::from_extension(""), None);
+        assert_eq!(ModelFormat::from_extension("txt"), None);
+    }
+
+    #[test]
+    fn test_model_format_equality() {
+        assert_eq!(ModelFormat::PyTorch, ModelFormat::PyTorch);
+        assert_ne!(ModelFormat::PyTorch, ModelFormat::ONNX);
+        assert_ne!(ModelFormat::ONNX, ModelFormat::SafeTensors);
+        assert_ne!(ModelFormat::SafeTensors, ModelFormat::Candle);
+    }
+
+    #[test]
+    fn test_model_format_clone() {
+        let fmt = ModelFormat::ONNX;
+        let cloned = fmt.clone();
+        assert_eq!(fmt, cloned);
+    }
+
+    #[test]
+    fn test_model_format_debug() {
+        let fmt = ModelFormat::PyTorch;
+        let dbg = format!("{:?}", fmt);
+        assert!(dbg.contains("PyTorch"));
+    }
+
+    #[test]
+    fn test_model_format_serde_roundtrip() {
+        let fmt = ModelFormat::ONNX;
+        let json = serde_json::to_string(&fmt).unwrap();
+        let decoded: ModelFormat = serde_json::from_str(&json).unwrap();
+        assert_eq!(fmt, decoded);
+    }
+
+    #[test]
+    fn test_model_format_hash() {
+        use std::collections::HashMap;
+        let mut map: HashMap<ModelFormat, usize> = HashMap::new();
+        map.insert(ModelFormat::PyTorch, 1);
+        map.insert(ModelFormat::ONNX, 2);
+        assert_eq!(map[&ModelFormat::PyTorch], 1);
+        assert_eq!(map[&ModelFormat::ONNX], 2);
+    }
+
+    // ── ModelRegistry::new ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_registry_new() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        // Empty registry should list no models
+        assert!(registry.list_models().is_empty());
+    }
+
+    // ── get_model – model not found ──────────────────────────────────────────
+
+    #[test]
+    fn test_get_model_not_found() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry.get_model("nonexistent");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("nonexistent"));
+    }
+
+    // ── unregister ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_unregister_not_found() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry.unregister("ghost");
+        assert!(result.is_err());
+    }
+
+    // ── mark_loaded / mark_used on missing model ─────────────────────────────
+
+    #[test]
+    fn test_mark_loaded_missing() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        assert!(registry.mark_loaded("nope").is_err());
+    }
+
+    #[test]
+    fn test_mark_used_missing() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        assert!(registry.mark_used("nope").is_err());
+    }
+
+    // ── update_model on missing model ────────────────────────────────────────
+
+    #[test]
+    fn test_update_model_missing() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry.update_model("ghost", |_e| {});
+        assert!(result.is_err());
+    }
+
+    // ── get_stats on empty registry ──────────────────────────────────────────
+
+    #[test]
+    fn test_get_stats_empty() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_models, 0);
+        assert_eq!(stats.loaded_models, 0);
+        assert_eq!(stats.total_size_bytes, 0);
+        assert!(stats.format_counts.is_empty());
+    }
+
+    // ── export_registry on empty registry ────────────────────────────────────
+
+    #[test]
+    fn test_export_registry_empty() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let exported = registry.export_registry();
+        assert_eq!(exported["total"], 0);
+        assert!(exported["models"].as_array().unwrap().is_empty());
+    }
+
+    // ── list_by_format / search_by_tags on empty registry ────────────────────
+
+    #[test]
+    fn test_list_by_format_empty() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let results = registry.list_by_format(ModelFormat::ONNX);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_by_tags_empty() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let results = registry.search_by_tags(&["audio".to_string()]);
+        assert!(results.is_empty());
+    }
+
+    // ── register_from_path ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_register_from_path_nonexistent() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry.register_from_path(
+            Path::new("/nonexistent/path/model.onnx"),
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_from_path_unsupported_extension() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"dummy").unwrap();
+        // Rename to give it an unsupported extension
+        let path = tmp.path().with_extension("bin");
+        std::fs::copy(tmp.path(), &path).unwrap();
+
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry.register_from_path(&path, None).await;
+        assert!(result.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_register_from_path_no_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("modelfile");
+        std::fs::write(&path, b"dummy").unwrap();
+
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry.register_from_path(&path, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_from_path_success_onnx() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mymodel.onnx");
+        std::fs::write(&path, b"dummy onnx data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let result = registry.register_from_path(&path, None).await;
+        assert!(result.is_ok());
+        let model_id = result.unwrap();
+        assert_eq!(model_id, "mymodel");
+
+        // Model should now be gettable
+        let meta = registry.get_model(&model_id).unwrap();
+        assert_eq!(meta.id, "mymodel");
+        assert_eq!(meta.format, ModelFormat::ONNX);
+        assert_eq!(meta.file_size, 15);
+    }
+
+    #[tokio::test]
+    async fn test_register_from_path_with_explicit_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.pt");
+        std::fs::write(&path, b"fake pytorch model").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let result = registry
+            .register_from_path(&path, Some("my-custom-name".to_string()))
+            .await;
+        assert!(result.is_ok());
+        let model_id = result.unwrap();
+        assert_eq!(model_id, "my-custom-name");
+
+        let meta = registry.get_model("my-custom-name").unwrap();
+        assert_eq!(meta.format, ModelFormat::PyTorch);
+        assert_eq!(meta.name, "my-custom-name");
+    }
+
+    // ── mark_loaded / mark_used on registered model ──────────────────────────
+
+    #[tokio::test]
+    async fn test_mark_loaded_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry.register_from_path(&path, None).await.unwrap();
+
+        // Initially not loaded
+        {
+            let entry = registry.models.get(&model_id).unwrap();
+            assert!(!entry.is_loaded);
+            assert_eq!(entry.load_count, 0);
+        }
+
+        registry.mark_loaded(&model_id).unwrap();
+
+        {
+            let entry = registry.models.get(&model_id).unwrap();
+            assert!(entry.is_loaded);
+            assert_eq!(entry.load_count, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mark_used_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("b.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry.register_from_path(&path, None).await.unwrap();
+
+        {
+            let entry = registry.models.get(&model_id).unwrap();
+            assert!(entry.last_used.is_none());
+        }
+
+        registry.mark_used(&model_id).unwrap();
+
+        {
+            let entry = registry.models.get(&model_id).unwrap();
+            assert!(entry.last_used.is_some());
+        }
+    }
+
+    // ── list_models / list_by_format after registration ──────────────────────
+
+    #[tokio::test]
+    async fn test_list_models_after_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        registry.register_from_path(&path, None).await.unwrap();
+
+        let models = registry.list_models();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "x");
+    }
+
+    #[tokio::test]
+    async fn test_list_by_format_after_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let onnx_path = dir.path().join("m1.onnx");
+        let pt_path = dir.path().join("m2.pt");
+        std::fs::write(&onnx_path, b"onnx").unwrap();
+        std::fs::write(&pt_path, b"pytorch").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        registry.register_from_path(&onnx_path, None).await.unwrap();
+        registry.register_from_path(&pt_path, None).await.unwrap();
+
+        let onnx_models = registry.list_by_format(ModelFormat::ONNX);
+        assert_eq!(onnx_models.len(), 1);
+        assert_eq!(onnx_models[0].format, ModelFormat::ONNX);
+
+        let pt_models = registry.list_by_format(ModelFormat::PyTorch);
+        assert_eq!(pt_models.len(), 1);
+        assert_eq!(pt_models[0].format, ModelFormat::PyTorch);
+    }
+
+    // ── search_by_tags ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_search_by_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tagged.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry.register_from_path(&path, None).await.unwrap();
+
+        // Manually add tags via update_model
+        registry
+            .update_model(&model_id, |entry| {
+                entry.metadata.tags = vec!["audio".to_string(), "tts".to_string()];
+            })
+            .unwrap();
+
+        let found = registry.search_by_tags(&["audio".to_string()]);
+        assert_eq!(found.len(), 1);
+
+        let not_found = registry.search_by_tags(&["vision".to_string()]);
+        assert!(not_found.is_empty());
+    }
+
+    // ── unregister ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_unregister_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("del.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry.register_from_path(&path, None).await.unwrap();
+
+        assert_eq!(registry.list_models().len(), 1);
+        registry.unregister(&model_id).unwrap();
+        assert!(registry.list_models().is_empty());
+        assert!(registry.get_model(&model_id).is_err());
+    }
+
+    // ── get_stats after registration ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_stats_after_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let p1 = dir.path().join("s1.onnx");
+        let p2 = dir.path().join("s2.pt");
+        std::fs::write(&p1, b"12345").unwrap();
+        std::fs::write(&p2, b"123").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let id1 = registry.register_from_path(&p1, None).await.unwrap();
+        registry.register_from_path(&p2, None).await.unwrap();
+
+        let stats = registry.get_stats();
+        assert_eq!(stats.total_models, 2);
+        assert_eq!(stats.loaded_models, 0);
+        assert_eq!(stats.total_size_bytes, 5 + 3);
+        assert_eq!(stats.format_counts[&ModelFormat::ONNX], 1);
+        assert_eq!(stats.format_counts[&ModelFormat::PyTorch], 1);
+
+        // Load one, check loaded_models increments
+        registry.mark_loaded(&id1).unwrap();
+        let stats2 = registry.get_stats();
+        assert_eq!(stats2.loaded_models, 1);
+    }
+
+    // ── export_registry after registration ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_export_registry_with_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("exp.onnx");
+        std::fs::write(&path, b"data").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        registry.register_from_path(&path, None).await.unwrap();
+
+        let exported = registry.export_registry();
+        assert_eq!(exported["total"], 1);
+        let arr = exported["models"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "exp");
+    }
+
+    // ── scan_directory ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_scan_directory_not_found() {
+        let registry = ModelRegistry::new(PathBuf::from("/tmp/models"));
+        let result = registry
+            .scan_directory(Path::new("/no/such/directory"))
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scan_directory_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let registered = registry.scan_directory(dir.path()).await.unwrap();
+        assert!(registered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_scan_directory_with_models() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.onnx"), b"onnx1").unwrap();
+        std::fs::write(dir.path().join("b.pt"), b"pytorch1").unwrap();
+        std::fs::write(dir.path().join("c.txt"), b"ignored").unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let mut registered = registry.scan_directory(dir.path()).await.unwrap();
+        registered.sort();
+
+        assert_eq!(registered.len(), 2);
+        assert!(registered.contains(&"a".to_string()));
+        assert!(registered.contains(&"b".to_string()));
+    }
+
+    // ── register_from_path with JSON config ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_register_with_config_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let model_path = dir.path().join("cfg_model.onnx");
+        std::fs::write(&model_path, b"onnx bytes").unwrap();
+
+        // Write a companion config JSON
+        let config_path = dir.path().join("cfg_model.json");
+        let config_json = serde_json::json!({
+            "input_schema": {"type": "array"},
+            "output_schema": {"type": "number"}
+        });
+        std::fs::write(&config_path, config_json.to_string()).unwrap();
+
+        let registry = ModelRegistry::new(dir.path().to_path_buf());
+        let model_id = registry
+            .register_from_path(&model_path, None)
+            .await
+            .unwrap();
+
+        let meta = registry.get_model(&model_id).unwrap();
+        assert!(meta.input_schema.is_some());
+        assert!(meta.output_schema.is_some());
+    }
+
+    // ── ModelMetadata struct fields ───────────────────────────────────────────
+
+    #[test]
+    fn test_model_metadata_serde() {
+        let now = Utc::now();
+        let meta = ModelMetadata {
+            id: "m1".to_string(),
+            name: "Test Model".to_string(),
+            format: ModelFormat::ONNX,
+            path: PathBuf::from("/tmp/m1.onnx"),
+            version: "1.0.0".to_string(),
+            description: Some("A test".to_string()),
+            tags: vec!["tag1".to_string()],
+            input_schema: None,
+            output_schema: None,
+            preprocessing: None,
+            postprocessing: None,
+            created_at: now,
+            updated_at: now,
+            file_size: 100,
+            checksum: Some("abc123".to_string()),
+        };
+
+        let json = serde_json::to_string(&meta).unwrap();
+        let decoded: ModelMetadata = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.id, "m1");
+        assert_eq!(decoded.format, ModelFormat::ONNX);
+        assert_eq!(decoded.file_size, 100);
+        assert_eq!(decoded.checksum, Some("abc123".to_string()));
+    }
+
+    // ── RegistryStats serialization ───────────────────────────────────────────
+
+    #[test]
+    fn test_registry_stats_serialize() {
+        let mut format_counts = HashMap::new();
+        format_counts.insert(ModelFormat::ONNX, 3usize);
+        let stats = RegistryStats {
+            total_models: 3,
+            loaded_models: 1,
+            format_counts,
+            total_size_bytes: 9999,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("total_models"));
+        assert!(json.contains("9999"));
+    }
+
+    // ── OutputType serde ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_output_type_serde() {
+        for variant in [
+            OutputType::Classification,
+            OutputType::Regression,
+            OutputType::Segmentation,
+            OutputType::Detection,
+            OutputType::Generation,
+            OutputType::Raw,
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            let decoded: OutputType = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                format!("{:?}", variant),
+                format!("{:?}", decoded)
+            );
+        }
+    }
+
+    // ── PostprocessingConfig / PreprocessingConfig structs ────────────────────
+
+    #[test]
+    fn test_postprocessing_config_serde() {
+        let cfg = PostprocessingConfig {
+            output_type: OutputType::Classification,
+            threshold: Some(0.5),
+            top_k: Some(5),
+            custom: None,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let decoded: PostprocessingConfig = serde_json::from_str(&json).unwrap();
+        assert!(matches!(decoded.output_type, OutputType::Classification));
+        assert_eq!(decoded.threshold, Some(0.5));
+        assert_eq!(decoded.top_k, Some(5));
+    }
+
+    #[test]
+    fn test_preprocessing_config_serde() {
+        let cfg = PreprocessingConfig {
+            image: Some(ImagePreprocessing {
+                resize: Some((224, 224)),
+                normalize: Some(NormalizationParams {
+                    mean: vec![0.485, 0.456, 0.406],
+                    std: vec![0.229, 0.224, 0.225],
+                }),
+                to_tensor: true,
+                color_space: Some("RGB".to_string()),
+            }),
+            audio: Some(AudioPreprocessing {
+                sample_rate: Some(22050),
+                channels: Some(1),
+                normalize: true,
+                to_mel: Some(MelSpectrogramParams {
+                    n_fft: 1024,
+                    hop_length: 256,
+                    n_mels: 80,
+                }),
+            }),
+            text: Some(TextPreprocessing {
+                tokenizer: Some("bert-base".to_string()),
+                max_length: Some(512),
+                padding: true,
+                truncation: true,
+            }),
+            custom: None,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let decoded: PreprocessingConfig = serde_json::from_str(&json).unwrap();
+        let img = decoded.image.unwrap();
+        assert_eq!(img.resize, Some((224, 224)));
+        assert!(img.to_tensor);
+        let audio = decoded.audio.unwrap();
+        assert_eq!(audio.sample_rate, Some(22050));
+        let text = decoded.text.unwrap();
+        assert_eq!(text.max_length, Some(512));
+        assert!(text.padding);
+    }
+
+    // ── ModelEntry struct ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_model_entry_debug() {
+        let now = Utc::now();
+        let entry = ModelEntry {
+            metadata: ModelMetadata {
+                id: "e1".to_string(),
+                name: "entry1".to_string(),
+                format: ModelFormat::SafeTensors,
+                path: PathBuf::from("/tmp/e1.safetensors"),
+                version: "1.0".to_string(),
+                description: None,
+                tags: vec![],
+                input_schema: None,
+                output_schema: None,
+                preprocessing: None,
+                postprocessing: None,
+                created_at: now,
+                updated_at: now,
+                file_size: 0,
+                checksum: None,
+            },
+            is_loaded: false,
+            load_count: 0,
+            last_used: None,
+        };
+        let dbg = format!("{:?}", entry);
+        assert!(dbg.contains("e1"));
     }
 }
