@@ -11,19 +11,9 @@ use crate::middleware::RateLimiter;
 use crate::dedup::RequestDeduplicator;
 
 pub async fn root() -> impl Responder {
-    HttpResponse::Ok().json(json!({
-        "message": "PyTorch Inference Framework API",
-        "version": "1.0.0",
-        "status": "running",
-        "timestamp": Utc::now().to_rfc3339(),
-        "endpoints": {
-            "inference": "/predict",
-            "tts": "/synthesize",
-            "health": "/health",
-            "stats": "/stats",
-            "models": "/models"
-        }
-    }))
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(include_str!("playground.html"))
 }
 
 pub async fn health_check(
