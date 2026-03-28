@@ -706,4 +706,42 @@ mod tests {
         assert!(metrics.min_latency_ms >= 1.0);
         assert!(metrics.max_latency_ms <= 100.0);
     }
+
+    /// Forces CAS contention on min_latency (line 86) by using a barrier so
+    /// many threads all compete to set min_latency to 1 at the exact same time,
+    /// guaranteeing compare_exchange failures and loop-body re-execution.
+    #[test]
+    fn test_monitor_cas_min_latency_barrier_contention() {
+        use std::sync::Barrier;
+
+        const THREADS: usize = 100;
+        let monitor = Arc::new(Monitor::new());
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let mut handles = vec![];
+
+        for _ in 0..THREADS {
+            let m = Arc::clone(&monitor);
+            let b = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                // All threads synchronize here so they enter record_request_end
+                // simultaneously, maximizing contention on the CAS for min_latency.
+                b.wait();
+                m.record_request_start();
+                // All threads use latency=1 (below initial MAX) so all try the
+                // compare_exchange; only one wins per round, the rest hit line 86.
+                m.record_request_end(1, "/api/barrier_cas", true);
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let metrics = monitor.get_metrics();
+        assert_eq!(metrics.total_requests, THREADS as u64);
+        assert_eq!(metrics.total_processed, THREADS as u64);
+        // Every thread used latency=1, so min should be 1 ms
+        assert!((metrics.min_latency_ms - 1.0).abs() < 0.001,
+            "min_latency should be 1.0, got {}", metrics.min_latency_ms);
+    }
 }

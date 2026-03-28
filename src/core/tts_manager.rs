@@ -1621,4 +1621,88 @@ mod tests {
         assert_eq!(count_after_first, count_after_second,
             "second call should not add duplicate engines");
     }
+
+    // ──────────────────────────── initialize_defaults ───────────────────────
+
+    #[ignore = "requires ORT runtime library (libonnxruntime.dylib)"]
+    #[tokio::test]
+    async fn test_initialize_defaults_completes_without_panic() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        // All engines will fail to load (no models present) but should not panic
+        let result = manager.initialize_defaults().await;
+        assert!(result.is_ok(), "initialize_defaults should succeed even if engines fail: {:?}", result);
+    }
+
+    #[ignore = "requires ORT runtime library (libonnxruntime.dylib)"]
+    #[tokio::test]
+    async fn test_initialize_defaults_engines_fail_gracefully() {
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        manager.initialize_defaults().await.unwrap();
+        // All loads fail gracefully - engine count is 0 (no models present in CI)
+        // But the method itself must return Ok(())
+        let stats = manager.get_stats();
+        assert_eq!(stats.cache_capacity, 128);
+    }
+
+    // ──────────────────────────── TTSManagerConfig serde ────────────────────
+
+    #[test]
+    fn test_tts_manager_config_serde_roundtrip() {
+        let cfg = TTSManagerConfig {
+            default_engine: "piper".to_string(),
+            cache_dir: std::path::PathBuf::from("/tmp/tts"),
+            max_concurrent_requests: 5,
+            synthesis_cache_capacity: 64,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: TTSManagerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.default_engine, "piper");
+        assert_eq!(back.max_concurrent_requests, 5);
+        assert_eq!(back.synthesis_cache_capacity, 64);
+    }
+
+    #[test]
+    fn test_tts_manager_config_serde_defaults() {
+        // When fields with serde defaults are absent, defaults kick in
+        let json = r#"{"default_engine": "test", "cache_dir": "/tmp"}"#;
+        let cfg: TTSManagerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.max_concurrent_requests, 10);
+        assert_eq!(cfg.synthesis_cache_capacity, 128);
+    }
+
+    #[test]
+    fn test_tts_manager_stats_serde() {
+        let stats = TTSManagerStats {
+            total_engines: 2,
+            engine_ids: vec!["a".to_string(), "b".to_string()],
+            cache_size: 5,
+            cache_capacity: 64,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        let back: TTSManagerStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.total_engines, 2);
+        assert_eq!(back.cache_capacity, 64);
+    }
+
+    #[test]
+    fn test_fnv1a_hash_empty_input() {
+        // FNV-1a of empty byte slice should equal the offset basis
+        let hash = TTSManager::fnv1a_u64(&[]);
+        assert_eq!(hash, 14695981039346656037u64);
+    }
+
+    #[test]
+    fn test_fnv1a_hash_deterministic() {
+        let data = b"hello world";
+        let h1 = TTSManager::fnv1a_u64(data);
+        let h2 = TTSManager::fnv1a_u64(data);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_fnv1a_hash_different_inputs_differ() {
+        let h1 = TTSManager::fnv1a_u64(b"abc");
+        let h2 = TTSManager::fnv1a_u64(b"def");
+        assert_ne!(h1, h2);
+    }
 }

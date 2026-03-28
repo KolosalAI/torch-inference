@@ -107,6 +107,15 @@ walkdir = "2.4"
 tempfile = "3.8"
 bytes = "1.5"
 
+# Performance — SIMD, zero-copy, LLM
+wide = "0.7"                                                         # AVX2/NEON SIMD via safe API
+zune-jpeg = "0.4"                                                    # 2× faster JPEG decode (SIMD)
+bytemuck = { version = "1.14", features = ["derive"] }               # zero-copy type punning
+half = { version = "2.3", features = ["bytemuck", "num-traits"] }    # f16 / bf16 for LLM
+crossbeam-queue = "0.3"                                              # lock-free queues
+core_affinity = "0.8"                                                # CPU core pinning
+tokenizers = { version = "0.19", optional = true, default-features = false } # HuggingFace tokenizer
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
@@ -131,6 +140,11 @@ telemetry = ["tracing-opentelemetry", "opentelemetry", "opentelemetry-otlp", "op
 metrics = ["prometheus"]
 jemalloc = ["tikv-jemallocator"]
 all-backends = ["cuda", "onnx", "torch", "candle"]
+# High-performance features
+simd-image = []                         # SIMD image preprocessing (zune-jpeg + wide)
+llm = ["tokenizers"]                    # LLM inference subsystem
+llm-metal = ["llm"]                     # LLM with Metal attention (macOS)
+llm-cuda = ["llm", "cuda"]              # LLM with CUDA FlashAttention
 
 [lib]
 name = "torch_inference"
@@ -139,6 +153,14 @@ path = "src/lib.rs"
 [[bin]]
 name = "torch-inference-server"
 path = "src/main.rs"
+
+[[bin]]
+name = "provider-comparison"
+path = "src/bin/provider_comparison.rs"
+
+[[bench]]
+name = "throughput_bench"
+harness = false
 
 [[bench]]
 name = "cache_bench"

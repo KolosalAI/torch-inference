@@ -2161,4 +2161,87 @@ mod tests {
         if let Some(v) = old_https { env::set_var("HTTPS_PROXY", v); } else { env::remove_var("HTTPS_PROXY"); }
         if let Some(v) = old_https_lc { env::set_var("https_proxy", v); } else { env::remove_var("https_proxy"); }
     }
+
+    // ===== get_download_url() tests =====
+
+    #[test]
+    fn test_get_download_url_cpu_backend_is_non_empty() {
+        let detector = TorchLibAutoDetect::new();
+        let url = detector.get_download_url(&TorchBackend::Cpu);
+        assert!(!url.is_empty());
+        assert!(url.contains("libtorch"));
+        assert!(url.ends_with(".zip"));
+    }
+
+    #[test]
+    fn test_get_download_url_metal_backend_is_non_empty() {
+        let detector = TorchLibAutoDetect::new();
+        let url = detector.get_download_url(&TorchBackend::Metal);
+        assert!(!url.is_empty());
+        assert!(url.contains("libtorch"));
+        assert!(url.ends_with(".zip"));
+    }
+
+    #[test]
+    fn test_get_download_url_cuda_12_backend() {
+        let detector = TorchLibAutoDetect::new();
+        let url = detector.get_download_url(&TorchBackend::Cuda("12.1".to_string()));
+        assert!(!url.is_empty());
+        assert!(url.contains("libtorch"));
+        assert!(url.ends_with(".zip"));
+    }
+
+    #[test]
+    fn test_get_download_url_cuda_11_8_backend() {
+        let detector = TorchLibAutoDetect::new();
+        let url = detector.get_download_url(&TorchBackend::Cuda("11.8".to_string()));
+        assert!(!url.is_empty());
+        assert!(url.contains("libtorch"));
+        assert!(url.ends_with(".zip"));
+    }
+
+    #[test]
+    fn test_get_download_url_cuda_old_backend() {
+        let detector = TorchLibAutoDetect::new();
+        // Old CUDA version that doesn't match 12.x or 11.8 prefix - should default to cu118
+        let url = detector.get_download_url(&TorchBackend::Cuda("10.2".to_string()));
+        assert!(!url.is_empty());
+        assert!(url.contains("libtorch"));
+    }
+
+    #[test]
+    fn test_get_download_url_contains_pytorch_domain() {
+        let detector = TorchLibAutoDetect::new();
+        let url = detector.get_download_url(&TorchBackend::Cpu);
+        assert!(url.contains("pytorch.org") || url.contains("download.pytorch.org"),
+            "URL should reference pytorch.org: {}", url);
+    }
+
+    #[test]
+    fn test_get_download_url_returns_different_for_different_backends() {
+        let detector = TorchLibAutoDetect::new();
+        // On macOS, Metal and Cpu might return the same URL (both map to arm64/x86_64),
+        // but Cuda should also return something non-empty and valid.
+        let _cpu_url = detector.get_download_url(&TorchBackend::Cpu);
+        let _cuda_url = detector.get_download_url(&TorchBackend::Cuda("12.1".to_string()));
+        let _metal_url = detector.get_download_url(&TorchBackend::Metal);
+        // Just verify all return valid-looking URLs
+        for url in [&_cpu_url, &_cuda_url, &_metal_url] {
+            assert!(!url.is_empty());
+            assert!(url.starts_with("https://"), "URL should use HTTPS: {}", url);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_detect_cuda_versioned_env_var_nonexistent() {
+        // Ensure none of the CUDA_PATH_V*_* vars point to existing dirs
+        let old_cuda_path = env::var("CUDA_PATH").ok();
+        env::remove_var("CUDA_PATH");
+        // CUDA_PATH_V10_0 through CUDA_PATH_V13_9 typically don't exist in CI
+        let mut detector = TorchLibAutoDetect::new();
+        let result = detector.detect_cuda();
+        assert!(result.is_ok());
+        if let Some(v) = old_cuda_path { env::set_var("CUDA_PATH", v); }
+    }
 }

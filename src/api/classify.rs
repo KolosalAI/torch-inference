@@ -1,0 +1,479 @@
+/// Batched image classification endpoint.
+///
+/// POST /classify/batch
+///   Body: `{ "images": ["<base64>", ...], "top_k": 5, "model_width": 224, "model_height": 224 }`
+///   Response: `{ "results": [[{"label":"..","confidence":0.9},...], ...], "batch_size": N }`
+///
+/// The handler is decoupled from ORT via the [`ClassificationBackend`] trait so
+/// the endpoint can be unit-tested with a mock without a real `.onnx` file.
+use actix_web::{web, HttpResponse};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+use crate::core::image_pipeline::{ImagePipeline, PreprocessConfig};
+use crate::error::ApiError;
+
+// ── Request / response types ──────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct BatchClassifyRequest {
+    /// Base64-encoded images (JPEG or PNG).
+    pub images: Vec<String>,
+    /// Number of top predictions to return per image (default 5).
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+    /// Target width for the model (default 224).
+    #[serde(default = "default_model_dim")]
+    pub model_width: u32,
+    /// Target height for the model (default 224).
+    #[serde(default = "default_model_dim")]
+    pub model_height: u32,
+}
+
+fn default_top_k() -> usize { 5 }
+fn default_model_dim() -> u32 { 224 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Prediction {
+    pub label: String,
+    pub confidence: f32,
+    pub class_id: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchClassifyResponse {
+    /// One Vec<Prediction> per input image, in submission order.
+    pub results: Vec<Vec<Prediction>>,
+    pub batch_size: usize,
+}
+
+// ── Backend trait ─────────────────────────────────────────────────────────
+
+/// Abstraction over the inference backend.
+///
+/// Implement this trait on a struct that holds an ORT `Session` to wire
+/// real ONNX inference. Use [`MockClassificationBackend`] in tests.
+#[async_trait]
+pub trait ClassificationBackend: Send + Sync {
+    /// Run classification on a pre-normalised NCHW f32 batch.
+    ///
+    /// `batch` is shaped `[N, 3, H, W]`.  Return one `Vec<Prediction>` per
+    /// image, sorted by confidence descending, truncated to `top_k`.
+    async fn classify_nchw(
+        &self,
+        batch: ndarray::Array4<f32>,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<Vec<Prediction>>>;
+}
+
+// ── App state ─────────────────────────────────────────────────────────────
+
+pub struct ClassifyState {
+    pub backend: Arc<dyn ClassificationBackend>,
+}
+
+// ── Handler ───────────────────────────────────────────────────────────────
+
+/// POST /classify/batch
+pub async fn batch_classify(
+    req: web::Json<BatchClassifyRequest>,
+    state: web::Data<ClassifyState>,
+) -> Result<HttpResponse, ApiError> {
+    if req.images.is_empty() {
+        return Err(ApiError::BadRequest("images array must not be empty".to_string()));
+    }
+    if req.images.len() > 128 {
+        return Err(ApiError::BadRequest(
+            "batch too large (max 128 images)".to_string(),
+        ));
+    }
+    if req.top_k == 0 {
+        return Err(ApiError::BadRequest("top_k must be >= 1".to_string()));
+    }
+
+    // Decode base64 → raw bytes.
+    use base64::Engine as _;
+    let raw_images: Vec<Vec<u8>> = req
+        .images
+        .iter()
+        .enumerate()
+        .map(|(i, b64)| {
+            base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| ApiError::BadRequest(format!("image[{}]: {}", i, e)))
+        })
+        .collect::<Result<_, _>>()?;
+
+    // Preprocess: decode → resize → normalise → NCHW f32.
+    let cfg = PreprocessConfig::imagenet(req.model_width, req.model_height);
+    let pipeline = ImagePipeline::new(cfg);
+    let batch = pipeline
+        .preprocess_batch(&raw_images)
+        .map_err(|e| ApiError::BadRequest(format!("preprocess failed: {}", e)))?;
+
+    // Run inference via the backend.
+    let results = state
+        .backend
+        .classify_nchw(batch, req.top_k)
+        .await
+        .map_err(|e| ApiError::InternalError(format!("inference failed: {}", e)))?;
+
+    Ok(HttpResponse::Ok().json(BatchClassifyResponse {
+        batch_size: results.len(),
+        results,
+    }))
+}
+
+/// Configure /classify routes.
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/classify")
+            .route("/batch", web::post().to(batch_classify)),
+    );
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use actix_web::{test as actix_test, App};
+
+    // ── Mock backend ─────────────────────────────────────────────────────
+
+    /// Returns `top_k` dummy predictions for each image in the batch.
+    pub struct MockClassificationBackend {
+        pub labels: Vec<String>,
+    }
+
+    impl Default for MockClassificationBackend {
+        fn default() -> Self {
+            Self {
+                labels: vec!["cat".into(), "dog".into(), "bird".into(),
+                             "fish".into(), "horse".into(), "car".into()],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ClassificationBackend for MockClassificationBackend {
+        async fn classify_nchw(
+            &self,
+            batch: ndarray::Array4<f32>,
+            top_k: usize,
+        ) -> anyhow::Result<Vec<Vec<Prediction>>> {
+            let n = batch.shape()[0];
+            Ok((0..n)
+                .map(|_| {
+                    self.labels
+                        .iter()
+                        .enumerate()
+                        .take(top_k)
+                        .map(|(i, label)| Prediction {
+                            label: label.clone(),
+                            confidence: 1.0 / (i + 1) as f32,
+                            class_id: i,
+                        })
+                        .collect()
+                })
+                .collect())
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    fn make_state() -> web::Data<ClassifyState> {
+        web::Data::new(ClassifyState {
+            backend: Arc::new(MockClassificationBackend::default()),
+        })
+    }
+
+    /// 1×1 solid-color PNG as base64.
+    fn tiny_b64(r: u8, g: u8, b: u8) -> String {
+        use image::{DynamicImage, ImageBuffer, Rgb};
+        use base64::Engine as _;
+        let img = DynamicImage::ImageRgb8(
+            ImageBuffer::from_pixel(1, 1, Rgb([r, g, b])),
+        );
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(buf.into_inner())
+    }
+
+    // ── Request deserialization ──────────────────────────────────────────
+
+    #[test]
+    fn test_batch_classify_request_defaults() {
+        let json = r#"{"images": ["abc"]}"#;
+        let req: BatchClassifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.top_k, 5);
+        assert_eq!(req.model_width, 224);
+        assert_eq!(req.model_height, 224);
+    }
+
+    #[test]
+    fn test_batch_classify_request_custom_fields() {
+        let json = r#"{"images": ["abc"], "top_k": 3, "model_width": 448, "model_height": 448}"#;
+        let req: BatchClassifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.top_k, 3);
+        assert_eq!(req.model_width, 448);
+        assert_eq!(req.model_height, 448);
+    }
+
+    // ── Response serialization ───────────────────────────────────────────
+
+    #[test]
+    fn test_batch_classify_response_serialization() {
+        let resp = BatchClassifyResponse {
+            results: vec![vec![Prediction {
+                label: "cat".into(),
+                confidence: 0.95,
+                class_id: 0,
+            }]],
+            batch_size: 1,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["batch_size"], 1);
+        assert_eq!(v["results"][0][0]["label"], "cat");
+    }
+
+    #[test]
+    fn test_prediction_serialization() {
+        let p = Prediction { label: "dog".into(), confidence: 0.8, class_id: 1 };
+        let json = serde_json::to_string(&p).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["label"], "dog");
+        assert!((v["confidence"].as_f64().unwrap() - 0.8).abs() < 1e-4);
+        assert_eq!(v["class_id"], 1);
+    }
+
+    // ── Handler tests ────────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_batch_classify_success() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(200, 100, 50);
+        let payload = serde_json::json!({ "images": [img] });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_response_has_correct_batch_size() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(128, 64, 32);
+        let payload = serde_json::json!({ "images": [img, img.clone()] });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let body: serde_json::Value = actix_test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["batch_size"], 2);
+        assert_eq!(body["results"].as_array().unwrap().len(), 2);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_top_k_limits_predictions() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(100, 100, 100);
+        let payload = serde_json::json!({ "images": [img], "top_k": 3 });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let body: serde_json::Value = actix_test::call_and_read_body_json(&app, req).await;
+        let preds = body["results"][0].as_array().unwrap();
+        assert_eq!(preds.len(), 3);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_empty_images_returns_bad_request() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let payload = serde_json::json!({ "images": [] });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_top_k_zero_returns_bad_request() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(1, 2, 3);
+        let payload = serde_json::json!({ "images": [img], "top_k": 0 });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_invalid_base64_returns_bad_request() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let payload = serde_json::json!({ "images": ["!!!not_base64!!!"] });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_batch_too_large_returns_bad_request() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(0, 0, 0);
+        let images: Vec<String> = std::iter::repeat(img).take(129).collect();
+        let payload = serde_json::json!({ "images": images });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_valid_base64_but_invalid_image_returns_bad_request() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        // Valid base64 but not an image.
+        use base64::Engine as _;
+        let not_image = base64::engine::general_purpose::STANDARD.encode(b"not an image");
+        let payload = serde_json::json!({ "images": [not_image] });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_batch_classify_predictions_have_required_fields() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(255, 0, 0);
+        let payload = serde_json::json!({ "images": [img], "top_k": 2 });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let body: serde_json::Value = actix_test::call_and_read_body_json(&app, req).await;
+        let pred = &body["results"][0][0];
+        assert!(pred["label"].is_string());
+        assert!(pred["confidence"].is_number());
+        assert!(pred["class_id"].is_number());
+    }
+
+    #[actix_web::test]
+    async fn test_configure_routes_registers_batch_endpoint() {
+        let state = make_state();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(state)
+                .configure(configure_routes),
+        )
+        .await;
+
+        let img = tiny_b64(50, 100, 150);
+        let payload = serde_json::json!({ "images": [img] });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    // ── Serde helpers ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_default_top_k_is_5() {
+        assert_eq!(default_top_k(), 5);
+    }
+
+    #[test]
+    fn test_default_model_dim_is_224() {
+        assert_eq!(default_model_dim(), 224);
+    }
+
+    #[test]
+    fn test_prediction_clone() {
+        let p = Prediction { label: "cat".into(), confidence: 0.9, class_id: 0 };
+        let p2 = p.clone();
+        assert_eq!(p2.label, "cat");
+        assert!((p2.confidence - 0.9).abs() < 1e-6);
+    }
+}

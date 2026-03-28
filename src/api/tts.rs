@@ -1,10 +1,14 @@
 /// Production TTS API - Clean, modular design
 use actix_web::{web, HttpResponse};
+use actix_web::web::Bytes;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::core::tts_manager::{TTSManager, TTSManagerStats};
 use crate::core::tts_engine::{SynthesisParams, VoiceInfo};
+use crate::core::tts_pipeline::StreamingTtsPipeline;
 use crate::core::audio::AudioProcessor;
 use crate::error::ApiError;
 
@@ -127,6 +131,54 @@ pub async fn synthesize(
         format: "wav".to_string(),
         engine_used,
     }))
+}
+
+/// POST /tts/stream - Sentence-level streaming TTS (low TTFA)
+///
+/// Returns a chunked HTTP response with raw 16-bit PCM audio (`audio/pcm`).
+/// Each chunk corresponds to one synthesised sentence so the caller can begin
+/// playback as soon as the first chunk arrives (TTFA ≈ first-sentence latency).
+///
+/// Query parameters:
+/// - `format`: `pcm16` (default) or `f32` — encoding of the audio samples.
+pub async fn stream_synthesize(
+    req: web::Json<SynthesisRequest>,
+    state: web::Data<TTSState>,
+) -> Result<HttpResponse, ApiError> {
+    if req.text.is_empty() {
+        return Err(ApiError::BadRequest("Text cannot be empty".to_string()));
+    }
+    if req.text.len() > 50000 {
+        return Err(ApiError::BadRequest("Text too long (max 50000 characters)".to_string()));
+    }
+
+    let engine = if let Some(id) = req.engine.as_deref() {
+        state.manager.get_engine(id)
+    } else {
+        state.manager.get_default_engine()
+    }
+    .ok_or_else(|| ApiError::InternalError("No TTS engine available".to_string()))?;
+
+    let params = SynthesisParams {
+        speed: req.speed.max(0.25).min(4.0),
+        pitch: req.pitch.max(0.5).min(2.0),
+        voice: req.voice.clone(),
+        language: req.language.clone(),
+    };
+
+    let pipeline = StreamingTtsPipeline::new(engine);
+    let chunk_rx = pipeline.synthesize_streaming(&req.text, params);
+
+    // Convert the mpsc receiver into an async Stream of Bytes.
+    let byte_stream = ReceiverStream::new(chunk_rx).map(|result| {
+        result
+            .map(|chunk| Bytes::from(chunk.to_pcm16_le()))
+            .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))
+    });
+
+    Ok(HttpResponse::Ok()
+        .content_type("audio/pcm")
+        .streaming(byte_stream))
 }
 
 /// GET /tts/engines - List available engines
@@ -700,6 +752,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/tts")
             .route("/synthesize", web::post().to(synthesize))
+            .route("/stream", web::post().to(stream_synthesize))
             .route("/engines", web::get().to(list_engines))
             .route("/engines/{engine_id}/capabilities", web::get().to(get_capabilities))
             .route("/engines/{engine_id}/voices", web::get().to(list_voices))

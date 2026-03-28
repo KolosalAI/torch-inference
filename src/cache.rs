@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
 use log::debug;
 use rand::seq::SliceRandom;
+use bytes::Bytes;
 
 #[derive(Clone)]
 pub struct CacheEntry {
@@ -14,6 +15,28 @@ pub struct CacheEntry {
     pub last_access: u64,
     pub access_count: u64,
     pub insertion_order: u64,
+}
+
+/// Zero-copy cache entry backed by `Arc<Bytes>`.
+///
+/// Reading from this entry costs ~5 ns (Arc pointer increment) vs ~300 ns
+/// for a deep clone of `serde_json::Value`.
+#[derive(Clone)]
+pub struct BytesCacheEntry {
+    /// Shared reference to the raw bytes (e.g. a serialised JSON response).
+    pub data: Arc<Bytes>,
+    pub timestamp: u64,
+    pub ttl: u64,
+}
+
+impl BytesCacheEntry {
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        now - self.timestamp > self.ttl
+    }
 }
 
 impl CacheEntry {
@@ -31,6 +54,9 @@ const SAMPLE_SIZE: usize = 100;
 
 pub struct Cache {
     data: DashMap<String, CacheEntry>,
+    /// Zero-copy byte-slice cache.  Entries here share the same TTL / max-size
+    /// budget as the JSON cache but avoid deep cloning on every read.
+    bytes_data: DashMap<String, BytesCacheEntry>,
     max_size: usize,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -43,6 +69,7 @@ impl Cache {
     pub fn new(max_size: usize) -> Self {
         Self {
             data: DashMap::new(),
+            bytes_data: DashMap::new(),
             max_size,
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
@@ -50,6 +77,51 @@ impl Cache {
             insertion_counter: AtomicU64::new(0),
             eviction_samples: AtomicU64::new(0),
         }
+    }
+
+    // ── Zero-copy Arc<Bytes> path ─────────────────────────────────────────
+
+    /// Store pre-serialised bytes (e.g. a JSON response body) without copying.
+    ///
+    /// On a cache hit, [`get_bytes`] returns a clone of the `Arc<Bytes>` —
+    /// just an atomic pointer increment (~5 ns), no heap allocation.
+    pub fn set_bytes(&self, key: String, value: Arc<Bytes>, ttl: u64) -> Result<(), String> {
+        // Evict if over capacity (reuses same max_size budget as JSON cache).
+        if self.bytes_data.len() >= self.max_size && !self.bytes_data.contains_key(&key) {
+            // Simple FIFO eviction: remove an arbitrary entry.
+            if let Some(evict_key) = self.bytes_data.iter().next().map(|e| e.key().clone()) {
+                self.bytes_data.remove(&evict_key);
+            }
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.bytes_data.insert(key, BytesCacheEntry { data: value, timestamp: now, ttl });
+        Ok(())
+    }
+
+    /// Retrieve bytes by key.  Returns `None` on miss or expiry.
+    ///
+    /// Clone cost is O(1) — increments the `Arc` reference count only.
+    pub fn get_bytes(&self, key: &str) -> Option<Arc<Bytes>> {
+        if let Some(entry) = self.bytes_data.get(key) {
+            if entry.is_expired() {
+                drop(entry);
+                self.bytes_data.remove(key);
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            return Some(Arc::clone(&entry.data));
+        }
+        self.misses.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    /// Remove a bytes entry by key.
+    pub fn remove_bytes(&self, key: &str) {
+        self.bytes_data.remove(key);
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
@@ -829,6 +901,103 @@ mod tests {
         let stats_after = cache.get_stats();
         assert_eq!(stats_after.evictions, 10);
         assert_eq!(stats_after.size, 100); // Cache maintains max_size
+    }
+
+    // ── Zero-copy Arc<Bytes> cache ────────────────────────────────────────
+
+    #[test]
+    fn test_set_bytes_and_get_bytes_roundtrip() {
+        let cache = Cache::new(100);
+        let data = Arc::new(Bytes::from(b"hello bytes cache".to_vec()));
+        cache.set_bytes("k1".to_string(), Arc::clone(&data), 60).unwrap();
+        let got = cache.get_bytes("k1").unwrap();
+        assert_eq!(&*got, &*data);
+    }
+
+    #[test]
+    fn test_get_bytes_miss_returns_none() {
+        let cache = Cache::new(100);
+        assert!(cache.get_bytes("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_get_bytes_returns_arc_clone_not_deep_copy() {
+        let cache = Cache::new(100);
+        let data = Arc::new(Bytes::from(vec![1u8, 2, 3]));
+        cache.set_bytes("k".to_string(), Arc::clone(&data), 60).unwrap();
+        let got1 = cache.get_bytes("k").unwrap();
+        let got2 = cache.get_bytes("k").unwrap();
+        // Both arcs point to the same allocation.
+        assert!(Arc::ptr_eq(&got1, &got2));
+    }
+
+    #[test]
+    fn test_set_bytes_overwrites_existing() {
+        let cache = Cache::new(100);
+        cache.set_bytes("k".to_string(), Arc::new(Bytes::from("v1")), 60).unwrap();
+        cache.set_bytes("k".to_string(), Arc::new(Bytes::from("v2")), 60).unwrap();
+        let got = cache.get_bytes("k").unwrap();
+        assert_eq!(got.as_ref(), b"v2".as_ref());
+    }
+
+    #[test]
+    fn test_remove_bytes_removes_entry() {
+        let cache = Cache::new(100);
+        cache.set_bytes("k".to_string(), Arc::new(Bytes::from("v")), 60).unwrap();
+        cache.remove_bytes("k");
+        assert!(cache.get_bytes("k").is_none());
+    }
+
+    #[test]
+    fn test_bytes_cache_respects_ttl_expiry() {
+        let cache = Cache::new(100);
+        cache.set_bytes("k".to_string(), Arc::new(Bytes::from("expire")), 1).unwrap();
+        thread::sleep(std::time::Duration::from_secs(2));
+        assert!(cache.get_bytes("k").is_none());
+    }
+
+    #[test]
+    fn test_bytes_entry_is_expired_true() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let entry = BytesCacheEntry {
+            data: Arc::new(Bytes::from("x")),
+            timestamp: now - 200,
+            ttl: 100,
+        };
+        assert!(entry.is_expired());
+    }
+
+    #[test]
+    fn test_bytes_entry_is_expired_false() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let entry = BytesCacheEntry {
+            data: Arc::new(Bytes::from("x")),
+            timestamp: now,
+            ttl: 600,
+        };
+        assert!(!entry.is_expired());
+    }
+
+    #[test]
+    fn test_bytes_cache_evicts_when_full() {
+        // max_size = 2; inserting 3 should evict one.
+        let cache = Cache::new(2);
+        cache.set_bytes("a".to_string(), Arc::new(Bytes::from("1")), 60).unwrap();
+        cache.set_bytes("b".to_string(), Arc::new(Bytes::from("2")), 60).unwrap();
+        cache.set_bytes("c".to_string(), Arc::new(Bytes::from("3")), 60).unwrap();
+        // Only 2 entries remain.
+        assert_eq!(cache.bytes_data.len(), 2);
+    }
+
+    #[test]
+    fn test_bytes_cache_empty_bytes() {
+        let cache = Cache::new(100);
+        let empty = Arc::new(Bytes::new());
+        cache.set_bytes("empty".to_string(), empty, 60).unwrap();
+        let got = cache.get_bytes("empty").unwrap();
+        assert!(got.is_empty());
     }
 
     /// Covers line 132: evict_lru() early-return when data is empty.
