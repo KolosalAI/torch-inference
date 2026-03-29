@@ -651,17 +651,17 @@
             <div class="card-title">Resource Usage</div>
             <div class="res-row">
               <span class="res-name">CPU</span>
-              <div class="res-bar-track"><div class="res-bar-fill" id="bar-cpu" style="width:0%;background:#6366f1"></div></div>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-cpu" style="width:0%;background:#0066F5"></div></div>
               <span class="res-val" id="val-cpu">—</span>
             </div>
             <div class="res-row">
               <span class="res-name">RAM</span>
-              <div class="res-bar-track"><div class="res-bar-fill" id="bar-ram" style="width:0%;background:#f59e0b"></div></div>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-ram" style="width:0%;background:#FFA931"></div></div>
               <span class="res-val" id="val-ram">—</span>
             </div>
             <div class="res-row">
               <span class="res-name">GPU</span>
-              <div class="res-bar-track"><div class="res-bar-fill" id="bar-gpu" style="width:0%;background:#22c55e"></div></div>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-gpu" style="width:0%;background:#3ABC3F"></div></div>
               <span class="res-val" id="val-gpu">—</span>
             </div>
             <div id="gpu-device-info"></div>
@@ -692,7 +692,7 @@
             </div>
           </div>
           <div id="dl-error"></div>
-          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">
             <div class="card-title" style="margin-bottom:10px">Active &amp; Recent Downloads</div>
             <div id="dl-tasks-list">
               <div id="dl-tasks-empty">No downloads yet.</div>
@@ -1262,19 +1262,19 @@ function updateSparkline(rps) {
   sparkData.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * (H - 6)));
   ctx.lineTo(W, H); ctx.closePath();
   const grad = ctx.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, 'rgba(99,102,241,0.25)');
-  grad.addColorStop(1, 'rgba(99,102,241,0.02)');
+  grad.addColorStop(0, 'rgba(0,102,245,0.18)');
+  grad.addColorStop(1, 'rgba(0,102,245,0.02)');
   ctx.fillStyle = grad; ctx.fill();
   ctx.beginPath();
   sparkData.forEach((v, i) => {
     const x = i * step, y = H - (v / max) * (H - 6);
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
-  ctx.strokeStyle = '#818cf8'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.strokeStyle = '#0066F5'; ctx.lineWidth = 1.5; ctx.stroke();
   const lx = (sparkData.length - 1) * step;
   const ly = H - (sparkData[sparkData.length - 1] / max) * (H - 6);
   ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-  ctx.fillStyle = '#818cf8'; ctx.fill();
+  ctx.fillStyle = '#0066F5'; ctx.fill();
 }
 
 function updateResourceBars(m, gpuList) {
