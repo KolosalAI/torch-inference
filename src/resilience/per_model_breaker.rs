@@ -486,4 +486,68 @@ mod tests {
         let _ = breaker.call(async { Err::<(), String>("fail".to_string()) }).await;
         assert_eq!(breaker.get_state().await, CircuitState::Open);
     }
+
+    // ── Dedicated gap-closing tests (lines 59, 111) ───────────────────────────
+
+    /// Line 59 (CircuitState::Open arm in call()): Open state with timeout
+    /// expired → should_try_recovery = true → transition to HalfOpen and call
+    /// succeeds → circuit closes.
+    #[tokio::test]
+    async fn test_open_timeout_expired_halfopen_then_closes() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 2,
+            success_threshold: 1,
+            timeout: Duration::from_millis(1), // very short timeout
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        // Open the circuit
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        let _ = cb.call(async { Err::<(), String>("fail".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Open);
+
+        // Wait for timeout to elapse
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Line 59: Open arm entered, should_try_recovery = true
+        // → state becomes HalfOpen, then call succeeds
+        // → on_success HalfOpen arm with threshold=1 → Closed
+        let result = cb.call(async { Ok::<(), String>(()) }).await;
+        assert!(result.is_ok());
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+    }
+
+    /// Line 111 (on_success `_ => {}` catch-all): on_success is called when the
+    /// circuit is in Closed state.  The Closed arm (lines 107-110) resets the
+    /// failure count; the `_ => {}` arm is the dead-code catch-all.
+    /// We verify on_success in Closed resets failure_count so that subsequent
+    /// failures still need the full threshold to open the circuit.
+    #[tokio::test]
+    async fn test_on_success_in_closed_state_resets_failure_count() {
+        let cfg = CircuitBreakerConfig {
+            failure_threshold: 3,
+            success_threshold: 1,
+            timeout: Duration::from_secs(60),
+        };
+        let cb = CircuitBreaker::new(cfg);
+
+        // Two failures (below threshold) — still Closed
+        let _ = cb.call(async { Err::<(), String>("f1".to_string()) }).await;
+        let _ = cb.call(async { Err::<(), String>("f2".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+
+        // A success while Closed → on_success Closed arm (line 107-110) runs,
+        // resetting failure_count to 0.
+        let r = cb.call(async { Ok::<(), String>(()) }).await;
+        assert!(r.is_ok());
+        assert_eq!(cb.get_state().await, CircuitState::Closed);
+
+        // We now need 3 fresh failures to open (count was reset)
+        let _ = cb.call(async { Err::<(), String>("g1".to_string()) }).await;
+        let _ = cb.call(async { Err::<(), String>("g2".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Closed); // still closed
+
+        let _ = cb.call(async { Err::<(), String>("g3".to_string()) }).await;
+        assert_eq!(cb.get_state().await, CircuitState::Open);
+    }
 }

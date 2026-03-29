@@ -727,4 +727,127 @@ mod tests {
             .await;
         assert_eq!(result, Err("retryable"));
     }
+
+    // ── Dedicated gap-closing tests (lines 60, 65-66, 76-77, 84-85, 105,
+    //    123-124, 131-132) ────────────────────────────────────────────────────
+
+    /// execute(): succeed AFTER one retry.
+    /// - loop body entered (line 60)
+    /// - warn! on retry attempt (lines 84-85)
+    /// - debug! on success after retry (lines 65-66)
+    #[tokio::test]
+    async fn test_execute_success_after_one_retry() {
+        ensure_global_trace_subscriber();
+        let policy = RetryPolicy {
+            max_retries: 3,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(2),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+        // Fail once (triggers warn! at 84-85), succeed on second call
+        // (triggers debug! at 65-66 since attempt > 0).
+        let result = policy
+            .execute(|| {
+                let c = calls2.clone();
+                async move {
+                    let n = c.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 { Err("one-shot-fail") } else { Ok(1) }
+                }
+            })
+            .await;
+        assert_eq!(result, Ok(1));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// execute(): always fail until max retries exceeded.
+    /// - loop body entered (line 60) multiple times
+    /// - warn! "Max retries exceeded" (lines 76-77)
+    /// - warn! per retry attempt (lines 84-85)
+    #[tokio::test]
+    async fn test_execute_always_fail_exceeds_max_retries() {
+        ensure_global_trace_subscriber();
+        let policy = RetryPolicy {
+            max_retries: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(2),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+        let result = policy
+            .execute(|| {
+                let c = calls2.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    Err::<i32, _>("always-fail")
+                }
+            })
+            .await;
+        assert_eq!(result, Err("always-fail"));
+        // 1 initial + 2 retries
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// execute_if(): non-retryable predicate → exits immediately on first failure.
+    /// - loop body entered (line 105)
+    /// - is_retryable returns false → returns Err immediately (no retry sleep)
+    #[tokio::test]
+    async fn test_execute_if_non_retryable_predicate_exits_first_failure() {
+        ensure_global_trace_subscriber();
+        let policy = RetryPolicy::new(5);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+        let result = policy
+            .execute_if(
+                || {
+                    let c = calls2.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Err::<i32, _>("non-retryable-error")
+                    }
+                },
+                // predicate always returns false → no retries
+                |_e| false,
+            )
+            .await;
+        assert_eq!(result, Err("non-retryable-error"));
+        // Must be called exactly once — no retries
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// execute_if(): retryable errors exhaust max retries.
+    /// - loop body entered (line 105) multiple times
+    /// - warn! per retry (lines 131-132)
+    /// - warn! "Max retries exceeded" (lines 123-124)
+    #[tokio::test]
+    async fn test_execute_if_retryable_exceeds_max_retries() {
+        ensure_global_trace_subscriber();
+        let policy = RetryPolicy {
+            max_retries: 2,
+            base_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(2),
+            multiplier: 1.0,
+            jitter: false,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls2 = calls.clone();
+        let result = policy
+            .execute_if(
+                || {
+                    let c = calls2.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        Err::<i32, _>("retryable-err")
+                    }
+                },
+                |_e| true,
+            )
+            .await;
+        assert_eq!(result, Err("retryable-err"));
+        assert_eq!(calls.load(Ordering::SeqCst), 3); // 1 initial + 2 retries
+    }
 }
