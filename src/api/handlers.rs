@@ -297,35 +297,31 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn test_root_response_body_contains_message() {
+    async fn test_root_response_is_html() {
         let app = test::init_service(App::new().route("/", web::get().to(root))).await;
         let req = test::TestRequest::get().uri("/").to_request();
-        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
-        assert_eq!(body["message"], "PyTorch Inference Framework API");
-        assert_eq!(body["version"], "1.0.0");
-        assert_eq!(body["status"], "running");
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.contains("text/html"), "root should return HTML, got: {}", ct);
     }
 
     #[actix_web::test]
-    async fn test_root_response_has_endpoints() {
+    async fn test_root_response_body_is_non_empty() {
         let app = test::init_service(App::new().route("/", web::get().to(root))).await;
         let req = test::TestRequest::get().uri("/").to_request();
-        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
-        assert!(body["endpoints"].is_object());
-        assert_eq!(body["endpoints"]["health"], "/health");
-        assert_eq!(body["endpoints"]["inference"], "/predict");
-        assert_eq!(body["endpoints"]["models"], "/models");
+        let body = test::call_and_read_body(&app, req).await;
+        assert!(!body.is_empty(), "root response body should not be empty");
     }
 
     #[actix_web::test]
-    async fn test_root_response_has_timestamp() {
+    async fn test_root_response_contains_html_tag() {
         let app = test::init_service(App::new().route("/", web::get().to(root))).await;
         let req = test::TestRequest::get().uri("/").to_request();
-        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
-        assert!(body["timestamp"].is_string());
-        let ts = body["timestamp"].as_str().unwrap();
-        // RFC3339 timestamps contain 'T' separating date and time
-        assert!(ts.contains('T'), "timestamp should be RFC3339 format");
+        let body = test::call_and_read_body(&app, req).await;
+        let body_str = std::str::from_utf8(&body).unwrap_or("");
+        assert!(body_str.contains("<html") || body_str.contains("<!DOCTYPE"),
+            "root response should contain HTML");
     }
 
     // ── get_endpoint_stats ───────────────────────────────────────────────────
