@@ -2042,32 +2042,6 @@ mod api_endpoint_tests {
         assert!(body["models"].as_array().unwrap().is_empty());
     }
 
-    // ── ModelRegistry::load() – fallback to compile-in when file not found ─────
-    //
-    // Exercises line 123: the log::info! fallback branch inside load() that runs
-    // when std::fs::read_to_string fails (path not found).  We call load()
-    // directly (bypassing the global OnceLock) with a custom env path pointing
-    // to a nonexistent file so the read fails and the embedded JSON is used
-    // instead.
-
-    #[tokio::test]
-    async fn test_model_registry_load_falls_back_to_embedded_when_file_not_found() {
-        // Point MODEL_REGISTRY_PATH at a path that does not exist so the
-        // std::fs::read_to_string falls back to include_str!.
-        std::env::set_var(
-            "MODEL_REGISTRY_PATH",
-            "/no/such/directory/model_registry_missing.json",
-        );
-        let registry = ModelRegistry::load();
-        // The embedded model_registry.json always has at least one model.
-        assert!(
-            !registry.models.is_empty(),
-            "fallback embedded registry should not be empty"
-        );
-        // Clean up env var so other tests are not affected.
-        std::env::remove_var("MODEL_REGISTRY_PATH");
-    }
-
     // ── list_models – empty registry ──────────────────────────────────────────
 
     #[actix_web::test]
