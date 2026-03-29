@@ -544,6 +544,103 @@
       </div>
     </section>
 
+    <!-- Dashboard -->
+    <section class="panel" id="panel-dashboard">
+
+      <div class="tab-bar">
+        <button class="tab active" id="dash-tab-overview"    onclick="switchDashTab('overview')">
+          <span class="tab-icon">◈</span> Overview
+        </button>
+        <button class="tab"        id="dash-tab-playground"  onclick="switchDashTab('playground')">
+          <span class="tab-icon">⚡</span> Playground
+        </button>
+      </div>
+
+      <!-- ── Overview ─────────────────────────────────────── -->
+      <div id="dash-overview">
+
+        <div class="panel-header" style="margin-bottom:16px">
+          <div class="panel-title" style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:10px">
+            Dashboard
+            <span class="live-badge" id="dash-live-badge">
+              <span class="live-dot"></span> SSE live
+            </span>
+          </div>
+          <div class="panel-desc">Real-time inference metrics pushed every 3 s.</div>
+        </div>
+
+        <div class="dash-stat-grid">
+          <div class="dash-tile"><div class="dash-tile-label">Uptime</div><div class="dash-tile-val" id="d-uptime">—</div><div class="dash-tile-sub">since restart</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Total Req</div><div class="dash-tile-val" id="d-total">—</div><div class="dash-tile-sub">all time</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Active</div><div class="dash-tile-val" id="d-active">—</div><div class="dash-tile-sub">in flight</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Avg Latency</div><div class="dash-tile-val" id="d-latency">—</div><div class="dash-tile-sub">rolling avg</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Error Rate</div><div class="dash-tile-val" id="d-errors">—</div><div class="dash-tile-sub">last N req</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Throughput</div><div class="dash-tile-val" id="d-rps">—</div><div class="dash-tile-sub">req / sec</div></div>
+        </div>
+
+        <div class="two-col" style="margin-top:16px">
+          <div class="card">
+            <div class="card-title">Request Throughput</div>
+            <div class="sparkline-wrap">
+              <canvas id="dash-spark"></canvas>
+            </div>
+            <div class="spark-hint">60-point rolling window · updated every 3 s via SSE</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Resource Usage</div>
+            <div class="res-row">
+              <span class="res-name">CPU</span>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-cpu" style="width:0%;background:#6366f1"></div></div>
+              <span class="res-val" id="val-cpu">—</span>
+            </div>
+            <div class="res-row">
+              <span class="res-name">RAM</span>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-ram" style="width:0%;background:#f59e0b"></div></div>
+              <span class="res-val" id="val-ram">—</span>
+            </div>
+            <div class="res-row">
+              <span class="res-name">GPU</span>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-gpu" style="width:0%;background:#22c55e"></div></div>
+              <span class="res-val" id="val-gpu">—</span>
+            </div>
+            <div id="gpu-device-info"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-title">Model Download Manager</div>
+          <div class="dl-form-row">
+            <div class="field narrow">
+              <label>Source</label>
+              <select id="dl-source">
+                <option value="huggingface">HuggingFace</option>
+                <option value="url">URL</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Repo ID / URL</label>
+              <input type="text" id="dl-repo" placeholder="e.g. meta-llama/Llama-3.2-1B" />
+            </div>
+            <div class="field slim" id="dl-revision-wrap">
+              <label>Revision</label>
+              <input type="text" id="dl-revision" placeholder="main" />
+            </div>
+            <div class="field" style="flex:0 0 auto">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" id="dl-btn" onclick="submitDownload()">↓ Download</button>
+            </div>
+          </div>
+          <div id="dl-error"></div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+            <div class="card-title" style="margin-bottom:10px">Active &amp; Recent Downloads</div>
+            <div id="dl-tasks-list">
+              <div id="dl-tasks-empty">No downloads yet.</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /#dash-overview -->
+
     <!-- Endpoints -->
     <section class="panel" id="panel-endpoints">
       <div class="panel-header">
