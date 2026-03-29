@@ -981,6 +981,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(tarpaulin, ignore = "DashMap shard lock interacts with tarpaulin ptrace instrumentation")]
     fn test_bytes_cache_evicts_when_full() {
         // max_size = 2; inserting 3 should evict one.
         let cache = Cache::new(2);
