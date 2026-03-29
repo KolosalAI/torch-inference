@@ -516,10 +516,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_capabilities_ssml_and_streaming_disabled() {
+    fn test_build_capabilities_ssml_disabled_streaming_enabled() {
         let caps = KokoroOnnxEngine::build_capabilities(24000);
         assert!(!caps.supports_ssml);
-        assert!(!caps.supports_streaming);
+        assert!(caps.supports_streaming);  // sentence-level streaming via /tts/stream
     }
 
     #[test]
