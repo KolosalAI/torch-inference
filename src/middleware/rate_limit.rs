@@ -190,6 +190,27 @@ mod tests {
     }
 
     #[test]
+    fn test_is_allowed_returns_err_when_limit_exceeded() {
+        let limiter = RateLimiter::new(2, 60); // max 2 requests per 60s
+        assert!(limiter.is_allowed("client-a").is_ok());
+        assert!(limiter.is_allowed("client-a").is_ok());
+        // Third request exceeds limit
+        let result = limiter.is_allowed("client-a");
+        assert!(result.is_err(), "third request should be rate-limited");
+        let err = result.unwrap_err();
+        assert_eq!(err.message, "Rate limit exceeded");
+        assert!(err.retry_after > 0);
+    }
+
+    #[test]
+    fn test_is_allowed_different_keys_are_independent() {
+        let limiter = RateLimiter::new(1, 60);
+        assert!(limiter.is_allowed("key-a").is_ok());
+        assert!(limiter.is_allowed("key-b").is_ok()); // different key, not limited
+        assert!(limiter.is_allowed("key-a").is_err()); // key-a now over limit
+    }
+
+    #[test]
     fn window_reset_after_expiry_lines_59_61() {
         // window_seconds=0: the window expires after 0 seconds.
         // First call: entry inserted, count=1 (count < max=100 branch).

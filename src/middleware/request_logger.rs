@@ -640,6 +640,26 @@ mod tests {
         }
     }
 
+    #[actix_web::test]
+    async fn test_request_logger_propagates_service_error() {
+        use actix_web::web;
+
+        async fn error_handler() -> Result<HttpResponse, AxError> {
+            Err(actix_web::error::ErrorInternalServerError("forced error"))
+        }
+
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/err", web::get().to(error_handler)),
+        ).await;
+
+        let req = awtest::TestRequest::get().uri("/err").to_request();
+        let resp = awtest::call_service(&app, req).await;
+        // actix converts the error to a 500 response
+        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     /// Covers lines 93 (error log open), 94 (correlation_id), 95 (method),
     /// 96 (path), 97 (error), 98 (duration_ms) by triggering the Err arm.
     #[actix_web::test]
