@@ -325,7 +325,7 @@ mod tests {
         assert!(result.is_err());
         let msg = format!("{}", result.err().unwrap());
         assert!(
-            msg.contains("PyTorch feature not enabled") || msg.contains("torch"),
+            msg.contains("PyTorch feature not enabled"),
             "unexpected error message: {}",
             msg
         );
@@ -336,12 +336,12 @@ mod tests {
     fn test_classify_bytes_without_torch_returns_error() {
         // Covers lines 195-197: the #[cfg(not(feature = "torch"))] classify_bytes() stub
         let clf = ImageClassifier::new_stub(vec!["cat".to_string()]);
-        let fake_bytes: &[u8] = &[0xFF, 0xD8, 0xFF]; // JPEG magic bytes (fake)
+        let fake_bytes: &[u8] = &[0xFF, 0xD8, 0xFF]; // stub ignores all input
         let result = clf.classify_bytes(fake_bytes, 1);
         assert!(result.is_err());
         let msg = format!("{}", result.err().unwrap());
         assert!(
-            msg.contains("PyTorch feature not enabled") || msg.contains("torch"),
+            msg.contains("PyTorch feature not enabled"),
             "unexpected error message: {}",
             msg
         );
