@@ -816,6 +816,7 @@
 <script>
 /* ── Panel navigation ──────────────────────────────────── */
 function show(id, btn) {
+  closeDashboardStream();
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + id).classList.add('active');
@@ -1115,6 +1116,416 @@ async function runCompletion() {
   } finally {
     document.getElementById('cmp-btn').disabled = false;
   }
+}
+/* ── XSS-safe helper ────────────────────────────────────── */
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/* ── Dashboard ─────────────────────────────────────────── */
+let dashES      = null;
+const sparkData = new Array(60).fill(0);
+let   sparkCtx  = null;
+
+function showDashboard(btn) {
+  closeDashboardStream();
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-dashboard').classList.add('active');
+  btn.classList.add('active');
+  switchDashTab('overview');
+  openDashboardStream();
+}
+
+function openDashboardStream() {
+  if (dashES) return;
+  dashES = new EventSource('/dashboard/stream');
+  dashES.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      updateDashTiles(ev.metrics   || {});
+      updateSparkline(ev.metrics   ? (ev.metrics.throughput_per_s || 0) : 0);
+      updateResourceBars(ev.metrics || {}, ev.gpu || []);
+      updateDownloadsList(ev.downloads || []);
+      const badge = document.getElementById('dash-live-badge');
+      if (badge) badge.style.opacity = '1';
+    } catch (_) {}
+  };
+  dashES.onerror = () => {
+    const badge = document.getElementById('dash-live-badge');
+    if (badge) badge.style.opacity = '0.4';
+  };
+}
+
+function closeDashboardStream() {
+  if (dashES) { dashES.close(); dashES = null; }
+}
+
+function fmtUptimeDash(s) {
+  if (!s) return '0s';
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+function updateDashTiles(m) {
+  const sv = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  sv('d-uptime',  fmtUptimeDash(m.uptime_s));
+  sv('d-total',   m.total_req   != null ? m.total_req.toLocaleString()         : '—');
+  sv('d-active',  m.active_req  != null ? m.active_req                         : '—');
+  sv('d-latency', m.avg_latency_ms != null ? m.avg_latency_ms.toFixed(1) + 'ms': '—');
+  sv('d-errors',  m.error_rate  != null ? (m.error_rate * 100).toFixed(1) + '%': '—');
+  sv('d-rps',     m.throughput_per_s != null ? m.throughput_per_s.toFixed(1) + '/s' : '—');
+}
+
+function updateSparkline(rps) {
+  sparkData.shift();
+  sparkData.push(rps);
+  const canvas = document.getElementById('dash-spark');
+  if (!canvas) return;
+  if (!sparkCtx) sparkCtx = canvas.getContext('2d');
+  const ctx = sparkCtx;
+  const W   = canvas.clientWidth || canvas.offsetWidth || 300;
+  const H   = 72;
+  canvas.width  = W;
+  canvas.height = H;
+  const max  = Math.max(...sparkData, 1);
+  const step = W / (sparkData.length - 1);
+  ctx.clearRect(0, 0, W, H);
+  ctx.beginPath(); ctx.moveTo(0, H);
+  sparkData.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * (H - 6)));
+  ctx.lineTo(W, H); ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(99,102,241,0.25)');
+  grad.addColorStop(1, 'rgba(99,102,241,0.02)');
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  sparkData.forEach((v, i) => {
+    const x = i * step, y = H - (v / max) * (H - 6);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = '#818cf8'; ctx.lineWidth = 1.5; ctx.stroke();
+  const lx = (sparkData.length - 1) * step;
+  const ly = H - (sparkData[sparkData.length - 1] / max) * (H - 6);
+  ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#818cf8'; ctx.fill();
+}
+
+function updateResourceBars(m, gpuList) {
+  function setBar(barId, valId, pct, text) {
+    const bar = document.getElementById(barId);
+    const val = document.getElementById(valId);
+    if (bar) bar.style.width = Math.min(100, pct || 0) + '%';
+    if (val) val.textContent = text;
+  }
+  setBar('bar-cpu', 'val-cpu', m.cpu_pct,
+    m.cpu_pct != null ? m.cpu_pct.toFixed(1) + '%' : '—');
+  const ramPct = m.mem_total_mb > 0 ? (m.mem_used_mb / m.mem_total_mb) * 100 : 0;
+  setBar('bar-ram', 'val-ram', ramPct,
+    m.mem_used_mb != null
+      ? (m.mem_used_mb >= 1024 ? (m.mem_used_mb / 1024).toFixed(1) + ' GB' : m.mem_used_mb + ' MB')
+      : '—');
+  const g0 = gpuList[0];
+  setBar('bar-gpu', 'val-gpu',
+    g0 ? (g0.util_pct || 0) : 0,
+    g0 && g0.util_pct != null ? g0.util_pct + '%' : '—');
+
+  // GPU device cards — built with safe DOM methods, no innerHTML for untrusted values
+  const container = document.getElementById('gpu-device-info');
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+  gpuList.forEach(g => {
+    const card  = document.createElement('div'); card.className = 'gpu-device';
+    const name  = document.createElement('div'); name.className = 'gpu-device-name';
+    name.textContent = g.name;
+    card.appendChild(name);
+    const rows = [
+      ['VRAM free', (g.vram_free_mb / 1024).toFixed(1) + ' GB / ' + (g.vram_total_mb / 1024).toFixed(1) + ' GB'],
+    ];
+    if (g.temp_c   != null) rows.push(['Temperature', g.temp_c   + ' °C']);
+    if (g.util_pct != null) rows.push(['Utilisation', g.util_pct + '%']);
+    rows.forEach(([label, value]) => {
+      const row = document.createElement('div'); row.className = 'gpu-row';
+      const l   = document.createElement('span'); l.textContent = label;
+      const v   = document.createElement('span'); v.textContent = value;
+      row.appendChild(l); row.appendChild(v); card.appendChild(row);
+    });
+    container.appendChild(card);
+  });
+}
+
+function updateDownloadsList(downloads) {
+  const list  = document.getElementById('dl-tasks-list');
+  const empty = document.getElementById('dl-tasks-empty');
+  if (!list) return;
+  const visible = downloads.slice(0, 8);
+  if (!visible.length) {
+    if (empty) empty.style.display = 'block';
+    list.querySelectorAll('.dl-task').forEach(el => el.remove());
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  const newIds = new Set(visible.map(t => t.id));
+  list.querySelectorAll('.dl-task').forEach(el => {
+    if (!newIds.has(el.dataset.id)) el.remove();
+  });
+  visible.forEach(t => {
+    const statusLower = t.status.toLowerCase();
+    const badgeCls    = statusLower.includes('download') ? 'downloading'
+                      : statusLower.includes('complet')  ? 'completed'
+                      : statusLower.includes('fail')     ? 'failed' : 'pending';
+    const fillCls     = badgeCls === 'completed' ? ' done' : badgeCls === 'failed' ? ' failed' : '';
+    const pct         = Math.round((t.progress || 0) * 100);
+    const dlMB        = t.downloaded_mb || 0;
+    const totStr      = t.total_mb != null ? t.total_mb + ' MB' : '?';
+
+    let el = list.querySelector('.dl-task[data-id="' + t.id + '"]');
+    if (!el) {
+      el = document.createElement('div');
+      el.className  = 'dl-task';
+      el.dataset.id = t.id;
+      list.prepend(el);
+    }
+    // Build using safe DOM manipulation — model_name is user-supplied data
+    while (el.firstChild) el.removeChild(el.firstChild);
+
+    const header = document.createElement('div'); header.className = 'dl-task-header';
+    const nameEl = document.createElement('span'); nameEl.className = 'dl-task-name';
+    nameEl.textContent = t.model_name;                      // textContent — XSS safe
+    const badge  = document.createElement('span'); badge.className  = 'dl-status-badge ' + badgeCls;
+    badge.textContent  = t.status;                          // textContent — XSS safe
+    header.appendChild(nameEl); header.appendChild(badge); el.appendChild(header);
+
+    const track = document.createElement('div'); track.className = 'dl-progress-track';
+    const fill  = document.createElement('div'); fill.className  = 'dl-progress-fill' + fillCls;
+    fill.style.width = pct + '%';
+    track.appendChild(fill); el.appendChild(track);
+
+    const meta = document.createElement('div'); meta.className = 'dl-meta';
+    const ml   = document.createElement('span'); ml.textContent = dlMB + ' MB / ' + totStr;
+    const mr   = document.createElement('span'); mr.textContent = pct + '%';
+    meta.appendChild(ml); meta.appendChild(mr); el.appendChild(meta);
+  });
+}
+
+async function submitDownload() {
+  const source   = document.getElementById('dl-source').value;
+  const repo     = document.getElementById('dl-repo').value.trim();
+  const revision = document.getElementById('dl-revision').value.trim();
+  const errEl    = document.getElementById('dl-error');
+  const btn      = document.getElementById('dl-btn');
+  if (!repo) { showDlError('Repo ID or URL is required.'); return; }
+  btn.disabled = true;
+  if (errEl) errEl.style.display = 'none';
+  const body = {
+    model_name:  repo.split('/').pop() || repo,
+    source_type: source,
+  };
+  if (source === 'huggingface') {
+    body.repo_id = repo;
+    if (revision) body.revision = revision;
+  } else {
+    body.url = repo;
+  }
+  try {
+    const res = await fetch('/api/models/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      showDlError(res.status + ' — ' + t);
+    }
+  } catch (e) {
+    showDlError('Network error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showDlError(msg) {
+  const el = document.getElementById('dl-error');
+  if (!el) return;
+  el.textContent  = msg;   // textContent — XSS safe
+  el.style.display = 'block';
+}
+
+/* ── Dashboard tab switching ───────────────────────────── */
+function switchDashTab(tab) {
+  const overview   = document.getElementById('dash-overview');
+  const playground = document.getElementById('dash-playground');
+  const tOv        = document.getElementById('dash-tab-overview');
+  const tPg        = document.getElementById('dash-tab-playground');
+  if (!overview || !playground) return;
+  if (tab === 'overview') {
+    overview.style.display   = '';     playground.style.display = 'none';
+    tOv.classList.add('active');       tPg.classList.remove('active');
+  } else {
+    overview.style.display   = 'none'; playground.style.display = '';
+    tOv.classList.remove('active');    tPg.classList.add('active');
+  }
+}
+
+/* ── Playground sub-tab switching ──────────────────────── */
+const PG_SUBTABS = ['tts', 'classify', 'llm', 'completion'];
+function switchPgTab(tab) {
+  PG_SUBTABS.forEach(id => {
+    const el  = document.getElementById('pg-' + id);
+    const btn = document.getElementById('pg-tab-' + id);
+    if (el)  el.style.display  = id === tab ? '' : 'none';
+    if (btn) btn.classList[id === tab ? 'add' : 'remove']('active');
+  });
+}
+
+/* ── Playground TTS ─────────────────────────────────────── */
+let pgTtsController = null;
+async function runPgTTS() {
+  const text   = document.getElementById('pg-tts-text').value.trim();
+  const engine = document.getElementById('pg-tts-engine').value.trim() || null;
+  const voice  = document.getElementById('pg-tts-voice').value.trim()  || null;
+  const speed  = parseFloat(document.getElementById('pg-tts-speed').value) || 1.0;
+  if (!text) return;
+  document.getElementById('pg-tts-btn').disabled = true;
+  setBox('pg-tts-status', 'Connecting to /tts/stream…', 'stream');
+  pgTtsController = new AbortController();
+  const chunks = [];
+  try {
+    const body = { text, speed };
+    if (engine) body.engine = engine;
+    if (voice)  body.voice  = voice;
+    const resp = await fetch('/tts/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: pgTtsController.signal,
+    });
+    if (!resp.ok) throw new Error(resp.status + ' — ' + await resp.text());
+    const reader = resp.body.getReader();
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); received += value.byteLength;
+      setBox('pg-tts-status', 'Received ' + received + ' bytes (' + chunks.length + ' chunks)…', 'stream');
+    }
+    const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+    const pcm   = new Uint8Array(total);
+    let off = 0; for (const c of chunks) { pcm.set(c, off); off += c.byteLength; }
+    const wav  = buildWav(pcm, 24000, 1);
+    const url  = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+    const audio = document.getElementById('pg-tts-audio');
+    audio.src  = url;
+    document.getElementById('pg-tts-audio-wrap').style.display = 'block';
+    audio.play();
+    setBox('pg-tts-status', 'Done — ' + total + ' bytes. Playing.', 'ok');
+  } catch (e) {
+    if (e.name === 'AbortError') setBox('pg-tts-status', 'Stopped.');
+    else setBox('pg-tts-status', 'Error: ' + e.message, 'error');
+  } finally { document.getElementById('pg-tts-btn').disabled = false; }
+}
+function stopPgTTS() { pgTtsController && pgTtsController.abort(); }
+
+/* ── Playground Classify ────────────────────────────────── */
+let pgImgBase64 = null;
+function handlePgDrop(e) {
+  e.preventDefault();
+  document.getElementById('pg-dropzone').classList.remove('over');
+  const f = e.dataTransfer.files[0]; if (f) handlePgFile(f);
+}
+function handlePgFile(f) {
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const dataUrl = ev.target.result;
+    pgImgBase64   = dataUrl.split(',')[1];
+    const preview = document.getElementById('pg-img-preview');
+    preview.src   = dataUrl; preview.style.display = 'block';
+    document.getElementById('pg-cls-btn').disabled = false;
+    setBox('pg-cls-out', 'Image loaded — click Classify.');
+  };
+  reader.readAsDataURL(f);
+}
+async function runPgClassify() {
+  if (!pgImgBase64) return;
+  const topk = parseInt(document.getElementById('pg-cls-topk').value) || 5;
+  const w    = parseInt(document.getElementById('pg-cls-w').value)    || 224;
+  const h    = parseInt(document.getElementById('pg-cls-h').value)    || 224;
+  document.getElementById('pg-cls-btn').disabled = true;
+  setBox('pg-cls-out', 'Classifying…', 'stream');
+  try {
+    const res = await fetch('/classify/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: [pgImgBase64], top_k: topk, width: w, height: h }),
+    });
+    const data = await res.json();
+    setBox('pg-cls-out', JSON.stringify(data, null, 2), res.ok ? 'ok' : 'error');
+  } catch (e) { setBox('pg-cls-out', 'Error: ' + e.message, 'error'); }
+  finally { document.getElementById('pg-cls-btn').disabled = false; }
+}
+
+/* ── Playground LLM Chat ────────────────────────────────── */
+let pgChatHistory = [];
+function clearPgChat() {
+  pgChatHistory = [];
+  const h = document.getElementById('pg-chat-history');
+  if (h) while (h.firstChild) h.removeChild(h.firstChild);
+}
+function appendPgMsg(role, text) {
+  const container = document.getElementById('pg-chat-history');
+  if (!container) return;
+  const div  = document.createElement('div');  div.className  = 'msg ' + (role === 'user' ? 'user' : 'asst');
+  const rlEl = document.createElement('div');  rlEl.className = 'msg-role';
+  rlEl.textContent = role === 'user' ? 'You' : 'Assistant';
+  const body = document.createElement('div');  body.className = 'msg-body';
+  body.textContent = text;   // textContent — XSS safe
+  div.appendChild(rlEl); div.appendChild(body); container.appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth' });
+}
+async function sendPgChat() {
+  const input  = document.getElementById('pg-chat-input');
+  const text   = input.value.trim(); if (!text) return;
+  input.value  = '';
+  const model  = document.getElementById('pg-chat-model').value.trim()    || 'default';
+  const maxtok = parseInt(document.getElementById('pg-chat-maxtok').value) || 256;
+  const temp   = parseFloat(document.getElementById('pg-chat-temp').value) || 0.7;
+  pgChatHistory.push({ role: 'user', content: text });
+  appendPgMsg('user', text);
+  document.getElementById('pg-chat-btn').disabled = true;
+  try {
+    const res  = await fetch('/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: pgChatHistory, max_tokens: maxtok, temperature: temp }),
+    });
+    const data  = await res.json();
+    const reply = data.choices?.[0]?.message?.content || JSON.stringify(data);
+    pgChatHistory.push({ role: 'assistant', content: reply });
+    appendPgMsg('assistant', reply);
+  } catch (e) { appendPgMsg('assistant', 'Error: ' + e.message); }
+  finally { document.getElementById('pg-chat-btn').disabled = false; }
+}
+
+/* ── Playground Completion ──────────────────────────────── */
+async function runPgCompletion() {
+  const prompt  = document.getElementById('pg-cmp-prompt').value;
+  const model   = document.getElementById('pg-cmp-model').value.trim()    || 'default';
+  const maxtok  = parseInt(document.getElementById('pg-cmp-maxtok').value) || 128;
+  const temp    = parseFloat(document.getElementById('pg-cmp-temp').value) || 0.7;
+  const topp    = parseFloat(document.getElementById('pg-cmp-topp').value) || 1.0;
+  document.getElementById('pg-cmp-btn').disabled = true;
+  setBox('pg-cmp-out', 'Generating…', 'stream');
+  try {
+    const res  = await fetch('/v1/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, max_tokens: maxtok, temperature: temp, top_p: topp }),
+    });
+    const data = await res.json();
+    const txt  = data.choices?.[0]?.text || JSON.stringify(data, null, 2);
+    setBox('pg-cmp-out', txt, res.ok ? 'ok' : 'error');
+  } catch (e) { setBox('pg-cmp-out', 'Error: ' + e.message, 'error'); }
+  finally { document.getElementById('pg-cmp-btn').disabled = false; }
 }
 </script>
 </body>
