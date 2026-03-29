@@ -81,8 +81,62 @@ use crate::telemetry::prometheus;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+/// Auto-detect ONNX Runtime, CUDA, and Metal library paths and set the
+/// relevant environment variables before any runtime loads them.
+///
+/// * `ORT_DYLIB_PATH`  — path to `libonnxruntime.{dylib,so,dll}`
+///
+/// CUDA and Metal are detected by the existing `GpuManager`; this function
+/// only handles the ORT library path which must be set before the first
+/// ORT session is created.
+fn auto_detect_backends() {
+    // ── ORT dynamic library ─────────────────────────────────────────────────
+    if std::env::var("ORT_DYLIB_PATH").is_ok() {
+        // Already set by the user — respect it.
+        return;
+    }
+
+    #[cfg(target_os = "macos")]
+    let candidates: &[&str] = &[
+        "/opt/homebrew/lib/libonnxruntime.dylib",       // Homebrew (Apple Silicon)
+        "/usr/local/lib/libonnxruntime.dylib",          // Homebrew (Intel Mac)
+        "/opt/homebrew/opt/onnxruntime/lib/libonnxruntime.dylib",
+    ];
+
+    #[cfg(target_os = "linux")]
+    let candidates: &[&str] = &[
+        "/usr/lib/libonnxruntime.so",
+        "/usr/local/lib/libonnxruntime.so",
+        "/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
+        "/usr/lib/aarch64-linux-gnu/libonnxruntime.so",
+    ];
+
+    #[cfg(target_os = "windows")]
+    let candidates: &[&str] = &[
+        r"C:\Program Files\onnxruntime\lib\onnxruntime.dll",
+        r"C:\onnxruntime\lib\onnxruntime.dll",
+    ];
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let candidates: &[&str] = &[];
+
+    for path in candidates {
+        if std::path::Path::new(path).exists() {
+            // SAFETY: called before any threads that read this var are spawned.
+            unsafe { std::env::set_var("ORT_DYLIB_PATH", path) };
+            // Will be logged after the logging system is ready (see main).
+            // Store it in a way main() can read:
+            unsafe { std::env::set_var("_ORT_AUTODETECTED", path) };
+            return;
+        }
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Auto-detect backend library paths BEFORE logging or ORT initialises.
+    auto_detect_backends();
+
     // Initialize structured logging
     let use_json = std::env::var("LOG_JSON").unwrap_or_else(|_| "false".to_string()) == "true";
     let log_dir = std::env::var("LOG_DIR").ok();
@@ -165,7 +219,16 @@ async fn main() -> std::io::Result<()> {
     }
     
     log_system_info();
-    
+
+    // Log ORT auto-detection result
+    if let Ok(detected) = std::env::var("_ORT_AUTODETECTED") {
+        info!("[AUTO] ORT library auto-detected: {}", detected);
+    } else if let Ok(explicit) = std::env::var("ORT_DYLIB_PATH") {
+        info!("[ORT] Using ORT_DYLIB_PATH from environment: {}", explicit);
+    } else {
+        log::warn!("[WARN] ORT library not found. Set ORT_DYLIB_PATH if ONNX inference is needed.");
+    }
+
     // Initialize PyTorch auto-detection (if torch feature enabled)
     #[cfg(feature = "torch")]
     {
