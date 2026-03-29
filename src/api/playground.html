@@ -151,22 +151,46 @@
   .row { display: flex; gap: 12px; }
   .row .field { flex: 1; }
 
-  /* Buttons */
+  /* Buttons — Kolosal vanilla */
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 8px 16px; border-radius: 7px; border: none; cursor: pointer;
-    font-family: var(--font); font-size: 13px; font-weight: 500;
-    transition: opacity .15s, transform .08s;
+    height: 36px; padding: 0 14px;
+    border-radius: 10px; border: none; cursor: pointer;
+    font-family: var(--font); font-size: 14px; font-weight: 500;
+    line-height: 20px; letter-spacing: 0.3px;
+    text-decoration: none;
+    transition: background .15s, border-color .15s;
   }
-  .btn:active { transform: scale(.97); }
-  .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover:not(:disabled) { background: var(--accent-hi); }
-  .btn-ghost { background: var(--surface2); color: var(--text-muted); border: 1px solid var(--border2); }
-  .btn-ghost:hover:not(:disabled) { color: var(--text); }
+  .btn:disabled { pointer-events: none; opacity: 0.65; cursor: not-allowed; }
+  .btn-primary {
+    background-color: #0D0E0F;
+    color: #FFFFFF;
+    box-shadow: inset 0px 2px 0px 0px rgba(255,255,255,0.25);
+    border: 1px solid #0D0E0F;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(90deg, #0D0E0F, #FF3131, #0066F5);
+    background-size: 300% 300%;
+    animation: gradientMove 3s ease infinite;
+  }
+  @keyframes gradientMove {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  .btn-ghost {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E7E9;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.15);
+    color: #0D0E0F;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: #F8F9F9;
+    border-color: #DDE1E3;
+  }
   .spinner {
     display: inline-block; width: 13px; height: 13px;
-    border: 2px solid rgba(255,255,255,.25);
+    border: 2px solid rgba(255,255,255,.3);
     border-top-color: #fff; border-radius: 50%;
     animation: spin .6s linear infinite;
   }
