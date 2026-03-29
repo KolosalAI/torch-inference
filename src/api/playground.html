@@ -641,6 +641,134 @@
 
       </div><!-- /#dash-overview -->
 
+      <!-- ── Playground ────────────────────────────────────── -->
+      <div id="dash-playground" style="display:none">
+
+        <div class="subtab-bar">
+          <button class="subtab active" id="pg-tab-tts"        onclick="switchPgTab('tts')">♪ TTS Stream</button>
+          <button class="subtab"        id="pg-tab-classify"   onclick="switchPgTab('classify')">⊞ Classify</button>
+          <button class="subtab"        id="pg-tab-llm"        onclick="switchPgTab('llm')">✦ LLM Chat</button>
+          <button class="subtab"        id="pg-tab-completion" onclick="switchPgTab('completion')">⌨ Completion</button>
+        </div>
+
+        <!-- TTS sub-tab -->
+        <div id="pg-tts">
+          <div class="panel-header">
+            <div class="panel-title">TTS Stream</div>
+            <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Input</div>
+            <div class="field">
+              <label>Text</label>
+              <textarea id="pg-tts-text">Hello! This is a streaming TTS demo from Kolosal Inference.</textarea>
+            </div>
+            <div class="row">
+              <div class="field"><label>Engine (optional)</label><input type="text" id="pg-tts-engine" placeholder="default" /></div>
+              <div class="field"><label>Voice (optional)</label><input type="text" id="pg-tts-voice" placeholder="default" /></div>
+              <div class="field"><label>Speed</label><input type="number" id="pg-tts-speed" value="1.0" min="0.5" max="2.0" step="0.1" /></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button class="btn btn-primary" id="pg-tts-btn" onclick="runPgTTS()">▶  Synthesise</button>
+              <button class="btn btn-ghost" onclick="stopPgTTS()">■  Stop</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Output</div>
+            <div class="response-box" id="pg-tts-status">waiting…</div>
+            <div id="pg-tts-audio-wrap" style="margin-top:12px;display:none">
+              <audio id="pg-tts-audio" controls style="width:100%"></audio>
+            </div>
+          </div>
+        </div>
+
+        <!-- Classify sub-tab -->
+        <div id="pg-classify" style="display:none">
+          <div class="panel-header">
+            <div class="panel-title">Image Classification</div>
+            <div class="panel-desc">SIMD-fused preprocessing + batched ORT inference via <span class="ep-code">POST /classify/batch</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Upload Image</div>
+            <div class="dropzone" id="pg-dropzone"
+                 onclick="document.getElementById('pg-img-file').click()"
+                 ondragover="event.preventDefault();this.classList.add('over')"
+                 ondragleave="this.classList.remove('over')"
+                 ondrop="handlePgDrop(event)">
+              <div class="drop-icon">⊞</div>
+              <div>Click to upload or drag &amp; drop</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
+              <input type="file" id="pg-img-file" accept="image/jpeg,image/png" onchange="handlePgFile(this.files[0])" />
+            </div>
+            <img id="pg-img-preview" alt="preview" style="max-width:200px;border-radius:8px;margin-top:10px;display:none" />
+            <div class="row" style="margin-top:12px">
+              <div class="field"><label>Top-K</label><input type="number" id="pg-cls-topk" value="5" min="1" max="1000" /></div>
+              <div class="field"><label>Width</label><input type="number" id="pg-cls-w" value="224" /></div>
+              <div class="field"><label>Height</label><input type="number" id="pg-cls-h" value="224" /></div>
+            </div>
+            <button class="btn btn-primary" style="margin-top:8px" id="pg-cls-btn" onclick="runPgClassify()" disabled>⊞  Classify</button>
+          </div>
+          <div class="card">
+            <div class="card-title">Predictions</div>
+            <div class="response-box" id="pg-cls-out">waiting for image…</div>
+          </div>
+        </div>
+
+        <!-- LLM Chat sub-tab -->
+        <div id="pg-llm" style="display:none">
+          <div class="panel-header">
+            <div class="panel-title">LLM Chat</div>
+            <div class="panel-desc">OpenAI-compatible chat via <span class="ep-code">POST /v1/chat/completions</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Conversation</div>
+            <div class="chat-history" id="pg-chat-history"></div>
+            <div class="chat-input-row">
+              <textarea id="pg-chat-input" placeholder="Type a message… (Enter to send)" rows="1"
+                onkeydown="if(event.key==='Enter'&amp;&amp;!event.shiftKey){event.preventDefault();sendPgChat();}"></textarea>
+              <button class="btn btn-primary" id="pg-chat-btn" onclick="sendPgChat()">Send</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Parameters</div>
+            <div class="row">
+              <div class="field"><label>Model</label><input type="text" id="pg-chat-model" value="default" /></div>
+              <div class="field"><label>Max Tokens</label><input type="number" id="pg-chat-maxtok" value="256" min="1" /></div>
+              <div class="field"><label>Temperature</label><input type="number" id="pg-chat-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+            </div>
+            <button class="btn btn-ghost" style="margin-top:4px" onclick="clearPgChat()">✕  Clear chat</button>
+          </div>
+        </div>
+
+        <!-- Completion sub-tab -->
+        <div id="pg-completion" style="display:none">
+          <div class="panel-header">
+            <div class="panel-title">Text Completion</div>
+            <div class="panel-desc">Raw prompt continuation via <span class="ep-code">POST /v1/completions</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Prompt</div>
+            <div class="field">
+              <textarea id="pg-cmp-prompt" style="min-height:130px">The key advantages of PagedAttention for LLM inference are:</textarea>
+            </div>
+            <div class="row">
+              <div class="field"><label>Model</label><input type="text" id="pg-cmp-model" value="default" /></div>
+              <div class="field"><label>Max Tokens</label><input type="number" id="pg-cmp-maxtok" value="128" min="1" /></div>
+              <div class="field"><label>Temperature</label><input type="number" id="pg-cmp-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+              <div class="field"><label>Top-P</label><input type="number" id="pg-cmp-topp" value="1.0" min="0" max="1" step="0.05" /></div>
+            </div>
+            <button class="btn btn-primary" style="margin-top:4px" id="pg-cmp-btn" onclick="runPgCompletion()">▶  Complete</button>
+          </div>
+          <div class="card">
+            <div class="card-title">Result</div>
+            <div class="response-box" id="pg-cmp-out">waiting…</div>
+          </div>
+        </div>
+
+      </div><!-- /#dash-playground -->
+
+    </section><!-- /#panel-dashboard -->
+
     <!-- Endpoints -->
     <section class="panel" id="panel-endpoints">
       <div class="panel-header">
