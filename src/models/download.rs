@@ -2180,4 +2180,43 @@ mod tests {
         assert!(cache_path.exists());
     }
 
+    // ===== Task 7: tempfile-based scan_cache tests =====
+
+    #[tokio::test]
+    async fn test_scan_cache_empty_dir_produces_no_models() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = ModelDownloadManager::new(tmp.path()).unwrap();
+        manager.initialize().await.unwrap();
+        assert!(manager.list_models().is_empty(), "empty cache dir should produce no models");
+    }
+
+    #[tokio::test]
+    async fn test_scan_cache_with_model_dir_no_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir(tmp.path().join("bert-base")).await.unwrap();
+        let manager = ModelDownloadManager::new(tmp.path()).unwrap();
+        manager.initialize().await.unwrap();
+        let models = manager.list_models();
+        assert_eq!(models.len(), 1, "one subdirectory should produce one model");
+        assert_eq!(models[0].name, "bert-base");
+        // No metadata.json, so metadata should be default
+        assert!(models[0].metadata.description.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_scan_cache_with_metadata_and_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let model_dir = tmp.path().join("my-model");
+        tokio::fs::create_dir(&model_dir).await.unwrap();
+        let meta = serde_json::json!({"description": "test", "tags": [], "framework": "onnx", "task": "tts", "license": "MIT"});
+        tokio::fs::write(model_dir.join("metadata.json"), meta.to_string()).await.unwrap();
+        tokio::fs::write(model_dir.join("model.bin"), b"fake content").await.unwrap();
+        let manager = ModelDownloadManager::new(tmp.path()).unwrap();
+        manager.initialize().await.unwrap();
+        let info = manager.get_model("my-model").unwrap();
+        assert!(info.size_bytes > 0, "size_bytes should be > 0 after calculate_dir_size");
+        assert_eq!(info.metadata.description.as_deref(), Some("test"));
+        assert_eq!(info.metadata.framework.as_deref(), Some("onnx"));
+    }
+
 }
