@@ -417,6 +417,8 @@ async fn main() -> std::io::Result<()> {
             .route("/health/ready", web::get().to(crate::api::health::readiness))
             // Metrics endpoint (Prometheus)
             .route("/metrics", web::get().to(crate::api::metrics_endpoint::metrics_handler))
+            // Dashboard SSE stream
+            .route("/dashboard/stream", web::get().to(crate::api::dashboard::dashboard_stream))
             .configure(handlers::configure_routes)
             .configure(crate::api::tts::configure_routes)
             .configure(crate::api::classify::configure_routes)

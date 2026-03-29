@@ -55,7 +55,7 @@ pub async fn dashboard_stream(
     system_state: web::Data<SystemInfoState>,
     download_state: web::Data<ModelDownloadState>,
 ) -> HttpResponse {
-    let (tx, rx) = mpsc::channel::<Result<Bytes, actix_web::Error>>(4);
+    let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(4);
 
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(3));
