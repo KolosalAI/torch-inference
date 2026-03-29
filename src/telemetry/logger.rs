@@ -1,6 +1,4 @@
 use log::{info, LevelFilter};
-use chrono::Local;
-use std::io::Write;
 
 /// Core formatting logic, separated from the env_logger Formatter so tests
 /// can call it directly with any `Write` impl (e.g. `Vec<u8>`).
