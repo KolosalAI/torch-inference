@@ -78,7 +78,7 @@
     display: inline-flex; align-items: center; gap: 5px;
     font-size: 12px; padding: 3px 9px; border-radius: 20px;
     background: var(--accent-bg); color: var(--accent-hi);
-    border: 1px solid rgba(99,102,241,.2);
+    border: 1px solid rgba(0,102,245,.2);
   }
   .dot {
     width: 6px; height: 6px; border-radius: 50%;
@@ -235,8 +235,8 @@
     font-family: var(--mono); font-size: 11px; font-weight: 600;
     padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
   }
-  .method.get  { background: rgba(34,197,94,.12); color: var(--green); }
-  .method.post { background: rgba(99,102,241,.12); color: var(--accent-hi); }
+  .method.get  { background: #F3FBF4; color: #2E9632; }
+  .method.post { background: #F0F6FE; color: #0052C4; }
   .ep-path { font-family: var(--mono); color: var(--text); flex: 1; }
   .ep-desc { color: var(--text-muted); }
 
@@ -312,15 +312,15 @@
   .live-badge {
     display: inline-flex; align-items: center; gap: 5px;
     font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 20px;
-    background: rgba(34,197,94,.1); color: var(--green);
-    border: 1px solid rgba(34,197,94,.2);
+    background: #F3FBF4; color: #2E9632;
+    border: 1px solid rgba(58,188,63,.25);
   }
   .live-dot {
-    width: 5px; height: 5px; border-radius: 50%; background: var(--green);
+    width: 5px; height: 5px; border-radius: 50%; background: #3ABC3F;
     animation: livepulse 2s ease-in-out infinite;
   }
   @keyframes livepulse {
-    0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); }
+    0%,100% { opacity: 1; box-shadow: 0 0 4px #3ABC3F; }
     50%      { opacity: .4; box-shadow: none; }
   }
   .dash-stat-grid {
@@ -367,10 +367,10 @@
   .dl-task-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .dl-task-name { font-size: 13px; font-weight: 500; font-family: var(--mono); }
   .dl-status-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; }
-  .dl-status-badge.downloading { background: rgba(99,102,241,.15); color: var(--accent-hi); }
-  .dl-status-badge.completed   { background: rgba(34,197,94,.12);  color: var(--green); }
-  .dl-status-badge.failed      { background: rgba(239,68,68,.12);  color: var(--red); }
-  .dl-status-badge.pending     { background: rgba(245,158,11,.12); color: var(--yellow); }
+  .dl-status-badge.downloading { background: #F0F6FE; color: #0052C4; }
+  .dl-status-badge.completed   { background: #F3FBF4; color: #2E9632; }
+  .dl-status-badge.failed      { background: #FFF3F3; color: #CC2727; }
+  .dl-status-badge.pending     { background: #FFFAF3; color: #CC8727; }
   .dl-progress-track { height: 5px; background: var(--border2); border-radius: 3px; overflow: hidden; margin-bottom: 5px; }
   .dl-progress-fill  { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
   .dl-progress-fill.done   { background: var(--green); }
