@@ -315,6 +315,38 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_classify_without_torch_returns_error() {
+        // Covers lines 174-176: the #[cfg(not(feature = "torch"))] classify() stub
+        let clf = ImageClassifier::new_stub(vec!["cat".to_string(), "dog".to_string()]);
+        let path = std::path::Path::new("/nonexistent/image.jpg");
+        let result = clf.classify(path, 1);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(
+            msg.contains("PyTorch feature not enabled") || msg.contains("torch"),
+            "unexpected error message: {}",
+            msg
+        );
+    }
+
+    #[cfg(not(feature = "torch"))]
+    #[test]
+    fn test_classify_bytes_without_torch_returns_error() {
+        // Covers lines 195-197: the #[cfg(not(feature = "torch"))] classify_bytes() stub
+        let clf = ImageClassifier::new_stub(vec!["cat".to_string()]);
+        let fake_bytes: &[u8] = &[0xFF, 0xD8, 0xFF]; // JPEG magic bytes (fake)
+        let result = clf.classify_bytes(fake_bytes, 1);
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(
+            msg.contains("PyTorch feature not enabled") || msg.contains("torch"),
+            "unexpected error message: {}",
+            msg
+        );
+    }
+
     #[test]
     fn test_models_resnet50_config() {
         let cfg = models::resnet50();
