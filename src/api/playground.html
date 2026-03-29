@@ -250,6 +250,104 @@
   .chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
   .chat-input-row textarea { resize: none; min-height: 40px; max-height: 120px; }
 
+  /* ── Dashboard tabs ─────────────────────────────────────── */
+  .tab-bar {
+    display: flex; gap: 2px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 9px; padding: 3px; width: fit-content; margin-bottom: 20px;
+  }
+  .tab {
+    padding: 6px 18px; border-radius: 7px;
+    font-size: 13px; font-weight: 500; color: var(--text-muted);
+    cursor: pointer; border: none; background: none; transition: all .15s;
+    display: flex; align-items: center; gap: 7px; font-family: var(--font);
+  }
+  .tab.active {
+    background: var(--accent-bg); color: var(--accent-hi);
+    border: 1px solid rgba(99,102,241,.25);
+  }
+  .tab-icon { font-size: 14px; }
+  .subtab-bar {
+    display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 18px;
+  }
+  .subtab {
+    padding: 7px 16px; font-size: 13px; font-weight: 500; color: var(--text-muted);
+    cursor: pointer; border: none; background: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: var(--font); transition: color .15s;
+  }
+  .subtab:hover { color: var(--text); }
+  .subtab.active { color: var(--accent-hi); border-bottom-color: var(--accent); }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 20px;
+    background: rgba(34,197,94,.1); color: var(--green);
+    border: 1px solid rgba(34,197,94,.2);
+  }
+  .live-dot {
+    width: 5px; height: 5px; border-radius: 50%; background: var(--green);
+    animation: livepulse 2s ease-in-out infinite;
+  }
+  @keyframes livepulse {
+    0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); }
+    50%      { opacity: .4; box-shadow: none; }
+  }
+  .dash-stat-grid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+  }
+  .dash-tile {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .dash-tile-label {
+    font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px;
+  }
+  .dash-tile-val {
+    font-size: 22px; font-weight: 700; font-family: var(--mono); color: var(--accent-hi);
+  }
+  .dash-tile-sub { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .res-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .res-row:last-child { margin-bottom: 0; }
+  .res-name { font-size: 12px; color: var(--text-muted); width: 44px; flex-shrink: 0; }
+  .res-bar-track { flex: 1; height: 6px; background: var(--border2); border-radius: 3px; overflow: hidden; }
+  .res-bar-fill  { height: 100%; border-radius: 3px; transition: width .6s ease; }
+  .res-val { font-size: 11px; font-family: var(--mono); color: var(--text); width: 56px; text-align: right; }
+  .gpu-device {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 12px; margin-top: 12px;
+  }
+  .gpu-device-name { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .gpu-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+  .gpu-row span:last-child { color: var(--text); font-family: var(--mono); }
+  .sparkline-wrap { position: relative; }
+  #dash-spark { width: 100%; height: 72px; display: block; }
+  .spark-hint { font-size: 10px; color: var(--text-dim); margin-top: 5px; font-family: var(--mono); }
+  .dl-form-row { display: flex; gap: 10px; align-items: flex-end; }
+  .dl-form-row .field { flex: 1; margin-bottom: 0; }
+  .dl-form-row .field.narrow { flex: 0 0 130px; }
+  .dl-form-row .field.slim   { flex: 0 0 150px; }
+  .dl-task {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; margin-bottom: 8px;
+  }
+  .dl-task:last-child { margin-bottom: 0; }
+  .dl-task-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .dl-task-name { font-size: 13px; font-weight: 500; font-family: var(--mono); }
+  .dl-status-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; }
+  .dl-status-badge.downloading { background: rgba(99,102,241,.15); color: var(--accent-hi); }
+  .dl-status-badge.completed   { background: rgba(34,197,94,.12);  color: var(--green); }
+  .dl-status-badge.failed      { background: rgba(239,68,68,.12);  color: var(--red); }
+  .dl-status-badge.pending     { background: rgba(245,158,11,.12); color: var(--yellow); }
+  .dl-progress-track { height: 5px; background: var(--border2); border-radius: 3px; overflow: hidden; margin-bottom: 5px; }
+  .dl-progress-fill  { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
+  .dl-progress-fill.done   { background: var(--green); }
+  .dl-progress-fill.failed { background: var(--red); }
+  .dl-meta { font-size: 10px; color: var(--text-dim); display: flex; justify-content: space-between; }
+  #dl-error { font-size: 12px; color: var(--red); margin-top: 6px; display: none; }
+  #dl-tasks-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 16px 0; }
+
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
@@ -289,6 +387,9 @@
       </button>
       <button class="nav-item" onclick="show('completion',this)">
         <span class="nav-icon">⌨</span> Completion
+      </button>
+      <button class="nav-item" onclick="showDashboard(this)">
+        <span class="nav-icon">⬡</span> Dashboard
       </button>
     </div>
     <div class="sidebar-section">
