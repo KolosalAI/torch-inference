@@ -1151,6 +1151,28 @@ mod tests {
         assert!(cuda_url.ends_with(".zip"));
     }
 
+    // ===== detect_backend with real lib dir (no cuda .so) → Cpu =====
+
+    #[test]
+    fn test_detect_backend_returns_cpu_when_no_cuda_lib() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("lib")).unwrap();
+        let detector = TorchLibAutoDetect::new();
+        let backend = detector.detect_backend(tmp.path());
+        assert_eq!(backend, TorchBackend::Cpu);
+    }
+
+    // ===== get_download_url macOS + Cuda → falls back to macos URL =====
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn test_get_download_url_cuda_on_macos_returns_macos_url() {
+        let detector = TorchLibAutoDetect::new();
+        let url = detector.get_download_url(&TorchBackend::Cuda("12.1".to_string()));
+        assert!(!url.is_empty());
+        assert!(url.contains("libtorch-macos"), "macOS Cuda should produce macos URL: {}", url);
+    }
+
     // ===== detect_cuda via versioned CUDA_PATH_V{m}_{n} env var (lines 109-117) =====
 
     #[test]
