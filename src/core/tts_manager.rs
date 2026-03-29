@@ -1705,4 +1705,58 @@ mod tests {
         let h2 = TTSManager::fnv1a_u64(b"def");
         assert_ne!(h1, h2);
     }
+
+    // ──────────────────────────── synthesize: targeted line coverage ──────────
+
+    #[tokio::test]
+    async fn test_synthesize_returns_err_when_engine_not_found() {
+        // No engines registered — default engine "nonexistent" → Err (line 185)
+        let manager = TTSManager::new(TTSManagerConfig {
+            default_engine: "nonexistent".to_string(),
+            ..TTSManagerConfig::default()
+        });
+        let result = manager.synthesize(
+            "hello",
+            None, // uses default engine "nonexistent"
+            SynthesisParams::default(),
+        ).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("nonexistent") || msg.contains("not found"),
+            "error should mention engine id or 'not found': {}", msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_cache_miss_then_hit() {
+        // First call: cache miss → MockEngine synthesizes → stored in LRU (lines 197-219)
+        // Second call: same text+params → cache hit → debug log (lines 170-171)
+        let manager = make_manager_with_mock("mock");
+        let params = SynthesisParams::default();
+
+        let first = manager.synthesize("hello world", Some("mock"), params.clone()).await;
+        assert!(first.is_ok(), "first synthesis (cache miss): {:?}", first.err());
+
+        let second = manager.synthesize("hello world", Some("mock"), params).await;
+        assert!(second.is_ok(), "second synthesis (cache hit): {:?}", second.err());
+
+        let a = first.unwrap();
+        let b = second.unwrap();
+        assert_eq!(a.sample_rate, b.sample_rate);
+        assert_eq!(a.samples, b.samples);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ORT runtime library (libonnxruntime.dylib)"]
+    async fn test_initialize_defaults_does_not_panic_when_models_absent() {
+        // All engines fail to load (no model files present), must complete Ok (lines 201-316)
+        let manager = TTSManager::new(TTSManagerConfig::default());
+        let result = manager.initialize_defaults().await;
+        assert!(
+            result.is_ok(),
+            "initialize_defaults should not propagate engine load errors: {:?}",
+            result.err()
+        );
+    }
 }
