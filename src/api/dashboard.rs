@@ -59,6 +59,8 @@ pub async fn dashboard_stream(
 
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_secs(3));
+        // Construct System once; only refresh on each tick.
+        let mut sys = sysinfo::System::new_all();
         loop {
             ticker.tick().await;
 
@@ -72,8 +74,8 @@ pub async fn dashboard_stream(
             };
 
             // CPU / RAM from sysinfo
-            let mut sys = sysinfo::System::new_all();
-            sys.refresh_all();
+            sys.refresh_cpu_all();
+            sys.refresh_memory();
             let cpu_pct = sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>()
                 / sys.cpus().len().max(1) as f32;
             let mem_used_mb  = sys.used_memory()  / 1024 / 1024;
@@ -103,7 +105,10 @@ pub async fn dashboard_stream(
                 .map(|t| DashboardDownload {
                     id:           t.id,
                     model_name:   t.model_name,
-                    status:       format!("{:?}", t.status),
+                    status:       serde_json::to_value(&t.status)
+                                    .ok()
+                                    .and_then(|v| v.as_str().map(str::to_owned))
+                                    .unwrap_or_else(|| format!("{:?}", t.status)),
                     progress:     t.progress,
                     downloaded_mb: t.downloaded_size / 1024 / 1024,
                     total_mb:     t.total_size.map(|s| s / 1024 / 1024),
@@ -128,7 +133,10 @@ pub async fn dashboard_stream(
 
             let json = match serde_json::to_string(&event) {
                 Ok(j)  => j,
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("[dashboard] serialization error (skipping tick): {e}");
+                    continue;
+                }
             };
             let frame = Bytes::from(format!("data: {}\n\n", json));
 
