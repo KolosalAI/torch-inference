@@ -2,27 +2,24 @@ use log::{info, LevelFilter};
 use chrono::Local;
 use std::io::Write;
 
-/// Format a single log record into the env_logger buffer.
-///
-/// Extracted from the `.format()` closure so that tests can call this
-/// function directly and guarantee the formatting logic is covered,
-/// independent of which logger wins the global-logger registration race.
-pub(crate) fn format_log_record(
-    buf: &mut env_logger::fmt::Formatter,
-    record: &log::Record<'_>,
+/// Core formatting logic, separated from the env_logger Formatter so tests
+/// can call it directly with any `Write` impl (e.g. `Vec<u8>`).
+pub(crate) fn format_log_record_inner(
+    buf: &mut dyn std::io::Write,
+    level: log::Level,
+    target: &str,
+    args: &std::fmt::Arguments<'_>,
 ) -> std::io::Result<()> {
-    let level_string = match record.level() {
-        log::Level::Error => "\x1b[1;31mERROR\x1b[0m",  // Bold red
-        log::Level::Warn  => "\x1b[1;33mWARN \x1b[0m",  // Bold yellow
-        log::Level::Info  => "\x1b[1;32mINFO \x1b[0m",  // Bold green
-        log::Level::Debug => "\x1b[1;36mDEBUG\x1b[0m",  // Bold cyan
-        log::Level::Trace => "\x1b[1;35mTRACE\x1b[0m",  // Bold magenta
+    let level_string = match level {
+        log::Level::Error => "\x1b[1;31mERROR\x1b[0m",
+        log::Level::Warn  => "\x1b[1;33mWARN \x1b[0m",
+        log::Level::Info  => "\x1b[1;32mINFO \x1b[0m",
+        log::Level::Debug => "\x1b[1;36mDEBUG\x1b[0m",
+        log::Level::Trace => "\x1b[1;35mTRACE\x1b[0m",
     };
 
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    let target = record.target();
+    let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
 
-    // Shorten target for readability
     let short_target = if target.starts_with("torch_inference::") {
         target.strip_prefix("torch_inference::").unwrap_or(target)
     } else {
@@ -35,8 +32,20 @@ pub(crate) fn format_log_record(
         timestamp,
         level_string,
         short_target,
-        record.args()
+        args
     )
+}
+
+/// Format a single log record into the env_logger buffer.
+///
+/// Extracted from the `.format()` closure so that tests can call this
+/// function directly and guarantee the formatting logic is covered,
+/// independent of which logger wins the global-logger registration race.
+pub(crate) fn format_log_record(
+    buf: &mut env_logger::fmt::Formatter,
+    record: &log::Record<'_>,
+) -> std::io::Result<()> {
+    format_log_record_inner(buf, record.level(), record.target(), record.args())
 }
 
 /// Setup enhanced logging with colors and better formatting
@@ -259,5 +268,83 @@ mod tests {
         ensure_trace_logger();
         log::info!(target: "torch_inference::telemetry::logger", "target stripping test");
         log::info!(target: "other_crate::module", "non-stripped target test");
+    }
+
+    // ── format_log_record_inner: direct Vec<u8> writer tests ─────────────────
+
+    #[test]
+    fn test_format_log_record_inner_error_contains_ansi_and_message() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("something broke");
+        format_log_record_inner(&mut buf, log::Level::Error, "mymod", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("ERROR"), "ERROR level string should appear");
+        assert!(out.contains("something broke"), "message should appear");
+        assert!(out.contains("mymod"), "target should appear");
+    }
+
+    #[test]
+    fn test_format_log_record_inner_warn() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("watch out");
+        format_log_record_inner(&mut buf, log::Level::Warn, "a::b", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("WARN"), "WARN level string should appear");
+        assert!(out.contains("watch out"));
+    }
+
+    #[test]
+    fn test_format_log_record_inner_info() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("hello");
+        format_log_record_inner(&mut buf, log::Level::Info, "svc", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("INFO"));
+        assert!(out.contains("hello"));
+    }
+
+    #[test]
+    fn test_format_log_record_inner_debug() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("debug msg");
+        format_log_record_inner(&mut buf, log::Level::Debug, "x", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("DEBUG"));
+    }
+
+    #[test]
+    fn test_format_log_record_inner_trace() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("trace msg");
+        format_log_record_inner(&mut buf, log::Level::Trace, "x", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("TRACE"));
+    }
+
+    #[test]
+    fn test_format_log_record_inner_strips_torch_inference_prefix() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("msg");
+        format_log_record_inner(&mut buf, log::Level::Info, "torch_inference::api::foo", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("api::foo"), "prefix should be stripped");
+        assert!(!out.contains("torch_inference::api::foo"), "full prefix should not appear");
+    }
+
+    #[test]
+    fn test_format_log_record_inner_no_strip_for_other_crate() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("msg");
+        format_log_record_inner(&mut buf, log::Level::Info, "other_crate::mod", &args).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("other_crate::mod"), "non-torch target should not be stripped");
+    }
+
+    #[test]
+    fn test_format_log_record_inner_ends_with_newline() {
+        let mut buf = Vec::<u8>::new();
+        let args = format_args!("x");
+        format_log_record_inner(&mut buf, log::Level::Info, "t", &args).unwrap();
+        assert!(buf.ends_with(b"\n"), "output should end with newline");
     }
 }
