@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use dashmap::DashMap;
 use serde_json::json;
-use log::{info, warn};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use std::sync::Arc;
 use rand;
 
@@ -30,8 +30,9 @@ impl BaseModel {
     }
     
     pub async fn load(&mut self) -> Result<()> {
-        info!("Loading model: {}", self.name);
+        tracing::info!(model = %self.name, "model load start");
         self.is_loaded = true;
+        tracing::info!(model = %self.name, "model load complete");
         Ok(())
     }
     
@@ -90,16 +91,16 @@ impl ModelManager {
     
     /// Register a model from file path
     pub async fn register_model_from_path(&self, path: &Path, name: Option<String>) -> Result<String> {
-        info!("Registering model from path: {:?}", path);
+        tracing::info!(path = ?path, "model registration start");
         let model_id = self.registry.register_from_path(path, name).await
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
-        info!("Model registered with ID: {}", model_id);
+        tracing::info!(model_id = %model_id, "model registered");
         Ok(model_id)
     }
     
     /// Scan directory and register all models
     pub async fn scan_and_register(&self, dir_path: &Path) -> Result<Vec<String>> {
-        info!("Scanning directory for models: {:?}", dir_path);
+        tracing::info!(dir = ?dir_path, "scanning directory for models");
         self.registry.scan_directory(dir_path).await
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))
     }
@@ -107,92 +108,97 @@ impl ModelManager {
     /// Load a PyTorch model
     #[cfg(feature = "torch")]
     pub async fn load_pytorch_model(&self, model_id: &str) -> Result<()> {
-        info!("Loading PyTorch model: {}", model_id);
-        
-        // Get metadata from registry
+        let start = Instant::now();
+        tracing::info!(model = %model_id, format = "pytorch", "model load start");
+
         let metadata = self.registry.get_model(model_id)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
-        
-        // Check format
+
         if metadata.format != ModelFormat::PyTorch {
             return Err(InferenceError::ModelLoadError(
                 format!("Model {} is not a PyTorch model", model_id)
             ));
         }
-        
-        // Load model
-        // Determine devices to load on
+
         let devices = if let Some(ids) = &self.config.device.device_ids {
             ids.clone()
         } else {
             vec![self.config.device.device_id]
         };
-        
+
         let mut loaded_models = Vec::new();
-        
-        for device_id in devices {
-            let device_str = if self.config.device.device_type == "cuda" || self.config.device.device_type == "auto" {
+
+        for device_id in &devices {
+            let device_str = if self.config.device.device_type == "cuda"
+                || self.config.device.device_type == "auto"
+            {
                 format!("cuda:{}", device_id)
             } else {
                 self.config.device.device_type.clone()
             };
-            
-            info!("Loading PyTorch model {} on device {}", model_id, device_str);
+
+            tracing::info!(model = %model_id, device = %device_str, "loading pytorch model on device");
             let loaded_model = self.pytorch_loader.load_model(&metadata.path, Some(device_str))
                 .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
             loaded_models.push(loaded_model);
         }
-        
-        // Store in cache
+
         self.loaded_pytorch_models.insert(model_id.to_string(), loaded_models);
-        
-        // Mark as loaded in registry
         self.registry.mark_loaded(model_id)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
-        
-        info!("PyTorch model loaded successfully: {}", model_id);
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        tracing::info!(
+            model        = %model_id,
+            format       = "pytorch",
+            elapsed_ms   = elapsed_ms,
+            device_count = devices.len(),
+            "model load complete"
+        );
         Ok(())
     }
 
     /// Load an ONNX model
     pub async fn load_onnx_model(&self, model_id: &str) -> Result<()> {
-        info!("Loading ONNX model: {}", model_id);
-        
-        // Get metadata from registry
+        let start = Instant::now();
+        tracing::info!(model = %model_id, format = "onnx", "model load start");
+
         let metadata = self.registry.get_model(model_id)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
-        
-        // Check format
+
         if metadata.format != ModelFormat::ONNX {
             return Err(InferenceError::ModelLoadError(
                 format!("Model {} is not an ONNX model", model_id)
             ));
         }
-        
-        // Determine devices to load on
+
         let devices = if let Some(ids) = &self.config.device.device_ids {
             ids.clone()
         } else {
             vec![self.config.device.device_id]
         };
-        
+
         let mut loaded_models = Vec::new();
-        
-        for device_id in devices {
-            info!("Loading model {} on device {}", model_id, device_id);
-            let loaded_model = self.onnx_loader.load_model(&metadata.path, Some(device_id))
+
+        for device_id in &devices {
+            tracing::info!(model = %model_id, device_id = device_id, "loading onnx model on device");
+            let loaded_model = self.onnx_loader.load_model(&metadata.path, Some(*device_id))
                 .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
             loaded_models.push(loaded_model);
         }
-        
-        // Store in cache
+
         self.loaded_onnx_models.insert(model_id.to_string(), loaded_models);
-        
-        // Mark as loaded in registry
         self.registry.mark_loaded(model_id)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
-        
-        info!("ONNX model loaded successfully: {}", model_id);
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        tracing::info!(
+            model        = %model_id,
+            format       = "onnx",
+            elapsed_ms   = elapsed_ms,
+            device_count = devices.len(),
+            "model load complete"
+        );
         Ok(())
     }
 
@@ -207,7 +213,7 @@ impl ModelManager {
     /// Run inference on a PyTorch model
     #[cfg(feature = "torch")]
     pub async fn infer_pytorch(&self, model_id: &str, input: &serde_json::Value) -> Result<serde_json::Value> {
-        info!("Running inference on model: {}", model_id);
+        tracing::info!(model = %model_id, format = "pytorch", "inference start");
         
         // Get metadata
         let metadata = self.registry.get_model(model_id)
@@ -234,14 +240,14 @@ impl ModelManager {
         // Mark as used
         self.registry.mark_used(model_id)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
-        
-        info!("Inference completed for model: {}", model_id);
+
+        tracing::info!(model = %model_id, format = "pytorch", "inference complete");
         Ok(result)
     }
 
     /// Run inference on an ONNX model
     pub async fn infer_onnx(&self, model_id: &str, input: &serde_json::Value) -> Result<serde_json::Value> {
-        info!("Running inference on ONNX model: {}", model_id);
+        tracing::info!(model = %model_id, format = "onnx", "inference start");
         
         // Get metadata
         let metadata = self.registry.get_model(model_id)
@@ -269,10 +275,10 @@ impl ModelManager {
         self.registry.mark_used(model_id)
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
         
-        info!("Inference completed for model: {}", model_id);
+        tracing::info!(model = %model_id, format = "onnx", "inference complete");
         Ok(result)
     }
-    
+
     #[cfg(not(feature = "torch"))]
     pub async fn infer_pytorch(&self, _model_id: &str, _input: &serde_json::Value) -> Result<serde_json::Value> {
         Err(InferenceError::ModelLoadError(
@@ -336,7 +342,7 @@ impl ModelManager {
     // Legacy methods for backward compatibility
     
     pub async fn register_model(&self, name: String, model: BaseModel) -> Result<()> {
-        info!("Registering legacy model: {}", name);
+        tracing::info!(model = %name, "registering legacy model");
         self.models.insert(name, model);
         Ok(())
     }
@@ -368,67 +374,61 @@ impl ModelManager {
     }
     
     pub async fn initialize_default_models(&self) -> Result<()> {
-        info!("Initializing default models");
-        
-        // Initialize legacy example model
+        tracing::info!("initializing default models");
+
         let example_model = BaseModel::new("example".to_string());
         self.register_model("example".to_string(), example_model).await?;
-        
-        // Scan default model directories
+
         let model_dirs = vec![
             PathBuf::from(&self.config.models.cache_dir),
             PathBuf::from("./models"),
             PathBuf::from("./models/audio"),
         ];
-        
+
         for dir in model_dirs {
             if dir.exists() && dir.is_dir() {
                 match self.scan_and_register(&dir).await {
                     Ok(models) => {
-                        info!("Registered {} models from {:?}", models.len(), dir);
+                        tracing::info!(dir = ?dir, model_count = models.len(), "models registered from directory");
                     }
                     Err(e) => {
-                        warn!("Failed to scan directory {:?}: {}", dir, e);
+                        tracing::warn!(dir = ?dir, error = %e, "failed to scan model directory");
                     }
                 }
             }
         }
-        
-        // Load auto-load models from config
+
         for model_name in &self.config.models.auto_load {
-            // Try legacy model first
             if let Ok(model) = self.get_model(model_name) {
                 let mut m = model;
                 if let Err(e) = m.load().await {
-                    warn!("Failed to load legacy model {}: {}", model_name, e);
+                    tracing::warn!(model = %model_name, error = %e, "failed to load legacy model");
                 }
             } else {
-                // Try PyTorch model from registry
                 #[cfg(feature = "torch")]
                 {
                     if let Ok(metadata) = self.registry.get_model(model_name) {
                         if metadata.format == ModelFormat::PyTorch {
                             if let Err(e) = self.load_pytorch_model(model_name).await {
-                                warn!("Failed to load PyTorch model {}: {}", model_name, e);
+                                tracing::warn!(model = %model_name, error = %e, format = "pytorch", "auto-load failed");
                             }
                         }
                     }
                 }
 
-                // Try ONNX model from registry
                 {
                     if let Ok(metadata) = self.registry.get_model(model_name) {
                         if metadata.format == ModelFormat::ONNX {
                             if let Err(e) = self.load_onnx_model(model_name).await {
-                                warn!("Failed to load ONNX model {}: {}", model_name, e);
+                                tracing::warn!(model = %model_name, error = %e, format = "onnx", "auto-load failed");
                             }
                         }
                     }
                 }
             }
         }
-        
-        info!("Model initialization complete");
+
+        tracing::info!("model initialization complete");
         Ok(())
     }
 }
