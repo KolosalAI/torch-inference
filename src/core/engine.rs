@@ -2,7 +2,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 use serde_json::json;
-use log::info;
 
 use crate::config::Config;
 use crate::error::Result;
@@ -26,71 +25,132 @@ impl InferenceEngine {
             sanitizer: Sanitizer::new(config.sanitizer.clone()),
         }
     }
-    
+
     pub async fn warmup(&self, config: &Config) -> Result<()> {
-        info!("Starting model warmup with {} iterations", config.performance.warmup_iterations);
-        
+        tracing::info!(
+            iterations = config.performance.warmup_iterations,
+            model_count = config.models.auto_load.len(),
+            "warmup start"
+        );
+
         for model_name in &config.models.auto_load {
-            info!("Warming up model: {}", model_name);
+            let warmup_start = Instant::now();
+            tracing::info!(model = %model_name, "warmup model start");
+
             if let Ok(_model) = self.model_manager.get_model(model_name) {
-                // Perform dummy inference
                 let dummy_input = json!({"test": true});
-                let _ = self.infer(model_name, &dummy_input).await;
+                match self.infer(model_name, &dummy_input).await {
+                    Ok(_) => {
+                        let elapsed_ms = warmup_start.elapsed().as_millis() as u64;
+                        tracing::info!(
+                            model      = %model_name,
+                            elapsed_ms = elapsed_ms,
+                            status     = "ok",
+                            "warmup model complete"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            model  = %model_name,
+                            error  = %e,
+                            status = "failed",
+                            "warmup model failed"
+                        );
+                    }
+                }
+            } else {
+                tracing::warn!(model = %model_name, "warmup model not found, skipping");
             }
         }
-        
-        info!("Warmup completed");
+
+        tracing::info!("warmup complete");
         Ok(())
     }
-    
-    pub async fn infer(&self, model_name: &str, inputs: &serde_json::Value) -> Result<serde_json::Value> {
+
+    pub async fn infer(
+        &self,
+        model_name: &str,
+        inputs: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
         let start = Instant::now();
-        
+
+        let span = tracing::info_span!("inference", model = %model_name);
+        let _guard = span.enter();
+
+        tracing::info!(model = %model_name, "inference start");
+
         // Sanitize input
-        let sanitized_inputs = self.sanitizer.sanitize_input(inputs)
+        let sanitized_inputs = self
+            .sanitizer
+            .sanitize_input(inputs)
             .map_err(|e| crate::error::InferenceError::InvalidInput(e))?;
-        
-        // Try registered model first
+
+        // Try registered model first, fall back to legacy model
         let result = if let Ok(_) = self.model_manager.get_model_metadata(model_name) {
-            self.model_manager.infer_registered(model_name, &sanitized_inputs).await?
+            self.model_manager
+                .infer_registered(model_name, &sanitized_inputs)
+                .await?
         } else {
-            // Fallback to legacy model
             let model = self.model_manager.get_model(model_name)?;
             model.forward(&sanitized_inputs).await?
         };
-        
+
         // Sanitize output
         let sanitized_result = self.sanitizer.sanitize_output(&result);
-        
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        self.metrics.record_inference(model_name, elapsed);
-        
+
+        let elapsed = start.elapsed();
+        let elapsed_ms = elapsed.as_millis() as u64;
+        self.metrics
+            .record_inference(model_name, elapsed.as_secs_f64() * 1000.0);
+
+        tracing::info!(
+            model      = %model_name,
+            elapsed_ms = elapsed_ms,
+            "inference complete"
+        );
+
+        if elapsed_ms >= 500 {
+            tracing::warn!(
+                model        = %model_name,
+                elapsed_ms   = elapsed_ms,
+                threshold_ms = 500u64,
+                "slow inference"
+            );
+        }
+
         Ok(sanitized_result)
     }
-    
+
     pub async fn tts_synthesize(&self, model_name: &str, text: &str) -> Result<String> {
-        info!("TTS synthesis requested for model: {}", model_name);
-        
-        // Sanitize text input
-        let sanitized_text = self.sanitizer.sanitize_input(&json!(text))
+        tracing::info!(model = %model_name, "tts synthesis start");
+
+        let sanitized_text = self
+            .sanitizer
+            .sanitize_input(&json!(text))
             .map_err(|e| crate::error::InferenceError::InvalidInput(e))?
             .as_str()
-            .ok_or_else(|| crate::error::InferenceError::InvalidInput("Sanitized text is not a string".to_string()))?
+            .ok_or_else(|| {
+                crate::error::InferenceError::InvalidInput(
+                    "Sanitized text is not a string".to_string(),
+                )
+            })?
             .to_string();
-        
+
         let _model = self.model_manager.get_model(model_name)?;
-        
-        // Placeholder: In real implementation, would call actual TTS model
-        let audio_data = format!("base64_audio_for_{}_words", sanitized_text.split_whitespace().count());
-        
+
+        let word_count = sanitized_text.split_whitespace().count();
+        let audio_data = format!("base64_audio_for_{}_words", word_count);
+
         self.metrics.record_request();
-        
+
+        tracing::info!(model = %model_name, word_count = word_count, "tts synthesis complete");
+
         Ok(audio_data)
     }
-    
+
     pub fn health_check(&self) -> serde_json::Value {
         let metrics = self.metrics.get_request_metrics();
-        
+
         json!({
             "healthy": true,
             "checks": {
@@ -105,10 +165,10 @@ impl InferenceEngine {
             }
         })
     }
-    
+
     pub fn get_stats(&self) -> serde_json::Value {
         let metrics = self.metrics.get_request_metrics();
-        
+
         json!({
             "total_requests": metrics.total_requests,
             "total_errors": metrics.total_errors,
