@@ -27,6 +27,16 @@ where
     }
 }
 
+fn status_class(status: u16) -> &'static str {
+    match status {
+        200..=299 => "2xx",
+        300..=399 => "3xx",
+        400..=499 => "4xx",
+        500..=599 => "5xx",
+        _         => "other",
+    }
+}
+
 pub struct RequestLoggerMiddleware<S> {
     service: S,
 }
@@ -46,9 +56,25 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let method = req.method().to_string();
         let path = req.path().to_string();
-        let remote_addr = req.connection_info().peer_addr().unwrap_or("unknown").to_string();
-        
-        // Get or create correlation ID
+        let remote_addr = req
+            .connection_info()
+            .peer_addr()
+            .unwrap_or("unknown")
+            .to_string();
+        let query = req.query_string().to_string();
+        let user_agent = req
+            .headers()
+            .get("User-Agent")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("unknown")
+            .to_string();
+        let content_len: u64 = req
+            .headers()
+            .get("Content-Length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
         let correlation_id = req
             .headers()
             .get("X-Correlation-ID")
@@ -58,13 +84,15 @@ where
 
         let metrics = RequestMetrics::new(correlation_id.clone());
 
-        // Log incoming request with structured data
         tracing::info!(
             correlation_id = %correlation_id.as_str(),
-            method = %method,
-            path = %path,
-            remote_addr = %remote_addr,
-            event = "request_received",
+            method         = %method,
+            path           = %path,
+            remote_addr    = %remote_addr,
+            query          = %query,
+            user_agent     = %user_agent,
+            content_len    = content_len,
+            event          = "request_received",
         );
 
         let fut = self.service.call(req);
@@ -72,31 +100,50 @@ where
         Box::pin(async move {
             match fut.await {
                 Ok(res) => {
-                    let status = res.status();
-                    
-                    // Log successful response
+                    let status = res.status().as_u16();
+                    let response_bytes: u64 = res
+                        .headers()
+                        .get("content-length")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0);
+                    let duration_ms = metrics.duration_ms();
+
                     tracing::info!(
                         correlation_id = %metrics.correlation_id.as_str(),
-                        method = %method,
-                        path = %path,
-                        status = %status.as_u16(),
-                        duration_ms = %metrics.duration_ms(),
-                        event = "request_completed",
+                        method         = %method,
+                        path           = %path,
+                        status         = status,
+                        status_class   = %status_class(status),
+                        duration_ms    = duration_ms,
+                        response_bytes = response_bytes,
+                        event          = "request_completed",
                     );
-                    
+
+                    if duration_ms >= 500 {
+                        tracing::warn!(
+                            correlation_id = %metrics.correlation_id.as_str(),
+                            method         = %method,
+                            path           = %path,
+                            duration_ms    = duration_ms,
+                            threshold_ms   = 500u64,
+                            event          = "slow_request",
+                        );
+                    }
+
                     Ok(res)
                 }
                 Err(err) => {
-                    // Log error response
                     tracing::error!(
                         correlation_id = %metrics.correlation_id.as_str(),
-                        method = %method,
-                        path = %path,
-                        error = %err,
-                        duration_ms = %metrics.duration_ms(),
-                        event = "request_error",
+                        method         = %method,
+                        path           = %path,
+                        error          = %err,
+                        duration_ms    = %metrics.duration_ms(),
+                        status_class   = "5xx",
+                        event          = "request_error",
                     );
-                    
+
                     Err(err)
                 }
             }
@@ -677,5 +724,117 @@ mod tests {
 
         let result = middleware.call(test_req).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_status_class_2xx() {
+        assert_eq!(status_class(200), "2xx");
+        assert_eq!(status_class(201), "2xx");
+        assert_eq!(status_class(299), "2xx");
+    }
+
+    #[test]
+    fn test_status_class_3xx() {
+        assert_eq!(status_class(301), "3xx");
+        assert_eq!(status_class(304), "3xx");
+    }
+
+    #[test]
+    fn test_status_class_4xx() {
+        assert_eq!(status_class(400), "4xx");
+        assert_eq!(status_class(404), "4xx");
+        assert_eq!(status_class(422), "4xx");
+    }
+
+    #[test]
+    fn test_status_class_5xx() {
+        assert_eq!(status_class(500), "5xx");
+        assert_eq!(status_class(503), "5xx");
+    }
+
+    #[test]
+    fn test_status_class_other() {
+        assert_eq!(status_class(100), "other");
+        assert_eq!(status_class(102), "other");
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_with_query_string() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/search", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        ).await;
+
+        let req = awtest::TestRequest::get()
+            .uri("/search?q=hello&top_k=5")
+            .to_request();
+        let resp = awtest::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_with_user_agent() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        ).await;
+
+        let req = awtest::TestRequest::get()
+            .uri("/")
+            .insert_header(("User-Agent", "test-client/1.0"))
+            .to_request();
+        let resp = awtest::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_without_user_agent() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/", web::get().to(|| async { HttpResponse::Ok().finish() })),
+        ).await;
+
+        let req = awtest::TestRequest::get().uri("/").to_request();
+        let resp = awtest::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_with_content_length() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route("/data", web::post().to(|| async { HttpResponse::Ok().finish() })),
+        ).await;
+
+        let req = awtest::TestRequest::post()
+            .uri("/data")
+            .insert_header(("Content-Length", "128"))
+            .to_request();
+        let resp = awtest::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_request_logger_response_with_content_length_header() {
+        let app = awtest::init_service(
+            App::new()
+                .wrap(RequestLogger)
+                .route(
+                    "/sized",
+                    web::get().to(|| async {
+                        HttpResponse::Ok()
+                            .insert_header(("Content-Length", "11"))
+                            .body("hello world")
+                    }),
+                ),
+        ).await;
+
+        let req = awtest::TestRequest::get().uri("/sized").to_request();
+        let resp = awtest::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
     }
 }
