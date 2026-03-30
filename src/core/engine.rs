@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use serde_json::json;
 
+use tracing::Instrument;
+
 use crate::config::Config;
 use crate::error::Result;
 use crate::models::manager::ModelManager;
@@ -59,7 +61,7 @@ impl InferenceEngine {
                     }
                 }
             } else {
-                tracing::warn!(model = %model_name, "warmup model not found, skipping");
+                tracing::warn!(model = %model_name, action = "skip", "warmup model not found");
             }
         }
 
@@ -72,10 +74,8 @@ impl InferenceEngine {
         model_name: &str,
         inputs: &serde_json::Value,
     ) -> Result<serde_json::Value> {
-        let start = Instant::now();
-
         let span = tracing::info_span!("inference", model = %model_name);
-        let _guard = span.enter();
+        let start = Instant::now();
 
         tracing::info!(model = %model_name, "inference start");
 
@@ -89,10 +89,11 @@ impl InferenceEngine {
         let result = if let Ok(_) = self.model_manager.get_model_metadata(model_name) {
             self.model_manager
                 .infer_registered(model_name, &sanitized_inputs)
+                .instrument(span.clone())
                 .await?
         } else {
             let model = self.model_manager.get_model(model_name)?;
-            model.forward(&sanitized_inputs).await?
+            model.forward(&sanitized_inputs).instrument(span.clone()).await?
         };
 
         // Sanitize output
@@ -103,12 +104,6 @@ impl InferenceEngine {
         self.metrics
             .record_inference(model_name, elapsed.as_secs_f64() * 1000.0);
 
-        tracing::info!(
-            model      = %model_name,
-            elapsed_ms = elapsed_ms,
-            "inference complete"
-        );
-
         if elapsed_ms >= 500 {
             tracing::warn!(
                 model        = %model_name,
@@ -117,6 +112,12 @@ impl InferenceEngine {
                 "slow inference"
             );
         }
+
+        tracing::info!(
+            model      = %model_name,
+            elapsed_ms = elapsed_ms,
+            "inference complete"
+        );
 
         Ok(sanitized_result)
     }
