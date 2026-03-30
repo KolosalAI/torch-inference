@@ -139,7 +139,7 @@ where
                         method         = %method,
                         path           = %path,
                         error          = %err,
-                        duration_ms    = %metrics.duration_ms(),
+                        duration_ms    = metrics.duration_ms(),
                         status_class   = "5xx",
                         event          = "request_error",
                     );
