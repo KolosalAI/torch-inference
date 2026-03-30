@@ -235,8 +235,12 @@ async fn main() -> std::io::Result<()> {
 
     #[cfg(feature = "torch")]
     {
-        let _span = tracing::info_span!("pytorch_init").entered();
-        tch::maybe_init_cuda();
+        {
+            let _span = tracing::info_span!("pytorch_init").entered();
+            tch::maybe_init_cuda();
+            tracing::info!("pytorch initializing");
+            drop(_span);
+        }
         match crate::core::torch_autodetect::initialize_torch().await {
             Ok(torch_config) => {
                 tracing::info!(
@@ -362,9 +366,13 @@ async fn main() -> std::io::Result<()> {
     
     // Initialize modern TTS manager
     let tts_manager = {
-        let _span = tracing::info_span!("tts_init").entered();
         let tts_config = crate::core::tts_manager::TTSManagerConfig::default();
         let tm = Arc::new(crate::core::tts_manager::TTSManager::new(tts_config));
+        {
+            let _span = tracing::info_span!("tts_init").entered();
+            tracing::info!("tts manager initializing");
+            drop(_span);
+        }
         tm.initialize_defaults().await.expect("Failed to initialize TTS manager");
         let tts_stats = tm.get_stats();
         tracing::info!(
@@ -491,10 +499,10 @@ async fn main() -> std::io::Result<()> {
             .app_data(performance_state.clone())
             .app_data(classify_state.clone())
             .app_data(llm_state.clone())
-            // RequestLogger is outermost so it captures total request time
-            .wrap(RequestLogger)
-            // Add correlation ID middleware first
+            // CorrelationIdMiddleware runs first (innermost), RequestLogger runs last (outermost)
+            // so it captures total wall time for each request
             .wrap(CorrelationIdMiddleware)
+            .wrap(RequestLogger)
             // Health check endpoints
             .route("/health", web::get().to(crate::api::health::health))
             .route("/health/live", web::get().to(crate::api::health::liveness))
