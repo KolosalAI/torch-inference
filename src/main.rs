@@ -23,8 +23,7 @@ mod worker_pool;
 #[cfg(feature = "torch")]
 mod torch_optimization;
 
-use actix_web::{web, App, HttpServer, middleware as actix_middleware};
-use log::info;
+use actix_web::{web, App, HttpServer};
 use std::sync::Arc;
 
 use crate::api::handlers;
@@ -146,121 +145,124 @@ async fn main() -> std::io::Result<()> {
     #[cfg(feature = "metrics")]
     {
         if let Err(e) = prometheus::init_metrics() {
-            log::warn!("[WARN] Failed to initialize Prometheus metrics: {}", e);
+            tracing::warn!(error = %e, "prometheus metrics initialization failed");
         } else {
-            info!("[OK] Prometheus metrics initialized");
+            tracing::info!("prometheus metrics initialized");
         }
     }
-    
-    println!("\n{}", "═".repeat(80));
-    println!("  [START] PyTorch Inference Framework v1.0.0");
-    println!("{}\n", "═".repeat(80));
-    
-    let mut config = Config::load().expect("Failed to load configuration");
-    info!("[OK] Configuration loaded successfully");
 
-    // Auto-detect device if set to "auto"
-    if config.device.device_type == "auto" {
-        info!("[INIT] Auto-detecting compute device...");
-        let temp_gpu_manager = GpuManager::new();
-        match temp_gpu_manager.get_info() {
-            Ok(info) => {
-                match info.backend {
-                    crate::core::gpu::GpuBackend::Cuda => {
-                        config.device.device_type = "cuda".to_string();
-                        info!("[AUTO] Detected CUDA - Setting device_type to 'cuda'");
-                        
-                        // Auto-configure device IDs if not set
-                        if config.device.device_ids.is_none() && info.count > 0 {
-                            let ids: Vec<usize> = (0..info.count).collect();
-                            info!("[AUTO] Detected {} CUDA devices - Setting device_ids to {:?}", info.count, ids);
-                            config.device.device_ids = Some(ids);
-                        }
-                    },
-                    crate::core::gpu::GpuBackend::Metal => {
-                        config.device.device_type = "mps".to_string();
-                        info!("[AUTO] Detected Metal - Setting device_type to 'mps'");
-                        
-                        // Enable Metal-specific optimizations
-                        if config.device.metal_optimize_for_apple_silicon {
-                            info!("[METAL] Apple Silicon optimizations enabled");
-                            
-                            // For unified memory, disable FP16 if not explicitly set (can cause issues on some models)
-                            if !config.device.use_fp16 {
-                                info!("[METAL] Using FP32 for maximum compatibility on unified memory");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "torch-inference starting");
+
+    let mut config = {
+        let _span = tracing::info_span!("config_load").entered();
+        let cfg = Config::load().expect("Failed to load configuration");
+        tracing::info!(
+            device_type = %cfg.device.device_type,
+            host        = %cfg.server.host,
+            port        = cfg.server.port,
+            "config loaded"
+        );
+        cfg
+    };
+
+    {
+        let _span = tracing::info_span!("device_detect").entered();
+        if config.device.device_type == "auto" {
+            tracing::info!("auto-detecting compute device");
+            let temp_gpu_manager = GpuManager::new();
+            match temp_gpu_manager.get_info() {
+                Ok(info) => {
+                    match info.backend {
+                        crate::core::gpu::GpuBackend::Cuda => {
+                            config.device.device_type = "cuda".to_string();
+                            tracing::info!(backend = "cuda", "cuda detected");
+                            if config.device.device_ids.is_none() && info.count > 0 {
+                                let ids: Vec<usize> = (0..info.count).collect();
+                                config.device.device_ids = Some(ids.clone());
+                                tracing::info!(
+                                    device_count = info.count,
+                                    device_ids   = ?ids,
+                                    "cuda devices configured"
+                                );
                             }
-                            
-                            // Set optimal thread count for Apple Silicon (efficiency + performance cores)
-                            let optimal_threads = (num_cpus::get() * 3) / 4; // Use 75% of cores for best performance
-                            config.device.num_threads = optimal_threads;
-                            info!("[METAL] Set optimal thread count to {} for Apple Silicon", optimal_threads);
+                        },
+                        crate::core::gpu::GpuBackend::Metal => {
+                            config.device.device_type = "mps".to_string();
+                            tracing::info!(backend = "mps", "metal detected");
+                            if config.device.metal_optimize_for_apple_silicon {
+                                let optimal_threads = (num_cpus::get() * 3) / 4;
+                                config.device.num_threads = optimal_threads;
+                                tracing::info!(
+                                    threads        = optimal_threads,
+                                    fp16           = config.device.use_fp16,
+                                    shader_caching = config.device.metal_cache_shaders,
+                                    "apple silicon configured"
+                                );
+                            }
+                            if config.device.device_ids.is_none() {
+                                config.device.device_ids = Some(vec![0]);
+                            }
+                        },
+                        crate::core::gpu::GpuBackend::Cpu => {
+                            config.device.device_type = "cpu".to_string();
+                            tracing::info!(backend = "cpu", "no gpu detected, using cpu");
                         }
-                        
-                        if config.device.metal_cache_shaders {
-                            info!("[METAL] Metal shader caching enabled for faster startup");
-                        }
-                        
-                        // Metal usually just uses device 0 (the unified memory GPU)
-                        if config.device.device_ids.is_none() {
-                             config.device.device_ids = Some(vec![0]);
-                        }
-                    },
-                    crate::core::gpu::GpuBackend::Cpu => {
-                        config.device.device_type = "cpu".to_string();
-                        info!("[AUTO] No GPU detected - Setting device_type to 'cpu'");
                     }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, backend = "cpu", "gpu detection failed, defaulting to cpu");
+                    config.device.device_type = "cpu".to_string();
                 }
-            },
-            Err(e) => {
-                log::warn!("[WARN] Failed to detect GPU info: {}. Defaulting to CPU.", e);
-                config.device.device_type = "cpu".to_string();
             }
+            tracing::info!(backend = %config.device.device_type, "device detection complete");
+        } else {
+            tracing::info!(backend = %config.device.device_type, "device configured from config");
         }
     }
     
-    log_system_info();
-
-    // Log ORT auto-detection result
-    if let Ok(detected) = std::env::var("_ORT_AUTODETECTED") {
-        info!("[AUTO] ORT library auto-detected: {}", detected);
-    } else if let Ok(explicit) = std::env::var("ORT_DYLIB_PATH") {
-        info!("[ORT] Using ORT_DYLIB_PATH from environment: {}", explicit);
-    } else {
-        log::warn!("[WARN] ORT library not found. Set ORT_DYLIB_PATH if ONNX inference is needed.");
+    {
+        let _span = tracing::info_span!("system_info").entered();
+        log_system_info();
     }
 
-    // Initialize PyTorch auto-detection (if torch feature enabled)
+    if let Ok(detected) = std::env::var("_ORT_AUTODETECTED") {
+        tracing::info!(ort_path = %detected, source = "auto-detected", "ort library found");
+    } else if let Ok(explicit) = std::env::var("ORT_DYLIB_PATH") {
+        tracing::info!(ort_path = %explicit, source = "environment", "ort library configured");
+    } else {
+        tracing::warn!("ort library not found; set ORT_DYLIB_PATH if onnx inference is needed");
+    }
+
     #[cfg(feature = "torch")]
     {
-        info!("[INIT] Initializing PyTorch environment...");
-        
-        // Initialize tch for thread safety
+        let _span = tracing::info_span!("pytorch_init").entered();
         tch::maybe_init_cuda();
-        
         match crate::core::torch_autodetect::initialize_torch().await {
             Ok(torch_config) => {
-                info!("[OK] PyTorch initialized successfully");
-                info!("   ├─ Backend: {:?}", torch_config.backend);
-                info!("   ├─ Path: {:?}", torch_config.libtorch_path);
-                info!("   └─ Version: {}", torch_config.version);
+                tracing::info!(
+                    backend = ?torch_config.backend,
+                    path    = ?torch_config.libtorch_path,
+                    version = %torch_config.version,
+                    "pytorch initialized"
+                );
             }
             Err(e) => {
-                log::warn!("[WARN]  PyTorch initialization failed: {}", e);
-                log::warn!("   └─ ML inference features will be limited");
+                tracing::warn!(error = %e, "pytorch initialization failed; ml inference limited");
             }
         }
     }
     
     // Initialize tensor pool for memory optimization
     let tensor_pool = if config.performance.enable_tensor_pooling {
-        info!("[OPT] Tensor pooling enabled (max: {} tensors)", config.performance.max_pooled_tensors);
+        tracing::info!(max_tensors = config.performance.max_pooled_tensors, "tensor pooling enabled");
         Some(Arc::new(crate::tensor_pool::TensorPool::new(config.performance.max_pooled_tensors)))
     } else {
         None
     };
 
     // Initialize components
-    info!("[INIT] Initializing core components...");
+    let _comp_span = tracing::info_span!("components_init").entered();
+    tracing::info!("initializing core components");
     let model_manager = Arc::new(ModelManager::new(&config, tensor_pool.clone()));
     let inference_engine = Arc::new(InferenceEngine::new(model_manager.clone(), &config));
     let monitor = Arc::new(Monitor::new());
@@ -285,88 +287,95 @@ async fn main() -> std::io::Result<()> {
     
     // Initialize compression service
     let _compression = if config.performance.enable_result_compression {
-        info!("[OPT] Result compression enabled (level: {})", config.performance.compression_level);
+        tracing::info!(level = config.performance.compression_level, "result compression enabled");
         Some(Arc::new(crate::compression::CompressionService::new(config.performance.compression_level)))
     } else {
         None
     };
-    
-    info!("[OK] Core components initialized");
+
+    tracing::info!(
+        workers_min   = config.performance.min_workers,
+        workers_max   = config.performance.max_workers,
+        cache_size_mb = config.performance.cache_size_mb,
+        "core components initialized"
+    );
+    drop(_comp_span);
     
     // Initialize GPU manager
-    info!("[GPU] Initializing GPU manager...");
     let gpu_manager = Arc::new(GpuManager::new());
-    
-    // Try to detect GPUs
-    match gpu_manager.get_info() {
-        Ok(info) => {
-            if info.available {
-                match info.backend {
-                    crate::core::gpu::GpuBackend::Cuda => {
-                        info!("[OK] GPU Manager initialized - {} CUDA GPU(s) detected", info.count);
-                    }
-                    crate::core::gpu::GpuBackend::Metal => {
-                        info!("[OK] GPU Manager initialized - Metal GPU detected (Apple Silicon)");
-                    }
-                    crate::core::gpu::GpuBackend::Cpu => {
-                        info!("[INFO]  GPU Manager initialized (No GPU detected, using CPU)");
-                    }
-                }
-                
-                for device in &info.devices {
-                    info!("   └─ GPU {}: {} ({:.2} GB)", 
-                        device.id, 
-                        device.name, 
-                        device.total_memory as f64 / 1024.0 / 1024.0 / 1024.0
-                    );
-                }
-            } else {
-                info!("[INFO]  GPU Manager initialized (No GPU available, using CPU)");
+    {
+        let _span = tracing::info_span!("gpu_init").entered();
+        match gpu_manager.get_info() {
+            Ok(info) if info.available => {
+                let device_names: Vec<String> = info.devices.iter()
+                    .map(|d| format!("{}:{}", d.name, d.id))
+                    .collect();
+                tracing::info!(
+                    backend      = ?info.backend,
+                    gpu_count    = info.count,
+                    device_names = %device_names.join(", "),
+                    "gpu init complete"
+                );
             }
-        }
-        Err(e) => {
-            log::warn!("[WARN]  GPU Manager initialized but failed to get GPU info: {}", e);
-            info!("[INFO]  Falling back to CPU mode");
+            Ok(_) => {
+                tracing::info!(backend = "cpu", "gpu init complete, no gpu available");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "gpu detection failed, falling back to cpu");
+            }
         }
     }
     
     // Initialize model download manager
-    info!("[DOWNLOAD] Initializing model download manager...");
-    let cache_dir = std::env::var("MODEL_CACHE_DIR")
-        .unwrap_or_else(|_| "./models".to_string());
-    let download_manager = Arc::new(
-        ModelDownloadManager::new(&cache_dir)
-            .expect("Failed to create model download manager")
-    );
-    download_manager.initialize().await.expect("Failed to initialize download manager");
-    info!("[OK] Model download manager ready at: {}", cache_dir);
+    let download_manager = {
+        let _span = tracing::info_span!("download_init").entered();
+        let cache_dir = std::env::var("MODEL_CACHE_DIR")
+            .unwrap_or_else(|_| "./models".to_string());
+        let dm = Arc::new(
+            ModelDownloadManager::new(&cache_dir)
+                .expect("Failed to create model download manager")
+        );
+        dm.initialize().await.expect("Failed to initialize download manager");
+        tracing::info!(cache_dir = %cache_dir, "download manager ready");
+        dm
+    };
     
     // Initialize audio model manager (legacy)
-    info!("[AUDIO] Initializing audio model manager...");
-    let audio_model_dir = std::env::var("AUDIO_MODEL_DIR")
-        .unwrap_or_else(|_| "./models/audio".to_string());
-    let audio_model_manager = Arc::new(crate::core::audio_models::AudioModelManager::new(&audio_model_dir));
-    audio_model_manager.initialize_default_models().await.ok();
-    info!("[OK] Audio model manager ready at: {}", audio_model_dir);
+    let audio_model_manager = {
+        let _span = tracing::info_span!("audio_init").entered();
+        let audio_model_dir = std::env::var("AUDIO_MODEL_DIR")
+            .unwrap_or_else(|_| "./models/audio".to_string());
+        let am = Arc::new(crate::core::audio_models::AudioModelManager::new(&audio_model_dir));
+        am.initialize_default_models().await.ok();
+        tracing::info!(model_dir = %audio_model_dir, "audio manager ready");
+        am
+    };
     
     // Initialize modern TTS manager
-    info!("[TTS]  Initializing TTS engines...");
-    let tts_config = crate::core::tts_manager::TTSManagerConfig::default();
-    let tts_manager = Arc::new(crate::core::tts_manager::TTSManager::new(tts_config));
-    tts_manager.initialize_defaults().await.expect("Failed to initialize TTS manager");
-    let tts_stats = tts_manager.get_stats();
-    info!("[OK] TTS Manager ready - {} engine(s) loaded", tts_stats.total_engines);
-    for engine_id in &tts_stats.engine_ids {
-        info!("   └─ {}", engine_id);
-    }
+    let tts_manager = {
+        let _span = tracing::info_span!("tts_init").entered();
+        let tts_config = crate::core::tts_manager::TTSManagerConfig::default();
+        let tm = Arc::new(crate::core::tts_manager::TTSManager::new(tts_config));
+        tm.initialize_defaults().await.expect("Failed to initialize TTS manager");
+        let tts_stats = tm.get_stats();
+        tracing::info!(
+            engine_count = tts_stats.total_engines,
+            engine_ids   = %tts_stats.engine_ids.join(", "),
+            "tts manager ready"
+        );
+        tm
+    };
     
     let start_time = std::time::Instant::now();
     
     if config.performance.preload_models_on_startup {
-        info!("[WARMUP] Pre-loading models on startup...");
+        let _span = tracing::info_span!("model_preload").entered();
+        tracing::info!(model_count = config.models.auto_load.len(), "preloading models on startup");
         for model_name in &config.models.auto_load {
             if let Ok(_) = model_manager.get_model(model_name) {
-                info!("   └─ Pre-loaded: {}", model_name);
+                tracing::info!(model = %model_name, status = "loaded", "model preloaded");
+            } else {
+                tracing::warn!(model = %model_name, status = "not_found", "model preload skipped");
             }
         }
     }
@@ -374,21 +383,22 @@ async fn main() -> std::io::Result<()> {
     // Warmup runs in the background so the HTTP server becomes reachable
     // (and /health returns 200) immediately rather than waiting for the first
     // inference pass to complete.
-    info!("[WARMUP] Warming up inference engine (background)...");
+    tracing::info!("starting background warmup");
     {
         let warmup_engine = inference_engine.clone();
         let config_cloned = config.clone();
         tokio::spawn(async move {
+            let _span = tracing::info_span!("warmup").entered();
             match warmup_engine.warmup(&config_cloned).await {
-                Ok(()) => info!("[OK] Inference engine warmup complete"),
-                Err(e) => log::warn!("[WARN] Inference engine warmup failed: {}", e),
+                Ok(()) => tracing::info!(status = "ok", "warmup complete"),
+                Err(e) => tracing::warn!(error = %e, status = "failed", "warmup failed"),
             }
         });
     }
     
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let display_addr = format!("localhost:{}", config.server.port);
-    info!("[SERVER] Starting HTTP server on {}...", addr);
+    tracing::info!(addr = %addr, workers = config.server.workers, "binding http server");
 
     let listener = std::net::TcpListener::bind(&addr)?;
     
@@ -428,29 +438,28 @@ async fn main() -> std::io::Result<()> {
         backend: std::sync::Arc::new(NoOpLlmBackend),
     });
     
-    println!("\n{}", "═".repeat(80));
-    println!("  [OK] Server Ready!");
-    println!("  [SERVER] Listening on: http://{}", display_addr);
-    println!("  [HEALTH] Health Check: http://{}/health", display_addr);
-    println!("  [HEALTH] Liveness Probe: http://{}/health/live", display_addr);
-    println!("  [HEALTH] Readiness Probe: http://{}/health/ready", display_addr);
+    tracing::info!(
+        server_url    = %format!("http://{}", display_addr),
+        health_url    = %format!("http://{}/health", display_addr),
+        liveness_url  = %format!("http://{}/health/live", display_addr),
+        readiness_url = %format!("http://{}/health/ready", display_addr),
+        workers       = config.server.workers,
+        "server ready"
+    );
+    tracing::info!(
+        tensor_pooling = config.performance.enable_tensor_pooling,
+        compression    = config.performance.enable_result_compression,
+        adaptive_batch = config.performance.adaptive_batch_timeout,
+        lru_caching    = config.performance.enable_caching,
+        cache_size_mb  = config.performance.cache_size_mb,
+        "server features"
+    );
     #[cfg(feature = "metrics")]
-    println!("  [METRICS] Prometheus Metrics: http://{}/metrics", display_addr);
-    if config.performance.enable_tensor_pooling {
-        println!("  [OPT] ✓ Tensor pooling enabled");
-    }
-    if config.performance.enable_result_compression {
-        println!("  [OPT] ✓ Result compression enabled");
-    }
-    if config.performance.adaptive_batch_timeout {
-        println!("  [OPT] ✓ Adaptive batching enabled");
-    }
-    if config.performance.enable_caching {
-        println!("  [OPT] ✓ LRU caching enabled ({} MB)", config.performance.cache_size_mb);
-    }
-    println!("{}\n", "═".repeat(80));
-    
-    info!("[OK] Server started successfully - Workers: {}", config.server.workers);
+    tracing::info!(
+        metrics_url = %format!("http://{}/metrics", display_addr),
+        "prometheus metrics available"
+    );
+    tracing::info!(workers = config.server.workers, "server started successfully");
     
     let server = HttpServer::new(move || {
         App::new()
@@ -472,9 +481,6 @@ async fn main() -> std::io::Result<()> {
             .app_data(llm_state.clone())
             // Add correlation ID middleware first
             .wrap(CorrelationIdMiddleware)
-            .wrap(actix_middleware::Logger::new(
-                r#"%a "%r" %s %b "%{Referer}i" %T %{X-Correlation-ID}o"#
-            ))
             // Health check endpoints
             .route("/health", web::get().to(crate::api::health::health))
             .route("/health/live", web::get().to(crate::api::health::liveness))
@@ -499,7 +505,7 @@ async fn main() -> std::io::Result<()> {
     let server_handle = server.handle();
     tokio::spawn(async move {
         shutdown_signal().await;
-        info!("[SHUTDOWN] Shutdown signal received, draining requests...");
+        tracing::info!("shutdown signal received, draining requests");
         server_handle.stop(true).await;
     });
 
@@ -528,91 +534,74 @@ async fn shutdown_signal() {
 
     tokio::select! {
         _ = ctrl_c => {
-            info!("[SHUTDOWN] Received Ctrl+C signal");
+            tracing::info!(signal = "ctrl_c", "shutdown signal received");
         },
         _ = terminate => {
-            info!("[SHUTDOWN] Received SIGTERM signal");
+            tracing::info!(signal = "sigterm", "shutdown signal received");
         },
     }
 }
 
 fn log_system_info() {
-    println!("\n  [SYSTEM] System Information:");
-    println!("  {}", "─".repeat(78));
-
-    // CPU Information
     let cpu_count = num_cpus::get();
-    info!("[CPU] CPU: {} cores available", cpu_count);
+    tracing::info!(cpu_cores = cpu_count, "cpu info");
 
-    // Memory Information
     if let Ok(sys_info) = sys_info::mem_info() {
         let total_gb = sys_info.total as f64 / 1024.0 / 1024.0;
         let avail_gb = sys_info.avail as f64 / 1024.0 / 1024.0;
-        info!("[RAM] RAM: {:.2} GB total, {:.2} GB available", total_gb, avail_gb);
+        tracing::info!(ram_total_gb = total_gb, ram_avail_gb = avail_gb, "memory info");
     }
 
-    // GPU Backend information
     #[cfg(target_os = "macos")]
     {
         if GpuManager::is_metal_available() {
             let gpu_manager = GpuManager::new();
             if let Some(metal_info) = gpu_manager.get_metal_info_string() {
-                info!("[METAL] Metal GPU: {}", metal_info);
+                tracing::info!(metal_gpu = %metal_info, "metal available");
             } else {
-                info!("[METAL] Metal: Available (Apple Silicon GPU)");
+                tracing::info!(metal_gpu = "apple silicon", "metal available");
             }
         } else {
-            info!("[METAL] Metal: Not available");
+            tracing::info!(metal = false, "metal not available");
         }
     }
 
-    // CUDA information
     if cfg!(feature = "cuda") {
-        info!("[GPU] CUDA: Enabled");
         if GpuManager::is_cuda_runtime_available() {
             if let Some(cuda_info) = GpuManager::get_cuda_info() {
-                info!("   └─ {}", cuda_info);
+                tracing::info!(cuda = true, cuda_info = %cuda_info, "cuda runtime available");
+            } else {
+                tracing::info!(cuda = true, "cuda runtime available");
             }
         } else {
-            log::warn!("   └─ CUDA runtime not detected");
+            tracing::warn!(cuda_feature = true, cuda_runtime = false, "cuda feature enabled but runtime not detected");
         }
     } else {
         #[cfg(not(target_os = "macos"))]
-        info!("[GPU] CUDA: Disabled (compile with --features cuda to enable)");
-
-        #[cfg(target_os = "macos")]
-        {
-            if !GpuManager::is_metal_available() {
-                info!("[GPU] GPU: Not available (Metal not detected)");
-            }
-        }
+        tracing::info!(cuda = false, "cuda disabled");
     }
 
-    // ONNX support
     if cfg!(feature = "onnx") {
-        info!("[ONNX] ONNX: Enabled");
+        tracing::info!(onnx = true, "onnx enabled");
     } else {
-        info!("[ONNX] ONNX: Disabled");
+        tracing::info!(onnx = false, "onnx disabled");
     }
 
-    // Audio processing
     #[cfg(feature = "audio")]
-    info!("[AUDIO] Audio Processing: Enabled");
-
+    tracing::info!(audio = true, "audio processing enabled");
     #[cfg(not(feature = "audio"))]
-    info!("[AUDIO] Audio Processing: Disabled");
+    tracing::info!(audio = false, "audio processing disabled");
 
-    // Image security
     #[cfg(feature = "image-security")]
-    info!("[SECURITY] Image Security: Enabled");
-
+    tracing::info!(image_security = true, "image security enabled");
     #[cfg(not(feature = "image-security"))]
-    info!("[SECURITY] Image Security: Disabled");
+    tracing::info!(image_security = false, "image security disabled");
 
-    // OS Information
-    info!("[OS]  OS: {} {}", std::env::consts::OS, std::env::consts::ARCH);
-
-    println!("  {}\n", "─".repeat(78));
+    tracing::info!(
+        os   = std::env::consts::OS,
+        arch = std::env::consts::ARCH,
+        "os info"
+    );
 }
 
 #[cfg(test)]
