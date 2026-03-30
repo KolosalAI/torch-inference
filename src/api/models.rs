@@ -76,7 +76,9 @@ fn de_f32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error
 
 fn de_i32_or_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
     match serde_json::Value::deserialize(d)? {
-        serde_json::Value::Number(n) => Ok(n.as_i64().unwrap_or(0) as i32),
+        serde_json::Value::Number(n) => Ok(n.as_i64()
+            .and_then(|v| i32::try_from(v).ok())
+            .unwrap_or(0)),
         serde_json::Value::String(s) => Ok(s.parse::<i32>().unwrap_or(0)),
         _ => Ok(0),
     }

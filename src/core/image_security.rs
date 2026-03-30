@@ -309,7 +309,7 @@ impl ImageSecurityValidator {
             width: img.width(),
             height: img.height(),
             format: format!("{:?}", img.color()),
-            size_bytes: (img.width() * img.height() * (color_depth as u32 / 8) * if has_alpha { 4 } else { 3 }) as usize,
+            size_bytes: (img.width() as u64 * img.height() as u64 * (color_depth as u64 / 8) * if has_alpha { 4 } else { 3 }) as usize,
             has_alpha,
             color_depth,
         }
