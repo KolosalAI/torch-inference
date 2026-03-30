@@ -92,3 +92,4 @@ models/
 
 # Configuration files
 config.optimized.toml
+.superpowers/
