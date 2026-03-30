@@ -387,8 +387,9 @@ async fn main() -> std::io::Result<()> {
     }
     
     let addr = format!("{}:{}", config.server.host, config.server.port);
+    let display_addr = format!("localhost:{}", config.server.port);
     info!("[SERVER] Starting HTTP server on {}...", addr);
-    
+
     let listener = std::net::TcpListener::bind(&addr)?;
     
     let config_data = web::Data::new(config.clone());
@@ -429,12 +430,12 @@ async fn main() -> std::io::Result<()> {
     
     println!("\n{}", "═".repeat(80));
     println!("  [OK] Server Ready!");
-    println!("  [SERVER] Listening on: http://{}", addr);
-    println!("  [HEALTH] Health Check: http://{}/health", addr);
-    println!("  [HEALTH] Liveness Probe: http://{}/health/live", addr);
-    println!("  [HEALTH] Readiness Probe: http://{}/health/ready", addr);
+    println!("  [SERVER] Listening on: http://{}", display_addr);
+    println!("  [HEALTH] Health Check: http://{}/health", display_addr);
+    println!("  [HEALTH] Liveness Probe: http://{}/health/live", display_addr);
+    println!("  [HEALTH] Readiness Probe: http://{}/health/ready", display_addr);
     #[cfg(feature = "metrics")]
-    println!("  [METRICS] Prometheus Metrics: http://{}/metrics", addr);
+    println!("  [METRICS] Prometheus Metrics: http://{}/metrics", display_addr);
     if config.performance.enable_tensor_pooling {
         println!("  [OPT] ✓ Tensor pooling enabled");
     }
