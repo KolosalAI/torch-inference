@@ -30,9 +30,11 @@ impl BaseModel {
     }
     
     pub async fn load(&mut self) -> Result<()> {
+        let start = std::time::Instant::now();
         tracing::info!(model = %self.name, "model load start");
         self.is_loaded = true;
-        tracing::info!(model = %self.name, "model load complete");
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        tracing::info!(model = %self.name, elapsed_ms = elapsed_ms, "model load complete");
         Ok(())
     }
     
@@ -148,11 +150,13 @@ impl ModelManager {
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
+        let device_type = &self.config.device.device_type;
         tracing::info!(
             model        = %model_id,
             format       = "pytorch",
             elapsed_ms   = elapsed_ms,
             device_count = devices.len(),
+            device       = %device_type,
             "model load complete"
         );
         Ok(())
@@ -192,11 +196,13 @@ impl ModelManager {
             .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
+        let device_type = &self.config.device.device_type;
         tracing::info!(
             model        = %model_id,
             format       = "onnx",
             elapsed_ms   = elapsed_ms,
             device_count = devices.len(),
+            device       = %device_type,
             "model load complete"
         );
         Ok(())
