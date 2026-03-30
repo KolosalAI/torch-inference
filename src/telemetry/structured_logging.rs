@@ -1,11 +1,10 @@
-use tracing::{Level, Subscriber};
+#![allow(dead_code)]
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
-    EnvFilter, Layer, Registry,
+    EnvFilter, Registry,
 };
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use std::io;
 use std::time::Instant;
 
 /// Initialize structured logging with JSON output

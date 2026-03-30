@@ -1,4 +1,5 @@
-use anyhow::{Result, Context, bail};
+#![allow(dead_code)]
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -78,7 +79,7 @@ impl ImageClassifier {
     #[cfg(not(feature = "torch"))]
     pub fn new(
         _model_path: &Path,
-        labels: Vec<String>,
+        _labels: Vec<String>,
         _input_size: Option<(i64, i64)>,
         _device: Option<()>,
     ) -> Result<Self> {
@@ -233,8 +234,6 @@ pub fn load_imagenet_labels() -> Vec<String> {
 
 /// Common pre-trained model configurations
 pub mod models {
-    use super::*;
-    
     pub struct ModelConfig {
         pub name: String,
         pub url: String,

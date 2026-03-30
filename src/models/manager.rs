@@ -1,9 +1,9 @@
+#![allow(dead_code)]
 use dashmap::DashMap;
 use serde_json::json;
-use log::{info, warn, error};
+use log::{info, warn};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use rand;
 
 use crate::config::Config;

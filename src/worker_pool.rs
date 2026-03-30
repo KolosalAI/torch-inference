@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, Notify};
 use tokio::task::JoinHandle;
-use log::{info, debug, warn, error};
+use log::{info, debug, warn};
 use std::time::{Duration, Instant};
 use std::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool, Ordering};
 
@@ -118,7 +119,6 @@ impl Default for WorkerPoolConfig {
 pub struct WorkerPool {
     config: WorkerPoolConfig,
     workers: Arc<RwLock<Vec<Arc<Worker>>>>,
-    active_workers: AtomicUsize,
     total_tasks: AtomicU64,
     failed_tasks: AtomicU64,
     queue_size: AtomicUsize,
@@ -133,7 +133,6 @@ impl WorkerPool {
         Arc::new(Self {
             config: config.clone(),
             workers: Arc::new(RwLock::new(Vec::new())),
-            active_workers: AtomicUsize::new(0),
             total_tasks: AtomicU64::new(0),
             failed_tasks: AtomicU64::new(0),
             queue_size: AtomicUsize::new(0),
@@ -180,8 +179,6 @@ impl WorkerPool {
         // Add to idle list
         self.idle_workers.lock().unwrap().push(worker_id);
         
-        self.active_workers.fetch_add(1, Ordering::Relaxed);
-        
         info!("Added worker {} (total: {})", worker_id, workers.len());
         Ok(())
     }
@@ -202,41 +199,9 @@ impl WorkerPool {
             idle.pop()
         };
         
-        if let Some(id) = idle_id {
-            // Verify worker exists and is actually idle (double check)
-            if id < workers.len() {
-                let worker = &workers[id];
-                if worker.get_state().await == WorkerState::Idle {
-                    worker.set_state(WorkerState::Stopping).await;
-                    // Note: Removing from middle of vector invalidates indices > id
-                    // This is problematic for our index-based approach.
-                    // Instead of removing, we should mark as stopped/inactive or use a map.
-                    // For now, we'll just mark it as stopped and keep it in the vector but ignore it.
-                    // Or better: swap_remove if we track ID mapping.
-                    
-                    // SIMPLIFICATION: For this optimization, we'll stick to just marking it stopped
-                    // and not actually removing from the Vec to avoid index invalidation issues
-                    // until a full refactor to HashMap<usize, Worker> is done.
-                    
-                    // Actually, let's just return OK and let the health checker clean up or 
-                    // accept that "removing" just means "stopping" for now.
-                    
-                    // But wait, the original code did `workers.remove(i)`.
-                    // If we change to index-based idle list, we MUST handle index stability.
-                    // Strategy: Only remove from the END of the list? No, idle worker might be anywhere.
-                    
-                    // Strategy: Use swap_remove to replace the removed worker with the last one.
-                    // Then we need to update the index of the moved worker in the idle list.
-                    // This is getting complex for a quick optimization.
-                    
-                    // ALTERNATIVE: Just pop from idle list. If we successfully popped, we know it's idle.
-                    // But we need to remove it from `workers` vector too.
-                    
-                    // Let's revert to scanning for removal (it's rare event), but optimize acquisition (frequent event).
-                    // So for removal, we scan, find an idle one, remove it, and ALSO remove it from idle_workers list.
-                }
-            }
-        }
+        // If we got an ID from the idle list, release the lock and fall through
+        // to the scan below which handles actual removal and index adjustment.
+        let _ = idle_id;
         
         // Fallback to scanning if idle list was empty or inconsistent
         // Find an idle worker
@@ -258,7 +223,6 @@ impl WorkerPool {
                     }
                 }
                 
-                self.active_workers.fetch_sub(1, Ordering::Relaxed);
                 info!("Removed idle worker {} (total: {})", i, workers.len());
                 return Ok(());
             }
@@ -342,24 +306,22 @@ impl WorkerPool {
     
     /// Start auto-scaling monitor
     fn start_auto_scaler(self: &Arc<Self>) {
-        let workers = self.workers.clone();
         let config = self.config.clone();
-        let queue_size = Arc::new(AtomicUsize::new(self.queue_size.load(Ordering::Relaxed)));
         let shutdown = self.shutdown.clone();
         let scale_notify = self.scale_notify.clone();
         let pool_self = self.clone();
-        
+
         tokio::spawn(async move {
             info!("Auto-scaler started");
-            
+
             while !shutdown.load(Ordering::Relaxed) {
                 tokio::select! {
                     _ = scale_notify.notified() => {},
                     _ = tokio::time::sleep(Duration::from_secs(5)) => {},
                 }
-                
-                let queue = queue_size.load(Ordering::Relaxed);
-                let worker_count = workers.read().await.len();
+
+                let queue = pool_self.queue_size.load(Ordering::Relaxed);
+                let worker_count = pool_self.workers.read().await.len();
                 
                 // Scale up if queue is large
                 if queue > config.scale_up_threshold && worker_count < config.max_workers {
@@ -1336,5 +1298,33 @@ mod tests {
 
         pool.shutdown().await;
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn test_auto_scaler_scales_up_when_queue_exceeds_threshold() {
+        // Regression test: start_auto_scaler used to clone the AtomicUsize at
+        // startup time, so set_queue_size() had no effect on the scaler's view.
+        let config = WorkerPoolConfig {
+            min_workers: 1,
+            max_workers: 5,
+            scale_up_threshold: 3,
+            scale_down_threshold: 0,
+            enable_auto_scaling: true,
+            ..Default::default()
+        };
+        let pool = WorkerPool::new(config);
+        pool.initialize().await.unwrap();
+        assert_eq!(pool.worker_count().await, 1);
+
+        // Push queue above the threshold; set_queue_size notifies the scaler.
+        pool.set_queue_size(5);
+
+        // Give the background task time to wake up and add a worker.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(
+            pool.worker_count().await > 1,
+            "auto-scaler must scale up when queue exceeds threshold"
+        );
     }
 }

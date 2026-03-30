@@ -1,4 +1,5 @@
-use anyhow::{Result, Context, bail};
+#![allow(dead_code)]
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::collections::HashMap;
@@ -85,7 +86,7 @@ impl NeuralNetwork {
     pub fn new(
         _model_path: &Path,
         _device: Option<()>,
-        metadata: Option<NetworkMetadata>,
+        _metadata: Option<NetworkMetadata>,
     ) -> Result<Self> {
         bail!("PyTorch feature not enabled. Compile with --features torch");
     }
@@ -231,8 +232,7 @@ impl NeuralNetwork {
 
 /// Helper to create common neural network architectures
 pub mod architectures {
-    use super::*;
-    
+
     /// MLP (Multi-Layer Perceptron) configuration
     #[derive(Debug, Clone)]
     pub struct MLPConfig {
@@ -327,8 +327,7 @@ impl BatchInference {
 
 /// Model quantization utilities
 pub mod quantization {
-    use super::*;
-    
+
     #[derive(Debug, Clone)]
     pub enum QuantizationType {
         Dynamic,

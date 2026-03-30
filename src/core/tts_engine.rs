@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Generic TTS Engine Trait - Production-grade modular architecture
 /// This allows any TTS implementation to be plugged in
 use anyhow::Result;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use dashmap::DashMap;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Deserialize};

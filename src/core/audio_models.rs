@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// ONNX-based TTS and STT model implementations
 use anyhow::{Result, Context, bail};
 use serde::{Deserialize, Serialize};
@@ -310,7 +311,7 @@ impl STTModel {
         log::warn!("ONNX feature not enabled, returning placeholder transcription");
         
         let duration = audio.samples.len() as f32 / audio.sample_rate as f32;
-        let word_count = (duration * 2.0) as usize; // Assume ~2 words per second
+        let _word_count = (duration * 2.0) as usize; // Assume ~2 words per second
         
         let text = format!("[Transcription placeholder - {} seconds of audio]", duration as u32);
 

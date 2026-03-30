@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use anyhow::{Result, Context};
@@ -322,7 +323,7 @@ impl GpuManager {
             .output();
             
         if let Ok(output) = output {
-            let output_str = String::from_utf8_lossy(&output.stdout);
+            let _output_str = String::from_utf8_lossy(&output.stdout);
             
             // Try to get memory info from system
             let mem_cmd = Command::new("sysctl")

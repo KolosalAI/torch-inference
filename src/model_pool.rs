@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -11,7 +12,8 @@ pub struct PermitGuard<'a> {
 }
 
 /// Metrics for a single model instance
-struct InstanceMetrics {
+#[allow(dead_code)]
+pub struct InstanceMetrics {
     active_requests: AtomicU64,
     total_requests: AtomicU64,
     avg_latency_ms: AtomicU64,

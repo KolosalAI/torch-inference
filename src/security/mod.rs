@@ -1,10 +1,13 @@
+#![allow(dead_code)]
 pub mod validation;
 pub mod sanitizer;
 
 use serde::{Deserialize, Serialize};
 
+#[allow(unused_imports)]
 pub use validation::{RequestValidator, ValidationErrorType};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityMitigation {
     pub enable_sanitization: bool,

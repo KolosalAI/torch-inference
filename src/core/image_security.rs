@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
-use image::{DynamicImage, ImageBuffer, Rgba};
-use anyhow::{Result, Context, bail};
+use image::{DynamicImage, ImageBuffer};
+use anyhow::Result;
 use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

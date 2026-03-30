@@ -1,7 +1,7 @@
 /// VITS (Variational Inference Text-to-Speech) TTS Engine
 /// Fast, high-quality neural TTS with multi-speaker support
 // Tests are at the bottom of this file.
-use anyhow::{Result, Context};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

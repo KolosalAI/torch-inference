@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Auto-detection and download for PyTorch (libtorch) libraries
 /// Handles CUDA detection and automatic library installation
 
@@ -5,6 +6,9 @@ use anyhow::{Result, Context, bail};
 use std::path::{Path, PathBuf};
 use std::env;
 use std::fs;
+use std::time::Duration;
+
+const TORCH_VERSION: &str = "2.3.0";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TorchBackend {
@@ -146,14 +150,17 @@ impl TorchLibAutoDetect {
         #[cfg(not(target_os = "windows"))]
         {
             if let Ok(output) = std::process::Command::new("nvidia-smi")
-                .arg("--query-gpu=driver_version")
+                .arg("--query-gpu=cuda_version")
                 .arg("--format=csv,noheader")
                 .output()
             {
                 if output.status.success() {
-                    log::info!("[OK] CUDA detected via nvidia-smi");
+                    let raw = String::from_utf8_lossy(&output.stdout);
+                    let version = Self::parse_cuda_version_from_smi(raw.trim())
+                        .unwrap_or_else(|| "11.8".to_string());
+                    log::info!("[OK] CUDA detected via nvidia-smi (version: {})", version);
                     self.cuda_available = true;
-                    self.cuda_version = Some("11.8".to_string()); // Default for compatibility
+                    self.cuda_version = Some(version);
                     return Ok(());
                 }
             }
@@ -163,6 +170,22 @@ impl TorchLibAutoDetect {
         self.cuda_available = false;
         self.cuda_version = None;
         Ok(())
+    }
+
+    /// Parse a CUDA version string from `nvidia-smi --query-gpu=cuda_version` output.
+    /// Returns `None` for empty or whitespace-only output.
+    pub fn parse_cuda_version_from_smi(raw: &str) -> Option<String> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        // nvidia-smi returns the first line of output; take only the first line
+        // in case of multi-GPU systems (each GPU on its own line).
+        let first_line = trimmed.lines().next()?.trim();
+        if first_line.is_empty() {
+            return None;
+        }
+        Some(first_line.to_string())
     }
 
     fn extract_cuda_version_from_path(&self, path: &Path) -> Option<String> {
@@ -190,7 +213,7 @@ impl TorchLibAutoDetect {
                 return Some(TorchConfig {
                     backend,
                     libtorch_path: path,
-                    version: "2.3.0".to_string(), // Default version
+                    version: TORCH_VERSION.to_string(),
                 });
             }
         }
@@ -202,7 +225,7 @@ impl TorchLibAutoDetect {
             return Some(TorchConfig {
                 backend,
                 libtorch_path: self.libtorch_dir.clone(),
-                version: "2.3.0".to_string(),
+                version: TORCH_VERSION.to_string(),
             });
         }
 
@@ -260,31 +283,21 @@ impl TorchLibAutoDetect {
     /// Get download URL for libtorch
     pub fn get_download_url(&self, backend: &TorchBackend) -> String {
         let base_url = "https://download.pytorch.org/libtorch";
-        let version = "2.3.0"; // Latest stable version
+        let version = TORCH_VERSION;
 
         #[cfg(target_os = "windows")]
         {
+            // CUDA on Windows requires manual download from the PyTorch website.
+            // All variants fall back to the CPU build; the caller can log a warning
+            // if a CUDA backend was requested.
             match backend {
-                TorchBackend::Cuda(cuda_ver) => {
-                    // Map CUDA version to PyTorch compatible version
-                    let cuda_suffix = if cuda_ver.starts_with("12") {
-                        "cu121"
-                    } else if cuda_ver.starts_with("11.8") {
-                        "cu118"
-                    } else {
-                        "cu118" // Default to 11.8
-                    };
-                    format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
-                    // Note: CUDA builds require manual download from PyTorch website
+                TorchBackend::Cuda(_) => {
+                    log::warn!("[WARN] Automatic CUDA libtorch download is not supported on Windows. \
+                        Download manually from https://pytorch.org and set LIBTORCH.");
                 }
-                TorchBackend::Metal => {
-                    // Metal is not available on Windows
-                    format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
-                }
-                TorchBackend::Cpu => {
-                    format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
-                }
+                _ => {}
             }
+            format!("{}/cpu/libtorch-win-shared-with-deps-{}.zip", base_url, version)
         }
 
         #[cfg(target_os = "linux")]
@@ -296,16 +309,15 @@ impl TorchLibAutoDetect {
                     } else {
                         "cu118"
                     };
-                    format!("{}/{}/libtorch-cxx11-abi-shared-with-deps-{}.zip", 
+                    format!("{}/{}/libtorch-cxx11-abi-shared-with-deps-{}.zip",
                         base_url, cuda_suffix, version)
                 }
                 TorchBackend::Metal => {
-                    // Metal is not available on Linux
-                    format!("{}/cpu/libtorch-cxx11-abi-shared-with-deps-{}.zip", 
+                    format!("{}/cpu/libtorch-cxx11-abi-shared-with-deps-{}.zip",
                         base_url, version)
                 }
                 TorchBackend::Cpu => {
-                    format!("{}/cpu/libtorch-cxx11-abi-shared-with-deps-{}.zip", 
+                    format!("{}/cpu/libtorch-cxx11-abi-shared-with-deps-{}.zip",
                         base_url, version)
                 }
             }
@@ -354,8 +366,13 @@ impl TorchLibAutoDetect {
             fs::create_dir_all(parent)?;
         }
 
-        // Download file
-        let response = reqwest::get(&url).await
+        // Use a client with a generous timeout — libtorch archives can be 2 GB+.
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3600))
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let response = client.get(&url).send().await
             .context("Failed to download libtorch")?;
 
         if !response.status().is_success() {
@@ -365,66 +382,95 @@ impl TorchLibAutoDetect {
         let total_size = response.content_length().unwrap_or(0);
         log::info!("   Size: {} MB", total_size / 1024 / 1024);
 
-        let bytes = response.bytes().await
-            .context("Failed to read download response")?;
-
-        fs::write(&download_path, &bytes)
-            .context("Failed to write downloaded file")?;
+        // Stream to disk — avoids buffering gigabytes in RAM.
+        {
+            use tokio::io::AsyncWriteExt;
+            use futures_util::StreamExt;
+            let mut file = tokio::fs::File::create(&download_path).await
+                .context("Failed to create download file")?;
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.context("Failed to read download chunk")?;
+                file.write_all(&chunk).await
+                    .context("Failed to write download chunk")?;
+            }
+        }
 
         log::info!("[OK] Downloaded successfully");
 
-        // Extract archive
+        // Extract archive on a blocking thread — zip extraction is CPU-bound I/O.
         log::info!("[DOWNLOAD] Extracting archive...");
-        self.extract_archive(&download_path)?;
+        let archive_path = download_path.clone();
+        let extract_dir = self.libtorch_dir.parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        tokio::task::spawn_blocking(move || extract_archive(&archive_path, &extract_dir))
+            .await
+            .context("extract_archive task panicked")??;
 
         // Clean up downloaded file
         fs::remove_file(&download_path)?;
 
         log::info!("[OK] Libtorch installed successfully at: {:?}", self.libtorch_dir);
 
-        // Set environment variable
-        env::set_var("LIBTORCH", &self.libtorch_dir);
-        env::set_var("LD_LIBRARY_PATH", self.libtorch_dir.join("lib"));
+        // Note: env::set_var is not safe to call from async multi-threaded code.
+        // These variables must be set before the tokio runtime starts (e.g. in
+        // main() or build.rs) for full effect.  We set them here as a best-effort
+        // hint for the current process only.
+        unsafe {
+            env::set_var("LIBTORCH", &self.libtorch_dir);
+            env::set_var("LD_LIBRARY_PATH", self.libtorch_dir.join("lib"));
+        }
 
         Ok(self.libtorch_dir.clone())
     }
+}
 
-    fn extract_archive(&self, archive_path: &Path) -> Result<()> {
-        let file = fs::File::open(archive_path)?;
-        let mut archive = zip::ZipArchive::new(file)
-            .context("Failed to open archive")?;
+/// Extract a zip archive to `extract_dir`.  Runs on a blocking thread via
+/// `tokio::task::spawn_blocking` so it does not stall the async executor.
+fn extract_archive(archive_path: &Path, extract_dir: &Path) -> Result<()> {
+    let file = fs::File::open(archive_path)?;
+    let mut archive = zip::ZipArchive::new(file)
+        .context("Failed to open archive")?;
 
-        let extract_dir = self.libtorch_dir.parent()
-            .unwrap_or(Path::new("."));
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => extract_dir.join(path),
+            None => continue,
+        };
 
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let outpath = match file.enclosed_name() {
-                Some(path) => extract_dir.join(path),
-                None => continue,
-            };
-
-            if file.name().ends_with('/') {
-                fs::create_dir_all(&outpath)?;
-            } else {
-                if let Some(p) = outpath.parent() {
-                    fs::create_dir_all(p)?;
-                }
-                let mut outfile = fs::File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
+        if file.name().ends_with('/') {
+            fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                fs::create_dir_all(p)?;
             }
-
-            // Set permissions on Unix
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Some(mode) = file.unix_mode() {
-                    fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
-                }
-            }
+            let mut outfile = fs::File::create(&outpath)?;
+            std::io::copy(&mut file, &mut outfile)?;
         }
 
-        Ok(())
+        // Set permissions on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Some(mode) = file.unix_mode() {
+                fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+impl TorchLibAutoDetect {
+    /// Convenience wrapper used by tests — delegates to the standalone
+    /// `extract_archive` function with `libtorch_dir`'s parent as the target.
+    fn extract_archive(&self, archive_path: &Path) -> Result<()> {
+        let extract_dir = self.libtorch_dir.parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        extract_archive(archive_path, &extract_dir)
     }
 
     /// Auto-detect and setup PyTorch
@@ -461,7 +507,7 @@ impl TorchLibAutoDetect {
         Ok(TorchConfig {
             backend,
             libtorch_path,
-            version: "2.3.0".to_string(),
+            version: TORCH_VERSION.to_string(),
         })
     }
 
@@ -1640,7 +1686,8 @@ mod tests {
         let tmpdir = tempfile::TempDir::new().unwrap();
         // Create a fake nvidia-smi script that exits 0
         let fake_nvidia_smi = tmpdir.path().join("nvidia-smi");
-        std::fs::write(&fake_nvidia_smi, b"#!/bin/sh\necho '525.85.12'\nexit 0\n").unwrap();
+        // Simulate `nvidia-smi --query-gpu=cuda_version` output (CUDA version, not driver version).
+        std::fs::write(&fake_nvidia_smi, b"#!/bin/sh\necho '12.4'\nexit 0\n").unwrap();
         std::fs::set_permissions(
             &fake_nvidia_smi,
             std::fs::Permissions::from_mode(0o755),
@@ -1670,9 +1717,9 @@ mod tests {
         let mut detector = TorchLibAutoDetect::new();
         let result = detector.detect_cuda();
         assert!(result.is_ok());
-        // Lines 153-157: nvidia-smi succeeded → cuda_available = true, cuda_version = Some("11.8")
+        // nvidia-smi succeeded → cuda_available = true, cuda_version parsed from output
         assert!(detector.cuda_available, "cuda_available should be true when fake nvidia-smi succeeds");
-        assert_eq!(detector.cuda_version, Some("11.8".to_string()));
+        assert_eq!(detector.cuda_version, Some("12.4".to_string()));
 
         // Restore env
         env::set_var("PATH", &old_path);
@@ -2252,6 +2299,55 @@ mod tests {
             assert!(!url.is_empty());
             assert!(url.starts_with("https://"), "URL should use HTTPS: {}", url);
         }
+    }
+
+    /// Regression: Windows CUDA backend previously computed `cuda_suffix` but
+    /// never used it in the URL — the format string always generated a CPU URL.
+    /// On Linux (where we can actually run this test) the equivalent code must
+    /// use the CUDA suffix in the path component.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_get_download_url_linux_cuda_uses_cuda_suffix_not_cpu_path() {
+        let detector = TorchLibAutoDetect::new();
+
+        let url_12 = detector.get_download_url(&TorchBackend::Cuda("12.1".to_string()));
+        assert!(
+            url_12.contains("cu121") || url_12.contains("cu12"),
+            "CUDA 12.x URL must contain cu12x path component, got: {}",
+            url_12
+        );
+        assert!(
+            !url_12.contains("/cpu/"),
+            "CUDA URL must not use the /cpu/ path segment, got: {}",
+            url_12
+        );
+
+        let url_11 = detector.get_download_url(&TorchBackend::Cuda("11.8".to_string()));
+        assert!(
+            url_11.contains("cu118"),
+            "CUDA 11.8 URL must contain cu118, got: {}",
+            url_11
+        );
+    }
+
+    /// Regression: nvidia-smi detection previously hardcoded "11.8" regardless
+    /// of the actual driver output.  Verify the version-parsing helper produces
+    /// the correct output from a sample nvidia-smi line.
+    #[test]
+    fn test_parse_cuda_version_from_smi_output() {
+        // "12.4" from driver 535+ should parse as "12.4"
+        let ver = TorchLibAutoDetect::parse_cuda_version_from_smi("12.4");
+        assert_eq!(ver, Some("12.4".to_string()));
+
+        let ver2 = TorchLibAutoDetect::parse_cuda_version_from_smi("11.8");
+        assert_eq!(ver2, Some("11.8".to_string()));
+
+        // Empty / whitespace should return None
+        let ver3 = TorchLibAutoDetect::parse_cuda_version_from_smi("");
+        assert!(ver3.is_none());
+
+        let ver4 = TorchLibAutoDetect::parse_cuda_version_from_smi("   ");
+        assert!(ver4.is_none());
     }
 
     #[test]

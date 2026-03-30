@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// SIMD-fused decode → resize → normalize pipeline for image preprocessing.
 ///
 /// Hot path (feature `simd-image`):

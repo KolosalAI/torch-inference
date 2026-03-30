@@ -1,10 +1,11 @@
-use actix_web::{web, HttpResponse, Result};
+use actix_web::{HttpResponse, Result};
 use actix_multipart::Multipart;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use crate::core::image_security::{ImageSecurityValidator, SecurityLevel, ImageSecurityResult};
 use crate::error::ApiError;
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ImageSecurityRequest {
     pub security_level: String,

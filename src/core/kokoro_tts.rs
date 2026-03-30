@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Kokoro TTS Engine - High-quality neural TTS
 /// Uses the Kokoro v1.0 82M parameter model
 use anyhow::Result;

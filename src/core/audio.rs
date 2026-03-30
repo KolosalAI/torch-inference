@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::path::Path;
@@ -296,7 +297,7 @@ impl AudioProcessor {
 
         // De-interleave: rubato expects [channel][frame] layout.
         let total_frames = audio.samples.len() / channels;
-        let mut channel_bufs: Vec<Vec<f32>> = (0..channels)
+        let channel_bufs: Vec<Vec<f32>> = (0..channels)
             .map(|c| {
                 (0..total_frames)
                     .map(|f| audio.samples[f * channels + c])

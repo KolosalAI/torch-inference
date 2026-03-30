@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Python TTS Bridge - FFI bridge to Python TTS libraries
 /// Enables calling Python TTS packages (kokoro, piper, etc.) from Rust
 /// Requires: --features python (which links against libpython)

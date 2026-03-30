@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// PagedAttention KV cache — fixed-size memory blocks for LLM inference.
 ///
 /// # Design
@@ -13,7 +14,7 @@
 /// - Zero fragmentation — every block is the same size
 /// - Copy-on-write prefix sharing (two sequences pointing to the same prefix
 ///   block, forked on first write)
-use anyhow::{bail, Result};
+use anyhow::Result;
 use std::collections::VecDeque;
 
 // ── Types ─────────────────────────────────────────────────────────────────

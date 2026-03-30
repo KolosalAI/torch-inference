@@ -1,7 +1,8 @@
 //! Prometheus metrics for production monitoring
-//! 
+//!
 //! Provides comprehensive metrics collection and export in Prometheus format.
 //! Enable with `--features metrics` flag.
+#![allow(dead_code)]
 
 #[cfg(feature = "metrics")]
 use prometheus::{

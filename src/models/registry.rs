@@ -1,10 +1,11 @@
+#![allow(dead_code)]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use log::{info, warn, error};
+use log::{info, warn};
 use anyhow::{Result, Context};
 use chrono::{DateTime, Utc};
 

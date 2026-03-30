@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error, HttpMessage,

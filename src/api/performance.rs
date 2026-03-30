@@ -1,8 +1,9 @@
+#![allow(dead_code)]
 /// Performance monitoring and profiling
 use actix_web::{web, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use sysinfo::{System, Pid};
+use sysinfo::System;
 use crate::error::ApiError;
 use crate::monitor::Monitor;
 use std::sync::Arc;
@@ -144,7 +145,7 @@ pub async fn get_performance_metrics(
 /// Profile a specific inference request
 pub async fn profile_inference(
     req: web::Json<ProfileRequest>,
-    state: web::Data<PerformanceState>,
+    _state: web::Data<PerformanceState>,
 ) -> Result<HttpResponse, ApiError> {
     log::info!("[ENDPOINT] Performance profiling requested");
 
@@ -203,7 +204,7 @@ pub async fn profile_inference(
 
 /// Trigger performance optimizations
 pub async fn optimize_performance(
-    state: web::Data<PerformanceState>,
+    _state: web::Data<PerformanceState>,
 ) -> Result<HttpResponse, ApiError> {
     log::info!("[ENDPOINT] Performance optimization triggered");
 

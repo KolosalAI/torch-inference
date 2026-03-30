@@ -1,5 +1,5 @@
+#![allow(dead_code, unused_variables)]
 use serde_json::Value;
-use validator::{Validate, ValidationError};
 use thiserror::Error;
 
 #[derive(Debug, Error)]

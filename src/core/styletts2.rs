@@ -1,6 +1,6 @@
 /// StyleTTS2 - High-quality expressive TTS with style control
 /// State-of-the-art quality with emotion and prosody control
-use anyhow::{Result, Context};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

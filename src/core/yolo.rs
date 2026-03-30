@@ -1,7 +1,8 @@
 // YOLO Object Detection Module
 // Supports YOLOv5, YOLOv8, YOLOv10, YOLOv11, and YOLOv12 (YOLO11)
 
-use anyhow::{Result, Context, bail};
+#![allow(dead_code)]
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -205,9 +206,9 @@ impl YoloDetector {
     #[cfg(not(feature = "torch"))]
     pub fn new(
         _model_path: &Path,
-        version: YoloVersion,
-        size: YoloSize,
-        class_names: Vec<String>,
+        _version: YoloVersion,
+        _size: YoloSize,
+        _class_names: Vec<String>,
         _device: Option<()>,
     ) -> Result<Self> {
         bail!("PyTorch feature not enabled. Compile with --features torch");

@@ -1,5 +1,6 @@
+#![allow(dead_code)]
 use flate2::Compression;
-use flate2::write::{GzEncoder, GzDecoder};
+use flate2::write::GzEncoder;
 use std::io::Write;
 use std::io::Read;
 use log::debug;

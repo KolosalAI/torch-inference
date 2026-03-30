@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Token sampler — greedy, temperature, top-k, and nucleus (top-p) sampling.
 ///
 /// All methods are stateless pure functions operating on logit slices so they

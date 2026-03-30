@@ -4,10 +4,11 @@ pub mod structured_logging;
 pub mod prometheus;
 
 pub use structured_logging::{
-    init_structured_logging, CorrelationId, 
-    create_request_span, create_inference_span,
+    init_structured_logging, CorrelationId,
     RequestMetrics,
 };
+#[allow(unused_imports)]
+pub use structured_logging::{create_request_span, create_inference_span};
 
 #[cfg(feature = "telemetry")]
 pub use structured_logging::init_with_tracing;

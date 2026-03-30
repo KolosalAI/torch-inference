@@ -1,8 +1,7 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 use actix_web::{web, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 #[cfg(feature = "torch")]
 use tch::{Tensor, Device};

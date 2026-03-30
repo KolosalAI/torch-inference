@@ -1,10 +1,9 @@
+#![allow(dead_code, unused_variables, unreachable_code)]
 /// Piper TTS Engine - Neural TTS using ONNX Runtime
-use anyhow::{Result, Context, bail};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
-use std::collections::HashMap;
 
 use super::tts_engine::{TTSEngine, EngineCapabilities, VoiceInfo, VoiceGender, VoiceQuality, SynthesisParams};
 use super::audio::AudioData;

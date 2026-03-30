@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use lru::LruCache;
 use parking_lot::Mutex;
 use serde_json::Value;

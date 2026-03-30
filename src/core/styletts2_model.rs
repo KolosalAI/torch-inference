@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #[cfg(feature = "torch")]
 use tch::{nn, nn::Module, Device, Tensor, Kind};
 #[cfg(feature = "torch")]

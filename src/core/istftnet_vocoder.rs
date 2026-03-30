@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// ISTFTNet Vocoder - Convert mel-spectrogram to waveform
 /// Implements a real tch::nn ISTFTNet vocoder for Kokoro TTS.
 #[cfg(feature = "torch")]

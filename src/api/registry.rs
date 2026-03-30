@@ -1,3 +1,4 @@
+#![allow(unused_variables, dead_code)]
 use actix_web::{web, HttpResponse, Result as ActixResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

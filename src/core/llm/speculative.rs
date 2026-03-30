@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Speculative decoding — draft-model proposes K tokens, target verifies in one pass.
 ///
 /// # Algorithm

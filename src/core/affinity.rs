@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// CPU core-affinity utilities for pinning inference worker threads to
 /// performance cores (P-cores).
 ///
@@ -20,7 +21,6 @@
 ///
 /// On Linux, use `/sys/devices/system/cpu/cpu*/topology/core_cpus_list` to
 /// discover physical-core IDs.  [`CoreSet::from_range`] covers most servers.
-
 use anyhow::{Result, anyhow};
 
 // ── CoreSet ───────────────────────────────────────────────────────────────

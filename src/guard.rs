@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use std::time::{Instant, Duration};

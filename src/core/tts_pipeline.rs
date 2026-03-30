@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Streaming TTS pipeline — sentence-level parallelism for low TTFA.
 ///
 /// # How it works

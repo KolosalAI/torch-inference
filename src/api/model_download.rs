@@ -1,6 +1,6 @@
 use actix_web::{web, HttpResponse, Result};
 use serde::{Deserialize, Serialize};
-use crate::models::download::{ModelDownloadManager, ModelSource, DownloadTask};
+use crate::models::download::{ModelDownloadManager, ModelSource};
 use crate::error::ApiError;
 use std::sync::Arc;
 
@@ -154,38 +154,104 @@ pub async fn get_cache_info(
     })))
 }
 
+/// Extract model info from a registry entry for the available-models list.
+/// Returns `None` if `model_data` is not a JSON object so callers can skip
+/// malformed entries without panicking.
+fn parse_available_model_entry(
+    model_id: &str,
+    model_data: &serde_json::Value,
+) -> Option<(serde_json::Value, String)> {
+    let model_obj = model_data.as_object()?;
+
+    let task = if let Some(task_str) = model_obj.get("task").and_then(|t| t.as_str()) {
+        task_str.to_string()
+    } else if model_obj.get("voices").is_some() {
+        "text-to-speech".to_string()
+    } else if model_obj.get("accuracy").is_some() {
+        "image-classification".to_string()
+    } else {
+        "unknown".to_string()
+    };
+
+    let url = model_obj.get("url").and_then(|u| u.as_str()).unwrap_or("");
+    let repo_id = if url.contains("huggingface.co") {
+        if let Some(parts) = url.split('/').collect::<Vec<_>>().get(3..5) {
+            Some(format!("{}/{}", parts[0], parts[1]))
+        } else {
+            Some(url.to_string())
+        }
+    } else {
+        None
+    };
+
+    let mut model_info = serde_json::json!({
+        "id": model_id,
+        "name": model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id),
+        "architecture": model_obj.get("architecture").and_then(|a| a.as_str()).unwrap_or("Unknown"),
+        "task": task,
+        "source": if url.contains("huggingface") { "huggingface" } else { "url" },
+        "url": url,
+        "size_estimate": model_obj.get("size").and_then(|s| s.as_str()).unwrap_or("Unknown"),
+        "status": model_obj.get("status").and_then(|s| s.as_str()).unwrap_or("Available"),
+    });
+
+    if let Some(repo) = repo_id {
+        model_info["repo_id"] = serde_json::json!(repo);
+    }
+
+    if task == "image-classification" {
+        if let Some(accuracy) = model_obj.get("accuracy").and_then(|a| a.as_str()) {
+            model_info["accuracy"] = serde_json::json!(accuracy);
+        }
+        if let Some(rank) = model_obj.get("rank") {
+            model_info["rank"] = rank.clone();
+        }
+        if let Some(dataset) = model_obj.get("dataset").and_then(|d| d.as_str()) {
+            model_info["dataset"] = serde_json::json!(dataset);
+        }
+    } else if task == "text-to-speech" {
+        if let Some(voices) = model_obj.get("voices") {
+            model_info["voices"] = voices.clone();
+        }
+        if let Some(quality) = model_obj.get("quality").and_then(|q| q.as_str()) {
+            model_info["quality"] = serde_json::json!(quality);
+        }
+        if let Some(score) = model_obj.get("score") {
+            model_info["score"] = score.clone();
+        }
+    }
+
+    if let Some(note) = model_obj.get("note").and_then(|n| n.as_str()) {
+        model_info["note"] = serde_json::json!(note);
+    }
+
+    Some((model_info, task))
+}
+
 pub async fn list_available_models() -> Result<HttpResponse, ApiError> {
     // Load models from registry
     let registry_path = std::path::Path::new("model_registry.json");
-    let models = if registry_path.exists() {
+    let _models = if registry_path.exists() {
         match std::fs::read_to_string(registry_path) {
             Ok(content) => {
                 match serde_json::from_str::<serde_json::Value>(&content) {
                     Ok(registry) => {
                         if let Some(models_obj) = registry.get("models").and_then(|m| m.as_object()) {
                             let mut available = Vec::new();
-                            
+
                             // Categorize models
                             let mut categories = std::collections::HashMap::new();
                             categories.insert("tts", 0);
                             categories.insert("image-classification", 0);
                             categories.insert("speech-recognition", 0);
                             categories.insert("multimodal", 0);
-                            
+
                             for (model_id, model_data) in models_obj {
-                                let model_obj = model_data.as_object().unwrap();
-                                
-                                // Determine task type
-                                let task = if let Some(task_str) = model_obj.get("task").and_then(|t| t.as_str()) {
-                                    task_str.to_string()
-                                } else if model_obj.get("voices").is_some() {
-                                    "text-to-speech".to_string()
-                                } else if model_obj.get("accuracy").is_some() {
-                                    "image-classification".to_string()
-                                } else {
-                                    "unknown".to_string()
+                                let (model_info, task) = match parse_available_model_entry(model_id, model_data) {
+                                    Some(entry) => entry,
+                                    None => continue,
                                 };
-                                
+
                                 // Count categories
                                 let category = match task.as_str() {
                                     "text-to-speech" => "tts",
@@ -195,63 +261,7 @@ pub async fn list_available_models() -> Result<HttpResponse, ApiError> {
                                     _ => "other",
                                 };
                                 *categories.entry(category).or_insert(0) += 1;
-                                
-                                // Extract repo_id from URL
-                                let url = model_obj.get("url").and_then(|u| u.as_str()).unwrap_or("");
-                                let repo_id = if url.contains("huggingface.co") {
-                                    // Extract repo_id from HuggingFace URL
-                                    if let Some(parts) = url.split("/").collect::<Vec<_>>().get(3..5) {
-                                        Some(format!("{}/{}", parts[0], parts[1]))
-                                    } else {
-                                        Some(url.to_string())
-                                    }
-                                } else {
-                                    None
-                                };
-                                
-                                let mut model_info = serde_json::json!({
-                                    "id": model_id,
-                                    "name": model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id),
-                                    "architecture": model_obj.get("architecture").and_then(|a| a.as_str()).unwrap_or("Unknown"),
-                                    "task": task,
-                                    "source": if url.contains("huggingface") { "huggingface" } else { "url" },
-                                    "url": url,
-                                    "size_estimate": model_obj.get("size").and_then(|s| s.as_str()).unwrap_or("Unknown"),
-                                    "status": model_obj.get("status").and_then(|s| s.as_str()).unwrap_or("Available"),
-                                });
-                                
-                                // Add repo_id if available
-                                if let Some(repo) = repo_id {
-                                    model_info["repo_id"] = serde_json::json!(repo);
-                                }
-                                
-                                // Add task-specific info
-                                if task == "image-classification" {
-                                    if let Some(accuracy) = model_obj.get("accuracy").and_then(|a| a.as_str()) {
-                                        model_info["accuracy"] = serde_json::json!(accuracy);
-                                    }
-                                    if let Some(rank) = model_obj.get("rank") {
-                                        model_info["rank"] = rank.clone();
-                                    }
-                                    if let Some(dataset) = model_obj.get("dataset").and_then(|d| d.as_str()) {
-                                        model_info["dataset"] = serde_json::json!(dataset);
-                                    }
-                                } else if task == "text-to-speech" {
-                                    if let Some(voices) = model_obj.get("voices") {
-                                        model_info["voices"] = voices.clone();
-                                    }
-                                    if let Some(quality) = model_obj.get("quality").and_then(|q| q.as_str()) {
-                                        model_info["quality"] = serde_json::json!(quality);
-                                    }
-                                    if let Some(score) = model_obj.get("score") {
-                                        model_info["score"] = score.clone();
-                                    }
-                                }
-                                
-                                if let Some(note) = model_obj.get("note").and_then(|n| n.as_str()) {
-                                    model_info["note"] = serde_json::json!(note);
-                                }
-                                
+
                                 available.push(model_info);
                             }
                             
@@ -459,8 +469,11 @@ pub async fn list_sota_models() -> Result<HttpResponse, ApiError> {
     let mut sota_models = Vec::new();
     
     for (model_id, model_data) in models_obj {
-        let model_obj = model_data.as_object().unwrap();
-        
+        let model_obj = match model_data.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+
         // Filter for image classification models (SOTA)
         if let Some(task) = model_obj.get("task").and_then(|t| t.as_str()) {
             if task == "Image Classification" {
@@ -1662,5 +1675,32 @@ mod tests {
         assert!(!models.is_empty());
         // repo_id should be set (falls back to full URL per line 206)
         assert!(models[0].get("repo_id").is_some());
+    }
+
+    /// Regression test: a non-object value in the model registry must not
+    /// cause a panic in list_available_models / list_sota_models.
+    #[test]
+    fn test_parse_available_model_entry_skips_non_object_values() {
+        // These must return None, not panic.
+        assert!(parse_available_model_entry("id1", &serde_json::Value::Null).is_none());
+        assert!(parse_available_model_entry("id2", &serde_json::json!("a string")).is_none());
+        assert!(parse_available_model_entry("id3", &serde_json::json!(42)).is_none());
+        assert!(parse_available_model_entry("id4", &serde_json::json!(["an", "array"])).is_none());
+    }
+
+    #[test]
+    fn test_parse_available_model_entry_returns_entry_for_valid_object() {
+        let data = serde_json::json!({
+            "name": "ResNet-50",
+            "task": "image-classification",
+            "url": "https://example.com/resnet50.onnx",
+            "size": "98 MB",
+        });
+        let result = parse_available_model_entry("resnet50", &data);
+        assert!(result.is_some());
+        let (info, task) = result.unwrap();
+        assert_eq!(info["id"], "resnet50");
+        assert_eq!(info["name"], "ResNet-50");
+        assert_eq!(task, "image-classification");
     }
 }

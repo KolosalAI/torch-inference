@@ -104,7 +104,7 @@ impl ProviderSummary {
         model: &str,
         category: &'static str,
         unit_label: &'static str,
-        mut results: Vec<RunResult>,
+        results: Vec<RunResult>,
     ) -> Self {
         let runs = results.len();
         let successes: Vec<&RunResult> = results.iter().filter(|r| r.success).collect();
@@ -780,7 +780,7 @@ fn print_table(summaries: &[ProviderSummary], category: &'static str, title: &st
         println!("  RTF = synthesis_time ÷ audio_duration  (lower is better; audio_duration ≈ chars/14)");
         for r in &rows {
             if r.avg_throughput > 0.0 && !r.avg_throughput.is_nan() {
-                let audio_duration = rows[0].runs as f64 * 89.0 / 14.0; // rough
+                let _audio_duration = rows[0].runs as f64 * 89.0 / 14.0; // rough
                 let rtf = (r.p50_latency_ms / 1000.0) / (89.0 / 14.0);
                 println!("    {:30}  RTF ≈ {:.2}", r.provider, rtf);
             }
@@ -803,7 +803,7 @@ fn fmt_f(v: f64) -> String {
 }
 
 fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
+    
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {

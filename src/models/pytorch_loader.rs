@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 use std::path::Path;
-use anyhow::{Result, Context};
-use log::{info, warn};
+use anyhow::Result;
+use log::info;
 use serde_json::Value;
 
 #[cfg(feature = "torch")]
@@ -8,7 +9,7 @@ use tch::{nn, Tensor, Device, Kind, CModule};
 
 use crate::models::registry::{ModelMetadata, PreprocessingConfig, PostprocessingConfig};
 use crate::config::DeviceConfig;
-use crate::tensor_pool::{TensorPool, TensorShape};
+use crate::tensor_pool::TensorPool;
 use std::sync::Arc;
 
 /// Get the best available device for PyTorch inference
@@ -180,7 +181,7 @@ impl PyTorchModelLoader {
     }
 
     #[cfg(not(feature = "torch"))]
-    pub fn load_model(&self, path: &Path) -> Result<LoadedPyTorchModel> {
+    pub fn load_model(&self, _path: &Path) -> Result<LoadedPyTorchModel> {
         Err(anyhow::anyhow!("PyTorch support not enabled. Compile with --features torch"))
     }
 

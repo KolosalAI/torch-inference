@@ -1,6 +1,6 @@
 /// XTTS (Coqui TTS) - Multilingual zero-shot voice cloning
 /// Cross-lingual Text-to-Speech with voice cloning capabilities
-use anyhow::{Result, Context};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

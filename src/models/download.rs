@@ -4,8 +4,10 @@ use std::sync::Arc;
 use anyhow::{Result, Context, bail};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Semaphore;
 use dashmap::DashMap;
 use uuid::Uuid;
+use futures_util::StreamExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
@@ -64,18 +66,29 @@ pub struct ModelDownloadManager {
     cache_dir: PathBuf,
     tasks: Arc<DashMap<String, DownloadTask>>,
     models: Arc<DashMap<String, ModelInfo>>,
-    max_concurrent_downloads: usize,
+    pub max_concurrent_downloads: usize,
+    /// Limits simultaneous `execute_download` calls to `max_concurrent_downloads`.
+    download_semaphore: Arc<Semaphore>,
+    /// Shared HTTP client — reuses the connection pool across all downloads.
+    client: Arc<reqwest::Client>,
 }
 
 impl ModelDownloadManager {
     pub fn new<P: AsRef<Path>>(cache_dir: P) -> Result<Self> {
         let cache_dir = cache_dir.as_ref().to_path_buf();
-        
+        let max_concurrent_downloads = 3;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3600))
+            .build()
+            .context("Failed to build HTTP client")?;
+
         Ok(Self {
             cache_dir,
             tasks: Arc::new(DashMap::new()),
             models: Arc::new(DashMap::new()),
-            max_concurrent_downloads: 3,
+            max_concurrent_downloads,
+            download_semaphore: Arc::new(Semaphore::new(max_concurrent_downloads)),
+            client: Arc::new(client),
         })
     }
 
@@ -182,6 +195,10 @@ impl ModelDownloadManager {
     }
 
     async fn execute_download(&self, task_id: String) -> Result<()> {
+        // Enforce max_concurrent_downloads — blocks until a permit is available.
+        let _permit = self.download_semaphore.acquire().await
+            .context("Download semaphore closed")?;
+
         let task = self.tasks.get(&task_id)
             .context("Task not found")?
             .clone();
@@ -240,11 +257,10 @@ impl ModelDownloadManager {
         
         log::info!("Downloading from HuggingFace: {} (revision: {})", repo_id, revision);
         
-        // HuggingFace API endpoint
+        // HuggingFace API endpoint — use shared client for connection reuse.
         let api_url = format!("https://huggingface.co/api/models/{}", repo_id);
-        
-        let client = reqwest::Client::new();
-        let response = client.get(&api_url)
+
+        let response = self.client.get(&api_url)
             .send()
             .await
             .context("Failed to fetch model info")?;
@@ -254,14 +270,14 @@ impl ModelDownloadManager {
         }
 
         let _model_info: serde_json::Value = response.json().await?;
-        
+
         // Get list of files
         let files_url = format!(
             "https://huggingface.co/api/models/{}/tree/{}",
             repo_id, revision
         );
-        
-        let files_response = client.get(&files_url)
+
+        let files_response = self.client.get(&files_url)
             .send()
             .await
             .context("Failed to fetch file list")?;
@@ -270,71 +286,85 @@ impl ModelDownloadManager {
 
         log::info!("Found {} files in repository", files.len());
 
-        // Download all files (no filtering)
-        let files_to_download: Vec<&str> = files.iter()
+        // Collect paths to download (skip directory entries).
+        let files_to_download: Vec<String> = files.iter()
             .filter_map(|f| f["path"].as_str())
-            .filter(|path| {
-                // Skip directories
-                !path.ends_with('/')
-            })
+            .filter(|p| !p.ends_with('/'))
+            .map(|p| p.to_string())
             .collect();
 
-        log::info!("Downloading {} files", files_to_download.len());
-
-        // Download all files
         let total_files = files_to_download.len();
-        for (idx, path) in files_to_download.iter().enumerate() {
-            log::info!("Downloading file {}/{}: {}", idx + 1, total_files, path);
-            
-            let file_url = format!(
-                "https://huggingface.co/{}/resolve/{}/{}",
-                repo_id, revision, path
-            );
+        log::info!("Downloading {} files (up to 8 concurrently)", total_files);
 
-            let file_path = target_dir.join(path);
-            
-            // Create parent directories
-            if let Some(parent) = file_path.parent() {
-                fs::create_dir_all(parent).await?;
-            }
+        // Download files concurrently (up to 8 in flight at a time).
+        let client = Arc::clone(&self.client);
+        let target_dir = target_dir.to_path_buf();
+        let repo_id = repo_id.to_string();
+        let revision = revision.to_string();
+        let task_id = task_id.to_string();
+        let manager = self.clone();
 
-            // Download file
-            let mut response = client.get(&file_url)
-                .send()
-                .await
-                .context(format!("Failed to download file: {}", path))?;
+        futures::stream::iter(files_to_download.into_iter().enumerate())
+            .map(|(idx, path)| {
+                let client = Arc::clone(&client);
+                let target = target_dir.clone();
+                let repo = repo_id.clone();
+                let rev = revision.clone();
+                let tid = task_id.clone();
+                let mgr = manager.clone();
+                async move {
+                    let file_url = format!(
+                        "https://huggingface.co/{}/resolve/{}/{}",
+                        repo, rev, path
+                    );
+                    let file_path = target.join(&path);
+                    if let Some(parent) = file_path.parent() {
+                        fs::create_dir_all(parent).await?;
+                    }
 
-            if !response.status().is_success() {
-                log::warn!("Failed to download {}: {}", path, response.status());
-                continue;
-            }
+                    let response = client.get(&file_url)
+                        .send()
+                        .await
+                        .context(format!("Failed to download file: {}", path))?;
 
-            let total_size = response.content_length();
-            let mut downloaded = 0u64;
+                    if !response.status().is_success() {
+                        log::warn!("Failed to download {}: {}", path, response.status());
+                        return Ok::<(), anyhow::Error>(());
+                    }
 
-            let mut file = fs::File::create(&file_path).await?;
+                    let total_size = response.content_length();
+                    let mut downloaded = 0u64;
+                    let mut file = fs::File::create(&file_path).await?;
+                    let mut stream = response.bytes_stream();
 
-            while let Some(chunk) = response.chunk().await? {
-                file.write_all(&chunk).await?;
-                downloaded += chunk.len() as u64;
+                    while let Some(chunk) = stream.next().await {
+                        let chunk = chunk?;
+                        file.write_all(&chunk).await?;
+                        downloaded += chunk.len() as u64;
 
-                // Update progress
-                let file_progress = idx as f32 / total_files as f32 * 100.0;
-                if let Some(total) = total_size {
-                    let chunk_progress = (downloaded as f32 / total as f32) * (1.0 / total_files as f32) * 100.0;
-                    self.update_task_progress(task_id, file_progress + chunk_progress, downloaded, total_size);
+                        let file_progress = idx as f32 / total_files as f32 * 100.0;
+                        if let Some(total) = total_size {
+                            let chunk_progress =
+                                (downloaded as f32 / total as f32) * (1.0 / total_files as f32) * 100.0;
+                            mgr.update_task_progress(&tid, file_progress + chunk_progress, downloaded, total_size);
+                        }
+                    }
+
+                    log::info!("Downloaded: {} ({} bytes)", path, downloaded);
+                    Ok(())
                 }
-            }
-
-            log::info!("Downloaded: {} ({} bytes)", path, downloaded);
-        }
+            })
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(())
     }
 
     async fn download_from_url(&self, task_id: &str, url: &str, target_dir: &Path) -> Result<()> {
-        let client = reqwest::Client::new();
-        let response = client.get(url).send().await?;
+        let response = self.client.get(url).send().await?;
 
         if !response.status().is_success() {
             bail!("Failed to download from URL: {}", url);
@@ -350,7 +380,6 @@ impl ModelDownloadManager {
         let mut file = fs::File::create(&file_path).await?;
         let mut stream = response.bytes_stream();
 
-        use futures::StreamExt;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             file.write_all(&chunk).await?;
@@ -363,6 +392,25 @@ impl ModelDownloadManager {
         }
 
         Ok(())
+    }
+
+    /// Test-accessible wrapper for `download_from_url` (bypasses the semaphore,
+    /// useful for unit-testing the download stream independently).
+    #[cfg(test)]
+    pub async fn download_from_url_pub(&self, task_id: &str, url: &str, target_dir: &Path) -> Result<()> {
+        self.download_from_url(task_id, url, target_dir).await
+    }
+
+    /// Test-accessible wrapper for `execute_download` (goes through the semaphore).
+    #[cfg(test)]
+    pub async fn execute_download_pub(&self, task_id: String) -> Result<()> {
+        self.execute_download(task_id).await
+    }
+
+    /// Number of semaphore permits currently available (test helper).
+    #[cfg(test)]
+    pub fn semaphore_available_permits(&self) -> usize {
+        self.download_semaphore.available_permits()
     }
 
     fn update_task_status(&self, task_id: &str, status: DownloadStatus) {
@@ -438,6 +486,8 @@ impl Clone for ModelDownloadManager {
             tasks: Arc::clone(&self.tasks),
             models: Arc::clone(&self.models),
             max_concurrent_downloads: self.max_concurrent_downloads,
+            download_semaphore: Arc::clone(&self.download_semaphore),
+            client: Arc::clone(&self.client),
         }
     }
 }
@@ -2201,6 +2251,74 @@ mod tests {
         assert_eq!(models[0].name, "bert-base");
         // No metadata.json, so metadata should be default
         assert!(models[0].metadata.description.is_none());
+    }
+
+    /// Regression: max_concurrent_downloads was stored as a field but never
+    /// enforced — all spawned downloads ran immediately regardless of the limit.
+    /// This test verifies that at most `max_concurrent_downloads` calls to
+    /// `execute_download` are in flight simultaneously by measuring total
+    /// elapsed time against a slow mock server.
+    ///
+    /// With a server that takes 80 ms per response and max_concurrent=3:
+    ///   - 6 downloads split into 2 batches of 3 → ~160 ms total
+    ///   - Without the semaphore all 6 run at once → ~80 ms total
+    #[tokio::test]
+    async fn test_concurrent_downloads_limited_by_semaphore() {
+        use wiremock::{MockServer, Mock, ResponseTemplate};
+        use wiremock::matchers::method;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200)
+                .set_body_bytes(b"ok")
+                .set_delay(std::time::Duration::from_millis(80)))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = ModelDownloadManager::new(tmp.path()).unwrap();
+        let max = manager.max_concurrent_downloads; // 3
+
+        // Pre-insert 2*max tasks so all can be started at once.
+        let n = max * 2;
+        let mut task_ids = Vec::new();
+        for i in 0..n {
+            let task_id = Uuid::new_v4().to_string();
+            let model_dir = tmp.path().join(format!("m{}", i));
+            tokio::fs::create_dir_all(&model_dir).await.unwrap();
+            let task = DownloadTask {
+                id: task_id.clone(),
+                model_name: format!("m{}", i),
+                source: ModelSource::Url { url: format!("{}/f{}", server.uri(), i) },
+                status: DownloadStatus::Pending,
+                progress: 0.0,
+                total_size: None,
+                downloaded_size: 0,
+                error: None,
+                started_at: chrono::Utc::now(),
+                completed_at: None,
+            };
+            manager.tasks.insert(task_id.clone(), task);
+            task_ids.push(task_id);
+        }
+
+        // Launch all downloads concurrently, measuring wall-clock time.
+        let start = tokio::time::Instant::now();
+        let handles: Vec<_> = task_ids.into_iter().map(|id| {
+            let mgr = manager.clone();
+            tokio::spawn(async move { let _ = mgr.execute_download_pub(id).await; })
+        }).collect();
+        for h in handles { let _ = h.await; }
+        let elapsed = start.elapsed().as_millis();
+
+        // Without a semaphore all 6 run in ~80 ms.
+        // With semaphore(3) they run in 2 batches → ≥ 150 ms.
+        assert!(
+            elapsed >= 150,
+            "with concurrency limit={} and {} slow downloads, elapsed {}ms \
+             should be ≥150ms (two batches of {} × 80ms)",
+            max, n, elapsed, max
+        );
     }
 
     #[tokio::test]

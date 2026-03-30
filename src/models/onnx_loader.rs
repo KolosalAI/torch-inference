@@ -1,13 +1,14 @@
+#![allow(dead_code)]
 use std::path::Path;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use log::{info, warn, debug};
 use serde_json::Value;
 use std::sync::Arc;
 
 use ort::session::Session;
-use ort::session::builder::{SessionBuilder, GraphOptimizationLevel};
+use ort::session::builder::GraphOptimizationLevel;
 
-use crate::models::registry::{ModelMetadata, PreprocessingConfig, PostprocessingConfig};
+use crate::models::registry::ModelMetadata;
 use crate::tensor_pool::TensorPool;
 
 /// TensorRT optimization settings
@@ -248,7 +249,7 @@ impl OnnxModelLoader {
 
     pub fn infer(
         &self,
-        model: &LoadedOnnxModel,
+        _model: &LoadedOnnxModel,
         input: &Value,
         metadata: &ModelMetadata,
     ) -> Result<Value> {

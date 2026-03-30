@@ -39,9 +39,9 @@ impl Default for TTSManagerConfig {
 pub struct TTSManager {
     config: TTSManagerConfig,
     engines: DashMap<String, Arc<dyn TTSEngine>>,
-    /// Content-addressed cache: key = hash(text + engine_id + params),
-    /// value = Arc<AudioData> so cache hits are O(1) pointer clones.
-    synthesis_cache: tokio::sync::Mutex<LruCache<u64, Arc<AudioData>>>,
+    /// Content-addressed synthesis cache: key = FNV-1a hash(text + engine_id + params).
+    /// AudioData is stored by value; cache hits clone the struct (samples Vec + metadata).
+    synthesis_cache: tokio::sync::Mutex<LruCache<u64, AudioData>>,
 }
 
 impl TTSManager {
@@ -163,12 +163,12 @@ impl TTSManager {
         let engine_id = engine_id.unwrap_or(&self.config.default_engine);
         let cache_key = Self::synthesis_cache_key(text, engine_id, &params);
 
-        // Fast path: return cached AudioData (O(1) Arc clone, no inference).
+        // Fast path: return cached AudioData (samples clone, no inference).
         {
             let mut cache = self.synthesis_cache.lock().await;
             if let Some(cached) = cache.get(&cache_key) {
                 log::debug!("TTS cache hit ({} chars, engine '{}')", text.len(), engine_id);
-                return Ok((**cached).clone());
+                return Ok(cached.clone());
             }
         }
 
@@ -187,7 +187,7 @@ impl TTSManager {
         // Store result; evicts LRU entry automatically when at capacity.
         {
             let mut cache = self.synthesis_cache.lock().await;
-            cache.put(cache_key, Arc::new(audio.clone()));
+            cache.put(cache_key, audio.clone());
         }
 
         Ok(audio)

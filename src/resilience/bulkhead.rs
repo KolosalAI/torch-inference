@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use log::{debug, warn};

@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 /// Phoneme Converter - Text to IPA phonemes for TTS
 /// Implements grapheme-to-phoneme conversion for Kokoro TTS
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Simple English G2P rules (basic implementation)

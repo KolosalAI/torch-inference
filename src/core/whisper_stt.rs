@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 /// Whisper Speech-to-Text Engine
 /// For validating TTS output quality by transcribing generated audio
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::path::Path;
 
 use super::audio::{AudioData, AudioProcessor};
@@ -98,7 +99,7 @@ impl WhisperEngine {
         
         // Analyze audio characteristics
         let duration = audio.samples.len() as f32 / audio.sample_rate as f32;
-        let avg_amplitude = audio.samples.iter().map(|s| s.abs()).sum::<f32>() / audio.samples.len() as f32;
+        let _avg_amplitude = audio.samples.iter().map(|s| s.abs()).sum::<f32>() / audio.samples.len() as f32;
         
         // Count zero crossings (rough estimate of pitch/content)
         let mut zero_crossings = 0;

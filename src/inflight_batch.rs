@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, oneshot};

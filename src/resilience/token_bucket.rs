@@ -1,7 +1,7 @@
+#![allow(dead_code)]
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 use dashmap::DashMap;
 
 /// Token bucket rate limiter

@@ -14,7 +14,11 @@ pub mod scheduler;
 pub mod speculative;
 
 // Re-export the most-used types.
+#[allow(unused_imports)]
 pub use sampler::SamplingParams;
+#[allow(unused_imports)]
 pub use kv_cache::{BlockPool, KvCacheConfig, SequenceBlockTable};
+#[allow(unused_imports)]
 pub use scheduler::{Scheduler, SchedulerConfig, Sequence, SeqStatus, SequenceId};
+#[allow(unused_imports)]
 pub use speculative::{DraftModel, SpecConfig, SpeculativeDecoder, TargetModel};

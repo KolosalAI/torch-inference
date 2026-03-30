@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Serialize, Deserialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{DateTime, Utc};

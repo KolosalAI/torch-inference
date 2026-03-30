@@ -1,4 +1,5 @@
-use actix_web::{middleware, http::StatusCode, HttpResponse, ResponseError};
+#![allow(dead_code)]
+use actix_web::{http::StatusCode, HttpResponse, ResponseError};
 use std::fmt;
 
 #[derive(Debug)]

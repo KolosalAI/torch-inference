@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// OpenAI-compatible LLM inference API.
 ///
 /// Endpoints:

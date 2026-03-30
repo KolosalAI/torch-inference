@@ -1,5 +1,5 @@
 use actix_web::{web, HttpResponse, Result};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use crate::core::gpu::GpuManager;
 use crate::error::ApiError;
 use std::sync::Arc;

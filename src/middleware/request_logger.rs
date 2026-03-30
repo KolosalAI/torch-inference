@@ -1,4 +1,4 @@
-use std::task::{Context, Poll};
+#![allow(dead_code)]
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error,
@@ -6,7 +6,6 @@ use actix_web::{
 use futures::future::{ok, Ready};
 use std::pin::Pin;
 use std::future::Future;
-use std::time::Instant;
 use crate::telemetry::{CorrelationId, RequestMetrics};
 
 pub struct RequestLogger;

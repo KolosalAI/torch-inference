@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 mod api;
 mod auth;
 mod batch;
@@ -38,7 +39,6 @@ use crate::resilience::{CircuitBreaker, CircuitBreakerConfig, Bulkhead, Bulkhead
 use crate::cache::Cache;
 use crate::dedup::RequestDeduplicator;
 use crate::telemetry::init_structured_logging;
-use crate::worker_pool::WorkerPool;
 use crate::security::sanitizer::Sanitizer;
 
 // ── No-op stub backends (replaced at runtime when a real model is loaded) ────
@@ -284,7 +284,7 @@ async fn main() -> std::io::Result<()> {
     let deduplicator = Arc::new(RequestDeduplicator::new(5000));
     
     // Initialize compression service
-    let compression = if config.performance.enable_result_compression {
+    let _compression = if config.performance.enable_result_compression {
         info!("[OPT] Result compression enabled (level: {})", config.performance.compression_level);
         Some(Arc::new(crate::compression::CompressionService::new(config.performance.compression_level)))
     } else {

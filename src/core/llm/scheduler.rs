@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 /// Continuous batching scheduler — iteration-level sequence management.
 ///
 /// Unlike fixed-timeout batching (where the server waits for N requests or T ms

@@ -1,7 +1,8 @@
+#![allow(dead_code)]
 use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::atomic::{AtomicU64, Ordering};
 use log::debug;
 use rand::seq::SliceRandom;
@@ -33,7 +34,7 @@ impl BytesCacheEntry {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         now - self.timestamp > self.ttl
     }
@@ -43,7 +44,7 @@ impl CacheEntry {
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         now - self.timestamp > self.ttl
     }
@@ -88,14 +89,19 @@ impl Cache {
     pub fn set_bytes(&self, key: String, value: Arc<Bytes>, ttl: u64) -> Result<(), String> {
         // Evict if over capacity (reuses same max_size budget as JSON cache).
         if self.bytes_data.len() >= self.max_size && !self.bytes_data.contains_key(&key) {
-            // Simple FIFO eviction: remove an arbitrary entry.
-            if let Some(evict_key) = self.bytes_data.iter().next().map(|e| e.key().clone()) {
+            // Collect the eviction key in a separate statement so that the
+            // DashMap Iter (and its shard read-lock) is fully dropped before
+            // we call remove() — otherwise remove() tries to acquire a write
+            // lock on the same shard the Iter is already holding, causing a
+            // deadlock when the evicted entry hashes to the same shard.
+            let evict_key: Option<String> = self.bytes_data.iter().next().map(|e| e.key().clone());
+            if let Some(evict_key) = evict_key {
                 self.bytes_data.remove(&evict_key);
             }
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         self.bytes_data.insert(key, BytesCacheEntry { data: value, timestamp: now, ttl });
         Ok(())
@@ -137,7 +143,7 @@ impl Cache {
             // Update LRU metadata
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
             entry.last_access = now;
             entry.access_count += 1;
@@ -159,9 +165,9 @@ impl Cache {
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
-        
+
         let insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
 
         self.data.insert(key.clone(), CacheEntry {
@@ -191,19 +197,19 @@ impl Cache {
             return;
         }
         
-        // Determine sample size (min of SAMPLE_SIZE or cache size)
-        let sample_size = std::cmp::min(SAMPLE_SIZE, cache_size);
-        
-        // Collect random sample of keys
+        // Only collect enough keys to have a good sample — at most SAMPLE_SIZE * 2
+        // so that after shuffling we can pick SAMPLE_SIZE without iterating the
+        // full DashMap (which holds shard locks while iterating).
+        let collect_limit = std::cmp::min(SAMPLE_SIZE * 2, cache_size);
         let keys: Vec<String> = self.data.iter()
-            .take(cache_size)
+            .take(collect_limit)
             .map(|entry| entry.key().clone())
             .collect();
-        
+
         if keys.is_empty() {
             return;
         }
-        
+
         // Randomly sample entries (or take all if cache is small)
         let sampled_keys = if keys.len() <= SAMPLE_SIZE {
             keys
@@ -1001,6 +1007,22 @@ mod tests {
         assert!(got.is_empty());
     }
 
+    /// Verifies that evict_lru retains the correct number of entries when the
+    /// cache is much larger than SAMPLE_SIZE — i.e. it only needs SAMPLE_SIZE
+    /// keys, not the full cache contents.
+    #[test]
+    fn test_evict_lru_large_cache_retains_size_minus_one() {
+        let size = SAMPLE_SIZE * 3;
+        let cache = Cache::new(size);
+        for i in 0..size {
+            cache.set(format!("k{}", i), serde_json::json!(i), 3600).unwrap();
+        }
+        assert_eq!(cache.size(), size);
+        // Insert one more — triggers evict_lru; cache must not grow beyond size.
+        cache.set("overflow".to_string(), serde_json::json!(0), 3600).unwrap();
+        assert_eq!(cache.size(), size, "cache should stay at max_size after eviction");
+    }
+
     /// Covers line 132: evict_lru() early-return when data is empty.
     /// A zero-capacity cache satisfies `data.len() >= max_size` (0 >= 0) on
     /// every new insertion, so evict_lru() is called with an empty DashMap.
@@ -1011,5 +1033,33 @@ mod tests {
         let cache = Cache::new(0);
         // Inserting any key triggers evict_lru() with an empty data map.
         let _ = cache.set("k".to_string(), serde_json::json!(1), 60);
+    }
+
+    /// Verifies that is_expired() on a CacheEntry with timestamp=0 (the Unix
+    /// epoch itself) returns `true` and does not panic.  This guards against
+    /// the `.unwrap()` on `duration_since(UNIX_EPOCH)` — in a VM with a
+    /// clock set before the epoch that call would return Err and panic.
+    #[test]
+    fn test_cache_entry_is_expired_with_epoch_timestamp_does_not_panic() {
+        let entry = CacheEntry {
+            data: serde_json::json!({}),
+            timestamp: 0,
+            ttl: 1,
+            last_access: 0,
+            access_count: 0,
+            insertion_order: 0,
+        };
+        // Epoch-0 entry with ttl=1 is always expired; must not panic.
+        assert!(entry.is_expired());
+    }
+
+    #[test]
+    fn test_bytes_cache_entry_is_expired_with_epoch_timestamp_does_not_panic() {
+        let entry = BytesCacheEntry {
+            data: Arc::new(Bytes::new()),
+            timestamp: 0,
+            ttl: 1,
+        };
+        assert!(entry.is_expired());
     }
 }

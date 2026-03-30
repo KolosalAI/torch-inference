@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use thiserror::Error;
 use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
 

@@ -1,15 +1,15 @@
 // API endpoints for YOLO object detection
+#![allow(dead_code, unreachable_code, unused_variables, unused_imports)]
 
 use actix_web::{web, HttpResponse, Result};
 use actix_multipart::Multipart;
 use serde::{Deserialize, Serialize};
 use futures_util::StreamExt;
-use std::sync::Arc;
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::core::yolo::{YoloDetector, YoloVersion, YoloSize, YoloResults, load_coco_names};
+use crate::core::yolo::{YoloVersion, YoloSize, YoloResults, load_coco_names};
 use crate::error::ApiError;
 
 /// YOLO detection request

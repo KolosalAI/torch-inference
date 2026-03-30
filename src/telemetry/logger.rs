@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use log::{info, LevelFilter};
 
 /// Core formatting logic, separated from the env_logger Formatter so tests

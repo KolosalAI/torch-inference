@@ -1,6 +1,6 @@
+#![allow(dead_code)]
 use std::time::Duration;
 use std::future::Future;
-use std::pin::Pin;
 use tokio::time::sleep;
 use rand::Rng;
 use tracing::{warn, debug};
@@ -55,7 +55,7 @@ impl RetryPolicy {
         E: std::fmt::Debug + Clone,
     {
         let mut attempt = 0;
-        let mut last_error: Option<E> = None;
+        let mut _last_error: Option<E> = None;
 
         loop {
             match f().await {
@@ -70,7 +70,7 @@ impl RetryPolicy {
                 }
                 Err(e) => {
                     attempt += 1;
-                    
+
                     if attempt > self.max_retries {
                         warn!(
                             "Max retries ({}) exceeded. Last error: {:?}",
@@ -85,7 +85,7 @@ impl RetryPolicy {
                         attempt, self.max_retries, delay, e
                     );
 
-                    last_error = Some(e);
+                    _last_error = Some(e);
                     sleep(delay).await;
                 }
             }

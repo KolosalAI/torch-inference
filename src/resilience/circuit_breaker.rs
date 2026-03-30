@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+#![allow(dead_code)]
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use log::{warn, info};
 

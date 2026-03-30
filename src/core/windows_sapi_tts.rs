@@ -1,8 +1,8 @@
+#![allow(dead_code)]
 /// Windows SAPI TTS Engine - Real speech using Windows Speech API
 use anyhow::{Result, Context};
 use async_trait::async_trait;
 use std::process::Command;
-use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
 use super::tts_engine::{TTSEngine, EngineCapabilities, VoiceInfo, VoiceGender, VoiceQuality, SynthesisParams};

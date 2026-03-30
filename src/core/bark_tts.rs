@@ -1,6 +1,6 @@
 /// Bark - Generative Audio Model by Suno AI
 /// Text-prompted generative audio with music, sound effects, and speech
-use anyhow::{Result, Context};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
