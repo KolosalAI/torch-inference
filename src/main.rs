@@ -32,7 +32,7 @@ use crate::core::engine::InferenceEngine;
 use crate::core::gpu::GpuManager;
 use crate::models::manager::ModelManager;
 use crate::models::download::ModelDownloadManager;
-use crate::middleware::{RateLimiter, CorrelationIdMiddleware};
+use crate::middleware::{RateLimiter, CorrelationIdMiddleware, RequestLogger};
 use crate::monitor::Monitor;
 use crate::resilience::{CircuitBreaker, CircuitBreakerConfig, Bulkhead, BulkheadConfig};
 use crate::cache::Cache;
@@ -278,20 +278,6 @@ async fn main() -> std::io::Result<()> {
         ..Default::default()
     };
     let worker_pool = crate::worker_pool::WorkerPool::new(worker_pool_config);
-    worker_pool.initialize().await.expect("Failed to initialize worker pool");
-    
-    // Initialize cache with LRU eviction
-    let cache_size = (config.performance.cache_size_mb * 1024 * 1024) / 1024; // Estimate entries
-    let cache = Arc::new(Cache::new(cache_size.max(1000)));
-    let deduplicator = Arc::new(RequestDeduplicator::new(5000));
-    
-    // Initialize compression service
-    let _compression = if config.performance.enable_result_compression {
-        tracing::info!(level = config.performance.compression_level, "result compression enabled");
-        Some(Arc::new(crate::compression::CompressionService::new(config.performance.compression_level)))
-    } else {
-        None
-    };
 
     tracing::info!(
         workers_min   = config.performance.min_workers,
@@ -300,6 +286,21 @@ async fn main() -> std::io::Result<()> {
         "core components initialized"
     );
     drop(_comp_span);
+
+    worker_pool.initialize().await.expect("Failed to initialize worker pool");
+
+    // Initialize cache with LRU eviction
+    let cache_size = (config.performance.cache_size_mb * 1024 * 1024) / 1024; // Estimate entries
+    let cache = Arc::new(Cache::new(cache_size.max(1000)));
+    let deduplicator = Arc::new(RequestDeduplicator::new(5000));
+
+    // Initialize compression service
+    let _compression = if config.performance.enable_result_compression {
+        tracing::info!(level = config.performance.compression_level, "result compression enabled");
+        Some(Arc::new(crate::compression::CompressionService::new(config.performance.compression_level)))
+    } else {
+        None
+    };
     
     // Initialize GPU manager
     let gpu_manager = Arc::new(GpuManager::new());
@@ -328,13 +329,17 @@ async fn main() -> std::io::Result<()> {
     
     // Initialize model download manager
     let download_manager = {
-        let _span = tracing::info_span!("download_init").entered();
         let cache_dir = std::env::var("MODEL_CACHE_DIR")
             .unwrap_or_else(|_| "./models".to_string());
         let dm = Arc::new(
             ModelDownloadManager::new(&cache_dir)
                 .expect("Failed to create model download manager")
         );
+        {
+            let _span = tracing::info_span!("download_init").entered();
+            tracing::info!(cache_dir = %cache_dir, "download manager initializing");
+            drop(_span);
+        }
         dm.initialize().await.expect("Failed to initialize download manager");
         tracing::info!(cache_dir = %cache_dir, "download manager ready");
         dm
@@ -342,10 +347,14 @@ async fn main() -> std::io::Result<()> {
     
     // Initialize audio model manager (legacy)
     let audio_model_manager = {
-        let _span = tracing::info_span!("audio_init").entered();
         let audio_model_dir = std::env::var("AUDIO_MODEL_DIR")
             .unwrap_or_else(|_| "./models/audio".to_string());
         let am = Arc::new(crate::core::audio_models::AudioModelManager::new(&audio_model_dir));
+        {
+            let _span = tracing::info_span!("audio_init").entered();
+            tracing::info!(model_dir = %audio_model_dir, "audio manager initializing");
+            drop(_span);
+        }
         am.initialize_default_models().await.ok();
         tracing::info!(model_dir = %audio_model_dir, "audio manager ready");
         am
@@ -385,15 +394,18 @@ async fn main() -> std::io::Result<()> {
     // inference pass to complete.
     tracing::info!("starting background warmup");
     {
+        use tracing::Instrument;
         let warmup_engine = inference_engine.clone();
         let config_cloned = config.clone();
-        tokio::spawn(async move {
-            let _span = tracing::info_span!("warmup").entered();
-            match warmup_engine.warmup(&config_cloned).await {
-                Ok(()) => tracing::info!(status = "ok", "warmup complete"),
-                Err(e) => tracing::warn!(error = %e, status = "failed", "warmup failed"),
+        tokio::spawn(
+            async move {
+                match warmup_engine.warmup(&config_cloned).await {
+                    Ok(()) => tracing::info!(status = "ok", "warmup complete"),
+                    Err(e) => tracing::warn!(error = %e, status = "failed", "warmup failed"),
+                }
             }
-        });
+            .instrument(tracing::info_span!("warmup"))
+        );
     }
     
     let addr = format!("{}:{}", config.server.host, config.server.port);
@@ -479,6 +491,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(performance_state.clone())
             .app_data(classify_state.clone())
             .app_data(llm_state.clone())
+            // RequestLogger is outermost so it captures total request time
+            .wrap(RequestLogger)
             // Add correlation ID middleware first
             .wrap(CorrelationIdMiddleware)
             // Health check endpoints
