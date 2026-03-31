@@ -49,7 +49,7 @@ module.exports = async function globalSetup() {
 
   const binaryPath = process.env.SERVER_BINARY
     ? path.resolve(process.env.SERVER_BINARY)
-    : path.join(DASHBOARD_DIR, 'target', 'release', 'torch-inference');
+    : path.join(DASHBOARD_DIR, 'target', 'release', 'torch-inference-server');
 
   if (!fs.existsSync(binaryPath)) {
     throw new Error(
