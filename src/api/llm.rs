@@ -178,8 +178,10 @@ pub async fn completions(
         top_p: req.top_p.clamp(1e-4, 1.0),
         top_k: req.top_k,
         max_tokens: req.max_tokens,
+        // stop strings require tokeniser integration; accepted but not applied yet
         stop_token_ids: vec![],
     };
+    let _ = &req.stop; // acknowledged — see stop_token_ids comment above
 
     let prompt_tokens = req.prompt.split_whitespace().count(); // rough estimate
 
@@ -227,8 +229,10 @@ pub async fn chat_completions(
         top_p: req.top_p.clamp(1e-4, 1.0),
         top_k: req.top_k,
         max_tokens: req.max_tokens,
+        // stop strings require tokeniser integration; accepted but not applied yet
         stop_token_ids: vec![],
     };
+    let _ = &req.stop; // acknowledged — see stop_token_ids comment above
 
     // Flatten chat messages into a prompt.
     let prompt = messages_to_prompt(&req.messages);

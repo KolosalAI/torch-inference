@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use actix_web::{http::StatusCode, HttpResponse, ResponseError};
 use std::fmt;
 
@@ -72,6 +71,9 @@ impl RateLimiter {
         }
     }
 
+    /// Evict entries whose window has fully expired.  Intended for periodic
+    /// background maintenance; no production caller yet.
+    #[allow(dead_code)]
     pub fn cleanup_old_entries(&self) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

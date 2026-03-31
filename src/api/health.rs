@@ -1,8 +1,9 @@
-use actix_web::{web, HttpResponse, Result};
+use actix_web::{web, HttpRequest, HttpResponse, Result};
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 use std::time::Instant;
 use std::collections::HashMap;
+use crate::middleware::get_correlation_id;
 use crate::monitor::Monitor;
 
 #[derive(Serialize, Deserialize)]
@@ -24,10 +25,12 @@ pub struct ComponentHealth {
 /// Liveness probe - basic health check
 /// Returns 200 if service is alive (even if degraded)
 pub async fn liveness(
+    req: HttpRequest,
     monitor: web::Data<Arc<Monitor>>,
 ) -> Result<HttpResponse> {
+    let correlation_id = get_correlation_id(&req);
     let health = monitor.get_health_status();
-    
+
     let response = HealthCheck {
         status: if health.healthy { "healthy".to_string() } else { "degraded".to_string() },
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -35,15 +38,19 @@ pub async fn liveness(
         uptime_seconds: health.uptime_seconds,
         checks: HashMap::new(),
     };
-    
-    Ok(HttpResponse::Ok().json(response))
+
+    Ok(HttpResponse::Ok()
+        .insert_header(("x-correlation-id", correlation_id.as_str()))
+        .json(response))
 }
 
 /// Readiness probe - strict health check
 /// Returns 200 only if service is ready to accept traffic
 pub async fn readiness(
+    req: HttpRequest,
     monitor: web::Data<Arc<Monitor>>,
 ) -> Result<HttpResponse> {
+    let correlation_id = get_correlation_id(&req);
     let start = Instant::now();
     let metrics = monitor.get_metrics();
     let health = monitor.get_health_status();
@@ -96,16 +103,22 @@ pub async fn readiness(
     };
     
     if overall_status == "ready" {
-        Ok(HttpResponse::Ok().json(response))
+        Ok(HttpResponse::Ok()
+            .insert_header(("x-correlation-id", correlation_id.as_str()))
+            .json(response))
     } else {
-        Ok(HttpResponse::ServiceUnavailable().json(response))
+        Ok(HttpResponse::ServiceUnavailable()
+            .insert_header(("x-correlation-id", correlation_id.as_str()))
+            .json(response))
     }
 }
 
 /// Detailed health check with component status
 pub async fn health(
+    req: HttpRequest,
     monitor: web::Data<Arc<Monitor>>,
 ) -> Result<HttpResponse> {
+    let correlation_id = get_correlation_id(&req);
     let start = Instant::now();
     let metrics = monitor.get_metrics();
     let health = monitor.get_health_status();
@@ -187,7 +200,9 @@ pub async fn health(
         checks,
     };
 
-    Ok(HttpResponse::Ok().json(response))
+    Ok(HttpResponse::Ok()
+        .insert_header(("x-correlation-id", correlation_id.as_str()))
+        .json(response))
 }
 
 #[cfg(test)]
@@ -199,12 +214,16 @@ mod handler_tests {
         web::Data::new(Arc::new(Monitor::new()))
     }
 
+    fn bare_request() -> HttpRequest {
+        test::TestRequest::get().uri("/").to_http_request()
+    }
+
     // ── liveness handler ─────────────────────────────────────────────────────
 
     #[actix_web::test]
     async fn test_liveness_handler_returns_200() {
         let monitor = make_monitor();
-        let result = liveness(monitor).await;
+        let result = liveness(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
@@ -213,7 +232,7 @@ mod handler_tests {
     #[actix_web::test]
     async fn test_liveness_handler_body_has_status() {
         let monitor = make_monitor();
-        let result = liveness(monitor).await;
+        let result = liveness(bare_request(), monitor).await;
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -227,7 +246,7 @@ mod handler_tests {
     #[actix_web::test]
     async fn test_readiness_handler_returns_200_or_503() {
         let monitor = make_monitor();
-        let result = readiness(monitor).await;
+        let result = readiness(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let status = resp.status();
@@ -243,7 +262,7 @@ mod handler_tests {
     #[actix_web::test]
     async fn test_readiness_handler_body_has_checks() {
         let monitor = make_monitor();
-        let result = readiness(monitor).await;
+        let result = readiness(bare_request(), monitor).await;
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -260,7 +279,7 @@ mod handler_tests {
     #[actix_web::test]
     async fn test_health_handler_returns_200() {
         let monitor = make_monitor();
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
@@ -269,7 +288,7 @@ mod handler_tests {
     #[actix_web::test]
     async fn test_health_handler_body_has_all_checks() {
         let monitor = make_monitor();
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -287,7 +306,7 @@ mod handler_tests {
     #[actix_web::test]
     async fn test_health_handler_fresh_monitor_is_healthy() {
         let monitor = make_monitor();
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
@@ -306,7 +325,7 @@ mod handler_tests {
             monitor_inner.record_request_end(10, "/test", false);
         }
         let monitor = web::Data::new(monitor_inner);
-        let result = readiness(monitor).await;
+        let result = readiness(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         // High error rate → 503 Service Unavailable
@@ -325,7 +344,7 @@ mod handler_tests {
             monitor_inner.record_request_end(10, "/test", true);
         }
         let monitor = web::Data::new(monitor_inner);
-        let result = readiness(monitor).await;
+        let result = readiness(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -348,7 +367,7 @@ mod handler_tests {
         monitor_inner.record_request_start();
         monitor_inner.record_request_end(10, "/test", false);
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -366,7 +385,7 @@ mod handler_tests {
             monitor_inner.record_request_end(10, "/test", false);
         }
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -384,7 +403,7 @@ mod handler_tests {
             monitor_inner.record_request_end(50, "/test", true);
         }
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -403,7 +422,7 @@ mod handler_tests {
         monitor_inner.record_request_start();
         monitor_inner.record_request_end(2000, "/test", true);
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -421,7 +440,7 @@ mod handler_tests {
         monitor_inner.record_request_start();
         monitor_inner.record_request_end(6000, "/test", true);
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -442,7 +461,7 @@ mod handler_tests {
             monitor_inner.record_request_start();
         }
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -458,7 +477,7 @@ mod handler_tests {
             monitor_inner.record_request_start();
         }
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
@@ -475,7 +494,7 @@ mod handler_tests {
         monitor_inner.record_request_start();
         monitor_inner.record_request_end(2000, "/test", true);
         let monitor = web::Data::new(monitor_inner);
-        let result = health(monitor).await;
+        let result = health(bare_request(), monitor).await;
         assert!(result.is_ok());
         let resp = result.unwrap();
         let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
