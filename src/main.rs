@@ -535,7 +535,12 @@ async fn main() -> std::io::Result<()> {
         server_handle.stop(true).await;
     });
 
-    server.await
+    server.await?;
+
+    // ORT (and Metal on macOS) hold C++ global state whose destructors can race
+    // with Tokio's thread-pool teardown, producing a libc++ mutex_lock EINVAL
+    // abort.  Exiting here is safe: the server has already drained connections.
+    std::process::exit(0);
 }
 
 async fn shutdown_signal() {
