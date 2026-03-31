@@ -43,6 +43,15 @@ pub async fn download_model(
     req: web::Json<DownloadModelRequest>,
     state: web::Data<ModelDownloadState>,
 ) -> Result<HttpResponse, ApiError> {
+    if req.model_name.trim().is_empty() {
+        return Err(ApiError::BadRequest("model_name must not be empty".to_string()));
+    }
+    if req.model_name.contains('/') || req.model_name.contains("..") {
+        return Err(ApiError::BadRequest(
+            "model_name must not contain path separators or '..'".to_string(),
+        ));
+    }
+
     let source = match req.source_type.as_str() {
         "huggingface" => {
             let repo_id = req.repo_id.clone()
@@ -55,6 +64,11 @@ pub async fn download_model(
         "url" => {
             let url = req.url.clone()
                 .ok_or_else(|| ApiError::BadRequest("url required for URL source".to_string()))?;
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err(ApiError::BadRequest(
+                    "url must start with http:// or https://".to_string(),
+                ));
+            }
             ModelSource::Url { url }
         }
         _ => {

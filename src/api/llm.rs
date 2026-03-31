@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 /// OpenAI-compatible LLM inference API.
 ///
 /// Endpoints:
@@ -48,6 +47,9 @@ pub struct CompletionRequest {
     pub top_k: usize,
     #[serde(default)]
     pub stop: Vec<String>,
+    /// Streaming is not yet implemented; passing `true` returns 501.
+    #[serde(default)]
+    pub stream: bool,
 }
 
 fn default_max_tokens() -> usize { 256 }
@@ -59,6 +61,7 @@ fn default_top_p() -> f32 { 1.0 }
 pub struct CompletionResponse {
     pub id: String,
     pub object: String,
+    pub created: i64,
     pub model: String,
     pub choices: Vec<CompletionChoice>,
     pub usage: UsageInfo,
@@ -86,6 +89,9 @@ pub struct ChatRequest {
     pub top_k: usize,
     #[serde(default)]
     pub stop: Vec<String>,
+    /// Streaming is not yet implemented; passing `true` returns 501.
+    #[serde(default)]
+    pub stream: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -99,6 +105,7 @@ pub struct ChatMessage {
 pub struct ChatResponse {
     pub id: String,
     pub object: String,
+    pub created: i64,
     pub model: String,
     pub choices: Vec<ChatChoice>,
     pub usage: UsageInfo,
@@ -156,6 +163,9 @@ pub async fn completions(
     req: web::Json<CompletionRequest>,
     state: web::Data<LlmState>,
 ) -> Result<HttpResponse, ApiError> {
+    if req.stream {
+        return Err(ApiError::NotImplemented("streaming completions are not yet supported".to_string()));
+    }
     if req.prompt.is_empty() {
         return Err(ApiError::BadRequest("prompt must not be empty".to_string()));
     }
@@ -182,6 +192,7 @@ pub async fn completions(
     Ok(HttpResponse::Ok().json(CompletionResponse {
         id: new_id("cmpl"),
         object: "text_completion".to_string(),
+        created: unix_now(),
         model: req.model.clone(),
         choices: vec![CompletionChoice {
             text,
@@ -201,6 +212,9 @@ pub async fn chat_completions(
     req: web::Json<ChatRequest>,
     state: web::Data<LlmState>,
 ) -> Result<HttpResponse, ApiError> {
+    if req.stream {
+        return Err(ApiError::NotImplemented("streaming chat completions are not yet supported".to_string()));
+    }
     if req.messages.is_empty() {
         return Err(ApiError::BadRequest("messages must not be empty".to_string()));
     }
@@ -229,6 +243,7 @@ pub async fn chat_completions(
     Ok(HttpResponse::Ok().json(ChatResponse {
         id: new_id("chatcmpl"),
         object: "chat.completion".to_string(),
+        created: unix_now(),
         model: req.model.clone(),
         choices: vec![ChatChoice {
             index: 0,
@@ -256,12 +271,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 fn new_id(prefix: &str) -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
+    format!("{}-{}", prefix, uuid::Uuid::new_v4())
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis();
-    format!("{}-{}", prefix, ts)
+        .as_secs() as i64
 }
 
 /// Flatten OpenAI chat messages into a simple prompt string.
@@ -372,6 +389,7 @@ mod tests {
         assert_eq!(body["object"], "text_completion");
         assert!(body["choices"][0]["text"].is_string());
         assert!(body["usage"]["total_tokens"].is_number());
+        assert!(body["created"].is_number());
         assert!(body["id"].as_str().unwrap().starts_with("cmpl-"));
     }
 
@@ -480,6 +498,7 @@ mod tests {
         assert_eq!(body["object"], "chat.completion");
         assert_eq!(body["choices"][0]["message"]["role"], "assistant");
         assert!(body["choices"][0]["message"]["content"].is_string());
+        assert!(body["created"].is_number());
         assert!(body["id"].as_str().unwrap().starts_with("chatcmpl-"));
     }
 
@@ -644,5 +663,46 @@ mod tests {
     fn test_new_id_starts_with_prefix() {
         let id = new_id("cmpl");
         assert!(id.starts_with("cmpl-"));
+    }
+
+    #[test]
+    fn test_new_id_is_unique() {
+        let a = new_id("x");
+        let b = new_id("x");
+        assert_ne!(a, b, "IDs must be unique across calls");
+    }
+
+    #[actix_web::test]
+    async fn test_completion_stream_true_returns_501() {
+        let app = actix_test::init_service(
+            App::new().app_data(make_state()).configure(configure_routes),
+        )
+        .await;
+        let payload = serde_json::json!({ "model": "m", "prompt": "hi", "stream": true });
+        let req = actix_test::TestRequest::post()
+            .uri("/v1/completions")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_IMPLEMENTED);
+    }
+
+    #[actix_web::test]
+    async fn test_chat_stream_true_returns_501() {
+        let app = actix_test::init_service(
+            App::new().app_data(make_state()).configure(configure_routes),
+        )
+        .await;
+        let payload = serde_json::json!({
+            "model": "m",
+            "messages": [{ "role": "user", "content": "hi" }],
+            "stream": true
+        });
+        let req = actix_test::TestRequest::post()
+            .uri("/v1/chat/completions")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_IMPLEMENTED);
     }
 }

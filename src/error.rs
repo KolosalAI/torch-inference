@@ -56,6 +56,9 @@ pub enum ApiError {
     
     #[error("Forbidden: {0}")]
     Forbidden(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 impl ResponseError for ApiError {
@@ -74,6 +77,7 @@ impl ResponseError for ApiError {
             ApiError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         }
     }
 }
