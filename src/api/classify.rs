@@ -91,6 +91,19 @@ pub async fn batch_classify(
     if req.top_k == 0 {
         return Err(ApiError::BadRequest("top_k must be >= 1".to_string()));
     }
+    if req.top_k > 1000 {
+        return Err(ApiError::BadRequest("top_k must be <= 1000".to_string()));
+    }
+    if req.model_width == 0 || req.model_height == 0 {
+        return Err(ApiError::BadRequest(
+            "model_width and model_height must be >= 1".to_string(),
+        ));
+    }
+    if req.model_width > 4096 || req.model_height > 4096 {
+        return Err(ApiError::BadRequest(
+            "model_width and model_height must be <= 4096".to_string(),
+        ));
+    }
 
     // Decode base64 → raw bytes.
     use base64::Engine as _;
@@ -475,5 +488,63 @@ pub mod tests {
         let p2 = p.clone();
         assert_eq!(p2.label, "cat");
         assert!((p2.confidence - 0.9).abs() < 1e-6);
+    }
+
+    // ── Input bounds validation ──────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_top_k_over_1000_returns_bad_request() {
+        let app = actix_test::init_service(
+            App::new().app_data(make_state()).configure(configure_routes),
+        )
+        .await;
+        let payload = serde_json::json!({
+            "images": [tiny_b64(4, 4, 100)],
+            "top_k": 1001
+        });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_zero_model_dim_returns_bad_request() {
+        let app = actix_test::init_service(
+            App::new().app_data(make_state()).configure(configure_routes),
+        )
+        .await;
+        let payload = serde_json::json!({
+            "images": [tiny_b64(4, 4, 100)],
+            "model_width": 0,
+            "model_height": 224
+        });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_oversized_model_dim_returns_bad_request() {
+        let app = actix_test::init_service(
+            App::new().app_data(make_state()).configure(configure_routes),
+        )
+        .await;
+        let payload = serde_json::json!({
+            "images": [tiny_b64(4, 4, 100)],
+            "model_width": 5000,
+            "model_height": 224
+        });
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/batch")
+            .set_json(&payload)
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
     }
 }
