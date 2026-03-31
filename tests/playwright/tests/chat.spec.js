@@ -13,8 +13,10 @@ test.describe('LLM Chat', () => {
     await expect(page.locator(S.chatBtn)).toBeVisible();
   });
 
-  test('chat history is empty on load', async ({ page }) => {
-    await expect(page.locator(S.chatHistory)).toBeEmpty();
+  test('chat history shows welcome message on load', async ({ page }) => {
+    // JS seeds one assistant welcome message; no user messages yet
+    await expect(page.locator(S.chatHistory).locator('.msg.user')).toHaveCount(0);
+    await expect(page.locator(S.chatHistory).locator('.msg.asst')).toHaveCount(1);
   });
 
   test('parameter fields have correct defaults', async ({ page }) => {
@@ -48,21 +50,25 @@ test.describe('LLM Chat', () => {
     await expect(page.locator(S.chatBtn)).toBeEnabled({ timeout: 30000 });
   });
 
-  test('history contains 2 messages after a round-trip', async ({ page }) => {
+  test('history gains user message and assistant response after a round-trip', async ({ page }) => {
     await page.locator(S.chatInput).fill('Hi');
     await page.locator(S.chatBtn).click();
     await expect(page.locator(S.chatBtn)).toBeEnabled({ timeout: 30000 });
-    await expect(page.locator(S.chatHistory).locator('.msg')).toHaveCount(2);
+    // welcome(1 asst) + user(1) + response/error(1 asst) = 1 user + 2 asst
+    await expect(page.locator(S.chatHistory).locator('.msg.user')).toHaveCount(1);
+    await expect(page.locator(S.chatHistory).locator('.msg.asst')).toHaveCount(2);
   });
 
-  test('Clear chat button empties history', async ({ page }) => {
+  test('Clear chat button removes user messages from history', async ({ page }) => {
     await page.locator(S.chatInput).fill('Hello');
     await page.locator(S.chatBtn).click();
     await expect(
       page.locator(S.chatHistory).locator('.msg.user')
     ).toHaveCount(1, { timeout: 5000 });
-    await page.locator('button:has-text("Clear chat")').click();
-    await expect(page.locator(S.chatHistory)).toBeEmpty();
+    await page.locator(S.panelLLM).locator('button:has-text("Clear chat")').click();
+    // clearChat() re-seeds a "Chat cleared" assistant message; no user messages remain
+    await expect(page.locator(S.chatHistory).locator('.msg.user')).toHaveCount(0);
+    await expect(page.locator(S.chatHistory).locator('.msg.asst')).toHaveCount(1);
   });
 });
 

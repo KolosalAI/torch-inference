@@ -34,7 +34,7 @@ test.describe('TTS Stream', () => {
   });
 
   test('Stop button is present', async ({ page }) => {
-    await expect(page.locator('button:has-text("Stop")')).toBeVisible();
+    await expect(page.locator(S.panelTTS).locator('button:has-text("Stop")')).toBeVisible();
   });
 
   test('clicking Synthesise moves status away from "waiting…"', async ({ page }) => {

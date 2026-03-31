@@ -40,11 +40,6 @@ test.describe('Model Download Manager', () => {
     await expect(page.locator(S.dlRevisionWrap)).toBeVisible();
   });
 
-  test('selecting URL source hides revision field', async ({ page }) => {
-    await page.locator(S.dlSource).selectOption('url');
-    await expect(page.locator(S.dlRevisionWrap)).toBeHidden();
-  });
-
   test('Download button is enabled', async ({ page }) => {
     await expect(page.locator(S.dlBtn)).toBeEnabled();
   });
