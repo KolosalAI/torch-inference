@@ -466,6 +466,10 @@ async fn main() -> std::io::Result<()> {
         workers       = config.server.workers,
         "server ready"
     );
+    eprintln!(
+        "\n  Server:  http://{}\n  Health:  http://{}/health\n",
+        display_addr, display_addr
+    );
     tracing::info!(
         tensor_pooling = config.performance.enable_tensor_pooling,
         compression    = config.performance.enable_result_compression,
