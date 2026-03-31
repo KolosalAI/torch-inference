@@ -527,20 +527,31 @@ async fn main() -> std::io::Result<()> {
     .listen(listener)?
     .run();
 
-    // Handle graceful shutdown
+    // Graceful shutdown.
+    //
+    // ORT and Metal (macOS) hold C++ global state whose destructors race with
+    // Tokio's thread-pool teardown and produce:
+    //   libc++abi: terminating … mutex lock failed: EINVAL
+    //
+    // The abort fires *inside* server.await (during Actix worker cleanup),
+    // so placing process::exit after server.await is too late.  Instead we
+    // call process::exit(0) from the signal handler, after telling Actix to
+    // stop accepting new connections but before waiting for workers to drop.
+    // In-flight requests get a short grace window then we exit cleanly.
     let server_handle = server.handle();
     tokio::spawn(async move {
         shutdown_signal().await;
         tracing::info!("shutdown signal received, draining requests");
-        server_handle.stop(true).await;
+        // Tell Actix to close the listening socket and finish current requests.
+        server_handle.stop(true);
+        // Brief window for in-flight work to complete before we bypass C++ dtors.
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        tracing::info!("drain window elapsed, exiting");
+        std::process::exit(0);
     });
 
     server.await?;
-
-    // ORT (and Metal on macOS) hold C++ global state whose destructors can race
-    // with Tokio's thread-pool teardown, producing a libc++ mutex_lock EINVAL
-    // abort.  Exiting here is safe: the server has already drained connections.
-    std::process::exit(0);
+    Ok(())
 }
 
 async fn shutdown_signal() {
