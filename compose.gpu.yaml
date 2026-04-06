@@ -1,0 +1,51 @@
+# GPU-optimized Docker Compose override
+# Use with: docker compose -f compose.yaml -f compose.gpu.yaml up
+
+services:
+  torch-inference:
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - GPU_MEMORY_FRACTION=0.8
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    runtime: nvidia
+
+  # GPU monitoring service
+  gpu-monitor:
+    image: nvidia/cuda:12.1-runtime-ubuntu22.04
+    container_name: torch-inference-gpu-monitor
+    restart: unless-stopped
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    command: |
+      sh -c "
+        apt-get update && apt-get install -y curl &&
+        while true; do
+          nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,memory.free,temperature.gpu --format=csv,noheader,nounits > /tmp/gpu_stats.csv
+          sleep 10
+        done
+      "
+    volumes:
+      - gpu_monitoring:/tmp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - inference_network
+
+volumes:
+  gpu_monitoring:
+    driver: local

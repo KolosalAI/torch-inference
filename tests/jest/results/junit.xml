@@ -1,0 +1,227 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="98" failures="0" errors="0" time="0.845">
+  <testsuite name="YOLO model catalog" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.543" tests="6">
+    <testcase classname="YOLO model catalog" name="GET /api/yolo/models returns available YOLO versions and sizes" time="0.006">
+    </testcase>
+    <testcase classname="YOLO model info" name="POST /api/yolo/info with valid version and size returns model info" time="0.001">
+    </testcase>
+    <testcase classname="YOLO model info" name="POST /api/yolo/info with invalid version returns 400/404" time="0">
+    </testcase>
+    <testcase classname="YOLO model info" name="POST /api/yolo/info with missing fields returns 400" time="0">
+    </testcase>
+    <testcase classname="YOLO detection" name="POST /api/yolo/detect without image returns 400" time="0.001">
+    </testcase>
+    <testcase classname="YOLO detection" name="POST /api/yolo/detect with PNG returns detections or model error" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Audio health" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.563" tests="4">
+    <testcase classname="Audio health" name="GET /audio/health returns status" time="0.002">
+    </testcase>
+    <testcase classname="Audio validation" name="POST /audio/validate with valid WAV returns valid=true" time="0">
+    </testcase>
+    <testcase classname="Audio validation" name="POST /audio/validate with empty body returns 400/422" time="0">
+    </testcase>
+    <testcase classname="Audio transcription" name="POST /audio/transcribe with WAV file returns transcript or error" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="API model catalog" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.588" tests="8">
+    <testcase classname="API model catalog" name="GET /api/models returns full model registry" time="0.002">
+    </testcase>
+    <testcase classname="API model catalog" name="GET /api/models response is non-empty" time="0">
+    </testcase>
+    <testcase classname="API single model info" name="GET /api/models/:model_id returns model details" time="0">
+    </testcase>
+    <testcase classname="API single model info" name="GET /api/models/nonexistent returns 404" time="0">
+    </testcase>
+    <testcase classname="API downloaded models" name="GET /api/models/downloaded returns downloaded models list" time="0">
+    </testcase>
+    <testcase classname="API model download" name="POST /api/models/download with missing model_id returns 400/422" time="0">
+    </testcase>
+    <testcase classname="API model download" name="POST /api/models/download with unknown model_id returns 404/400" time="0">
+    </testcase>
+    <testcase classname="API model comparison" name="GET /api/models/comparison returns comparison data" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Registry listing &amp; stats" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.576" tests="11">
+    <testcase classname="Registry listing &amp; stats" name="GET /registry/models returns registered models" time="0.002">
+    </testcase>
+    <testcase classname="Registry listing &amp; stats" name="GET /registry/models with format filter" time="0">
+    </testcase>
+    <testcase classname="Registry listing &amp; stats" name="GET /registry/stats returns statistics" time="0">
+    </testcase>
+    <testcase classname="Registry listing &amp; stats" name="GET /registry/export returns full registry export" time="0">
+    </testcase>
+    <testcase classname="Registry registration" name="POST /registry/register with missing path returns 400/422" time="0">
+    </testcase>
+    <testcase classname="Registry registration" name="POST /registry/register with nonexistent path returns error" time="0">
+    </testcase>
+    <testcase classname="Registry registration" name="POST /registry/scan with nonexistent path returns error" time="0">
+    </testcase>
+    <testcase classname="Registry model operations" name="GET /registry/models/:id with unknown id returns 404" time="0">
+    </testcase>
+    <testcase classname="Registry model operations" name="POST /registry/models/:id/load with unknown id returns 404" time="0">
+    </testcase>
+    <testcase classname="Registry model operations" name="POST /registry/infer with missing model_id returns 400/422" time="0">
+    </testcase>
+    <testcase classname="Registry model operations" name="POST /registry/infer with unknown model_id returns 404" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Image health" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.631" tests="7">
+    <testcase classname="Image health" name="GET /image/health returns status" time="0.003">
+    </testcase>
+    <testcase classname="Image security stats" name="GET /image/security/stats returns statistics" time="0.001">
+    </testcase>
+    <testcase classname="Image security validation" name="POST /image/validate/security with PNG returns security result" time="0">
+    </testcase>
+    <testcase classname="Image security validation" name="POST /image/validate/security with invalid security_level is handled" time="0">
+    </testcase>
+    <testcase classname="Image security validation" name="POST /image/validate/security without image returns 400" time="0.001">
+    </testcase>
+    <testcase classname="Image processing (secure)" name="POST /image/process/secure with PNG returns result" time="0">
+    </testcase>
+    <testcase classname="Image processing (secure)" name="POST /image/process/secure without body returns 400" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="NN model listing" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.625" tests="6">
+    <testcase classname="NN model listing" name="GET /api/nn/list returns loaded models" time="0.01">
+    </testcase>
+    <testcase classname="NN model loading" name="POST /api/nn/load with missing fields returns 400/422" time="0">
+    </testcase>
+    <testcase classname="NN model loading" name="POST /api/nn/load with nonexistent model path returns error" time="0">
+    </testcase>
+    <testcase classname="NN model inference" name="POST /api/nn/infer with missing model_id returns 400/422" time="0">
+    </testcase>
+    <testcase classname="NN model inference" name="POST /api/nn/infer with unloaded model returns 404/400" time="0">
+    </testcase>
+    <testcase classname="NN model unloading" name="DELETE /api/nn/:model_id with unknown model returns 404/400" time="0.002">
+    </testcase>
+  </testsuite>
+  <testsuite name="TTS health" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.648" tests="10">
+    <testcase classname="TTS health" name="GET /tts/health returns status" time="0.004">
+    </testcase>
+    <testcase classname="TTS engines" name="GET /tts/engines returns list of engines" time="0">
+    </testcase>
+    <testcase classname="TTS engines" name="GET /tts/engines/:id/capabilities returns engine capabilities" time="0">
+    </testcase>
+    <testcase classname="TTS engines" name="GET /tts/engines/:id/voices returns voice list" time="0">
+    </testcase>
+    <testcase classname="TTS stats" name="GET /tts/stats returns synthesis stats" time="0">
+    </testcase>
+    <testcase classname="TTS synthesis" name="POST /tts/synthesize rejects empty text" time="0">
+    </testcase>
+    <testcase classname="TTS synthesis" name="POST /tts/synthesize returns audio for short text" time="0.001">
+    </testcase>
+    <testcase classname="TTS synthesis" name="POST /tts/synthesize accepts voice and language params" time="0">
+    </testcase>
+    <testcase classname="TTS synthesis" name="POST /tts/synthesize rejects text exceeding max length" time="0">
+    </testcase>
+    <testcase classname="TTS synthesis" name="POST /audio/synthesize is an alias for TTS synthesis" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Logs listing" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:24" time="0.109" tests="5">
+    <testcase classname="Logs listing" name="GET /logs returns log directory info" time="0">
+    </testcase>
+    <testcase classname="Logs listing" name="GET /logs includes log level" time="0.001">
+    </testcase>
+    <testcase classname="Log file read" name="GET /logs/:log_file returns file content" time="0">
+    </testcase>
+    <testcase classname="Log file read" name="GET /logs/nonexistent-file returns 404" time="0">
+    </testcase>
+    <testcase classname="Log file deletion" name="DELETE /logs/nonexistent-file returns 404" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="System info" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:24" time="0.1" tests="7">
+    <testcase classname="System info" name="GET /system/info returns OS, CPU, memory info" time="0">
+    </testcase>
+    <testcase classname="System info" name="GET /system/info includes GPU availability" time="0">
+    </testcase>
+    <testcase classname="System info" name="GET /system/info includes runtime info" time="0">
+    </testcase>
+    <testcase classname="System info" name="GET /system/info includes feature flags" time="0">
+    </testcase>
+    <testcase classname="System config" name="GET /system/config returns server configuration" time="0">
+    </testcase>
+    <testcase classname="System config" name="GET /system/config includes inference settings" time="0">
+    </testcase>
+    <testcase classname="GPU stats" name="GET /system/gpu/stats returns GPU info (even if no GPU)" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Performance metrics" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:24" time="0.073" tests="5">
+    <testcase classname="Performance metrics" name="GET /performance returns system and process metrics" time="0">
+    </testcase>
+    <testcase classname="Performance metrics" name="GET /performance system_info includes cpu_count and memory" time="0">
+    </testcase>
+    <testcase classname="Performance metrics" name="GET /performance process_info includes pid" time="0">
+    </testcase>
+    <testcase classname="Performance profiling" name="POST /performance/profile returns timing metrics" time="0">
+    </testcase>
+    <testcase classname="Performance optimization" name="GET /performance/optimize runs optimizations and reports result" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Classify by path" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:24" time="0.087" tests="4">
+    <testcase classname="Classify by path" name="POST /api/classify/image with missing image_path returns 400/422" time="0.001">
+    </testcase>
+    <testcase classname="Classify by path" name="POST /api/classify/image with nonexistent path returns error" time="0">
+    </testcase>
+    <testcase classname="Classify by upload" name="POST /api/classify/upload with PNG returns result or model-not-loaded error" time="0">
+    </testcase>
+    <testcase classname="Classify by upload" name="POST /api/classify/upload without image returns 400" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Model download list &amp; cache" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.675" tests="11">
+    <testcase classname="Model download list &amp; cache" name="GET /models/download/list returns active downloads" time="0.002">
+    </testcase>
+    <testcase classname="Model download list &amp; cache" name="GET /models/managed returns managed models" time="0">
+    </testcase>
+    <testcase classname="Model download list &amp; cache" name="GET /models/cache/info returns cache statistics" time="0">
+    </testcase>
+    <testcase classname="Available models catalog" name="GET /models/available returns downloadable models" time="0">
+    </testcase>
+    <testcase classname="Available models catalog" name="GET /models/sota returns SOTA model registry" time="0">
+    </testcase>
+    <testcase classname="Model download trigger" name="POST /models/download with missing model_name returns 400/422" time="0">
+    </testcase>
+    <testcase classname="Model download trigger" name="POST /models/download with valid payload starts task" time="0">
+    </testcase>
+    <testcase classname="Model download trigger" name="GET /models/download/status/:id with unknown id returns 404" time="0">
+    </testcase>
+    <testcase classname="Model info &amp; deletion" name="GET /models/download/:name/info for unknown model returns 404" time="0">
+    </testcase>
+    <testcase classname="Model info &amp; deletion" name="DELETE /models/download/:name for unknown model returns 404" time="0">
+    </testcase>
+    <testcase classname="SOTA model download" name="POST /models/sota/:model_id with unknown model returns 404/400" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Predict endpoint" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:24" time="0.067" tests="5">
+    <testcase classname="Predict endpoint" name="POST /predict with missing model_name returns 400/422" time="0">
+    </testcase>
+    <testcase classname="Predict endpoint" name="POST /predict with unknown model returns error" time="0">
+    </testcase>
+    <testcase classname="Predict endpoint" name="POST /predict response shape on error includes message" time="0">
+    </testcase>
+    <testcase classname="Legacy synthesize endpoint" name="POST /synthesize with missing text returns 400/422" time="0">
+    </testcase>
+    <testcase classname="Legacy synthesize endpoint" name="POST /synthesize handles unknown model gracefully" time="0">
+    </testcase>
+  </testsuite>
+  <testsuite name="Root endpoint" errors="0" failures="0" skipped="0" timestamp="2026-03-27T04:29:23" time="0.704" tests="9">
+    <testcase classname="Root endpoint" name="GET / returns API info" time="0.002">
+    </testcase>
+    <testcase classname="Health endpoints" name="GET /health returns 200 with status" time="0">
+    </testcase>
+    <testcase classname="Health endpoints" name="GET /health/live returns 200 (liveness probe)" time="0">
+    </testcase>
+    <testcase classname="Health endpoints" name="GET /health/ready returns 200 or 503 (readiness probe)" time="0">
+    </testcase>
+    <testcase classname="Metrics endpoint" name="GET /metrics returns prometheus-format text" time="0">
+    </testcase>
+    <testcase classname="Server info &amp; stats" name="GET /info returns system information" time="0">
+    </testcase>
+    <testcase classname="Server info &amp; stats" name="GET /stats returns request metrics" time="0">
+    </testcase>
+    <testcase classname="Server info &amp; stats" name="GET /endpoints returns endpoint list" time="0">
+    </testcase>
+    <testcase classname="Models listing (core)" name="GET /models returns model list" time="0.001">
+    </testcase>
+  </testsuite>
+</testsuites>

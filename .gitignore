@@ -1,0 +1,98 @@
+# Worktrees
+.worktrees/
+
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+.cargo/
+
+# LibTorch
+/libtorch/
+libtorch*.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# Model files - ignore all downloaded models
+/models/*
+!/models/.gitkeep
+
+# Output files
+*.log
+*.wav
+*.mp3
+*.flac
+
+# Archives
+archive_*/
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+
+# Test outputs
+inference_outputs/
+stt_validation_results/
+tts_validation_results/
+api_demo_outputs/
+automated_test_results/
+
+# Sample outputs - ignore WAV files but keep structure
+sample_output/*.wav
+!sample_output/README.md
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Test scripts (generated)
+test_*.sh
+!test_outputs/.gitkeep
+
+# Test output files
+test_outputs/
+test_report_output.txt
+
+# Benchmark outputs (generated at runtime)
+benchmark_results/
+benchmark_images/
+build_output.log
+server_torch.log
+
+# Downloaded test images
+test_images/
+
+# Model downloads
+/models/
+!models/.gitkeep
+
+# Configuration files
+config.optimized.toml
+.superpowers/
+
+# Node.js dependencies
+node_modules/

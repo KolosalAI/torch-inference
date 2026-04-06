@@ -1,0 +1,42 @@
+# Production Configuration
+[server]
+host = "0.0.0.0"
+port = 8080
+workers = 16
+max_connections = 10000
+keepalive_timeout = 75
+
+[performance]
+max_batch_size = 32
+batch_timeout_ms = 50
+enable_batching = true
+adaptive_batch_timeout = true
+enable_caching = true
+cache_size_mb = 1024
+enable_tensor_pooling = true
+max_pooled_tensors = 1000
+enable_result_compression = true
+compression_level = 6
+preload_models_on_startup = true
+
+[models]
+auto_load = ["yolov8n", "resnet50"]
+model_cache_dir = "./models"
+max_instances_per_model = 3
+model_timeout_secs = 300
+
+[security]
+require_api_key = false
+enable_cors = true
+allowed_origins = ["*"]
+max_request_size_mb = 10
+
+[monitoring]
+enable_prometheus = true
+enable_tracing = false
+health_check_interval_secs = 10
+
+[rate_limiting]
+enabled = true
+requests_per_second = 1000
+burst_size = 2000

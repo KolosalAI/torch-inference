@@ -1,0 +1,2619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kolosal Inference</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' rx='8' fill='%230066F5'/><text x='6' y='23' font-family='sans-serif' font-size='16' font-weight='700' fill='white'>KI</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/remixicon@4.7.0/fonts/remixicon.css" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #F8F9F9;
+    --surface:   #FFFFFF;
+    --surface2:  #FFFFFF;
+    --border:    #DDE1E3;
+    --border2:   #E4E7E9;
+    --accent:    #0066F5;
+    --accent-hi: #3C8AF7;
+    --accent-lo: #003D93;
+    --accent-bg: #F0F6FE;
+    --green:     #3ABC3F;
+    --green-bg:  #F3FBF4;
+    --green-text:#2E9632;
+    --red:       #FF3131;
+    --red-bg:    #FFF3F3;
+    --red-text:  #CC2727;
+    --yellow:    #FFA931;
+    --yellow-bg: #FFFAF3;
+    --yellow-text:#CC8727;
+    --text:      #0D0E0F;
+    --text-muted:#6A6F73;
+    --text-dim:  #9C9FA1;
+    --radius:    10px;
+    --font:      'Inter', system-ui, sans-serif;
+    --mono:      'Geist Mono', monospace;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    grid-template-rows: 52px 1fr;
+    min-height: 100vh;
+  }
+
+  /* Top bar */
+  .topbar {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { display: flex; align-items: center; gap: 8px; }
+  .logo-mark {
+    width: 28px; height: 28px; background: var(--accent);
+    border-radius: 7px; display: grid; place-items: center;
+    font-weight: 700; font-size: 11px; color: #fff; letter-spacing: .5px;
+  }
+  .logo-name { font-weight: 600; font-size: 15px; }
+  .logo-sub  { font-size: 12px; color: var(--text-muted); margin-left: 4px; }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; padding: 3px 9px; border-radius: 20px;
+    background: var(--accent-bg); color: var(--accent);
+    border: 1px solid rgba(0,102,245,.2);
+  }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green); flex-shrink: 0;
+    box-shadow: 0 0 6px var(--green);
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 16px 0;
+    overflow-y: auto;
+  }
+  .sidebar-section { padding: 0 12px; margin-bottom: 20px; }
+  .sidebar-label {
+    font-size: 10px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-dim);
+    padding: 0 8px 8px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px;
+    padding: 7px 8px; border-radius: 7px; cursor: pointer;
+    font-size: 13px; font-weight: 500; color: var(--text-muted);
+    transition: background .15s, color .15s;
+    user-select: none;
+    border: none; background: none; width: 100%; text-align: left;
+  }
+  .nav-item:hover  { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: var(--accent-bg); color: var(--accent); }
+  .nav-item.active .nav-icon { color: var(--accent); }
+  .nav-icon { font-size: 16px; width: 18px; text-align: center; flex-shrink: 0; font-style: normal; }
+
+  /* Main */
+  .main { overflow-y: auto; padding: 28px 32px; display: flex; flex-direction: column; }
+  .panel { display: none; flex-direction: column; gap: 20px; }
+  .panel.active { display: flex; }
+  .panel-header { margin-bottom: 4px; }
+  .panel-title  { font-size: 18px; font-weight: 600; }
+  .panel-desc   { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+  .ep-code { color: var(--accent); font-family: var(--mono); }
+
+  /* Cards */
+  .card {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 20px;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.08);
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+    color: var(--text-muted); margin-bottom: 14px;
+  }
+
+  /* Forms */
+  label { font-size: 12px; font-weight: 500; color: var(--text-muted); display: block; margin-bottom: 5px; }
+  input[type=text], input[type=number], select {
+    width: 100%; height: 36px;
+    padding: 0 14px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    font-family: var(--font); font-size: 14px; font-weight: 400;
+    outline: none; transition: border-color .15s, box-shadow .15s;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.15);
+  }
+  input[type=text]:hover, input[type=number]:hover, select:hover {
+    border-color: var(--text-dim);
+    box-shadow: none;
+  }
+  input[type=text]::placeholder, input[type=number]::placeholder {
+    color: var(--text-dim);
+  }
+  input[type=text]:focus, input[type=number]:focus, select:focus {
+    border-color: var(--text-dim);
+    outline: none;
+    box-shadow: 0px 0px 0px 2px var(--border2);
+  }
+  textarea {
+    width: 100%; min-height: 90px;
+    padding: 8px 12px;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px;
+    font-family: var(--font); font-size: 14px; font-weight: 400;
+    line-height: 1.6; outline: none; resize: vertical;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.15);
+    transition: border-color .15s, box-shadow .15s;
+  }
+  textarea:hover { border-color: var(--text-dim); box-shadow: none; }
+  textarea::placeholder { color: var(--text-dim); }
+  textarea:focus {
+    border-color: var(--text-dim);
+    outline: none;
+    box-shadow: 0px 0px 0px 2px var(--border2);
+  }
+  .field { display: flex; flex-direction: column; gap: 0; margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  .row { display: flex; gap: 12px; }
+  .row .field { flex: 1; }
+
+  /* Buttons — Kolosal vanilla */
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 36px; padding: 0 14px;
+    border-radius: 10px; border: none; cursor: pointer;
+    font-family: var(--font); font-size: 14px; font-weight: 500;
+    line-height: 20px; letter-spacing: 0.3px;
+    text-decoration: none;
+    transition: background .15s, border-color .15s;
+  }
+  .btn:disabled { pointer-events: none; opacity: 0.65; cursor: not-allowed; }
+  .btn-primary {
+    background-color: #0D0E0F;
+    color: #FFFFFF;
+    box-shadow: inset 0px 2px 0px 0px rgba(255,255,255,0.25);
+    border: 1px solid #0D0E0F;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(90deg, #0D0E0F, #FF3131, #0066F5);
+    background-size: 300% 300%;
+    animation: gradientMove 3s ease infinite;
+  }
+  @keyframes gradientMove {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  .btn-ghost {
+    background-color: #FFFFFF;
+    border: 1px solid #E4E7E9;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.15);
+    color: #0D0E0F;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: #F8F9F9;
+    border-color: #DDE1E3;
+  }
+  .spinner {
+    display: inline-block; width: 13px; height: 13px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-top-color: #fff; border-radius: 50%;
+    animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Response */
+  .response-box {
+    background: #F1F3F4; border: 1px solid var(--border2);
+    border-radius: 10px; padding: 14px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    color: var(--text-muted); min-height: 80px;
+    white-space: pre-wrap; word-break: break-all;
+    overflow-y: auto; max-height: 340px;
+  }
+  .response-box.ok     { color: var(--text); }
+  .response-box.error  { color: var(--red); }
+  .response-box.stream { color: var(--green-text); }
+
+  /* Stats */
+  .stat-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 12px;
+  }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 14px 16px;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.08);
+  }
+  .stat-label { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-value { font-size: 20px; font-weight: 700; font-family: var(--mono); }
+  .stat-value.ok     { color: var(--green-text); }
+  .stat-value.warn   { color: var(--yellow-text); }
+  .stat-value.err    { color: var(--red); }
+  .stat-value.accent { color: var(--accent); }
+
+  /* Endpoints */
+  .endpoint-list { display: flex; flex-direction: column; gap: 6px; }
+  .endpoint-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: var(--surface);
+    border: 1px solid var(--border2); border-radius: 8px; font-size: 12px;
+  }
+  .method {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
+  }
+  .method.get  { background: #F3FBF4; color: #2E9632; }
+  .method.post { background: #F0F6FE; color: #0052C4; }
+  .ep-path { font-family: var(--mono); color: var(--text); flex: 1; }
+  .ep-desc { color: var(--text-muted); }
+
+  /* TTS */
+  #tts-audio-wrap { margin-top: 12px; display: none; }
+  #tts-audio-wrap audio { width: 100%; }
+
+  /* Image upload */
+  .dropzone {
+    border: 2px dashed var(--border2); border-radius: 8px;
+    padding: 28px; text-align: center; cursor: pointer;
+    color: var(--text-muted); font-size: 13px;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover, .dropzone.over {
+    border-color: var(--accent); background: var(--accent-bg);
+  }
+  .dropzone input { display: none; }
+  .drop-icon { font-size: 28px; margin-bottom: 6px; }
+  #img-preview { max-width: 200px; border-radius: 8px; margin-top: 10px; display: none; }
+
+  /* Chat */
+  .chat-history {
+    background: #F1F3F4; border: 1px solid var(--border2);
+    border-radius: 10px; padding: 14px; min-height: 180px;
+    max-height: 320px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg { display: flex; flex-direction: column; gap: 2px; max-width: 88%; }
+  .msg.user { align-self: flex-end; align-items: flex-end; }
+  .msg.asst { align-self: flex-start; align-items: flex-start; }
+  .msg-role {
+    font-size: 10px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--text-dim);
+  }
+  .msg-body {
+    padding: 9px 13px; border-radius: 10px;
+    font-size: 13px; line-height: 1.55;
+  }
+  .msg.user .msg-body { background: var(--accent); color: #fff; }
+  .msg.asst .msg-body { background: var(--surface); color: var(--text); border: 1px solid var(--border2); }
+  .chat-input-row { display: flex; gap: 8px; margin-top: 8px; }
+  .chat-input-row textarea { resize: none; min-height: 40px; max-height: 120px; }
+
+  /* ── Dashboard tabs ─────────────────────────────────────── */
+  .tab-bar {
+    display: flex; gap: 2px;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 10px; padding: 3px; width: fit-content; margin-bottom: 20px;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.08);
+  }
+  .tab {
+    padding: 6px 18px; border-radius: 8px;
+    font-size: 13px; font-weight: 500; color: var(--text-muted);
+    cursor: pointer; border: none; background: none; transition: all .15s;
+    display: flex; align-items: center; gap: 7px; font-family: var(--font);
+  }
+  .tab.active {
+    background: var(--accent-bg); color: var(--accent);
+    border: 1px solid rgba(0,102,245,.2);
+  }
+  .tab-icon { font-size: 14px; font-style: normal; }
+  .subtab-bar {
+    display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 18px;
+  }
+  .subtab {
+    padding: 7px 16px; font-size: 13px; font-weight: 500; color: var(--text-muted);
+    cursor: pointer; border: none; background: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: var(--font); transition: color .15s;
+  }
+  .subtab:hover { color: var(--text); }
+  .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 20px;
+    background: #F3FBF4; color: #2E9632;
+    border: 1px solid rgba(58,188,63,.25);
+  }
+  .live-dot {
+    width: 5px; height: 5px; border-radius: 50%; background: #3ABC3F;
+    animation: livepulse 2s ease-in-out infinite;
+  }
+  @keyframes livepulse {
+    0%,100% { opacity: 1; box-shadow: 0 0 4px #3ABC3F; }
+    50%      { opacity: .4; box-shadow: none; }
+  }
+  .dash-stat-grid {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+  }
+  .dash-tile {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 14px 16px;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.08);
+  }
+  .dash-tile-label {
+    font-size: 10px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px;
+  }
+  .dash-tile-val {
+    font-size: 22px; font-weight: 700; font-family: var(--mono); color: var(--accent);
+  }
+  .dash-tile-sub { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .res-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .res-row:last-child { margin-bottom: 0; }
+  .res-name { font-size: 12px; color: var(--text-muted); width: 44px; flex-shrink: 0; }
+  .res-bar-track { flex: 1; height: 6px; background: var(--border2); border-radius: 3px; overflow: hidden; }
+  .res-bar-fill  { height: 100%; border-radius: 3px; transition: width .6s ease; }
+  .res-val { font-size: 11px; font-family: var(--mono); color: var(--text); width: 56px; text-align: right; }
+  .gpu-device {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 10px; padding: 12px; margin-top: 12px;
+  }
+  .gpu-device-name { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .gpu-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 3px; }
+  .gpu-row span:last-child { color: var(--text); font-family: var(--mono); }
+  .sparkline-wrap { position: relative; }
+  #dash-spark { width: 100%; height: 72px; display: block; }
+  .spark-hint { font-size: 10px; color: var(--text-dim); margin-top: 5px; font-family: var(--mono); }
+  .dl-form-row { display: flex; gap: 10px; align-items: flex-end; }
+  .dl-form-row .field { flex: 1; margin-bottom: 0; }
+  .dl-form-row .field.narrow { flex: 0 0 130px; }
+  .dl-form-row .field.slim   { flex: 0 0 150px; }
+  .dl-task {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 10px; padding: 12px; margin-bottom: 8px;
+  }
+  .dl-task:last-child { margin-bottom: 0; }
+  .dl-task-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .dl-task-name { font-size: 13px; font-weight: 500; font-family: var(--mono); }
+  .dl-status-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; }
+  .dl-status-badge.downloading { background: #F0F6FE; color: #0052C4; }
+  .dl-status-badge.completed   { background: #F3FBF4; color: #2E9632; }
+  .dl-status-badge.failed      { background: #FFF3F3; color: #CC2727; }
+  .dl-status-badge.pending     { background: #FFFAF3; color: #CC8727; }
+  .dl-progress-track { height: 5px; background: var(--border2); border-radius: 3px; overflow: hidden; margin-bottom: 5px; }
+  .dl-progress-fill  { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
+  .dl-progress-fill.done   { background: var(--green); }
+  .dl-progress-fill.failed { background: var(--red); }
+  .dl-meta { font-size: 10px; color: var(--text-dim); display: flex; justify-content: space-between; }
+  #dl-error { font-size: 12px; color: var(--red); margin-top: 6px; display: none; }
+  #dl-tasks-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 16px 0; }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+  /* ── Models panel ─────────────────────────────────────── */
+  .model-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+  .model-card {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 16px;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.08);
+    display: flex; flex-direction: column; gap: 10px;
+    transition: border-color .15s;
+  }
+  .model-card:hover { border-color: var(--accent); }
+  .model-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .model-card-name { font-size: 13px; font-weight: 600; word-break: break-all; line-height: 1.4; }
+  .model-task-badge {
+    flex-shrink: 0; font-size: 10px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 20px;
+  }
+  .task-llm        { background: #F0F6FE; color: #0052C4; }
+  .task-tts        { background: #F5F0FE; color: #6C27CC; }
+  .task-classify   { background: #FFF3E0; color: #B85C00; }
+  .task-detection  { background: #F3FBF4; color: #2E9632; }
+  .task-other      { background: var(--bg); color: var(--text-muted); }
+  .model-card-arch { font-size: 11px; color: var(--text-muted); font-family: var(--mono); }
+  .model-card-meta { display: flex; gap: 14px; }
+  .model-meta-item { font-size: 11px; color: var(--text-dim); }
+  .model-meta-item span { color: var(--text); font-weight: 500; }
+  .model-card-actions { margin-top: auto; }
+  .model-card-actions .btn { width: 100%; justify-content: center; height: 32px; font-size: 12px; }
+  .model-card-actions .btn.downloaded {
+    background: var(--green-bg); border-color: rgba(58,188,63,.3);
+    color: var(--green-text); cursor: default;
+  }
+
+  /* Downloaded model list */
+  .dl-model-row {
+    display: flex; align-items: center; gap: 12px; padding: 12px;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 10px; margin-bottom: 8px;
+  }
+  .dl-model-row:last-child { margin-bottom: 0; }
+  .dl-model-icon { font-size: 18px; color: var(--text-dim); flex-shrink: 0; }
+  .dl-model-info { flex: 1; min-width: 0; }
+  .dl-model-name { font-size: 13px; font-weight: 500; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl-model-sub  { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .dl-model-status { font-size: 11px; padding: 2px 8px; border-radius: 12px; flex-shrink: 0; }
+  .dl-model-status.loaded   { background: #F3FBF4; color: #2E9632; }
+  .dl-model-status.cached   { background: #F0F6FE; color: #0052C4; }
+  .dl-model-status.unknown  { background: var(--bg); color: var(--text-muted); }
+
+  /* Model select row (select + refresh button) */
+  .model-select-row { display: flex; gap: 6px; align-items: flex-end; }
+  .model-select-row select { flex: 1; }
+  .model-select-row .btn-refresh {
+    flex-shrink: 0; height: 36px; width: 36px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; cursor: pointer; color: var(--text-muted);
+    font-size: 15px; transition: color .15s, border-color .15s;
+  }
+  .model-select-row .btn-refresh:hover { color: var(--accent); border-color: var(--accent); }
+  .mdl-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 28px 0; }
+  #mdl-avail-error, #mdl-dl-error { font-size: 12px; color: var(--red); margin-top: 6px; display: none; }
+  #mdl-avail-loading, #mdl-down-loading { font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px 0; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-mark">KI</div>
+      <span class="logo-name">Kolosal</span>
+      <span class="logo-sub">Inference</span>
+    </div>
+    <div class="topbar-right">
+      <span class="badge">
+        <span class="dot" id="health-dot" style="background:var(--text-dim);box-shadow:none"></span>
+        <span id="health-text">checking</span>
+      </span>
+    </div>
+  </header>
+
+  <nav class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Playground</div>
+      <button class="nav-item active" onclick="show('status',this)">
+        <i class="nav-icon ri-pulse-line"></i> Status
+      </button>
+      <button class="nav-item" onclick="show('tts',this)">
+        <i class="nav-icon ri-music-2-line"></i> TTS Stream
+      </button>
+      <button class="nav-item" onclick="show('classify',this)">
+        <i class="nav-icon ri-image-line"></i> Classify
+      </button>
+      <button class="nav-item" onclick="show('llm',this)">
+        <i class="nav-icon ri-chat-3-line"></i> LLM Chat
+      </button>
+      <button class="nav-item" onclick="show('completion',this)">
+        <i class="nav-icon ri-edit-line"></i> Completion
+      </button>
+      <button class="nav-item" onclick="show('audio',this)">
+        <i class="nav-icon ri-mic-line"></i> Audio
+      </button>
+      <button class="nav-item" onclick="showDashboard(this)">
+        <i class="nav-icon ri-dashboard-3-line"></i> Dashboard
+      </button>
+      <button class="nav-item" onclick="show('models',this)">
+        <i class="nav-icon ri-box-3-line"></i> Models
+      </button>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Tools</div>
+      <button class="nav-item" onclick="show('logs',this)">
+        <i class="nav-icon ri-file-list-3-line"></i> Logs
+      </button>
+      <button class="nav-item" onclick="show('system',this)">
+        <i class="nav-icon ri-settings-3-line"></i> System
+      </button>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Reference</div>
+      <button class="nav-item" onclick="show('endpoints',this)">
+        <i class="nav-icon ri-link-m"></i> Endpoints
+      </button>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- Status -->
+    <section class="panel active" id="panel-status">
+      <div class="panel-header">
+        <div class="panel-title">System Status</div>
+        <div class="panel-desc">Live health and runtime metrics.</div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value accent" id="s-status">—</div></div>
+        <div class="stat-card"><div class="stat-label">Uptime</div><div class="stat-value accent" id="s-uptime">—</div></div>
+        <div class="stat-card"><div class="stat-label">Active Req</div><div class="stat-value accent" id="s-active">—</div></div>
+        <div class="stat-card"><div class="stat-label">Total Req</div><div class="stat-value accent" id="s-total">—</div></div>
+        <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value accent" id="s-latency">—</div></div>
+        <div class="stat-card"><div class="stat-label">Error Rate</div><div class="stat-value accent" id="s-errors">—</div></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Raw Health JSON</div>
+        <div class="response-box ok" id="health-raw">fetching…</div>
+      </div>
+      <button class="btn btn-ghost" style="align-self:flex-start" onclick="fetchHealth()"><i class="ri-refresh-line"></i> Refresh</button>
+    </section>
+
+    <!-- TTS -->
+    <section class="panel" id="panel-tts">
+      <div class="panel-header">
+        <div class="panel-title">TTS Stream</div>
+        <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Input</div>
+        <div class="field">
+          <label>Text</label>
+          <textarea id="tts-text">Hello! This is a streaming TTS demo from Kolosal Inference. The first sentence should start playing almost immediately.</textarea>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Engine</label>
+            <div class="model-select-row">
+              <select id="tts-engine" onchange="loadVoicesForEngine(this.value,'tts-voice')"><option value="">default</option></select>
+              <button class="btn-refresh" title="Refresh engines" onclick="refreshTtsSelects()"><i class="ri-refresh-line"></i></button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Voice (optional)</label>
+            <select id="tts-voice"><option value="">default</option></select>
+          </div>
+          <div class="field">
+            <label>Speed</label>
+            <input type="number" id="tts-speed" value="1.0" min="0.5" max="2.0" step="0.1" />
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button class="btn btn-primary" id="tts-btn" onclick="runTTS()"><i class="ri-play-line"></i> Synthesise</button>
+          <button class="btn btn-ghost" onclick="stopTTS()"><i class="ri-stop-line"></i> Stop</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Output</div>
+        <div class="response-box" id="tts-status">waiting…</div>
+        <div id="tts-audio-wrap"><audio id="tts-audio" controls></audio></div>
+      </div>
+    </section>
+
+    <!-- Classify -->
+    <section class="panel" id="panel-classify">
+      <div class="panel-header">
+        <div class="panel-title">Image Classification</div>
+        <div class="panel-desc">SIMD-fused preprocessing + batched ORT inference via <span class="ep-code">POST /classify/batch</span>.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Upload Image</div>
+        <div class="dropzone" id="dropzone"
+             onclick="document.getElementById('img-file').click()"
+             ondragover="event.preventDefault();this.classList.add('over')"
+             ondragleave="this.classList.remove('over')"
+             ondrop="handleDrop(event)">
+          <div class="drop-icon"><i class="ri-image-add-line"></i></div>
+          <div>Click to upload or drag &amp; drop</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
+          <input type="file" id="img-file" accept="image/jpeg,image/png" onchange="handleFile(this.files[0])" />
+        </div>
+        <img id="img-preview" alt="preview" />
+        <div class="field" style="margin-top:12px">
+          <label>Model</label>
+          <div class="model-select-row">
+            <select id="cls-model"><option value="default">default</option></select>
+            <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field"><label>Top-K</label><input type="number" id="cls-topk" value="5" min="1" max="1000" /></div>
+          <div class="field"><label>Width</label><input type="number" id="cls-w" value="224" /></div>
+          <div class="field"><label>Height</label><input type="number" id="cls-h" value="224" /></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:8px" id="cls-btn" onclick="runClassify()" disabled><i class="ri-image-line"></i> Classify</button>
+      </div>
+      <div class="card">
+        <div class="card-title">Predictions</div>
+        <div class="response-box" id="cls-out">waiting for image…</div>
+      </div>
+    </section>
+
+    <!-- LLM Chat -->
+    <section class="panel" id="panel-llm">
+      <div class="panel-header">
+        <div class="panel-title">LLM Chat</div>
+        <div class="panel-desc">OpenAI-compatible chat via <span class="ep-code">POST /v1/chat/completions</span>.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Conversation</div>
+        <div class="chat-history" id="chat-history"></div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" placeholder="Type a message… (Enter to send)" rows="1"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+          <button class="btn btn-primary" id="chat-btn" onclick="sendChat()">Send</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Parameters</div>
+        <div class="row">
+          <div class="field">
+            <label>Model</label>
+            <div class="model-select-row">
+              <select id="chat-model"><option value="default">default</option></select>
+              <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+            </div>
+          </div>
+          <div class="field"><label>Max Tokens</label><input type="number" id="chat-maxtok" value="256" min="1" /></div>
+          <div class="field"><label>Temperature</label><input type="number" id="chat-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+        </div>
+        <button class="btn btn-ghost" style="margin-top:4px" onclick="clearChat()"><i class="ri-close-line"></i> Clear chat</button>
+      </div>
+    </section>
+
+    <!-- Completion -->
+    <section class="panel" id="panel-completion">
+      <div class="panel-header">
+        <div class="panel-title">Text Completion</div>
+        <div class="panel-desc">Raw prompt continuation via <span class="ep-code">POST /v1/completions</span>.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Prompt</div>
+        <div class="field">
+          <textarea id="cmp-prompt" style="min-height:130px">The key advantages of PagedAttention for LLM inference are:</textarea>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Model</label>
+            <div class="model-select-row">
+              <select id="cmp-model"><option value="default">default</option></select>
+              <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+            </div>
+          </div>
+          <div class="field"><label>Max Tokens</label><input type="number" id="cmp-maxtok" value="128" min="1" /></div>
+          <div class="field"><label>Temperature</label><input type="number" id="cmp-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+          <div class="field"><label>Top-P</label><input type="number" id="cmp-topp" value="1.0" min="0" max="1" step="0.05" /></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:4px" id="cmp-btn" onclick="runCompletion()"><i class="ri-play-line"></i> Complete</button>
+      </div>
+      <div class="card">
+        <div class="card-title">Result</div>
+        <div class="response-box" id="cmp-out">waiting…</div>
+      </div>
+    </section>
+
+    <!-- Audio -->
+    <section class="panel" id="panel-audio">
+      <div class="panel-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="panel-title">Audio Transcription</div>
+          <span id="audio-health-badge" style="font-size:12px;padding:2px 9px;border-radius:12px;background:var(--accent-bg);color:var(--accent)">checking…</span>
+        </div>
+        <div class="panel-desc">Upload audio and transcribe via <span class="ep-code">POST /audio/transcribe</span>.</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="card">
+          <div class="card-title">Input</div>
+          <div class="dropzone" id="audio-dropzone"
+               onclick="document.getElementById('audio-file').click()"
+               ondragover="event.preventDefault();this.classList.add('over')"
+               ondragleave="this.classList.remove('over')"
+               ondrop="handleAudioDrop(event)">
+            <div class="drop-icon"><i class="ri-mic-line"></i></div>
+            <div>Click to upload or drag &amp; drop</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">WAV · MP3 · OGG · FLAC · M4A</div>
+            <input type="file" id="audio-file" accept="audio/*" onchange="handleAudioFile(this.files[0])" />
+          </div>
+          <div id="audio-file-name" style="font-size:12px;color:var(--text-muted);margin-top:6px;display:none"></div>
+          <div class="field" style="margin-top:12px">
+            <label>Model</label>
+            <select id="audio-model"><option value="default">default</option></select>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <input type="checkbox" id="audio-timestamps" />
+            <label for="audio-timestamps" style="font-size:13px;cursor:pointer">Include timestamps</label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-primary" id="audio-btn" onclick="runAudio()" disabled>
+              <i class="ri-file-music-line"></i> Transcribe
+            </button>
+            <button class="btn btn-ghost" onclick="stopAudio()"><i class="ri-stop-line"></i> Stop</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Result</div>
+          <div class="response-box" id="audio-result-text" style="min-height:80px">Upload a file to transcribe.</div>
+          <div id="audio-meta" style="font-size:12px;color:var(--text-muted);margin-top:6px;display:none"></div>
+          <div id="audio-segments" style="display:none;margin-top:10px">
+            <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Segments</div>
+            <div id="audio-segments-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard -->
+    <section class="panel" id="panel-dashboard">
+
+      <div class="tab-bar">
+        <button class="tab active" id="dash-tab-overview"    onclick="switchDashTab('overview')">
+          <i class="tab-icon ri-bar-chart-line"></i> Overview
+        </button>
+        <button class="tab"        id="dash-tab-playground"  onclick="switchDashTab('playground')">
+          <i class="tab-icon ri-flashlight-line"></i> Playground
+        </button>
+      </div>
+
+      <!-- ── Overview ─────────────────────────────────────── -->
+      <div id="dash-overview">
+
+        <div class="panel-header" style="margin-bottom:16px">
+          <div class="panel-title" style="font-size:18px;font-weight:600;display:flex;align-items:center;gap:10px">
+            Dashboard
+            <span class="live-badge" id="dash-live-badge">
+              <span class="live-dot"></span> SSE live
+            </span>
+          </div>
+          <div class="panel-desc">Real-time inference metrics pushed every 3 s.</div>
+        </div>
+
+        <div class="dash-stat-grid">
+          <div class="dash-tile"><div class="dash-tile-label">Uptime</div><div class="dash-tile-val" id="d-uptime">—</div><div class="dash-tile-sub">since restart</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Total Req</div><div class="dash-tile-val" id="d-total">—</div><div class="dash-tile-sub">all time</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Active</div><div class="dash-tile-val" id="d-active">—</div><div class="dash-tile-sub">in flight</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Avg Latency</div><div class="dash-tile-val" id="d-latency">—</div><div class="dash-tile-sub">rolling avg</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Error Rate</div><div class="dash-tile-val" id="d-errors">—</div><div class="dash-tile-sub">last N req</div></div>
+          <div class="dash-tile"><div class="dash-tile-label">Throughput</div><div class="dash-tile-val" id="d-rps">—</div><div class="dash-tile-sub">req / sec</div></div>
+        </div>
+
+        <div class="two-col" style="margin-top:16px">
+          <div class="card">
+            <div class="card-title">Request Throughput</div>
+            <div class="sparkline-wrap">
+              <canvas id="dash-spark"></canvas>
+            </div>
+            <div class="spark-hint">60-point rolling window · updated every 3 s via SSE</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Resource Usage</div>
+            <div class="res-row">
+              <span class="res-name">CPU</span>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-cpu" style="width:0%;background:#0066F5"></div></div>
+              <span class="res-val" id="val-cpu">—</span>
+            </div>
+            <div class="res-row">
+              <span class="res-name">RAM</span>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-ram" style="width:0%;background:#FFA931"></div></div>
+              <span class="res-val" id="val-ram">—</span>
+            </div>
+            <div class="res-row">
+              <span class="res-name">GPU</span>
+              <div class="res-bar-track"><div class="res-bar-fill" id="bar-gpu" style="width:0%;background:#3ABC3F"></div></div>
+              <span class="res-val" id="val-gpu">—</span>
+            </div>
+            <div id="gpu-device-info"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-title">Model Download Manager</div>
+          <div class="dl-form-row">
+            <div class="field narrow">
+              <label>Source</label>
+              <select id="dl-source">
+                <option value="huggingface">HuggingFace</option>
+                <option value="url">URL</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Repo ID / URL</label>
+              <input type="text" id="dl-repo" placeholder="e.g. meta-llama/Llama-3.2-1B" />
+            </div>
+            <div class="field slim" id="dl-revision-wrap">
+              <label>Revision</label>
+              <input type="text" id="dl-revision" placeholder="main" />
+            </div>
+            <div class="field" style="flex:0 0 auto">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" id="dl-btn" onclick="submitDownload()"><i class="ri-download-line"></i> Download</button>
+            </div>
+          </div>
+          <div id="dl-error"></div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2)">
+            <div class="card-title" style="margin-bottom:10px">Active &amp; Recent Downloads</div>
+            <div id="dl-tasks-list">
+              <div id="dl-tasks-empty">No downloads yet.</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /#dash-overview -->
+
+      <!-- ── Playground ────────────────────────────────────── -->
+      <div id="dash-playground" style="display:none">
+
+        <div class="subtab-bar">
+          <button class="subtab active" id="pg-tab-tts"        onclick="switchPgTab('tts')"><i class="ri-music-2-line"></i> TTS Stream</button>
+          <button class="subtab"        id="pg-tab-classify"   onclick="switchPgTab('classify')"><i class="ri-image-line"></i> Classify</button>
+          <button class="subtab"        id="pg-tab-llm"        onclick="switchPgTab('llm')"><i class="ri-chat-3-line"></i> LLM Chat</button>
+          <button class="subtab"        id="pg-tab-completion" onclick="switchPgTab('completion')"><i class="ri-edit-line"></i> Completion</button>
+        </div>
+
+        <!-- TTS sub-tab -->
+        <div id="pg-tts">
+          <div class="panel-header">
+            <div class="panel-title">TTS Stream</div>
+            <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Input</div>
+            <div class="field">
+              <label>Text</label>
+              <textarea id="pg-tts-text">Hello! This is a streaming TTS demo from Kolosal Inference.</textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>Engine</label>
+                <div class="model-select-row">
+                  <select id="pg-tts-engine" onchange="loadVoicesForEngine(this.value,'pg-tts-voice')"><option value="">default</option></select>
+                  <button class="btn-refresh" title="Refresh engines" onclick="refreshTtsSelects()"><i class="ri-refresh-line"></i></button>
+                </div>
+              </div>
+              <div class="field"><label>Voice (optional)</label><select id="pg-tts-voice"><option value="">default</option></select></div>
+              <div class="field"><label>Speed</label><input type="number" id="pg-tts-speed" value="1.0" min="0.5" max="2.0" step="0.1" /></div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button class="btn btn-primary" id="pg-tts-btn" onclick="runPgTTS()"><i class="ri-play-line"></i> Synthesise</button>
+              <button class="btn btn-ghost" onclick="stopPgTTS()"><i class="ri-stop-line"></i> Stop</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Output</div>
+            <div class="response-box" id="pg-tts-status">waiting…</div>
+            <div id="pg-tts-audio-wrap" style="margin-top:12px;display:none">
+              <audio id="pg-tts-audio" controls style="width:100%"></audio>
+            </div>
+          </div>
+        </div>
+
+        <!-- Classify sub-tab -->
+        <div id="pg-classify" style="display:none">
+          <div class="panel-header">
+            <div class="panel-title">Image Classification</div>
+            <div class="panel-desc">SIMD-fused preprocessing + batched ORT inference via <span class="ep-code">POST /classify/batch</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Upload Image</div>
+            <div class="dropzone" id="pg-dropzone"
+                 onclick="document.getElementById('pg-img-file').click()"
+                 ondragover="event.preventDefault();this.classList.add('over')"
+                 ondragleave="this.classList.remove('over')"
+                 ondrop="handlePgDrop(event)">
+              <div class="drop-icon"><i class="ri-image-add-line"></i></div>
+              <div>Click to upload or drag &amp; drop</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
+              <input type="file" id="pg-img-file" accept="image/jpeg,image/png" onchange="handlePgFile(this.files[0])" />
+            </div>
+            <img id="pg-img-preview" alt="preview" style="max-width:200px;border-radius:8px;margin-top:10px;display:none" />
+            <div class="field" style="margin-top:12px">
+              <label>Model</label>
+              <div class="model-select-row">
+                <select id="pg-cls-model"><option value="default">default</option></select>
+                <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field"><label>Top-K</label><input type="number" id="pg-cls-topk" value="5" min="1" max="1000" /></div>
+              <div class="field"><label>Width</label><input type="number" id="pg-cls-w" value="224" /></div>
+              <div class="field"><label>Height</label><input type="number" id="pg-cls-h" value="224" /></div>
+            </div>
+            <button class="btn btn-primary" style="margin-top:8px" id="pg-cls-btn" onclick="runPgClassify()" disabled><i class="ri-image-line"></i> Classify</button>
+          </div>
+          <div class="card">
+            <div class="card-title">Predictions</div>
+            <div class="response-box" id="pg-cls-out">waiting for image…</div>
+          </div>
+        </div>
+
+        <!-- LLM Chat sub-tab -->
+        <div id="pg-llm" style="display:none">
+          <div class="panel-header">
+            <div class="panel-title">LLM Chat</div>
+            <div class="panel-desc">OpenAI-compatible chat via <span class="ep-code">POST /v1/chat/completions</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Conversation</div>
+            <div class="chat-history" id="pg-chat-history"></div>
+            <div class="chat-input-row">
+              <textarea id="pg-chat-input" placeholder="Type a message… (Enter to send)" rows="1"
+                onkeydown="if(event.key==='Enter'&amp;&amp;!event.shiftKey){event.preventDefault();sendPgChat();}"></textarea>
+              <button class="btn btn-primary" id="pg-chat-btn" onclick="sendPgChat()">Send</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Parameters</div>
+            <div class="row">
+              <div class="field">
+                <label>Model</label>
+                <div class="model-select-row">
+                  <select id="pg-chat-model"><option value="default">default</option></select>
+                  <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+                </div>
+              </div>
+              <div class="field"><label>Max Tokens</label><input type="number" id="pg-chat-maxtok" value="256" min="1" /></div>
+              <div class="field"><label>Temperature</label><input type="number" id="pg-chat-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+            </div>
+            <button class="btn btn-ghost" style="margin-top:4px" onclick="clearPgChat()"><i class="ri-close-line"></i> Clear chat</button>
+          </div>
+        </div>
+
+        <!-- Completion sub-tab -->
+        <div id="pg-completion" style="display:none">
+          <div class="panel-header">
+            <div class="panel-title">Text Completion</div>
+            <div class="panel-desc">Raw prompt continuation via <span class="ep-code">POST /v1/completions</span>.</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Prompt</div>
+            <div class="field">
+              <textarea id="pg-cmp-prompt" style="min-height:130px">The key advantages of PagedAttention for LLM inference are:</textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>Model</label>
+                <div class="model-select-row">
+                  <select id="pg-cmp-model"><option value="default">default</option></select>
+                  <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+                </div>
+              </div>
+              <div class="field"><label>Max Tokens</label><input type="number" id="pg-cmp-maxtok" value="128" min="1" /></div>
+              <div class="field"><label>Temperature</label><input type="number" id="pg-cmp-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+              <div class="field"><label>Top-P</label><input type="number" id="pg-cmp-topp" value="1.0" min="0" max="1" step="0.05" /></div>
+            </div>
+            <button class="btn btn-primary" style="margin-top:4px" id="pg-cmp-btn" onclick="runPgCompletion()"><i class="ri-play-line"></i> Complete</button>
+          </div>
+          <div class="card">
+            <div class="card-title">Result</div>
+            <div class="response-box" id="pg-cmp-out">waiting…</div>
+          </div>
+        </div>
+
+      </div><!-- /#dash-playground -->
+
+    </section><!-- /#panel-dashboard -->
+
+    <!-- Models -->
+    <section class="panel" id="panel-models">
+      <div class="panel-header">
+        <div class="panel-title">Models</div>
+        <div class="panel-desc">Browse the model catalog, manage downloads, and inspect loaded models.</div>
+      </div>
+
+      <div class="subtab-bar">
+        <button class="subtab active" id="mdl-tab-available" onclick="switchMdlTab('available')"><i class="ri-store-2-line"></i> Catalog</button>
+        <button class="subtab"        id="mdl-tab-downloaded" onclick="switchMdlTab('downloaded')"><i class="ri-hard-drive-2-line"></i> Downloaded</button>
+        <button class="subtab"        id="mdl-tab-sota" onclick="switchMdlTab('sota')"><i class="ri-star-line"></i> SOTA</button>
+        <button class="subtab"        id="mdl-tab-download" onclick="switchMdlTab('download')"><i class="ri-download-cloud-line"></i> Download</button>
+      </div>
+
+      <!-- Catalog sub-tab -->
+      <div id="mdl-available">
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+          <input type="text" id="mdl-search" placeholder="Filter by name, task, architecture…"
+            style="max-width:320px" oninput="filterModelCatalog()" />
+          <select id="mdl-filter-task" style="max-width:160px" onchange="filterModelCatalog()">
+            <option value="">All tasks</option>
+            <option value="llm">LLM</option>
+            <option value="tts">TTS</option>
+            <option value="classification">Classification</option>
+            <option value="detection">Detection</option>
+          </select>
+          <button class="btn btn-ghost" style="height:36px;padding:0 12px;font-size:13px" onclick="loadAvailableModels()">
+            <i class="ri-refresh-line"></i> Refresh
+          </button>
+        </div>
+        <div id="mdl-avail-error"></div>
+        <div id="mdl-avail-loading" style="display:none">Loading catalog…</div>
+        <div class="model-grid" id="mdl-avail-grid"></div>
+      </div>
+
+      <!-- Downloaded sub-tab -->
+      <div id="mdl-downloaded" style="display:none">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+          <button class="btn btn-ghost" style="height:36px;padding:0 12px;font-size:13px" onclick="loadDownloadedModels()">
+            <i class="ri-refresh-line"></i> Refresh
+          </button>
+        </div>
+        <div id="mdl-down-loading" style="display:none">Loading…</div>
+        <div id="mdl-downloaded-list"></div>
+      </div>
+
+      <!-- SOTA sub-tab -->
+      <div id="mdl-sota" style="display:none">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+          <button class="btn btn-ghost" style="height:36px;padding:0 12px;font-size:13px" onclick="loadSotaModels()">
+            <i class="ri-refresh-line"></i> Refresh
+          </button>
+        </div>
+        <div id="mdl-sota-loading" style="display:none">Loading SOTA models…</div>
+        <div class="model-grid" id="mdl-sota-grid"></div>
+      </div>
+
+      <!-- Download sub-tab -->
+      <div id="mdl-download" style="display:none">
+        <div class="card">
+          <div class="card-title">Download a Model</div>
+          <div class="dl-form-row">
+            <div class="field narrow">
+              <label>Source</label>
+              <select id="mdl-dl-source" onchange="toggleMdlRevision()">
+                <option value="huggingface">HuggingFace</option>
+                <option value="url">URL</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Repo ID / URL</label>
+              <input type="text" id="mdl-dl-repo" placeholder="e.g. meta-llama/Llama-3.2-1B" />
+            </div>
+            <div class="field slim" id="mdl-dl-revision-wrap">
+              <label>Revision</label>
+              <input type="text" id="mdl-dl-revision" placeholder="main" />
+            </div>
+            <div class="field" style="flex:0 0 auto">
+              <label>&nbsp;</label>
+              <button class="btn btn-primary" id="mdl-dl-btn" onclick="submitMdlDownload()">
+                <i class="ri-download-line"></i> Download
+              </button>
+            </div>
+          </div>
+          <div id="mdl-dl-error"></div>
+        </div>
+
+        <div class="card" style="margin-top:0">
+          <div class="card-title" style="margin-bottom:10px">Active &amp; Recent Downloads</div>
+          <div id="mdl-dl-tasks-list">
+            <div class="mdl-empty">No downloads yet.</div>
+          </div>
+        </div>
+      </div>
+
+    </section><!-- /#panel-models -->
+
+    <!-- Logs -->
+    <section class="panel" id="panel-logs">
+      <div class="panel-header">
+        <div class="panel-title">Log Viewer</div>
+        <div class="panel-desc">Browse and inspect server log files via <span class="ep-code">GET /logs</span>.</div>
+      </div>
+      <div style="display:grid;grid-template-columns:240px 1fr;gap:16px;align-items:start">
+        <div class="card" style="padding:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div class="card-title" style="margin:0">Files</div>
+            <button class="btn btn-ghost" style="padding:3px 10px;font-size:12px" onclick="loadLogs()">
+              <i class="ri-refresh-line"></i>
+            </button>
+          </div>
+          <div id="logs-file-list"><div class="mdl-empty">Loading…</div></div>
+          <div id="logs-total" style="font-size:11px;color:var(--text-dim);margin-top:8px"></div>
+        </div>
+        <div class="card" style="padding:12px;min-height:240px">
+          <div id="logs-viewer-header" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-family:var(--mono)">Select a file to view</div>
+          <pre id="logs-viewer-content" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;font-family:var(--mono);max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:var(--text)">—</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- System -->
+    <section class="panel" id="panel-system">
+      <div class="panel-header">
+        <div class="panel-title">System</div>
+        <div class="panel-desc">Server info, performance metrics, and configuration.</div>
+      </div>
+
+      <div class="subtab-bar">
+        <button class="subtab active" id="sys-tab-info"   onclick="switchSysTab('info')"><i class="ri-server-line"></i> Info</button>
+        <button class="subtab"        id="sys-tab-perf"   onclick="switchSysTab('perf')"><i class="ri-speed-line"></i> Performance</button>
+        <button class="subtab"        id="sys-tab-config" onclick="switchSysTab('config')"><i class="ri-code-s-slash-line"></i> Config</button>
+      </div>
+
+      <!-- Info sub-tab -->
+      <div id="sys-info-pane">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px" onclick="loadSystemInfo()">
+            <i class="ri-refresh-line"></i> Refresh
+          </button>
+        </div>
+        <div id="sys-info-cards" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
+      </div>
+
+      <!-- Performance sub-tab -->
+      <div id="sys-perf-pane" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px" onclick="loadPerformance()">
+            <i class="ri-refresh-line"></i> Refresh
+          </button>
+          <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px;color:var(--green);border-color:var(--green)"
+                  onclick="getOptimizationTips()">
+            <i class="ri-lightbulb-line"></i> Optimization Tips
+          </button>
+        </div>
+        <div id="sys-perf-tiles" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:16px"></div>
+        <div id="sys-opt-tips" style="display:none"></div>
+      </div>
+
+      <!-- Config sub-tab -->
+      <div id="sys-config-pane" style="display:none">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px" onclick="copyConfig()">
+            <i class="ri-file-copy-line"></i> Copy Config
+          </button>
+        </div>
+        <pre id="sys-config-content" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;font-family:var(--mono);max-height:500px;overflow:auto;white-space:pre-wrap;word-break:break-all">Loading…</pre>
+      </div>
+    </section>
+
+    <!-- Endpoints -->
+    <section class="panel" id="panel-endpoints">
+      <div class="panel-header">
+        <div class="panel-title">API Reference</div>
+        <div class="panel-desc">All registered routes on this server.</div>
+      </div>
+      <div class="card">
+        <div class="card-title">TTS</div>
+        <div class="endpoint-list">
+          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/tts/synthesize</span><span class="ep-desc">Batch synthesis → WAV</span></div>
+          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/tts/stream</span><span class="ep-desc">Streaming synthesis → chunked audio/pcm</span></div>
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/tts/engines</span><span class="ep-desc">List loaded TTS engines</span></div>
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/tts/health</span><span class="ep-desc">TTS subsystem health</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Classification</div>
+        <div class="endpoint-list">
+          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/classify/batch</span><span class="ep-desc">SIMD preprocess + batched ORT inference</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">LLM — OpenAI-compatible</div>
+        <div class="endpoint-list">
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/v1/models</span><span class="ep-desc">List available models</span></div>
+          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/v1/completions</span><span class="ep-desc">Text completion</span></div>
+          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/v1/chat/completions</span><span class="ep-desc">Chat completion</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">System</div>
+        <div class="endpoint-list">
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/health</span><span class="ep-desc">Liveness + readiness</span></div>
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/system/info</span><span class="ep-desc">GPU / CPU / memory info</span></div>
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/performance</span><span class="ep-desc">Throughput metrics</span></div>
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/stats</span><span class="ep-desc">Request statistics</span></div>
+          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/metrics</span><span class="ep-desc">Prometheus scrape endpoint</span></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+/* ── Panel navigation ──────────────────────────────────── */
+function show(id, btn) {
+  closeDashboardStream();
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  btn.classList.add('active');
+  if (id === 'models') switchMdlTab('available');
+  if (id === 'audio')  loadAudioHealth();
+  if (id === 'logs')   loadLogs();
+  if (id === 'system') switchSysTab('info');
+}
+
+/* ── Helpers ───────────────────────────────────────────── */
+function setBox(id, text, cls) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className   = 'response-box' + (cls ? ' ' + cls : '');
+}
+function fmtUptime(s) {
+  if (s == null) return '—';
+  if (s < 60)    return s + 's';
+  if (s < 3600)  return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+function setBtnLoading(id, loading) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = loading;
+  // spinner is a child element; toggle visibility
+  const sp = btn.querySelector('.spinner');
+  if (sp) sp.style.display = loading ? 'inline-block' : 'none';
+}
+
+/* ── Health / Status ───────────────────────────────────── */
+async function fetchHealth() {
+  try {
+    const r    = await fetch('/health');
+    const data = await r.json();
+    const ok   = r.ok && data.healthy !== false;
+    const dot  = document.getElementById('health-dot');
+    dot.style.background  = ok ? 'var(--green)' : 'var(--red)';
+    dot.style.boxShadow   = ok ? '0 0 6px var(--green)' : '0 0 6px var(--red)';
+    document.getElementById('health-text').textContent = ok ? 'online' : 'degraded';
+    setBox('health-raw', JSON.stringify(data, null, 2), 'ok');
+
+    const sv = (id, v) => { document.getElementById(id).textContent = v; };
+    sv('s-status',  ok ? '● OK' : '● ERR');
+    document.getElementById('s-status').className = 'stat-value ' + (ok ? 'ok' : 'err');
+    sv('s-uptime',  fmtUptime(data.uptime_seconds));
+    sv('s-active',  data.active_requests  ?? '—');
+    sv('s-total',   data.total_requests   ?? '—');
+    sv('s-latency', data.avg_latency_ms != null ? data.avg_latency_ms.toFixed(1) + 'ms' : '—');
+    sv('s-errors',  data.error_rate      != null ? (data.error_rate * 100).toFixed(1) + '%' : '—');
+  } catch (e) {
+    document.getElementById('health-dot').style.background = 'var(--red)';
+    document.getElementById('health-text').textContent = 'offline';
+    setBox('health-raw', 'Error: ' + e.message, 'error');
+    document.getElementById('s-status').textContent  = '● ERR';
+    document.getElementById('s-status').className    = 'stat-value err';
+  }
+}
+fetchHealth();
+setInterval(fetchHealth, 10000);
+
+/* ── TTS ───────────────────────────────────────────────── */
+let ttsController = null;
+
+async function runTTS() {
+  const text   = document.getElementById('tts-text').value.trim();
+  const engine = document.getElementById('tts-engine').value.trim() || null;
+  const voice  = document.getElementById('tts-voice').value.trim()  || null;
+  const speed  = parseFloat(document.getElementById('tts-speed').value) || 1.0;
+  if (!text) return;
+
+  document.getElementById('tts-btn').disabled = true;
+  setBox('tts-status', 'Connecting to /tts/stream…', 'stream');
+
+  ttsController = new AbortController();
+  const chunks  = [];
+
+  try {
+    const body = { text, speed };
+    if (engine) body.engine = engine;
+    if (voice)  body.voice  = voice;
+
+    const resp = await fetch('/tts/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ttsController.signal,
+    });
+    if (!resp.ok) {
+      const t = await resp.text();
+      throw new Error(resp.status + ' — ' + t);
+    }
+
+    const reader = resp.body.getReader();
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+      setBox('tts-status', 'Received ' + received + ' bytes (' + chunks.length + ' chunks)…', 'stream');
+    }
+
+    /* assemble PCM16-LE → WAV blob → play */
+    const total  = chunks.reduce((s, c) => s + c.byteLength, 0);
+    const pcm    = new Uint8Array(total);
+    let   off    = 0;
+    for (const c of chunks) { pcm.set(c, off); off += c.byteLength; }
+
+    const wav   = buildWav(pcm, 24000, 1);
+    const url   = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+    const audio = document.getElementById('tts-audio');
+    audio.src   = url;
+    document.getElementById('tts-audio-wrap').style.display = 'block';
+    audio.play();
+    setBox('tts-status', 'Done — ' + total + ' bytes, ' + chunks.length + ' chunks. Playing.', 'ok');
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      setBox('tts-status', 'Stopped.');
+    } else {
+      setBox('tts-status', 'Error: ' + e.message, 'error');
+    }
+  } finally {
+    document.getElementById('tts-btn').disabled = false;
+  }
+}
+
+function stopTTS() { ttsController && ttsController.abort(); }
+
+function buildWav(pcm, sampleRate, ch) {
+  const len = pcm.byteLength;
+  const buf = new ArrayBuffer(44 + len);
+  const v   = new DataView(buf);
+  const w   = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + len, true); w(8, 'WAVE');
+  w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true); v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * ch * 2, true); v.setUint16(32, ch * 2, true);
+  v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, len, true);
+  new Uint8Array(buf, 44).set(pcm);
+  return buf;
+}
+
+/* ── Image classify ────────────────────────────────────── */
+let imgBase64 = null;
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+}
+
+function handleFile(f) {
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const dataUrl = ev.target.result;
+    imgBase64 = dataUrl.split(',')[1];
+    const preview = document.getElementById('img-preview');
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+    document.getElementById('cls-btn').disabled = false;
+    setBox('cls-out', 'Image loaded — click Classify.');
+  };
+  reader.readAsDataURL(f);
+}
+
+async function runClassify() {
+  if (!imgBase64) return;
+  document.getElementById('cls-btn').disabled = true;
+  setBox('cls-out', 'Sending to /classify/batch…', 'stream');
+  try {
+    const resp = await fetch('/classify/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        images:       [imgBase64],
+        top_k:        parseInt(document.getElementById('cls-topk').value) || 5,
+        model_width:  parseInt(document.getElementById('cls-w').value)    || 224,
+        model_height: parseInt(document.getElementById('cls-h').value)    || 224,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || JSON.stringify(data));
+    const preds = data.results && data.results[0] ? data.results[0] : [];
+    if (preds.length === 0) {
+      setBox('cls-out', '(no predictions — no model loaded on this backend)');
+    } else {
+      const lines = preds.map((p, i) =>
+        (i + 1) + '.  ' + p.label.padEnd(32) + (p.confidence * 100).toFixed(2) + '%'
+      ).join('\n');
+      setBox('cls-out', lines, 'ok');
+    }
+  } catch (e) {
+    setBox('cls-out', 'Error: ' + e.message, 'error');
+  } finally {
+    document.getElementById('cls-btn').disabled = false;
+  }
+}
+
+/* ── LLM Chat ──────────────────────────────────────────── */
+const chatHistory = [];
+
+function appendMsg(role, content) {
+  chatHistory.push({ role, content });
+  const hist     = document.getElementById('chat-history');
+  const isCls    = role === 'user' ? 'user' : 'asst';
+  const outer    = document.createElement('div');
+  outer.className = 'msg ' + isCls;
+  const roleEl   = document.createElement('div');
+  roleEl.className = 'msg-role';
+  roleEl.textContent = role === 'user' ? 'you' : 'assistant';
+  const bodyEl   = document.createElement('div');
+  bodyEl.className = 'msg-body';
+  bodyEl.textContent = content;          // textContent — no XSS risk
+  outer.appendChild(roleEl);
+  outer.appendChild(bodyEl);
+  hist.appendChild(outer);
+  hist.scrollTop = hist.scrollHeight;
+}
+
+/* seed the welcome message */
+appendMsg('assistant', "Hi! I'm the Kolosal inference endpoint. Ask me anything — I'll forward it to the LLM backend.");
+
+async function sendChat() {
+  const inp = document.getElementById('chat-input');
+  const msg = inp.value.trim();
+  if (!msg) return;
+  inp.value = '';
+  appendMsg('user', msg);
+
+  const btn = document.getElementById('chat-btn');
+  btn.disabled = true;
+  btn.textContent = '…';
+
+  try {
+    const messages = chatHistory.map(m => ({
+      role:    m.role === 'asst' ? 'assistant' : m.role,
+      content: m.content,
+    }));
+    const resp = await fetch('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model:       document.getElementById('chat-model').value || 'default',
+        messages,
+        max_tokens:  parseInt(document.getElementById('chat-maxtok').value) || 256,
+        temperature: parseFloat(document.getElementById('chat-temp').value) || 0.7,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || JSON.stringify(data));
+    const text = (data.choices && data.choices[0] && data.choices[0].message)
+      ? data.choices[0].message.content
+      : '(empty response)';
+    appendMsg('assistant', text);
+  } catch (e) {
+    appendMsg('assistant', 'Error: ' + e.message);
+  } finally {
+    btn.disabled  = false;
+    btn.textContent = 'Send';
+  }
+}
+
+function clearChat() {
+  chatHistory.length = 0;
+  document.getElementById('chat-history').textContent = '';
+  appendMsg('assistant', "Chat cleared. Ask me anything!");
+}
+
+/* ── Text Completion ───────────────────────────────────── */
+async function runCompletion() {
+  const prompt = document.getElementById('cmp-prompt').value.trim();
+  if (!prompt) return;
+  document.getElementById('cmp-btn').disabled = true;
+  setBox('cmp-out', 'Sending to /v1/completions…', 'stream');
+  try {
+    const resp = await fetch('/v1/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model:       document.getElementById('cmp-model').value  || 'default',
+        prompt,
+        max_tokens:  parseInt(document.getElementById('cmp-maxtok').value)  || 128,
+        temperature: parseFloat(document.getElementById('cmp-temp').value)  || 0.7,
+        top_p:       parseFloat(document.getElementById('cmp-topp').value)  || 1.0,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || JSON.stringify(data));
+    const text  = (data.choices && data.choices[0]) ? data.choices[0].text : '(empty)';
+    const usage = data.usage;
+    const footer = usage
+      ? '\n\n── ' + usage.prompt_tokens + 'p + ' + usage.completion_tokens + 'c = ' + usage.total_tokens + 't'
+      : '';
+    setBox('cmp-out', text + footer, 'ok');
+  } catch (e) {
+    setBox('cmp-out', 'Error: ' + e.message, 'error');
+  } finally {
+    document.getElementById('cmp-btn').disabled = false;
+  }
+}
+/* ── XSS-safe helper ────────────────────────────────────── */
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/* ── Dashboard ─────────────────────────────────────────── */
+let dashES      = null;
+const sparkData = new Array(60).fill(0);
+let   sparkCtx  = null;
+
+function showDashboard(btn) {
+  closeDashboardStream();
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-dashboard').classList.add('active');
+  btn.classList.add('active');
+  switchDashTab('overview');
+  openDashboardStream();
+}
+
+function openDashboardStream() {
+  if (dashES) return;
+  dashES = new EventSource('/dashboard/stream');
+  dashES.onmessage = (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      updateDashTiles(ev.metrics   || {});
+      updateSparkline(ev.metrics   ? (ev.metrics.throughput_per_s || 0) : 0);
+      updateResourceBars(ev.metrics || {}, ev.gpu || []);
+      updateDownloadsList(ev.downloads || []);
+      const badge = document.getElementById('dash-live-badge');
+      if (badge) badge.style.opacity = '1';
+    } catch (_) {}
+  };
+  dashES.onerror = () => {
+    const badge = document.getElementById('dash-live-badge');
+    if (badge) badge.style.opacity = '0.4';
+  };
+}
+
+function closeDashboardStream() {
+  if (dashES) { dashES.close(); dashES = null; }
+}
+
+function fmtUptimeDash(s) {
+  if (!s) return '0s';
+  if (s < 60)   return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+function updateDashTiles(m) {
+  const sv = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  sv('d-uptime',  fmtUptimeDash(m.uptime_s));
+  sv('d-total',   m.total_req   != null ? m.total_req.toLocaleString()         : '—');
+  sv('d-active',  m.active_req  != null ? m.active_req                         : '—');
+  sv('d-latency', m.avg_latency_ms != null ? m.avg_latency_ms.toFixed(1) + 'ms': '—');
+  sv('d-errors',  m.error_rate  != null ? (m.error_rate * 100).toFixed(1) + '%': '—');
+  sv('d-rps',     m.throughput_per_s != null ? m.throughput_per_s.toFixed(1) + '/s' : '—');
+}
+
+function updateSparkline(rps) {
+  sparkData.shift();
+  sparkData.push(rps);
+  const canvas = document.getElementById('dash-spark');
+  if (!canvas) return;
+  if (!sparkCtx) sparkCtx = canvas.getContext('2d');
+  const ctx = sparkCtx;
+  const W   = canvas.clientWidth || canvas.offsetWidth || 300;
+  const H   = 72;
+  canvas.width  = W;
+  canvas.height = H;
+  const max  = Math.max(...sparkData, 1);
+  const step = W / (sparkData.length - 1);
+  ctx.clearRect(0, 0, W, H);
+  ctx.beginPath(); ctx.moveTo(0, H);
+  sparkData.forEach((v, i) => ctx.lineTo(i * step, H - (v / max) * (H - 6)));
+  ctx.lineTo(W, H); ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(0,102,245,0.18)');
+  grad.addColorStop(1, 'rgba(0,102,245,0.02)');
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  sparkData.forEach((v, i) => {
+    const x = i * step, y = H - (v / max) * (H - 6);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = '#0066F5'; ctx.lineWidth = 1.5; ctx.stroke();
+  const lx = (sparkData.length - 1) * step;
+  const ly = H - (sparkData[sparkData.length - 1] / max) * (H - 6);
+  ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#0066F5'; ctx.fill();
+}
+
+function updateResourceBars(m, gpuList) {
+  function setBar(barId, valId, pct, text) {
+    const bar = document.getElementById(barId);
+    const val = document.getElementById(valId);
+    if (bar) bar.style.width = Math.min(100, pct || 0) + '%';
+    if (val) val.textContent = text;
+  }
+  setBar('bar-cpu', 'val-cpu', m.cpu_pct,
+    m.cpu_pct != null ? m.cpu_pct.toFixed(1) + '%' : '—');
+  const ramPct = m.mem_total_mb > 0 ? (m.mem_used_mb / m.mem_total_mb) * 100 : 0;
+  setBar('bar-ram', 'val-ram', ramPct,
+    m.mem_used_mb != null
+      ? (m.mem_used_mb >= 1024 ? (m.mem_used_mb / 1024).toFixed(1) + ' GB' : m.mem_used_mb + ' MB')
+      : '—');
+  const g0 = gpuList[0];
+  setBar('bar-gpu', 'val-gpu',
+    g0 ? (g0.util_pct || 0) : 0,
+    g0 && g0.util_pct != null ? g0.util_pct + '%' : '—');
+
+  // GPU device cards — built with safe DOM methods, no innerHTML for untrusted values
+  const container = document.getElementById('gpu-device-info');
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+  gpuList.forEach(g => {
+    const card  = document.createElement('div'); card.className = 'gpu-device';
+    const name  = document.createElement('div'); name.className = 'gpu-device-name';
+    name.textContent = g.name;
+    card.appendChild(name);
+    const rows = [
+      ['VRAM free', (g.vram_free_mb / 1024).toFixed(1) + ' GB / ' + (g.vram_total_mb / 1024).toFixed(1) + ' GB'],
+    ];
+    if (g.temp_c   != null) rows.push(['Temperature', g.temp_c   + ' °C']);
+    if (g.util_pct != null) rows.push(['Utilisation', g.util_pct + '%']);
+    rows.forEach(([label, value]) => {
+      const row = document.createElement('div'); row.className = 'gpu-row';
+      const l   = document.createElement('span'); l.textContent = label;
+      const v   = document.createElement('span'); v.textContent = value;
+      row.appendChild(l); row.appendChild(v); card.appendChild(row);
+    });
+    container.appendChild(card);
+  });
+}
+
+function updateDownloadsList(downloads) {
+  const list  = document.getElementById('dl-tasks-list');
+  const empty = document.getElementById('dl-tasks-empty');
+  if (!list) return;
+  const visible = downloads.slice(0, 8);
+  if (!visible.length) {
+    if (empty) empty.style.display = 'block';
+    list.querySelectorAll('.dl-task').forEach(el => el.remove());
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  const newIds = new Set(visible.map(t => t.id));
+  list.querySelectorAll('.dl-task').forEach(el => {
+    if (!newIds.has(el.dataset.id)) el.remove();
+  });
+  visible.forEach(t => {
+    const statusLower = t.status.toLowerCase();
+    const badgeCls    = statusLower.includes('download') ? 'downloading'
+                      : statusLower.includes('complet')  ? 'completed'
+                      : statusLower.includes('fail')     ? 'failed' : 'pending';
+    const fillCls     = badgeCls === 'completed' ? ' done' : badgeCls === 'failed' ? ' failed' : '';
+    const pct         = Math.round((t.progress || 0) * 100);
+    const dlMB        = t.downloaded_mb || 0;
+    const totStr      = t.total_mb != null ? t.total_mb + ' MB' : '?';
+
+    let el = list.querySelector('.dl-task[data-id="' + t.id + '"]');
+    if (!el) {
+      el = document.createElement('div');
+      el.className  = 'dl-task';
+      el.dataset.id = t.id;
+      list.prepend(el);
+    }
+    // Build using safe DOM manipulation — model_name is user-supplied data
+    while (el.firstChild) el.removeChild(el.firstChild);
+
+    const header = document.createElement('div'); header.className = 'dl-task-header';
+    const nameEl = document.createElement('span'); nameEl.className = 'dl-task-name';
+    nameEl.textContent = t.model_name;                      // textContent — XSS safe
+    const badge  = document.createElement('span'); badge.className  = 'dl-status-badge ' + badgeCls;
+    badge.textContent  = t.status;                          // textContent — XSS safe
+    header.appendChild(nameEl); header.appendChild(badge); el.appendChild(header);
+
+    const track = document.createElement('div'); track.className = 'dl-progress-track';
+    const fill  = document.createElement('div'); fill.className  = 'dl-progress-fill' + fillCls;
+    fill.style.width = pct + '%';
+    track.appendChild(fill); el.appendChild(track);
+
+    const meta = document.createElement('div'); meta.className = 'dl-meta';
+    const ml   = document.createElement('span'); ml.textContent = dlMB + ' MB / ' + totStr;
+    const mr   = document.createElement('span'); mr.textContent = pct + '%';
+    meta.appendChild(ml); meta.appendChild(mr); el.appendChild(meta);
+  });
+}
+
+async function submitDownload() {
+  const source   = document.getElementById('dl-source').value;
+  const repo     = document.getElementById('dl-repo').value.trim();
+  const revision = document.getElementById('dl-revision').value.trim();
+  const errEl    = document.getElementById('dl-error');
+  const btn      = document.getElementById('dl-btn');
+  if (!repo) { showDlError('Repo ID or URL is required.'); return; }
+  btn.disabled = true;
+  if (errEl) errEl.style.display = 'none';
+  const body = {
+    model_name:  repo.split('/').pop() || repo,
+    source_type: source,
+  };
+  if (source === 'huggingface') {
+    body.repo_id = repo;
+    if (revision) body.revision = revision;
+  } else {
+    body.url = repo;
+  }
+  try {
+    const res = await fetch('/api/models/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      showDlError(res.status + ' — ' + t);
+    }
+  } catch (e) {
+    showDlError('Network error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function showDlError(msg) {
+  const el = document.getElementById('dl-error');
+  if (!el) return;
+  el.textContent  = msg;   // textContent — XSS safe
+  el.style.display = 'block';
+}
+
+/* ── Dashboard tab switching ───────────────────────────── */
+function switchDashTab(tab) {
+  const overview   = document.getElementById('dash-overview');
+  const playground = document.getElementById('dash-playground');
+  const tOv        = document.getElementById('dash-tab-overview');
+  const tPg        = document.getElementById('dash-tab-playground');
+  if (!overview || !playground) return;
+  if (tab === 'overview') {
+    overview.style.display   = '';     playground.style.display = 'none';
+    tOv.classList.add('active');       tPg.classList.remove('active');
+  } else {
+    overview.style.display   = 'none'; playground.style.display = '';
+    tOv.classList.remove('active');    tPg.classList.add('active');
+  }
+}
+
+/* ── Playground sub-tab switching ──────────────────────── */
+const PG_SUBTABS = ['tts', 'classify', 'llm', 'completion'];
+function switchPgTab(tab) {
+  PG_SUBTABS.forEach(id => {
+    const el  = document.getElementById('pg-' + id);
+    const btn = document.getElementById('pg-tab-' + id);
+    if (el)  el.style.display  = id === tab ? '' : 'none';
+    if (btn) btn.classList[id === tab ? 'add' : 'remove']('active');
+  });
+}
+
+/* ── Playground TTS ─────────────────────────────────────── */
+let pgTtsController = null;
+async function runPgTTS() {
+  const text   = document.getElementById('pg-tts-text').value.trim();
+  const engine = document.getElementById('pg-tts-engine').value.trim() || null;
+  const voice  = document.getElementById('pg-tts-voice').value.trim()  || null;
+  const speed  = parseFloat(document.getElementById('pg-tts-speed').value) || 1.0;
+  if (!text) return;
+  document.getElementById('pg-tts-btn').disabled = true;
+  setBox('pg-tts-status', 'Connecting to /tts/stream…', 'stream');
+  pgTtsController = new AbortController();
+  const chunks = [];
+  try {
+    const body = { text, speed };
+    if (engine) body.engine = engine;
+    if (voice)  body.voice  = voice;
+    const resp = await fetch('/tts/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: pgTtsController.signal,
+    });
+    if (!resp.ok) throw new Error(resp.status + ' — ' + await resp.text());
+    const reader = resp.body.getReader();
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); received += value.byteLength;
+      setBox('pg-tts-status', 'Received ' + received + ' bytes (' + chunks.length + ' chunks)…', 'stream');
+    }
+    const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+    const pcm   = new Uint8Array(total);
+    let off = 0; for (const c of chunks) { pcm.set(c, off); off += c.byteLength; }
+    const wav  = buildWav(pcm, 24000, 1);
+    const url  = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+    const audio = document.getElementById('pg-tts-audio');
+    audio.src  = url;
+    document.getElementById('pg-tts-audio-wrap').style.display = 'block';
+    audio.play();
+    setBox('pg-tts-status', 'Done — ' + total + ' bytes. Playing.', 'ok');
+  } catch (e) {
+    if (e.name === 'AbortError') setBox('pg-tts-status', 'Stopped.');
+    else setBox('pg-tts-status', 'Error: ' + e.message, 'error');
+  } finally { document.getElementById('pg-tts-btn').disabled = false; }
+}
+function stopPgTTS() { pgTtsController && pgTtsController.abort(); }
+
+/* ── Playground Classify ────────────────────────────────── */
+let pgImgBase64 = null;
+function handlePgDrop(e) {
+  e.preventDefault();
+  document.getElementById('pg-dropzone').classList.remove('over');
+  const f = e.dataTransfer.files[0]; if (f) handlePgFile(f);
+}
+function handlePgFile(f) {
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const dataUrl = ev.target.result;
+    pgImgBase64   = dataUrl.split(',')[1];
+    const preview = document.getElementById('pg-img-preview');
+    preview.src   = dataUrl; preview.style.display = 'block';
+    document.getElementById('pg-cls-btn').disabled = false;
+    setBox('pg-cls-out', 'Image loaded — click Classify.');
+  };
+  reader.readAsDataURL(f);
+}
+async function runPgClassify() {
+  if (!pgImgBase64) return;
+  const topk = parseInt(document.getElementById('pg-cls-topk').value) || 5;
+  const w    = parseInt(document.getElementById('pg-cls-w').value)    || 224;
+  const h    = parseInt(document.getElementById('pg-cls-h').value)    || 224;
+  document.getElementById('pg-cls-btn').disabled = true;
+  setBox('pg-cls-out', 'Classifying…', 'stream');
+  try {
+    const res = await fetch('/classify/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: [pgImgBase64], top_k: topk, model_width: w, model_height: h }),
+    });
+    const data = await res.json();
+    setBox('pg-cls-out', JSON.stringify(data, null, 2), res.ok ? 'ok' : 'error');
+  } catch (e) { setBox('pg-cls-out', 'Error: ' + e.message, 'error'); }
+  finally { document.getElementById('pg-cls-btn').disabled = false; }
+}
+
+/* ── Playground LLM Chat ────────────────────────────────── */
+let pgChatHistory = [];
+function clearPgChat() {
+  pgChatHistory = [];
+  const h = document.getElementById('pg-chat-history');
+  if (h) while (h.firstChild) h.removeChild(h.firstChild);
+}
+function appendPgMsg(role, text) {
+  const container = document.getElementById('pg-chat-history');
+  if (!container) return;
+  const div  = document.createElement('div');  div.className  = 'msg ' + (role === 'user' ? 'user' : 'asst');
+  const rlEl = document.createElement('div');  rlEl.className = 'msg-role';
+  rlEl.textContent = role === 'user' ? 'You' : 'Assistant';
+  const body = document.createElement('div');  body.className = 'msg-body';
+  body.textContent = text;   // textContent — XSS safe
+  div.appendChild(rlEl); div.appendChild(body); container.appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth' });
+}
+async function sendPgChat() {
+  const input  = document.getElementById('pg-chat-input');
+  const text   = input.value.trim(); if (!text) return;
+  input.value  = '';
+  const model  = document.getElementById('pg-chat-model').value.trim()    || 'default';
+  const maxtok = parseInt(document.getElementById('pg-chat-maxtok').value) || 256;
+  const temp   = parseFloat(document.getElementById('pg-chat-temp').value) || 0.7;
+  pgChatHistory.push({ role: 'user', content: text });
+  appendPgMsg('user', text);
+  document.getElementById('pg-chat-btn').disabled = true;
+  try {
+    const res  = await fetch('/v1/chat/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: pgChatHistory, max_tokens: maxtok, temperature: temp }),
+    });
+    const data  = await res.json();
+    const reply = data.choices?.[0]?.message?.content || JSON.stringify(data);
+    pgChatHistory.push({ role: 'assistant', content: reply });
+    appendPgMsg('assistant', reply);
+  } catch (e) { appendPgMsg('assistant', 'Error: ' + e.message); }
+  finally { document.getElementById('pg-chat-btn').disabled = false; }
+}
+
+/* ── Playground Completion ──────────────────────────────── */
+async function runPgCompletion() {
+  const prompt  = document.getElementById('pg-cmp-prompt').value;
+  const model   = document.getElementById('pg-cmp-model').value.trim()    || 'default';
+  const maxtok  = parseInt(document.getElementById('pg-cmp-maxtok').value) || 128;
+  const temp    = parseFloat(document.getElementById('pg-cmp-temp').value) || 0.7;
+  const topp    = parseFloat(document.getElementById('pg-cmp-topp').value) || 1.0;
+  document.getElementById('pg-cmp-btn').disabled = true;
+  setBox('pg-cmp-out', 'Generating…', 'stream');
+  try {
+    const res  = await fetch('/v1/completions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt, max_tokens: maxtok, temperature: temp, top_p: topp }),
+    });
+    const data = await res.json();
+    const txt  = data.choices?.[0]?.text || JSON.stringify(data, null, 2);
+    setBox('pg-cmp-out', txt, res.ok ? 'ok' : 'error');
+  } catch (e) { setBox('pg-cmp-out', 'Error: ' + e.message, 'error'); }
+  finally { document.getElementById('pg-cmp-btn').disabled = false; }
+}
+
+/* ── DOM helpers ────────────────────────────────────────────── */
+function mkEl(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls)  n.className   = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function clearEl(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
+
+/* ── Model select population ────────────────────────────────── */
+const LLM_SEL  = ['chat-model', 'cmp-model', 'pg-chat-model', 'pg-cmp-model'];
+const CLS_SEL  = ['cls-model', 'pg-cls-model'];
+const TTS_SEL  = ['tts-engine', 'pg-tts-engine'];
+
+function fillSelect(id, items, valueFn, labelFn, defLabel) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  const prev = sel.value;
+  clearEl(sel);
+  const defOpt = document.createElement('option');
+  defOpt.value = 'default'; defOpt.textContent = defLabel || 'default'; sel.appendChild(defOpt);
+  items.forEach(item => {
+    const opt = document.createElement('option');
+    opt.value = valueFn(item); opt.textContent = labelFn(item); sel.appendChild(opt);
+  });
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+async function refreshModelSelects() {
+  try {
+    const r = await fetch('/api/models/downloaded');
+    if (!r.ok) return;
+    const data   = await r.json();
+    const models = Array.isArray(data) ? data : (data.models || []);
+    const idOf   = m => m.id || m.model_id || m.name || '';
+    const nameOf = m => m.name || m.id || m.model_id || '—';
+    LLM_SEL.forEach(id => fillSelect(id, models, idOf, nameOf, 'default'));
+    CLS_SEL.forEach(id => fillSelect(id, models, idOf, nameOf, 'default'));
+  } catch (_) {}
+}
+
+async function refreshTtsSelects() {
+  try {
+    const r = await fetch('/tts/engines');
+    if (!r.ok) return;
+    const data    = await r.json();
+    const engines = Array.isArray(data) ? data : (data.engines || []);
+    const idOf    = e => (typeof e === 'string' ? e : (e.name || e.id || ''));
+    TTS_SEL.forEach(id => fillSelect(id, engines, idOf, idOf, 'default'));
+    const firstId = engines.length ? idOf(engines[0]) : '';
+    if (firstId) {
+      loadVoicesForEngine(firstId, 'tts-voice');
+      loadVoicesForEngine(firstId, 'pg-tts-voice');
+    }
+  } catch (_) {}
+}
+
+async function loadVoicesForEngine(engineId, voiceSelectId) {
+  const sel = document.getElementById(voiceSelectId);
+  if (!sel) return;
+  clearEl(sel);
+  const def = document.createElement('option');
+  def.value = ''; def.textContent = 'default'; sel.appendChild(def);
+  if (!engineId) return;
+  try {
+    const r = await fetch('/tts/engines/' + encodeURIComponent(engineId) + '/voices');
+    if (!r.ok) return;
+    const data   = await r.json();
+    const voices = Array.isArray(data) ? data : (data.voices || []);
+    voices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value       = v.id || v.name || '';
+      opt.textContent = (v.name || v.id || '') + (v.language ? ' (' + v.language + ')' : '');
+      sel.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+refreshModelSelects();
+refreshTtsSelects();
+
+/* ── Models panel ───────────────────────────────────────────── */
+const MDL_SUBTABS = ['available', 'downloaded', 'sota', 'download'];
+function switchMdlTab(tab) {
+  MDL_SUBTABS.forEach(id => {
+    const pane = document.getElementById('mdl-' + id);
+    const btn  = document.getElementById('mdl-tab-' + id);
+    if (pane) pane.style.display = id === tab ? '' : 'none';
+    if (btn)  btn.classList[id === tab ? 'add' : 'remove']('active');
+  });
+  if (tab === 'available')  loadAvailableModels();
+  if (tab === 'downloaded') loadDownloadedModels();
+  if (tab === 'sota')       loadSotaModels();
+}
+
+/* — Catalog — */
+let availableCatalog = [];
+
+async function loadAvailableModels() {
+  const grid = document.getElementById('mdl-avail-grid');
+  const load = document.getElementById('mdl-avail-loading');
+  const err  = document.getElementById('mdl-avail-error');
+  if (!grid) return;
+  clearEl(grid); err.style.display = 'none'; load.style.display = '';
+  try {
+    const r    = await fetch('/api/models');
+    const data = await r.json();
+    availableCatalog = Array.isArray(data) ? data : (data.models || []);
+    renderCatalog(availableCatalog);
+  } catch (e) {
+    err.textContent = 'Failed to load catalog: ' + e.message; err.style.display = 'block';
+    const msg = mkEl('div', 'mdl-empty', 'Could not reach /api/models.');
+    grid.appendChild(msg);
+  } finally { load.style.display = 'none'; }
+}
+
+function taskBadgeCls(task) {
+  const t = (task || '').toLowerCase();
+  if (t.includes('llm') || t.includes('language') || t.includes('chat') || t.includes('text')) return 'task-llm';
+  if (t.includes('tts') || t.includes('speech') || t.includes('audio')) return 'task-tts';
+  if (t.includes('classif') || t.includes('vision')) return 'task-classify';
+  if (t.includes('detect') || t.includes('yolo')) return 'task-detection';
+  return 'task-other';
+}
+
+function buildModelCard(m) {
+  const card = mkEl('div', 'model-card');
+
+  // top row: name + task badge
+  const top  = mkEl('div', 'model-card-top');
+  top.appendChild(mkEl('div', 'model-card-name', m.name || m.id || m.model_id || '—'));
+  const task = m.task || m.model_type || 'other';
+  top.appendChild(mkEl('span', 'model-task-badge ' + taskBadgeCls(task), task));
+  card.appendChild(top);
+
+  if (m.architecture) card.appendChild(mkEl('div', 'model-card-arch', m.architecture));
+
+  // meta row
+  const meta = mkEl('div', 'model-card-meta');
+  if (m.size || m.size_estimate) {
+    const item = mkEl('div', 'model-meta-item');
+    item.appendChild(document.createTextNode('Size '));
+    item.appendChild(mkEl('span', null, m.size || m.size_estimate));
+    meta.appendChild(item);
+  }
+  card.appendChild(meta);
+
+  // action button
+  const actions = mkEl('div', 'model-card-actions');
+  const status  = (m.status || '').toLowerCase();
+  const done    = status === 'downloaded' || status === 'cached' || status === 'loaded';
+  if (done) {
+    const btn = mkEl('button', 'btn downloaded');
+    btn.disabled = true;
+    const ico = document.createElement('i'); ico.className = 'ri-check-line';
+    btn.appendChild(ico); btn.appendChild(document.createTextNode(' Downloaded'));
+    actions.appendChild(btn);
+  } else {
+    const btn = mkEl('button', 'btn btn-primary');
+    const modelId = String(m.id || m.model_id || m.name || '');
+    btn.addEventListener('click', () => downloadFromCatalog(modelId));
+    const ico = document.createElement('i'); ico.className = 'ri-download-line';
+    btn.appendChild(ico); btn.appendChild(document.createTextNode(' Download'));
+    actions.appendChild(btn);
+  }
+  card.appendChild(actions);
+  return card;
+}
+
+function renderCatalog(models) {
+  const grid = document.getElementById('mdl-avail-grid');
+  if (!grid) return;
+  clearEl(grid);
+  if (!models.length) {
+    grid.appendChild(mkEl('div', 'mdl-empty', 'No models in catalog.'));
+    return;
+  }
+  models.forEach(m => grid.appendChild(buildModelCard(m)));
+}
+
+function filterModelCatalog() {
+  const q    = (document.getElementById('mdl-search')?.value || '').toLowerCase();
+  const task = (document.getElementById('mdl-filter-task')?.value || '').toLowerCase();
+  renderCatalog(availableCatalog.filter(m => {
+    const hay = [m.name, m.id, m.architecture, m.task, m.model_type].join(' ').toLowerCase();
+    return (!q || hay.includes(q)) && (!task || (m.task || m.model_type || '').toLowerCase().includes(task));
+  }));
+}
+
+async function downloadFromCatalog(modelId) {
+  switchMdlTab('download');
+  const repo = document.getElementById('mdl-dl-repo');
+  if (repo) repo.value = modelId;
+  await submitMdlDownload();
+}
+
+/* — Downloaded list — */
+async function loadDownloadedModels() {
+  const list = document.getElementById('mdl-downloaded-list');
+  const load = document.getElementById('mdl-down-loading');
+  if (!list) return;
+  clearEl(list); load.style.display = '';
+  try {
+    const r    = await fetch('/api/models/downloaded');
+    const data = await r.json();
+    const models = Array.isArray(data) ? data : (data.models || []);
+    load.style.display = 'none';
+    if (!models.length) { list.appendChild(mkEl('div', 'mdl-empty', 'No downloaded models found.')); return; }
+    models.forEach(m => {
+      const row = mkEl('div', 'dl-model-row');
+      const ico = document.createElement('i'); ico.className = 'dl-model-icon ri-box-3-line'; row.appendChild(ico);
+      const info = mkEl('div', 'dl-model-info');
+      info.appendChild(mkEl('div', 'dl-model-name', m.name || m.id || m.model_id || '—'));
+      const sub = [m.task, m.size].filter(Boolean).join(' · ');
+      if (sub) info.appendChild(mkEl('div', 'dl-model-sub', sub));
+      row.appendChild(info);
+      const status = (m.status || 'cached').toLowerCase();
+      const stCls  = status === 'loaded' ? 'loaded' : (status === 'cached' ? 'cached' : 'unknown');
+      row.appendChild(mkEl('span', 'dl-model-status ' + stCls, status));
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-ghost';
+      // Safe: icon is hardcoded, not user data
+      const delIco = document.createElement('i'); delIco.className = 'ri-delete-bin-line';
+      delBtn.appendChild(delIco);
+      delBtn.appendChild(document.createTextNode(' Delete'));
+      delBtn.style.cssText = 'margin-left:auto;font-size:12px;padding:3px 10px;color:var(--red);border-color:var(--red)';
+      const modelName = m.name || m.id || m.model_id || '';
+      delBtn.onclick = () => deleteModel(modelName);
+      row.appendChild(delBtn);
+      list.appendChild(row);
+    });
+    refreshModelSelects();
+  } catch (e) {
+    load.style.display = 'none';
+    list.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + e.message));
+  }
+}
+
+/* — Download form — */
+function toggleMdlRevision() {
+  const wrap = document.getElementById('mdl-dl-revision-wrap');
+  if (wrap) wrap.style.display = document.getElementById('mdl-dl-source')?.value === 'url' ? 'none' : '';
+}
+
+async function submitMdlDownload() {
+  const source   = document.getElementById('mdl-dl-source')?.value || 'huggingface';
+  const repo     = (document.getElementById('mdl-dl-repo')?.value || '').trim();
+  const revision = (document.getElementById('mdl-dl-revision')?.value || '').trim();
+  const errEl    = document.getElementById('mdl-dl-error');
+  const btn      = document.getElementById('mdl-dl-btn');
+  if (!repo) { errEl.textContent = 'Repo ID or URL is required.'; errEl.style.display = 'block'; return; }
+  btn.disabled = true; errEl.style.display = 'none';
+  const body = { model_name: repo.split('/').pop() || repo, source_type: source };
+  if (source === 'huggingface') { body.repo_id = repo; if (revision) body.revision = revision; }
+  else body.url = repo;
+  try {
+    const res = await fetch('/api/models/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      errEl.textContent = res.status + ' — ' + await res.text(); errEl.style.display = 'block';
+    } else {
+      const data = await res.json().catch(() => ({}));
+      if (data.task_id || data.id) pollMdlDownload(data.task_id || data.id, repo.split('/').pop() || repo);
+    }
+  } catch (e) { errEl.textContent = 'Network error: ' + e.message; errEl.style.display = 'block'; }
+  finally { btn.disabled = false; }
+}
+
+function pollMdlDownload(taskId, name) {
+  const list  = document.getElementById('mdl-dl-tasks-list');
+  const rowId = 'mdl-task-' + taskId;
+  const empty = list.querySelector('.mdl-empty');
+  if (empty) list.removeChild(empty);
+  if (!document.getElementById(rowId)) {
+    const row   = mkEl('div', 'dl-task'); row.id = rowId;
+    const hdr   = mkEl('div', 'dl-task-header');
+    hdr.appendChild(mkEl('span', 'dl-task-name', name));
+    hdr.appendChild(mkEl('span', 'dl-status-badge downloading', 'downloading')); hdr.lastChild.id = rowId + '-badge';
+    row.appendChild(hdr);
+    const track = mkEl('div', 'dl-progress-track');
+    const fill  = mkEl('div', 'dl-progress-fill'); fill.id = rowId + '-bar'; fill.style.width = '5%';
+    track.appendChild(fill); row.appendChild(track);
+    const meta  = mkEl('div', 'dl-meta');
+    const bl = mkEl('span', null, 'starting…'); bl.id = rowId + '-bytes';
+    const pr = mkEl('span', null, '—');          pr.id = rowId + '-pct';
+    meta.appendChild(bl); meta.appendChild(pr); row.appendChild(meta);
+    list.prepend(row);
+  }
+  let pct = 5;
+  const iv = setInterval(async () => {
+    try {
+      const r = await fetch('/api/models/download/' + taskId);
+      if (!r.ok) { clearInterval(iv); return; }
+      const d     = await r.json();
+      const done  = d.status === 'completed' || d.status === 'failed';
+      const badge = document.getElementById(rowId + '-badge');
+      const bar   = document.getElementById(rowId + '-bar');
+      const bl    = document.getElementById(rowId + '-bytes');
+      const pr    = document.getElementById(rowId + '-pct');
+      if (d.progress != null) pct = Math.min(99, d.progress * 100);
+      else if (!done) pct = Math.min(pct + 3, 90);
+      if (bar) {
+        bar.style.width = (done && d.status !== 'failed' ? 100 : pct) + '%';
+        if (d.status === 'completed') bar.classList.add('done');
+        if (d.status === 'failed')    bar.classList.add('failed');
+      }
+      if (badge) { badge.textContent = d.status; badge.className = 'dl-status-badge ' + (d.status || 'downloading'); }
+      if (bl) bl.textContent = d.bytes_downloaded ? formatBytes(d.bytes_downloaded) + ' downloaded' : (d.message || '');
+      if (pr) pr.textContent = d.progress != null ? Math.round(d.progress * 100) + '%' : '';
+      if (done) {
+        clearInterval(iv);
+        if (d.status === 'completed') { refreshModelSelects(); loadDownloadedModels(); }
+      }
+    } catch (_) { clearInterval(iv); }
+  }, 1500);
+}
+
+async function deleteModel(name) {
+  if (!name) return;
+  if (!confirm('Delete model "' + name + '"? This cannot be undone.')) return;
+  try {
+    const r = await fetch('/models/download/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (!r.ok) {
+      const msg = await r.text().catch(() => String(r.status));
+      alert('Delete failed: ' + msg);
+      return;
+    }
+    loadDownloadedModels();
+    refreshModelSelects();
+  } catch (e) { alert('Delete error: ' + e.message); }
+}
+
+async function loadSotaModels() {
+  const grid = document.getElementById('mdl-sota-grid');
+  const load = document.getElementById('mdl-sota-loading');
+  if (!grid) return;
+  clearEl(grid); load.style.display = '';
+  try {
+    const r = await fetch('/models/sota');
+    if (!r.ok) throw new Error(String(r.status));
+    const data   = await r.json();
+    const models = Array.isArray(data) ? data : (data.models || []);
+    load.style.display = 'none';
+    if (!models.length) { grid.appendChild(mkEl('div', 'mdl-empty', 'No SOTA models found.')); return; }
+    models.forEach(m => {
+      const card = buildModelCard(m);
+      // Override the download button to use the SOTA endpoint
+      const btn = card.querySelector('button.btn-primary');
+      if (btn) {
+        btn.onclick = null;
+        const id   = m.id || m.model_id || m.name || '';
+        const name = m.name || id;
+        btn.addEventListener('click', () => downloadSotaModel(id, name));
+      }
+      grid.appendChild(card);
+    });
+  } catch (e) {
+    load.style.display = 'none';
+    grid.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + e.message));
+  }
+}
+
+async function downloadSotaModel(modelId, name) {
+  try {
+    const r = await fetch('/models/sota/' + encodeURIComponent(modelId), { method: 'POST' });
+    if (!r.ok) { alert('Download failed: ' + r.status); return; }
+    const data = await r.json().catch(() => ({}));
+    switchMdlTab('download');
+    if (data.task_id || data.id) pollMdlDownload(data.task_id || data.id, name || modelId);
+  } catch (e) { alert('Network error: ' + e.message); }
+}
+
+/* ── Audio tab ──────────────────────────────────────────── */
+let audioFile = null;
+let audioAbort = null;
+
+async function loadAudioHealth() {
+  const badge = document.getElementById('audio-health-badge');
+  if (!badge) return;
+  try {
+    const r = await fetch('/audio/health');
+    badge.textContent       = r.ok ? '● Audio healthy'     : '● Audio unavailable';
+    badge.style.background  = r.ok ? 'var(--green-bg)'     : 'var(--red-bg)';
+    badge.style.color       = r.ok ? 'var(--green-text)'   : 'var(--red-text)';
+  } catch (_) {
+    badge.textContent = '● Audio unavailable';
+    badge.style.background = 'var(--red-bg)'; badge.style.color = 'var(--red-text)';
+  }
+}
+
+function handleAudioFile(file) {
+  if (!file) return;
+  audioFile = file;
+  const nameEl = document.getElementById('audio-file-name');
+  if (nameEl) {
+    nameEl.textContent = file.name + ' (' + formatBytes(file.size) + ')';
+    nameEl.style.display = '';
+  }
+  const drop = document.getElementById('audio-dropzone');
+  if (drop) { drop.style.borderColor = 'var(--accent)'; drop.style.background = 'var(--accent-bg)'; }
+  document.getElementById('audio-btn').disabled = false;
+}
+
+function handleAudioDrop(e) {
+  e.preventDefault();
+  document.getElementById('audio-dropzone')?.classList.remove('over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) handleAudioFile(file);
+}
+
+async function runAudio() {
+  if (!audioFile) return;
+  audioAbort = new AbortController();
+  const btn = document.getElementById('audio-btn');
+  btn.disabled = true;
+  setBox('audio-result-text', 'Transcribing…', 'stream');
+  document.getElementById('audio-meta').style.display = 'none';
+  document.getElementById('audio-segments').style.display = 'none';
+  try {
+    const form = new FormData();
+    form.append('audio', audioFile);
+    form.append('model', document.getElementById('audio-model').value || 'default');
+    form.append('timestamps', document.getElementById('audio-timestamps').checked ? 'true' : 'false');
+    const res  = await fetch('/audio/transcribe', { method: 'POST', body: form, signal: audioAbort.signal });
+    const data = await res.json();
+    if (!res.ok) {
+      setBox('audio-result-text', String(data.error || data.message || res.status), 'error');
+      return;
+    }
+    setBox('audio-result-text', data.text || '(empty)', 'ok');
+    const meta  = document.getElementById('audio-meta');
+    const parts = [];
+    if (data.language) parts.push('Language: ' + data.language);
+    if (data.confidence != null) parts.push('Confidence: ' + (data.confidence * 100).toFixed(1) + '%');
+    if (parts.length) { meta.textContent = parts.join(' · '); meta.style.display = ''; }
+    if (data.segments && data.segments.length) {
+      const list = document.getElementById('audio-segments-list');
+      clearEl(list);
+      data.segments.forEach(seg => {
+        const row = mkEl('div', null);
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:4px;font-size:12px';
+        const ts = mkEl('span', null, seg.start.toFixed(2) + 's–' + seg.end.toFixed(2) + 's');
+        ts.style.cssText = 'flex-shrink:0;background:var(--accent-bg);color:var(--accent);padding:1px 7px;border-radius:10px';
+        row.appendChild(ts);
+        row.appendChild(mkEl('span', null, seg.text));
+        list.appendChild(row);
+      });
+      document.getElementById('audio-segments').style.display = '';
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') setBox('audio-result-text', 'Error: ' + e.message, 'error');
+  } finally { btn.disabled = false; }
+}
+
+function stopAudio() { if (audioAbort) { audioAbort.abort(); audioAbort = null; } }
+
+/* ── Logs tab ───────────────────────────────────────────── */
+async function loadLogs() {
+  const list  = document.getElementById('logs-file-list');
+  const total = document.getElementById('logs-total');
+  if (!list) return;
+  clearEl(list);
+  list.appendChild(mkEl('div', 'mdl-empty', 'Loading…'));
+  try {
+    const r = await fetch('/logs');
+    if (!r.ok) {
+      clearEl(list);
+      list.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status));
+      return;
+    }
+    const data  = await r.json();
+    const files = data.available_log_files || [];
+    if (total) total.textContent = 'Total: ' + (data.total_log_size_mb || 0).toFixed(2) + ' MB · Level: ' + (data.log_level || '—');
+    clearEl(list);
+    if (!files.length) { list.appendChild(mkEl('div', 'mdl-empty', 'No log files found.')); return; }
+    files.forEach(f => {
+      const row = mkEl('div', null);
+      row.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--border2);display:flex;justify-content:space-between;align-items:center';
+      const info = mkEl('div', null);
+      const nameEl = mkEl('div', null, f.name); nameEl.style.cssText = 'font-weight:500;font-size:13px';
+      const subEl  = mkEl('div', null, (f.size_mb || 0).toFixed(2) + ' MB · ' + (f.line_count || 0).toLocaleString() + ' lines');
+      subEl.style.cssText = 'font-size:11px;color:var(--text-dim)';
+      info.appendChild(nameEl); info.appendChild(subEl); row.appendChild(info);
+      const btns = mkEl('div', null); btns.style.cssText = 'display:flex;gap:4px;flex-shrink:0';
+      const vBtn = mkEl('button', 'btn btn-ghost', 'View');
+      vBtn.style.cssText = 'font-size:12px;padding:3px 10px';
+      vBtn.onclick = () => viewLog(f.name);
+      const cBtn = mkEl('button', 'btn btn-ghost', 'Clear');
+      cBtn.style.cssText = 'font-size:12px;padding:3px 10px;color:var(--red);border-color:var(--red)';
+      cBtn.onclick = () => clearLog(f.name);
+      btns.appendChild(vBtn); btns.appendChild(cBtn); row.appendChild(btns);
+      list.appendChild(row);
+    });
+  } catch (e) {
+    clearEl(list);
+    list.appendChild(mkEl('div', 'mdl-empty', 'Error: ' + e.message));
+  }
+}
+
+async function viewLog(name) {
+  const hdr = document.getElementById('logs-viewer-header');
+  const pre = document.getElementById('logs-viewer-content');
+  if (!pre) return;
+  pre.textContent = 'Loading…';
+  if (hdr) hdr.textContent = name;
+  try {
+    const r = await fetch('/logs/' + encodeURIComponent(name));
+    if (!r.ok) { pre.textContent = 'Failed: ' + r.status; return; }
+    const text = await r.text();
+    pre.textContent = text.replace(/\x1b\[[0-9;]*m/g, '');
+    pre.scrollTop   = pre.scrollHeight;
+  } catch (e) { pre.textContent = 'Error: ' + e.message; }
+}
+
+async function clearLog(name) {
+  if (!confirm('Clear log file "' + name + '"?')) return;
+  try {
+    const r = await fetch('/logs/' + encodeURIComponent(name), { method: 'DELETE' });
+    if (!r.ok) { alert('Clear failed: ' + r.status); return; }
+    loadLogs();
+    const hdr = document.getElementById('logs-viewer-header');
+    const pre = document.getElementById('logs-viewer-content');
+    if (hdr && hdr.textContent === name) { pre.textContent = '—'; hdr.textContent = 'Select a file to view'; }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+/* ── System tab ─────────────────────────────────────────── */
+const SYS_SUBTABS = ['info', 'perf', 'config'];
+
+function switchSysTab(tab) {
+  SYS_SUBTABS.forEach(id => {
+    const pane = document.getElementById('sys-' + id + '-pane');
+    const btn  = document.getElementById('sys-tab-' + id);
+    if (pane) pane.style.display = id === tab ? '' : 'none';
+    if (btn)  btn.classList[id === tab ? 'add' : 'remove']('active');
+  });
+  if (tab === 'info')   loadSystemInfo();
+  if (tab === 'perf')   loadPerformance();
+  if (tab === 'config') loadConfig();
+}
+
+function makeSysCard(title, rows) {
+  const card = mkEl('div', 'card'); card.style.padding = '12px';
+  card.appendChild(mkEl('div', 'card-title', title));
+  rows.forEach(([label, value]) => {
+    const row = mkEl('div', null);
+    row.style.cssText = 'display:flex;justify-content:space-between;margin-bottom:3px;font-size:13px';
+    const lEl = mkEl('span', null, label); lEl.style.color = 'var(--text-muted)';
+    const vEl = mkEl('span', null, value != null ? String(value) : '—'); vEl.style.fontWeight = '500';
+    row.appendChild(lEl); row.appendChild(vEl); card.appendChild(row);
+  });
+  return card;
+}
+
+async function loadSystemInfo() {
+  const cards = document.getElementById('sys-info-cards');
+  if (!cards) return;
+  clearEl(cards);
+  try {
+    const [ri, rg] = await Promise.all([fetch('/system/info'), fetch('/system/gpu/stats')]);
+    const info = ri.ok ? await ri.json() : {};
+    const gpus = rg.ok ? await rg.json() : [];
+    const ramGB   = info.total_memory_mb     ? (info.total_memory_mb / 1024).toFixed(1) + ' GB'     : null;
+    const ramFree = info.available_memory_mb ? (info.available_memory_mb / 1024).toFixed(1) + ' GB' : null;
+    cards.appendChild(makeSysCard('System',  [['OS', info.os], ['Arch', info.arch], ['Hostname', info.hostname], ['CPUs', info.cpu_count]]));
+    cards.appendChild(makeSysCard('Server',  [['Version', info.server_version], ['Workers', info.worker_count], ['Uptime', info.uptime_seconds != null ? fmtUptime(info.uptime_seconds) : null], ['Rust', info.rust_version]]));
+    cards.appendChild(makeSysCard('Memory',  [['Total', ramGB], ['Free', ramFree]]));
+    if (gpus && gpus.length) {
+      gpus.forEach((g, i) => cards.appendChild(makeSysCard('GPU' + (gpus.length > 1 ? ' ' + (i + 1) : ''), [
+        ['Device', g.name],
+        ['Util',   g.util_pct  != null ? g.util_pct + '%'  : null],
+        ['Temp',   g.temp_c    != null ? g.temp_c + '°C'   : null],
+        ['VRAM',   g.vram_total_mb != null ? ((g.vram_total_mb - (g.vram_free_mb || 0)) / 1024).toFixed(1) + ' / ' + (g.vram_total_mb / 1024).toFixed(1) + ' GB' : null],
+      ])));
+    } else {
+      cards.appendChild(makeSysCard('GPU', [['Status', 'No GPU detected']]));
+    }
+  } catch (e) {
+    cards.appendChild(mkEl('div', 'mdl-empty', 'Failed to load system info: ' + e.message));
+  }
+}
+
+async function loadPerformance() {
+  const tiles = document.getElementById('sys-perf-tiles');
+  if (!tiles) return;
+  clearEl(tiles);
+  document.getElementById('sys-opt-tips').style.display = 'none';
+  try {
+    const r = await fetch('/performance');
+    if (!r.ok) { tiles.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status)); return; }
+    const d = await r.json();
+    [
+      ['Avg Latency',  d.avg_latency_ms  != null ? d.avg_latency_ms  + ' ms' : '—'],
+      ['P50 Latency',  d.p50_latency_ms  != null ? d.p50_latency_ms  + ' ms' : '—'],
+      ['P95 Latency',  d.p95_latency_ms  != null ? d.p95_latency_ms  + ' ms' : '—'],
+      ['P99 Latency',  d.p99_latency_ms  != null ? d.p99_latency_ms  + ' ms' : '—'],
+      ['Throughput',   d.requests_per_second != null ? d.requests_per_second + ' req/s' : '—'],
+      ['Error Rate',   d.error_rate != null ? (d.error_rate * 100).toFixed(2) + '%' : '—'],
+      ['Total Reqs',   d.total_requests != null ? d.total_requests.toLocaleString() : '—'],
+    ].forEach(([label, value]) => {
+      const tile = mkEl('div', 'stat-tile');
+      tile.appendChild(mkEl('div', 'stat-label', label));
+      tile.appendChild(mkEl('div', 'stat-value', value));
+      tiles.appendChild(tile);
+    });
+  } catch (e) { tiles.appendChild(mkEl('div', 'mdl-empty', 'Error: ' + e.message)); }
+}
+
+async function getOptimizationTips() {
+  const box = document.getElementById('sys-opt-tips');
+  if (!box) return;
+  box.style.display = '';
+  clearEl(box);
+  box.appendChild(mkEl('div', 'mdl-empty', 'Loading suggestions…'));
+  try {
+    const r = await fetch('/performance/optimize');
+    if (!r.ok) {
+      clearEl(box); box.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status)); return;
+    }
+    const data        = await r.json();
+    const suggestions = Array.isArray(data) ? data : (data.suggestions || []);
+    clearEl(box);
+    if (!suggestions.length) { box.appendChild(mkEl('div', 'mdl-empty', 'No suggestions available.')); return; }
+    suggestions.forEach(s => {
+      const card = mkEl('div', 'card'); card.style.cssText = 'padding:10px;margin-bottom:8px';
+      const hdr  = mkEl('div', null);  hdr.style.cssText  = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
+      const impact  = (s.impact   || '').toLowerCase();
+      const impCls  = impact === 'high' ? 'task-detection' : impact === 'medium' ? 'task-tts' : 'task-other';
+      hdr.appendChild(mkEl('span', 'model-task-badge ' + impCls, s.category || 'general'));
+      hdr.appendChild(mkEl('span', 'model-task-badge task-classify', impact + ' impact'));
+      card.appendChild(hdr);
+      card.appendChild(mkEl('div', null, s.description || ''));
+      if (s.action) {
+        const a = mkEl('div', null, s.action);
+        a.style.cssText = 'font-size:12px;color:var(--text-muted);margin-top:4px;font-family:var(--mono)';
+        card.appendChild(a);
+      }
+      box.appendChild(card);
+    });
+  } catch (e) {
+    clearEl(box); box.appendChild(mkEl('div', 'mdl-empty', 'Error: ' + e.message));
+  }
+}
+
+async function loadConfig() {
+  const pre = document.getElementById('sys-config-content');
+  if (!pre) return;
+  pre.textContent = 'Loading…';
+  try {
+    const r = await fetch('/system/config');
+    if (!r.ok) { pre.textContent = 'Failed: ' + r.status; return; }
+    const data = await r.json();
+    pre.textContent = JSON.stringify(data, null, 2);
+  } catch (e) { pre.textContent = 'Error: ' + e.message; }
+}
+
+function copyConfig() {
+  const pre = document.getElementById('sys-config-content');
+  if (!pre || !navigator.clipboard) return;
+  navigator.clipboard.writeText(pre.textContent).then(() => alert('Config copied to clipboard.'));
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+
+</script>
+</body>
+</html>

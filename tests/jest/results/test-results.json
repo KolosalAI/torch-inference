@@ -1,0 +1,1024 @@
+{
+  "timestamp": "2026-03-27T04:29:23.473Z",
+  "config": {
+    "base_url": "http://localhost:8000",
+    "node_version": "v22.21.1"
+  },
+  "summary": {
+    "total": 98,
+    "passed": 98,
+    "failed": 0,
+    "skipped": 0,
+    "duration_ms": 844
+  },
+  "suites": [
+    {
+      "name": "yolo.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/yolo.test.js",
+      "status": "passed",
+      "duration_ms": 543,
+      "tests": [
+        {
+          "name": "YOLO model catalog GET /api/yolo/models returns available YOLO versions and sizes",
+          "status": "passed",
+          "duration_ms": 6,
+          "error": null,
+          "ancestorTitles": [
+            "YOLO model catalog"
+          ]
+        },
+        {
+          "name": "YOLO model info POST /api/yolo/info with valid version and size returns model info",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "YOLO model info"
+          ]
+        },
+        {
+          "name": "YOLO model info POST /api/yolo/info with invalid version returns 400/404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "YOLO model info"
+          ]
+        },
+        {
+          "name": "YOLO model info POST /api/yolo/info with missing fields returns 400",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "YOLO model info"
+          ]
+        },
+        {
+          "name": "YOLO detection POST /api/yolo/detect without image returns 400",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "YOLO detection"
+          ]
+        },
+        {
+          "name": "YOLO detection POST /api/yolo/detect with PNG returns detections or model error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "YOLO detection"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "audio.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/audio.test.js",
+      "status": "passed",
+      "duration_ms": 563,
+      "tests": [
+        {
+          "name": "Audio health GET /audio/health returns status",
+          "status": "passed",
+          "duration_ms": 2,
+          "error": null,
+          "ancestorTitles": [
+            "Audio health"
+          ]
+        },
+        {
+          "name": "Audio validation POST /audio/validate with valid WAV returns valid=true",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Audio validation"
+          ]
+        },
+        {
+          "name": "Audio validation POST /audio/validate with empty body returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Audio validation"
+          ]
+        },
+        {
+          "name": "Audio transcription POST /audio/transcribe with WAV file returns transcript or error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Audio transcription"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "api_models.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/api_models.test.js",
+      "status": "passed",
+      "duration_ms": 588,
+      "tests": [
+        {
+          "name": "API model catalog GET /api/models returns full model registry",
+          "status": "passed",
+          "duration_ms": 2,
+          "error": null,
+          "ancestorTitles": [
+            "API model catalog"
+          ]
+        },
+        {
+          "name": "API model catalog GET /api/models response is non-empty",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API model catalog"
+          ]
+        },
+        {
+          "name": "API single model info GET /api/models/:model_id returns model details",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API single model info"
+          ]
+        },
+        {
+          "name": "API single model info GET /api/models/nonexistent returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API single model info"
+          ]
+        },
+        {
+          "name": "API downloaded models GET /api/models/downloaded returns downloaded models list",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API downloaded models"
+          ]
+        },
+        {
+          "name": "API model download POST /api/models/download with missing model_id returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API model download"
+          ]
+        },
+        {
+          "name": "API model download POST /api/models/download with unknown model_id returns 404/400",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API model download"
+          ]
+        },
+        {
+          "name": "API model comparison GET /api/models/comparison returns comparison data",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "API model comparison"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "registry.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/registry.test.js",
+      "status": "passed",
+      "duration_ms": 576,
+      "tests": [
+        {
+          "name": "Registry listing & stats GET /registry/models returns registered models",
+          "status": "passed",
+          "duration_ms": 2,
+          "error": null,
+          "ancestorTitles": [
+            "Registry listing & stats"
+          ]
+        },
+        {
+          "name": "Registry listing & stats GET /registry/models with format filter",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry listing & stats"
+          ]
+        },
+        {
+          "name": "Registry listing & stats GET /registry/stats returns statistics",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry listing & stats"
+          ]
+        },
+        {
+          "name": "Registry listing & stats GET /registry/export returns full registry export",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry listing & stats"
+          ]
+        },
+        {
+          "name": "Registry registration POST /registry/register with missing path returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry registration"
+          ]
+        },
+        {
+          "name": "Registry registration POST /registry/register with nonexistent path returns error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry registration"
+          ]
+        },
+        {
+          "name": "Registry registration POST /registry/scan with nonexistent path returns error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry registration"
+          ]
+        },
+        {
+          "name": "Registry model operations GET /registry/models/:id with unknown id returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry model operations"
+          ]
+        },
+        {
+          "name": "Registry model operations POST /registry/models/:id/load with unknown id returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry model operations"
+          ]
+        },
+        {
+          "name": "Registry model operations POST /registry/infer with missing model_id returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry model operations"
+          ]
+        },
+        {
+          "name": "Registry model operations POST /registry/infer with unknown model_id returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Registry model operations"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "image.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/image.test.js",
+      "status": "passed",
+      "duration_ms": 631,
+      "tests": [
+        {
+          "name": "Image health GET /image/health returns status",
+          "status": "passed",
+          "duration_ms": 3,
+          "error": null,
+          "ancestorTitles": [
+            "Image health"
+          ]
+        },
+        {
+          "name": "Image security stats GET /image/security/stats returns statistics",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "Image security stats"
+          ]
+        },
+        {
+          "name": "Image security validation POST /image/validate/security with PNG returns security result",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Image security validation"
+          ]
+        },
+        {
+          "name": "Image security validation POST /image/validate/security with invalid security_level is handled",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Image security validation"
+          ]
+        },
+        {
+          "name": "Image security validation POST /image/validate/security without image returns 400",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "Image security validation"
+          ]
+        },
+        {
+          "name": "Image processing (secure) POST /image/process/secure with PNG returns result",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Image processing (secure)"
+          ]
+        },
+        {
+          "name": "Image processing (secure) POST /image/process/secure without body returns 400",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Image processing (secure)"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "nn.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/nn.test.js",
+      "status": "passed",
+      "duration_ms": 625,
+      "tests": [
+        {
+          "name": "NN model listing GET /api/nn/list returns loaded models",
+          "status": "passed",
+          "duration_ms": 10,
+          "error": null,
+          "ancestorTitles": [
+            "NN model listing"
+          ]
+        },
+        {
+          "name": "NN model loading POST /api/nn/load with missing fields returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "NN model loading"
+          ]
+        },
+        {
+          "name": "NN model loading POST /api/nn/load with nonexistent model path returns error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "NN model loading"
+          ]
+        },
+        {
+          "name": "NN model inference POST /api/nn/infer with missing model_id returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "NN model inference"
+          ]
+        },
+        {
+          "name": "NN model inference POST /api/nn/infer with unloaded model returns 404/400",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "NN model inference"
+          ]
+        },
+        {
+          "name": "NN model unloading DELETE /api/nn/:model_id with unknown model returns 404/400",
+          "status": "passed",
+          "duration_ms": 2,
+          "error": null,
+          "ancestorTitles": [
+            "NN model unloading"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "tts.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/tts.test.js",
+      "status": "passed",
+      "duration_ms": 648,
+      "tests": [
+        {
+          "name": "TTS health GET /tts/health returns status",
+          "status": "passed",
+          "duration_ms": 4,
+          "error": null,
+          "ancestorTitles": [
+            "TTS health"
+          ]
+        },
+        {
+          "name": "TTS engines GET /tts/engines returns list of engines",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS engines"
+          ]
+        },
+        {
+          "name": "TTS engines GET /tts/engines/:id/capabilities returns engine capabilities",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS engines"
+          ]
+        },
+        {
+          "name": "TTS engines GET /tts/engines/:id/voices returns voice list",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS engines"
+          ]
+        },
+        {
+          "name": "TTS stats GET /tts/stats returns synthesis stats",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS stats"
+          ]
+        },
+        {
+          "name": "TTS synthesis POST /tts/synthesize rejects empty text",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS synthesis"
+          ]
+        },
+        {
+          "name": "TTS synthesis POST /tts/synthesize returns audio for short text",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "TTS synthesis"
+          ]
+        },
+        {
+          "name": "TTS synthesis POST /tts/synthesize accepts voice and language params",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS synthesis"
+          ]
+        },
+        {
+          "name": "TTS synthesis POST /tts/synthesize rejects text exceeding max length",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS synthesis"
+          ]
+        },
+        {
+          "name": "TTS synthesis POST /audio/synthesize is an alias for TTS synthesis",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "TTS synthesis"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "logs.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/logs.test.js",
+      "status": "passed",
+      "duration_ms": 109,
+      "tests": [
+        {
+          "name": "Logs listing GET /logs returns log directory info",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Logs listing"
+          ]
+        },
+        {
+          "name": "Logs listing GET /logs includes log level",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "Logs listing"
+          ]
+        },
+        {
+          "name": "Log file read GET /logs/:log_file returns file content",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Log file read"
+          ]
+        },
+        {
+          "name": "Log file read GET /logs/nonexistent-file returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Log file read"
+          ]
+        },
+        {
+          "name": "Log file deletion DELETE /logs/nonexistent-file returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Log file deletion"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "system.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/system.test.js",
+      "status": "passed",
+      "duration_ms": 100,
+      "tests": [
+        {
+          "name": "System info GET /system/info returns OS, CPU, memory info",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "System info"
+          ]
+        },
+        {
+          "name": "System info GET /system/info includes GPU availability",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "System info"
+          ]
+        },
+        {
+          "name": "System info GET /system/info includes runtime info",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "System info"
+          ]
+        },
+        {
+          "name": "System info GET /system/info includes feature flags",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "System info"
+          ]
+        },
+        {
+          "name": "System config GET /system/config returns server configuration",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "System config"
+          ]
+        },
+        {
+          "name": "System config GET /system/config includes inference settings",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "System config"
+          ]
+        },
+        {
+          "name": "GPU stats GET /system/gpu/stats returns GPU info (even if no GPU)",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "GPU stats"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "performance.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/performance.test.js",
+      "status": "passed",
+      "duration_ms": 73,
+      "tests": [
+        {
+          "name": "Performance metrics GET /performance returns system and process metrics",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Performance metrics"
+          ]
+        },
+        {
+          "name": "Performance metrics GET /performance system_info includes cpu_count and memory",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Performance metrics"
+          ]
+        },
+        {
+          "name": "Performance metrics GET /performance process_info includes pid",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Performance metrics"
+          ]
+        },
+        {
+          "name": "Performance profiling POST /performance/profile returns timing metrics",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Performance profiling"
+          ]
+        },
+        {
+          "name": "Performance optimization GET /performance/optimize runs optimizations and reports result",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Performance optimization"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "classify.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/classify.test.js",
+      "status": "passed",
+      "duration_ms": 87,
+      "tests": [
+        {
+          "name": "Classify by path POST /api/classify/image with missing image_path returns 400/422",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "Classify by path"
+          ]
+        },
+        {
+          "name": "Classify by path POST /api/classify/image with nonexistent path returns error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Classify by path"
+          ]
+        },
+        {
+          "name": "Classify by upload POST /api/classify/upload with PNG returns result or model-not-loaded error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Classify by upload"
+          ]
+        },
+        {
+          "name": "Classify by upload POST /api/classify/upload without image returns 400",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Classify by upload"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "models.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/models.test.js",
+      "status": "passed",
+      "duration_ms": 675,
+      "tests": [
+        {
+          "name": "Model download list & cache GET /models/download/list returns active downloads",
+          "status": "passed",
+          "duration_ms": 2,
+          "error": null,
+          "ancestorTitles": [
+            "Model download list & cache"
+          ]
+        },
+        {
+          "name": "Model download list & cache GET /models/managed returns managed models",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model download list & cache"
+          ]
+        },
+        {
+          "name": "Model download list & cache GET /models/cache/info returns cache statistics",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model download list & cache"
+          ]
+        },
+        {
+          "name": "Available models catalog GET /models/available returns downloadable models",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Available models catalog"
+          ]
+        },
+        {
+          "name": "Available models catalog GET /models/sota returns SOTA model registry",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Available models catalog"
+          ]
+        },
+        {
+          "name": "Model download trigger POST /models/download with missing model_name returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model download trigger"
+          ]
+        },
+        {
+          "name": "Model download trigger POST /models/download with valid payload starts task",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model download trigger"
+          ]
+        },
+        {
+          "name": "Model download trigger GET /models/download/status/:id with unknown id returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model download trigger"
+          ]
+        },
+        {
+          "name": "Model info & deletion GET /models/download/:name/info for unknown model returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model info & deletion"
+          ]
+        },
+        {
+          "name": "Model info & deletion DELETE /models/download/:name for unknown model returns 404",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Model info & deletion"
+          ]
+        },
+        {
+          "name": "SOTA model download POST /models/sota/:model_id with unknown model returns 404/400",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "SOTA model download"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "inference.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/inference.test.js",
+      "status": "passed",
+      "duration_ms": 67,
+      "tests": [
+        {
+          "name": "Predict endpoint POST /predict with missing model_name returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Predict endpoint"
+          ]
+        },
+        {
+          "name": "Predict endpoint POST /predict with unknown model returns error",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Predict endpoint"
+          ]
+        },
+        {
+          "name": "Predict endpoint POST /predict response shape on error includes message",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Predict endpoint"
+          ]
+        },
+        {
+          "name": "Legacy synthesize endpoint POST /synthesize with missing text returns 400/422",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Legacy synthesize endpoint"
+          ]
+        },
+        {
+          "name": "Legacy synthesize endpoint POST /synthesize handles unknown model gracefully",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Legacy synthesize endpoint"
+          ]
+        }
+      ],
+      "exec_error": null
+    },
+    {
+      "name": "health.test.js",
+      "file": "/Users/evintleovonzko/Documents/Works/Kolosal/torch-inference/tests/jest/tests/health.test.js",
+      "status": "passed",
+      "duration_ms": 704,
+      "tests": [
+        {
+          "name": "Root endpoint GET / returns API info",
+          "status": "passed",
+          "duration_ms": 2,
+          "error": null,
+          "ancestorTitles": [
+            "Root endpoint"
+          ]
+        },
+        {
+          "name": "Health endpoints GET /health returns 200 with status",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Health endpoints"
+          ]
+        },
+        {
+          "name": "Health endpoints GET /health/live returns 200 (liveness probe)",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Health endpoints"
+          ]
+        },
+        {
+          "name": "Health endpoints GET /health/ready returns 200 or 503 (readiness probe)",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Health endpoints"
+          ]
+        },
+        {
+          "name": "Metrics endpoint GET /metrics returns prometheus-format text",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Metrics endpoint"
+          ]
+        },
+        {
+          "name": "Server info & stats GET /info returns system information",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Server info & stats"
+          ]
+        },
+        {
+          "name": "Server info & stats GET /stats returns request metrics",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Server info & stats"
+          ]
+        },
+        {
+          "name": "Server info & stats GET /endpoints returns endpoint list",
+          "status": "passed",
+          "duration_ms": 0,
+          "error": null,
+          "ancestorTitles": [
+            "Server info & stats"
+          ]
+        },
+        {
+          "name": "Models listing (core) GET /models returns model list",
+          "status": "passed",
+          "duration_ms": 1,
+          "error": null,
+          "ancestorTitles": [
+            "Models listing (core)"
+          ]
+        }
+      ],
+      "exec_error": null
+    }
+  ]
+}

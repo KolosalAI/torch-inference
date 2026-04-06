@@ -1,0 +1,323 @@
+# PyTorch Inference Framework Configuration
+# This file contains the main configuration for the inference framework
+
+# Application Configuration
+app:
+  name: "PyTorch Inference Framework"
+  version: "1.0.0"
+  description: "High-performance PyTorch model inference with optimization and monitoring"
+
+# Server Configuration - OPTIMIZED FOR HIGH CONCURRENCY
+server:
+  host: "0.0.0.0"
+  port: 8000
+  reload: false
+  log_level: "INFO"
+  workers: 1  # Keep single worker but optimize async handling
+
+# Model Configuration
+models:
+  default_model: "example"
+  model_path: "models/"
+  supported_formats:
+    - ".pt"
+    - ".pth"
+    - ".onnx"
+    - ".torchscript"
+  
+  # Model Download Configuration
+  download:
+    cache_dir: "models/"
+    auto_download: true
+    sources:
+      pytorch_hub:
+        enabled: true
+      torchvision:
+        enabled: true
+      huggingface:
+        enabled: true
+      url:
+        enabled: true
+        verify_ssl: true
+        timeout_seconds: 300
+    registry_file: "model_registry.json"
+
+# Device Configuration - ULTRA-HIGH PERFORMANCE OPTIMIZATIONS
+device:
+  type: "cuda"  # Force CUDA usage instead of auto-detection
+  id: 0  # GPU ID if using CUDA
+  use_fp16: true  # Enable FP16 for maximum speed on modern GPUs
+  use_torch_compile: true  # Enable torch.compile for acceleration
+  compile_mode: "max-autotune"  # Use most aggressive compilation mode
+  memory_fraction: 0.9  # Use more GPU memory for better performance
+  use_tf32: true  # Enable TF32 on Ampere+ GPUs for massive speedup
+  use_quantization: false  # Enable for CPU inference speedup (experimental)
+  enable_flash_attention: true  # Enable if available for transformers
+  enable_kernel_fusion: true  # Enable automatic kernel fusion
+  enable_memory_pooling: true  # Enable CUDA memory pooling for stable performance
+  
+  # Multi-GPU Configuration
+  multi_gpu:
+    enabled: false
+    strategy: "data_parallel"  # data_parallel, model_parallel, pipeline_parallel, hybrid
+    device_ids: null  # Auto-detect available GPUs, or specify [0, 1, 2, 3]
+    load_balancing: "dynamic"  # round_robin, weighted, dynamic
+    synchronization: "barrier"  # barrier, async, pipeline
+    memory_balancing: true
+    fault_tolerance: true
+    max_devices: null  # Maximum number of GPUs to use (null = no limit)
+    preferred_device_order: null  # Preferred device order [0, 1, 2, 3]
+    
+    # Phase 3 Performance Optimization Settings
+    performance_optimization:
+      # Memory optimization
+      memory_pool_size_mb: 512
+      enable_memory_monitoring: true
+      memory_gc_threshold: 0.8
+      memory_defrag_threshold: 0.3
+      
+      # Communication optimization
+      enable_nccl: true
+      comm_chunk_size_mb: 4
+      comm_overlap_threshold_mb: 1
+      comm_bandwidth_limit: 0.8
+      
+      # Dynamic scaling
+      enable_dynamic_scaling: true
+      scale_up_cooldown: 30.0
+      scale_down_cooldown: 60.0
+      scaling_evaluation_interval: 10.0
+      scaling_stability_threshold: 0.1
+      
+      # Advanced scheduling
+      enable_advanced_scheduling: true
+      scheduling_strategy: "balanced"  # round_robin, least_loaded, memory_aware, balanced
+      max_tasks_per_device: 4
+      task_timeout: 300.0
+      enable_task_preemption: false
+      enable_task_migration: false
+
+# Batch Processing Configuration - ULTRA-LOW LATENCY WITH HIGH THROUGHPUT
+batch:
+  batch_size: 4  # Optimal batch size for latency/throughput balance
+  min_batch_size: 1
+  max_batch_size: 16  # Increased for better throughput when needed
+  adaptive_batching: true
+  timeout_seconds: 0.02  # Ultra-aggressive timeout (20ms) for sub-50ms inference
+  queue_size: 1000  # Larger queue for high-concurrency workloads
+  enable_kernel_fusion: true  # Fuse batch operations for efficiency
+  enable_tensor_caching: true  # Cache intermediate tensors
+  enable_pipeline_processing: true  # Pipeline pre/post processing
+
+# Preprocessing Configuration
+preprocessing:
+  input_size:
+    width: 224
+    height: 224
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+  interpolation: "bilinear"
+  center_crop: true
+  normalize: true
+  to_rgb: true
+
+# Postprocessing Configuration
+postprocessing:
+  threshold: 0.5
+  nms_threshold: 0.5
+  max_detections: 100
+  apply_sigmoid: false
+  apply_softmax: false
+
+# Performance Configuration - MAXIMUM PERFORMANCE
+performance:
+  enable_profiling: false  # Disable profiling for production
+  enable_metrics: true
+  warmup_iterations: 50  # Extensive warmup for maximum stability
+  benchmark_iterations: 200  # Better benchmarking for optimization
+  enable_async: true
+  max_workers: 16  # Increased workers for maximum concurrency
+  enable_numba_jit: true  # Enable Numba JIT acceleration
+  enable_cuda_graphs: true  # Enable CUDA graphs for repetitive workloads
+  optimize_memory_layout: true  # Optimize tensor memory layouts
+  enable_tensor_cores: true  # Enable tensor core usage on supported hardware
+
+# Caching Configuration
+cache:
+  enable_caching: true
+  cache_size: 100
+  cache_ttl_seconds: 3600
+  disk_cache_path: null
+
+# Audio Configuration
+audio:
+  sample_rate: 16000
+  chunk_duration: 30  # seconds
+  overlap: 5          # seconds  
+  enable_vad: true    # Voice Activity Detection
+  supported_formats: ["wav", "mp3", "flac", "m4a", "ogg"]
+  max_audio_length: 300  # seconds
+  preprocessing:
+    normalize: true
+    normalization_method: "peak"  # peak, rms, lufs
+    remove_silence: true
+    
+# TTS Configuration
+tts:
+  voice: "default"
+  speed: 1.0
+  pitch: 1.0
+  volume: 1.0
+  language: "en"
+  emotion: null
+  output_format: "wav"
+  quality: "high"  # low, medium, high
+  
+# STT Configuration  
+stt:
+  language: "auto"  # auto, en, es, fr, de, etc.
+  enable_timestamps: true
+  beam_size: 5
+  temperature: 0.0
+  suppress_blank: true
+  suppress_tokens: [-1]
+  initial_prompt: null
+  condition_on_previous_text: true
+
+# Security Configuration
+security:
+  max_file_size_mb: 100
+  allowed_extensions:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".bmp"
+    - ".tiff"
+    - ".webp"
+    - ".wav"
+    - ".mp3"
+    - ".flac"
+    - ".m4a"
+    - ".ogg"
+  validate_inputs: true
+  sanitize_outputs: true
+
+# Optimization Configuration - ENHANCED FOR MAXIMUM SPEED
+optimization:
+  enable_jit: true
+  enable_quantization: true  # Enable quantization for speed
+  quantization_mode: "dynamic"  # dynamic, static, qat
+  enable_tensorrt: true  # Enable TensorRT if available
+  tensorrt_precision: "fp16"  # Use FP16 for TensorRT
+  enable_onnx: true  # Enable ONNX Runtime for additional speed
+  onnx_providers:
+    - "TensorrtExecutionProvider"  # Prioritize TensorRT
+    - "CUDAExecutionProvider"  # Then CUDA
+    - "CPUExecutionProvider"  # Fallback to CPU
+  enable_model_compilation: true  # Enable comprehensive model compilation
+  enable_operator_fusion: true  # Fuse compatible operators
+  enable_constant_folding: true  # Pre-compute constant operations
+  enable_dead_code_elimination: true  # Remove unused operations
+
+# Post-Download Optimization Configuration - NEW FEATURE
+post_download_optimization:
+  enable_optimization: true  # Enable automatic post-download optimization
+  enable_quantization: true  # Apply quantization after download
+  quantization_method: "dynamic"  # dynamic, static, qat, fx - dynamic is safest and fastest
+  enable_low_rank_optimization: true  # Apply tensor factorization for model compression
+  low_rank_method: "svd"  # svd, tucker, hlrtf - SVD is most stable
+  target_compression_ratio: 0.7  # Target 30% model size reduction
+  enable_tensor_factorization: true  # Enable hierarchical tensor factorization
+  preserve_accuracy_threshold: 0.02  # Maximum acceptable accuracy loss (2%)
+  enable_structured_pruning: false  # More aggressive, disabled by default
+  auto_select_best_method: true  # Automatically choose best optimization method
+  benchmark_optimizations: true  # Benchmark before/after optimization
+  save_optimized_model: true  # Save optimized version separately for future use
+
+# Monitoring Configuration
+monitoring:
+  enable_metrics: true
+  enable_logging: true
+  enable_tracing: false
+  metrics:
+    port: 9090
+    path: "/metrics"
+    retention_days: 30
+  logging:
+    level: "INFO"
+    format: "json"
+    retention_days: 30
+  tracing:
+    service_name: "torch-inference"
+    sampling_rate: 0.1
+    jaeger_endpoint: ""
+    zipkin_endpoint: ""
+
+# Enterprise Configuration (optional)
+enterprise:
+  enabled: false
+  auth:
+    provider: "jwt"  # jwt, oauth2, saml, ldap
+    secret_key: ""
+    algorithm: "HS256"
+    access_token_expire_minutes: 30
+    enable_mfa: false
+    enable_api_keys: true
+  rbac:
+    enable_rbac: false
+    default_role: "user"
+    admin_users: []
+  security:
+    enable_encryption_at_rest: false
+    enable_rate_limiting: true
+    rate_limit_requests_per_minute: 100
+    enable_audit_logging: false
+  integration:
+    database_url: ""
+    cache_url: "redis://localhost:6379/0"
+    message_broker_url: ""
+  scaling:
+    enable_auto_scaling: false
+    min_replicas: 1
+    max_replicas: 10
+    cpu_target_utilization: 70
+
+# Environment-specific overrides
+environments:
+  development:
+    server:
+      reload: true
+      log_level: "DEBUG"
+    security:
+      validate_inputs: false
+    performance:
+      enable_profiling: true
+    enterprise:
+      security:
+        enable_rate_limiting: false
+  
+  staging:
+    security:
+      validate_inputs: true
+    monitoring:
+      enable_tracing: true
+    enterprise:
+      security:
+        rate_limit_requests_per_minute: 500
+  
+  production:
+    server:
+      workers: 4
+    security:
+      validate_inputs: true
+      sanitize_outputs: true
+    enterprise:
+      enabled: true
+      auth:
+        enable_mfa: true
+      security:
+        enable_encryption_at_rest: true
+        enable_audit_logging: true
+      scaling:
+        enable_auto_scaling: true
