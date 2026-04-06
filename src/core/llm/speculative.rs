@@ -93,7 +93,9 @@ impl SpeculativeDecoder {
         let (draft_tokens, draft_probs) = draft.propose(context, k)?;
 
         // 2. Target evaluates context + draft tokens (K+1 positions).
-        let mut eval_tokens: Vec<u32> = context.to_vec();
+        // Pre-allocate with exact capacity to avoid reallocation on extend.
+        let mut eval_tokens: Vec<u32> = Vec::with_capacity(context.len() + k);
+        eval_tokens.extend_from_slice(context);
         eval_tokens.extend_from_slice(&draft_tokens);
         let target_logits = target.forward(&eval_tokens)?;
         // We need positions [context.len()-1 .. context.len()-1+K+1] if

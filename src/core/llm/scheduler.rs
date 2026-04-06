@@ -167,7 +167,8 @@ impl Scheduler {
 
         // Try to admit waiting sequences.
         while let Some(&candidate_id) = self.waiting.front() {
-            let seq = match self.sequences.get(&candidate_id) {
+            // Single get_mut replaces the former get (read) + get_mut (write) double lookup.
+            let seq = match self.sequences.get_mut(&candidate_id) {
                 Some(s) => s,
                 None => {
                     self.waiting.pop_front();
@@ -190,9 +191,8 @@ impl Scheduler {
                 break; // Not enough KV cache; keep waiting.
             }
 
-            // Admit.
+            // Admit — mutate in-place using the borrow already held.
             self.waiting.pop_front();
-            let seq = self.sequences.get_mut(&candidate_id).unwrap();
             seq.status = SeqStatus::Running;
             // Allocate KV blocks for the prompt.
             seq.block_table

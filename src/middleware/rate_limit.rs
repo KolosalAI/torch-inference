@@ -28,8 +28,8 @@ impl ResponseError for RateLimitError {
     }
 }
 
+use crate::clock::coarse_unix_secs;
 use dashmap::DashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct RateLimiter {
     request_counts: DashMap<String, (u64, u64)>,
@@ -47,29 +47,35 @@ impl RateLimiter {
     }
 
     pub fn is_allowed(&self, key: &str) -> Result<(), RateLimitError> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
 
-        let mut entry = self
-            .request_counts
-            .entry(key.to_string())
-            .or_insert((0, now));
-        let (count, timestamp) = entry.value_mut();
+        // Fast path: key already present — avoid String allocation on the common hit.
+        if let Some(mut entry) = self.request_counts.get_mut(key) {
+            let (count, timestamp) = entry.value_mut();
+            if now - *timestamp > self.window_seconds {
+                *count = 1;
+                *timestamp = now;
+                return Ok(());
+            } else if *count < self.max_requests {
+                *count += 1;
+                return Ok(());
+            } else {
+                let retry_after = self.window_seconds - (now - *timestamp);
+                return Err(RateLimitError {
+                    message: "Rate limit exceeded".to_string(),
+                    retry_after,
+                });
+            }
+        }
 
-        if now - *timestamp > self.window_seconds {
-            *count = 1;
-            *timestamp = now;
-            Ok(())
-        } else if *count < self.max_requests {
-            *count += 1;
+        // Cold path: first request from this client — allocate key once.
+        if 0 < self.max_requests {
+            self.request_counts.insert(key.to_string(), (1, now));
             Ok(())
         } else {
-            let retry_after = self.window_seconds - (now - *timestamp);
             Err(RateLimitError {
                 message: "Rate limit exceeded".to_string(),
-                retry_after,
+                retry_after: self.window_seconds,
             })
         }
     }
@@ -78,11 +84,7 @@ impl RateLimiter {
     /// background maintenance; no production caller yet.
     #[allow(dead_code)]
     pub fn cleanup_old_entries(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
+        let now = coarse_unix_secs();
         self.request_counts
             .retain(|_, (_, timestamp)| now - *timestamp < self.window_seconds * 2);
     }

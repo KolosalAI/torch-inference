@@ -64,11 +64,15 @@ impl RequestDeduplicator {
     }
 
     pub fn generate_key(&self, model: &str, inputs: &Value) -> String {
-        let mut buf = String::with_capacity(128);
+        let mut buf = String::with_capacity(256);
         write_canonical_json(inputs, &mut buf);
         let hash = fnv1a(buf.as_bytes());
         let epoch_window = coarse_unix_secs() / 10;
-        format!("{}:{:016x}:{}", model, hash, epoch_window)
+        // Reuse the buffer — clear and write the final key without a second heap allocation.
+        buf.clear();
+        use std::fmt::Write as _;
+        let _ = write!(buf, "{}:{:016x}:{}", model, hash, epoch_window);
+        buf
     }
 
     /// Returns a cheap `Arc` clone of the cached value — O(1), no data copied.
