@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use std::sync::Arc;
 use std::time::Instant;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{
@@ -142,16 +143,19 @@ fn init_structured_logging_fallback(
 }
 
 /// Correlation ID middleware for request tracing
+///
+/// The inner `Arc<str>` makes `.clone()` an O(1) atomic reference-count bump
+/// instead of a heap allocation + string copy.  All call sites are unchanged.
 #[derive(Clone)]
-pub struct CorrelationId(pub String);
+pub struct CorrelationId(pub Arc<str>);
 
 impl CorrelationId {
     pub fn new() -> Self {
-        Self(uuid::Uuid::new_v4().to_string())
+        Self(uuid::Uuid::new_v4().to_string().into())
     }
 
     pub fn from_header(value: &str) -> Self {
-        Self(value.to_string())
+        Self(value.into())
     }
 
     pub fn as_str(&self) -> &str {

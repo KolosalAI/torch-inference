@@ -5,9 +5,15 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
+
+static BATCH_EPOCH: OnceLock<Instant> = OnceLock::new();
+#[inline]
+fn batch_epoch() -> Instant {
+    *BATCH_EPOCH.get_or_init(Instant::now)
+}
 
 #[derive(Clone, Debug)]
 pub struct BatchRequest {
@@ -44,33 +50,46 @@ impl Ord for OrderedBatchRequest {
 struct BatchQueue {
     heap: BinaryHeap<OrderedBatchRequest>,
     next_seq: u64,
+    /// Earliest enqueue time in the heap — maintained on push/drain so
+    /// `oldest_age()` is O(1) instead of an O(n) heap scan.
+    oldest_enqueue: Option<Instant>,
 }
 
 impl BatchQueue {
-    fn new() -> Self { Self { heap: BinaryHeap::new(), next_seq: 0 } }
+    fn new() -> Self { Self { heap: BinaryHeap::new(), next_seq: 0, oldest_enqueue: None } }
 
     fn push(&mut self, request: BatchRequest) {
+        let ts = request.timestamp;
         let seq = self.next_seq;
         self.next_seq += 1;
         let priority = request.priority;
         self.heap.push(OrderedBatchRequest { priority, seq, request });
+        // Track the minimum (oldest) enqueue time.
+        match self.oldest_enqueue {
+            None => self.oldest_enqueue = Some(ts),
+            Some(prev) if ts < prev => self.oldest_enqueue = Some(ts),
+            _ => {}
+        }
     }
 
     fn len(&self) -> usize { self.heap.len() }
 
+    /// O(1) — returns elapsed time since the earliest-enqueued request.
     fn oldest_age(&self) -> Option<Duration> {
-        self.heap.iter().map(|o| o.request.timestamp.elapsed()).max()
+        self.oldest_enqueue.map(|t| t.elapsed())
     }
 
     /// Drain all items in priority order — no sort needed (heap already ordered).
     fn drain_all(&mut self) -> Vec<BatchRequest> {
         let mut out = Vec::with_capacity(self.heap.len());
         while let Some(o) = self.heap.pop() { out.push(o.request); }
+        self.oldest_enqueue = None;
         out
     }
 
     fn clear(&mut self) {
         self.heap.clear();
+        self.oldest_enqueue = None;
     }
 }
 
@@ -83,6 +102,10 @@ pub struct BatchProcessor {
     processed_batches: AtomicU64,
     total_latency_ms: AtomicU64,
     queue_depth: AtomicUsize,
+    /// Nanos since `BATCH_EPOCH` of the oldest request in the current batch.
+    /// 0 = batch is empty.  Updated atomically so `should_process_batch` can
+    /// do the timeout check without ever acquiring the Mutex.
+    oldest_enqueue_nanos: AtomicU64,
     /// Notified immediately when the batch reaches max capacity, so any
     /// consumer blocked in `notified().await` can dispatch without waiting
     /// for the poll interval to expire.
@@ -100,6 +123,7 @@ impl BatchProcessor {
             processed_batches: AtomicU64::new(0),
             total_latency_ms: AtomicU64::new(0),
             queue_depth: AtomicUsize::new(0),
+            oldest_enqueue_nanos: AtomicU64::new(0),
             batch_full_notify: Arc::new(Notify::new()),
         }
     }
@@ -115,18 +139,25 @@ impl BatchProcessor {
     }
 
     pub fn add_request(&self, request: BatchRequest) -> Result<bool, String> {
-        let len = {
+        let (len, oldest_ts) = {
             let mut batch = self.current_batch.lock();
 
             if batch.len() >= self.max_batch_size {
                 return Err("Batch is full".to_string());
             }
 
+            let ts = request.timestamp;
             batch.push(request);
-            batch.len()
+            (batch.len(), batch.oldest_enqueue.unwrap_or(ts))
         };
 
         self.queue_depth.store(len, Ordering::Relaxed);
+        // Publish the epoch-nanos for the oldest request so `should_process_batch`
+        // can read it without taking the lock.
+        let epoch = batch_epoch();
+        let nanos = oldest_ts.saturating_duration_since(epoch).as_nanos() as u64;
+        self.oldest_enqueue_nanos.store(nanos.max(1), Ordering::Relaxed);
+
         debug!("Request added to batch. Current size: {}", len);
 
         let is_full = len >= self.max_batch_size;
@@ -137,28 +168,23 @@ impl BatchProcessor {
     }
 
     pub fn should_process_batch(&self) -> bool {
-        let (len, oldest_age) = {
-            let batch = self.current_batch.lock();
-            if batch.len() == 0 {
-                return false;
-            }
-            let age = batch.oldest_age();
-            (batch.len(), age)
-        };
-
-        // Process immediately if max size reached
+        let len = self.queue_depth.load(Ordering::Relaxed);
+        if len == 0 {
+            return false;
+        }
         if len >= self.max_batch_size {
             return true;
         }
-
-        // Check min batch size
         if len < self.min_batch_size {
             return false;
         }
 
-        if let Some(age) = oldest_age {
+        // Lock-free age check using the atomic oldest_enqueue_nanos.
+        let nanos = self.oldest_enqueue_nanos.load(Ordering::Relaxed);
+        if nanos > 0 {
+            let oldest = batch_epoch() + Duration::from_nanos(nanos);
             let timeout = self.get_adaptive_timeout();
-            return age >= Duration::from_millis(timeout);
+            return oldest.elapsed() >= Duration::from_millis(timeout);
         }
 
         false
@@ -188,6 +214,7 @@ impl BatchProcessor {
     pub fn get_batch(&self) -> Vec<BatchRequest> {
         let requests = self.current_batch.lock().drain_all();
         self.queue_depth.store(0, Ordering::Relaxed);
+        self.oldest_enqueue_nanos.store(0, Ordering::Relaxed);
         self.processed_batches.fetch_add(1, Ordering::Relaxed);
         info!("Processing batch with {} requests (priority ordered)", requests.len());
         requests
@@ -221,6 +248,8 @@ impl BatchProcessor {
     pub fn clear_batch(&self) {
         let mut batch = self.current_batch.lock();
         batch.clear();
+        self.queue_depth.store(0, Ordering::Relaxed);
+        self.oldest_enqueue_nanos.store(0, Ordering::Relaxed);
         debug!("Batch cleared");
     }
 
