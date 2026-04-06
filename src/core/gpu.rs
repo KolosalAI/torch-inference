@@ -252,13 +252,18 @@ impl GpuManager {
     }
 
     pub fn record_stats(&self, device_id: usize, stats: GpuStats) {
-        let mut history = self.stats_history.entry(device_id).or_insert_with(Vec::new);
+        let max = self.max_history;
+        let mut history = self
+            .stats_history
+            .entry(device_id)
+            .or_insert_with(|| Vec::with_capacity(max));
         history.push(stats);
 
-        // Keep only recent history
+        // Drain oldest entries to maintain max_history bound.
+        // drain(0..excess) shifts the entire Vec left in one memmove.
         let len = history.len();
-        if len > self.max_history {
-            history.drain(0..(len - self.max_history));
+        if len > max {
+            history.drain(0..(len - max));
         }
     }
 

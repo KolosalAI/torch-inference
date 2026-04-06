@@ -54,27 +54,11 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
+        // method and path are needed inside the async closure for post-call logging.
         let method = req.method().to_string();
         let path = req.path().to_string();
-        let remote_addr = req
-            .connection_info()
-            .peer_addr()
-            .unwrap_or("unknown")
-            .to_string();
-        let query = req.query_string().to_string();
-        let user_agent = req
-            .headers()
-            .get("User-Agent")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("unknown")
-            .to_string();
-        let content_len: u64 = req
-            .headers()
-            .get("Content-Length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
 
+        // correlation_id is needed in the async closure (via metrics).
         let correlation_id = req
             .headers()
             .get("X-Correlation-ID")
@@ -84,16 +68,35 @@ where
 
         let metrics = RequestMetrics::new(correlation_id.clone());
 
-        tracing::info!(
-            correlation_id = %correlation_id.as_str(),
-            method         = %method,
-            path           = %path,
-            remote_addr    = %remote_addr,
-            query          = %query,
-            user_agent     = %user_agent,
-            content_len    = content_len,
-            event          = "request_received",
-        );
+        // Pre-call log — borrow everything directly from `req` to avoid String
+        // allocations for values only needed here (remote_addr, query, user_agent).
+        {
+            let ci = req.connection_info();
+            let remote_addr = ci.peer_addr().unwrap_or("unknown");
+            let query = req.query_string();
+            let user_agent = req
+                .headers()
+                .get("User-Agent")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("unknown");
+            let content_len: u64 = req
+                .headers()
+                .get("Content-Length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+
+            tracing::info!(
+                correlation_id = %correlation_id.as_str(),
+                method         = %method,
+                path           = %path,
+                remote_addr    = %remote_addr,
+                query          = %query,
+                user_agent     = %user_agent,
+                content_len    = content_len,
+                event          = "request_received",
+            );
+        } // ci, query, user_agent, remote_addr dropped; borrows on req released
 
         let fut = self.service.call(req);
 

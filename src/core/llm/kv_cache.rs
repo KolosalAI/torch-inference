@@ -127,6 +127,20 @@ impl BlockPool {
             .ok_or_else(|| anyhow::anyhow!("KV cache pool exhausted"))
     }
 
+    /// Batch-allocate `count` blocks in a single pass, appending their ids to `out`.
+    ///
+    /// Requires the caller to have already verified `num_free_blocks() >= count`
+    /// (see [`SequenceBlockTable::extend`]).  Draining the tail of the free-list
+    /// in one `drain` call is O(count) with a single iterator vs O(count) separate
+    /// Vec::pop + push pairs.
+    pub fn allocate_many(&mut self, count: usize, out: &mut Vec<BlockId>) {
+        let start = self.free_blocks.len() - count;
+        for id in self.free_blocks.drain(start..) {
+            self.ref_counts[id as usize] = 1;
+            out.push(id);
+        }
+    }
+
     /// Increment the reference count of a block (for copy-on-write sharing).
     pub fn add_ref(&mut self, id: BlockId) {
         // saturating_add prevents silent wrap-around which would corrupt the
@@ -261,10 +275,7 @@ impl SequenceBlockTable {
             );
         }
 
-        for _ in 0..new_blocks {
-            let id = pool.allocate()?;
-            self.blocks.push(id);
-        }
+        pool.allocate_many(new_blocks, &mut self.blocks);
         self.num_tokens += n;
         Ok(())
     }

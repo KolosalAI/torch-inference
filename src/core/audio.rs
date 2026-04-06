@@ -14,12 +14,20 @@ pub enum AudioFormat {
 
 impl AudioFormat {
     pub fn from_extension(ext: &str) -> Result<Self> {
-        match ext.to_lowercase().as_str() {
-            "wav" => Ok(AudioFormat::Wav),
-            "mp3" => Ok(AudioFormat::Mp3),
-            "flac" => Ok(AudioFormat::Flac),
-            "ogg" => Ok(AudioFormat::Ogg),
-            _ => bail!("Unsupported audio format: {}", ext),
+        // Match common ASCII cases directly to avoid a String allocation from
+        // to_lowercase().  Only fall through to the alloc path for exotic casing.
+        match ext {
+            "wav" | "WAV" => Ok(AudioFormat::Wav),
+            "mp3" | "MP3" => Ok(AudioFormat::Mp3),
+            "flac" | "FLAC" => Ok(AudioFormat::Flac),
+            "ogg" | "OGG" => Ok(AudioFormat::Ogg),
+            other => match other.to_lowercase().as_str() {
+                "wav" => Ok(AudioFormat::Wav),
+                "mp3" => Ok(AudioFormat::Mp3),
+                "flac" => Ok(AudioFormat::Flac),
+                "ogg" => Ok(AudioFormat::Ogg),
+                _ => bail!("Unsupported audio format: {}", other),
+            },
         }
     }
 
