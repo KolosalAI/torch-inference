@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use log::debug;
 use rand::seq::SliceRandom;
 use serde_json::Value;
+use crate::clock::coarse_unix_secs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,10 +33,7 @@ pub struct BytesCacheEntry {
 
 impl BytesCacheEntry {
     pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         self.is_expired_at(now)
     }
 
@@ -47,10 +45,7 @@ impl BytesCacheEntry {
 
 impl CacheEntry {
     pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         self.is_expired_at(now)
     }
 
@@ -106,10 +101,7 @@ impl Cache {
                 self.bytes_data.remove(&evict_key);
             }
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         self.bytes_data.insert(
             key,
             BytesCacheEntry {
@@ -125,10 +117,7 @@ impl Cache {
     ///
     /// Clone cost is O(1) — increments the `Arc` reference count only.
     pub fn get_bytes(&self, key: &str) -> Option<Arc<Bytes>> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         if let Some(entry) = self.bytes_data.get(key) {
             if entry.is_expired_at(now) {
                 drop(entry);
@@ -149,10 +138,7 @@ impl Cache {
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         if let Some(mut entry) = self.data.get_mut(key) {
             if entry.is_expired_at(now) {
                 drop(entry);
@@ -181,10 +167,7 @@ impl Cache {
             self.evict_lru();
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
 
         let insertion_order = self.insertion_counter.fetch_add(1, Ordering::Relaxed);
 
@@ -242,10 +225,7 @@ impl Cache {
 
         // Compute `now` once — avoids one syscall per entry in the filter below
         // (sample_size * 2 = 40–200 entries × ~30 ns/syscall = up to 6 µs saved).
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
 
         // Collect at most sample_size * 2 non-expired entries — the .take() stops
         // the DashMap iterator early instead of scanning the entire map (O(k) vs O(n)).
@@ -357,10 +337,7 @@ impl Cache {
     }
 
     pub fn cleanup_expired(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         let expired: Vec<String> = self
             .data
             .iter()
@@ -506,10 +483,7 @@ mod tests {
 
     #[test]
     fn test_cache_entry_is_expired() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = coarse_unix_secs();
 
         let entry = CacheEntry {
             data: serde_json::json!("test"),
@@ -525,10 +499,7 @@ mod tests {
 
     #[test]
     fn test_cache_entry_not_expired() {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = coarse_unix_secs();
 
         let entry = CacheEntry {
             data: serde_json::json!("test"),
@@ -1111,10 +1082,7 @@ mod tests {
     #[test]
     fn test_bytes_entry_is_expired_true() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = coarse_unix_secs();
         let entry = BytesCacheEntry {
             data: Arc::new(Bytes::from("x")),
             timestamp: now - 200,
@@ -1126,10 +1094,7 @@ mod tests {
     #[test]
     fn test_bytes_entry_is_expired_false() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = coarse_unix_secs();
         let entry = BytesCacheEntry {
             data: Arc::new(Bytes::from("x")),
             timestamp: now,

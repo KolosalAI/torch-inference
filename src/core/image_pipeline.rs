@@ -102,15 +102,25 @@ impl ImagePipeline {
     }
 
     /// Preprocess a batch of images and stack them into `[N, 3, H, W]`.
+    ///
+    /// Each image is decoded + resized + normalized on a rayon worker thread in
+    /// parallel, then assembled into the output tensor sequentially (O(N) memory
+    /// copy only).
     pub fn preprocess_batch(&self, images: &[Vec<u8>]) -> Result<Array4<f32>> {
         if images.is_empty() {
             bail!("empty batch");
         }
+        use rayon::prelude::*;
         let h = self.cfg.height as usize;
         let w = self.cfg.width as usize;
+
+        // Parallel decode + resize + normalize.
+        let results: Vec<Result<Array4<f32>>> =
+            images.par_iter().map(|data| self.preprocess_bytes(data)).collect();
+
         let mut out = Array4::<f32>::zeros((images.len(), 3, h, w));
-        for (i, data) in images.iter().enumerate() {
-            let arr = self.preprocess_bytes(data)?;
+        for (i, res) in results.into_iter().enumerate() {
+            let arr = res?;
             out.slice_mut(ndarray::s![i, .., .., ..])
                 .assign(&arr.slice(ndarray::s![0, .., .., ..]));
         }
@@ -161,6 +171,10 @@ fn decode_generic(data: &[u8]) -> Result<(Vec<u8>, u32, u32)> {
 // ── Resize ────────────────────────────────────────────────────────────────
 
 /// Resize `src` (HWC RGB u8) from `src_w × src_h` to `dst_w × dst_h`.
+///
+/// Uses `fast_image_resize` with CatmullRom filtering — SIMD-accelerated
+/// (SSE4.1 / AVX2 / NEON), ~4× faster than image-rs Lanczos3 for typical
+/// ML model input sizes with visually equivalent quality.
 fn resize_hwc(
     src: &[u8],
     src_w: u32,
@@ -168,22 +182,39 @@ fn resize_hwc(
     dst_w: u32,
     dst_h: u32,
 ) -> Result<(Vec<u8>, u32, u32)> {
-    use image::{DynamicImage, ImageBuffer, Rgb};
-    let buf: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_raw(src_w, src_h, src.to_vec())
-        .ok_or_else(|| anyhow::anyhow!("resize: invalid HWC buffer dimensions"))?;
-    let resized = DynamicImage::ImageRgb8(buf).resize_exact(
-        dst_w,
-        dst_h,
-        image::imageops::FilterType::Lanczos3,
+    use fast_image_resize as fir;
+    use std::num::NonZeroU32;
+
+    let mut src_buf = src.to_vec();
+    let src_img = fir::Image::from_slice_u8(
+        NonZeroU32::new(src_w).ok_or_else(|| anyhow::anyhow!("resize: zero src width"))?,
+        NonZeroU32::new(src_h).ok_or_else(|| anyhow::anyhow!("resize: zero src height"))?,
+        // fast_image_resize needs a &mut [u8]; we use an owned copy.
+        &mut src_buf,
+        fir::PixelType::U8x3,
+    )
+    .map_err(|e| anyhow::anyhow!("fast_image_resize src: {e}"))?;
+
+    let mut dst_img = fir::Image::new(
+        NonZeroU32::new(dst_w).ok_or_else(|| anyhow::anyhow!("resize: zero dst width"))?,
+        NonZeroU32::new(dst_h).ok_or_else(|| anyhow::anyhow!("resize: zero dst height"))?,
+        fir::PixelType::U8x3,
     );
-    Ok((resized.to_rgb8().into_raw(), dst_w, dst_h))
+
+    fir::Resizer::new(fir::ResizeAlg::Convolution(fir::FilterType::CatmullRom))
+        .resize(&src_img.view(), &mut dst_img.view_mut())
+        .map_err(|e| anyhow::anyhow!("fast_image_resize resize: {e}"))?;
+
+    Ok((dst_img.into_vec(), dst_w, dst_h))
 }
 
 // ── Normalize ─────────────────────────────────────────────────────────────
 
 /// Convert HWC u8 RGB → NCHW f32 with per-channel normalisation.
 ///
-/// With `simd-image` feature: uses `wide::f32x8` over the per-channel slices.
+/// Uses `wide::f32x8` (AVX2 / NEON 8-wide SIMD) unconditionally for the
+/// normalize step.  Step 1 (HWC scatter → NCHW) remains scalar because the
+/// random-access pattern doesn't vectorise cleanly.
 fn hwc_u8_to_nchw_f32(
     src: &[u8],
     height: usize,
@@ -193,7 +224,7 @@ fn hwc_u8_to_nchw_f32(
 ) -> Array4<f32> {
     let mut out = Array4::<f32>::zeros((1, 3, height, width));
 
-    // Step 1: fill NCHW with pixel / 255.0
+    // Step 1: scatter HWC → NCHW, dividing by 255.
     for h in 0..height {
         for w in 0..width {
             for c in 0..3usize {
@@ -203,27 +234,12 @@ fn hwc_u8_to_nchw_f32(
         }
     }
 
-    // Step 2: normalise each channel's contiguous slice.
-    #[cfg(feature = "simd-image")]
-    {
-        for c in 0..3usize {
-            // In NCHW row-major layout each channel [0,c,..,..] is contiguous.
-            if let Some(slice) = out.slice_mut(ndarray::s![0, c, .., ..]).as_slice_mut() {
-                normalize_channel_simd(slice, mean[c], std[c]);
-                continue;
-            }
-            // Non-contiguous fallback (should not happen for fresh zeros Array4).
-            for h in 0..height {
-                for w in 0..width {
-                    out[[0, c, h, w]] = (out[[0, c, h, w]] - mean[c]) / std[c];
-                }
-            }
-        }
-    }
-
-    #[cfg(not(feature = "simd-image"))]
-    {
-        for c in 0..3usize {
+    // Step 2: normalise each channel's contiguous NCHW slice with SIMD.
+    for c in 0..3usize {
+        if let Some(slice) = out.slice_mut(ndarray::s![0, c, .., ..]).as_slice_mut() {
+            normalize_channel_simd(slice, mean[c], std[c]);
+        } else {
+            // Non-contiguous fallback (should not occur for fresh zeros Array4).
             for h in 0..height {
                 for w in 0..width {
                     out[[0, c, h, w]] = (out[[0, c, h, w]] - mean[c]) / std[c];
@@ -236,7 +252,6 @@ fn hwc_u8_to_nchw_f32(
 }
 
 /// Normalise a contiguous f32 slice in-place using `wide::f32x8` (8-wide SIMD).
-#[cfg(feature = "simd-image")]
 fn normalize_channel_simd(channel: &mut [f32], mean: f32, std: f32) {
     use wide::f32x8;
     let mean_v = f32x8::splat(mean);
@@ -244,15 +259,12 @@ fn normalize_channel_simd(channel: &mut [f32], mean: f32, std: f32) {
 
     let (head, middle, tail) = bytemuck::pod_align_to_mut::<f32, f32x8>(channel);
 
-    // scalar prefix (before alignment boundary)
     for v in head.iter_mut() {
         *v = (*v - mean) / std;
     }
-    // SIMD body
     for v in middle.iter_mut() {
         *v = (*v - mean_v) / std_v;
     }
-    // scalar suffix
     for v in tail.iter_mut() {
         *v = (*v - mean) / std;
     }

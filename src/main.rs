@@ -3,6 +3,7 @@ mod api;
 mod auth;
 mod batch;
 mod cache;
+mod clock;
 mod compression;
 mod config;
 mod core;

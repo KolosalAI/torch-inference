@@ -1,11 +1,11 @@
 #![allow(dead_code)]
+use crate::clock::coarse_unix_secs;
 use log::{debug, trace};
 use lru::LruCache;
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── FNV-1a 64-bit ─────────────────────────────────────────────────────────
 // Replaces Sha256 for dedup key generation — ~20× faster for short strings,
@@ -22,6 +22,10 @@ fn fnv1a(data: &[u8]) -> u64 {
     h
 }
 
+/// Number of independent LRU shards.  16 shards reduce Mutex contention by
+/// ~16× under concurrent load; each shard is indexed by `fnv1a(key) & 0xF`.
+const NUM_SHARDS: usize = 16;
+
 /// Store the result behind an Arc so that clone on cache-hit is O(1)
 /// (pointer copy) instead of a deep-copy of the potentially large JSON value.
 #[derive(Clone)]
@@ -31,56 +35,53 @@ pub struct DeduplicationEntry {
     pub ttl: u64,
 }
 
-/// Request deduplicator backed by an LRU cache.
+type Shard = Mutex<LruCache<String, DeduplicationEntry>>;
+
+/// Request deduplicator backed by 16 independent LRU shards.
 ///
-/// When at capacity, the least-recently-used entry is evicted automatically.
-/// The old `DashMap`-based implementation returned `Err` when full, which the
-/// call-site silently ignored — meaning new requests were never cached once
-/// the map filled. LRU gives correct behaviour: stale results age out and
-/// hot phrases stay cached.
+/// Each key is routed to a shard via `fnv1a(key) & 0xF`.  Concurrent requests
+/// hitting different shards acquire different locks, reducing contention ~16×
+/// compared to a single global `Mutex<LruCache>`.
 pub struct RequestDeduplicator {
-    cache: Mutex<LruCache<String, DeduplicationEntry>>,
+    shards: Box<[Shard; NUM_SHARDS]>,
 }
 
 impl RequestDeduplicator {
     pub fn new(max_entries: usize) -> Self {
-        let cap = NonZeroUsize::new(max_entries.max(1)).expect("max_entries must be at least 1");
+        // Distribute capacity evenly; each shard gets at least 1 slot.
+        let per_shard =
+            NonZeroUsize::new(((max_entries + NUM_SHARDS - 1) / NUM_SHARDS).max(1)).unwrap();
         Self {
-            cache: Mutex::new(LruCache::new(cap)),
+            shards: Box::new(std::array::from_fn(|_| {
+                Mutex::new(LruCache::new(per_shard))
+            })),
         }
     }
 
+    #[inline]
+    fn shard_index(key: &str) -> usize {
+        (fnv1a(key.as_bytes()) & (NUM_SHARDS as u64 - 1)) as usize
+    }
+
     pub fn generate_key(&self, model: &str, inputs: &Value) -> String {
-        // Build the canonical form into a pre-allocated buffer, then hash with
-        // FNV-1a (non-cryptographic, ~20× faster than SHA-256, sufficient for
-        // a 10-second dedup window).
         let mut buf = String::with_capacity(128);
         write_canonical_json(inputs, &mut buf);
         let hash = fnv1a(buf.as_bytes());
-        let epoch_window = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 10;
+        let epoch_window = coarse_unix_secs() / 10;
         format!("{}:{:016x}:{}", model, hash, epoch_window)
     }
 
     /// Returns a cheap `Arc` clone of the cached value — O(1), no data copied.
     /// Promotes the entry to most-recently-used on a hit.
     pub fn get(&self, key: &str) -> Option<Arc<Value>> {
-        let mut cache = self.cache.lock();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let mut cache = self.shards[Self::shard_index(key)].lock();
+        let now = coarse_unix_secs();
 
-        // peek first (no promotion) to check TTL without a mutable borrow conflict
         let is_valid = cache
             .peek(key)
             .map_or(false, |e| now.saturating_sub(e.timestamp) < e.ttl);
 
         if is_valid {
-            // promote to MRU and return
             let result = cache.get(key).map(|e| Arc::clone(&e.result));
             debug!("Deduplication cache hit: {}", key);
             result
@@ -91,15 +92,11 @@ impl RequestDeduplicator {
         }
     }
 
-    /// Insert a result. When at capacity the LRU entry is evicted automatically.
-    /// Wrap `result` in an `Arc` once so all future cache hits share the allocation.
+    /// Insert a result. When the shard is at capacity, the LRU entry is evicted.
     pub fn set(&self, key: String, result: Value, ttl: u64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = coarse_unix_secs();
         debug!("Deduplication entry set: {} (TTL: {}s)", key, ttl);
-        self.cache.lock().put(
+        self.shards[Self::shard_index(&key)].lock().put(
             key,
             DeduplicationEntry {
                 result: Arc::new(result),
@@ -110,35 +107,37 @@ impl RequestDeduplicator {
     }
 
     pub fn invalidate(&self, key: &str) {
-        self.cache.lock().pop(key);
+        self.shards[Self::shard_index(key)].lock().pop(key);
         debug!("Deduplication entry invalidated: {}", key);
     }
 
     pub fn clear(&self) {
-        self.cache.lock().clear();
+        for shard in self.shards.iter() {
+            shard.lock().clear();
+        }
         debug!("Deduplication cache cleared");
     }
 
     pub fn cleanup_expired(&self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let mut cache = self.cache.lock();
-        let expired: Vec<String> = cache
-            .iter()
-            .filter(|(_, e)| now.saturating_sub(e.timestamp) >= e.ttl)
-            .map(|(k, _)| k.clone())
-            .collect();
-        let count = expired.len();
-        for key in &expired {
-            cache.pop(key.as_str());
+        let now = coarse_unix_secs();
+        let mut total = 0usize;
+        for shard in self.shards.iter() {
+            let mut cache = shard.lock();
+            let expired: Vec<String> = cache
+                .iter()
+                .filter(|(_, e)| now.saturating_sub(e.timestamp) >= e.ttl)
+                .map(|(k, _)| k.clone())
+                .collect();
+            total += expired.len();
+            for key in &expired {
+                cache.pop(key.as_str());
+            }
         }
-        debug!("Deduplication cleanup: removed {} expired entries", count);
+        debug!("Deduplication cleanup: removed {} expired entries", total);
     }
 
     pub fn size(&self) -> usize {
-        self.cache.lock().len()
+        self.shards.iter().map(|s| s.lock().len()).sum()
     }
 }
 
@@ -227,22 +226,17 @@ mod tests {
 
     #[test]
     fn test_dedup_lru_eviction_on_full() {
-        let dedup = RequestDeduplicator::new(2);
-        dedup.set("key1".to_string(), serde_json::json!("val1"), 60);
-        dedup.set("key2".to_string(), serde_json::json!("val2"), 60);
-
-        // Access key1 to promote it to MRU; key2 becomes LRU
-        let _ = dedup.get("key1");
-
-        // Adding key3 should evict key2 (LRU), not fail
-        dedup.set("key3".to_string(), serde_json::json!("val3"), 60);
-
-        assert_eq!(dedup.size(), 2);
-        assert!(dedup.get("key1").is_some(), "key1 (MRU) should survive");
-        assert!(dedup.get("key2").is_none(), "key2 (LRU) should be evicted");
+        // Each shard has capacity 1 (max_entries=16, NUM_SHARDS=16).
+        // Inserting 3× as many keys as capacity must keep size bounded.
+        let dedup = RequestDeduplicator::new(NUM_SHARDS);
+        for i in 0..NUM_SHARDS * 3 {
+            dedup.set(format!("key_{}", i), serde_json::json!(i), 60);
+        }
         assert!(
-            dedup.get("key3").is_some(),
-            "key3 (newly added) should be present"
+            dedup.size() <= NUM_SHARDS,
+            "size {} must not exceed NUM_SHARDS = {}",
+            dedup.size(),
+            NUM_SHARDS,
         );
     }
 

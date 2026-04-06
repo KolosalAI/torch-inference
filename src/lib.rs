@@ -2,6 +2,7 @@ pub mod api;
 pub mod auth;
 pub mod batch;
 pub mod cache;
+pub mod clock;
 pub mod compression;
 pub mod config;
 pub mod core;
