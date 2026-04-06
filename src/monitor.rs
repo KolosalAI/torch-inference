@@ -83,26 +83,43 @@ impl Monitor {
 
         // Call Utc::now() once and reuse for both last_called sites.
         let now_utc = Utc::now();
-        self.endpoint_stats
-            .entry(endpoint.to_string())
-            .and_modify(|stats| {
-                stats.calls += 1;
-                // Welford's online mean: numerically stable, avoids multiplying
-                // a large running average by (n-1) on every update.
-                stats.avg_latency_ms +=
-                    (latency_ms as f64 - stats.avg_latency_ms) / stats.calls as f64;
-                stats.last_called = now_utc;
-                if !success {
-                    stats.errors += 1;
-                }
-            })
-            .or_insert_with(|| EndpointStats {
-                path: endpoint.to_string(),
-                calls: 1,
-                errors: if success { 0 } else { 1 },
-                avg_latency_ms: latency_ms as f64,
-                last_called: now_utc,
-            });
+
+        // Fast path: endpoint already tracked — update in-place without allocating a
+        // new String key.  `get_mut` accepts `&str` via `String: Borrow<str>`.
+        // This covers >99 % of calls (all endpoints after their first request).
+        if let Some(mut stats) = self.endpoint_stats.get_mut(endpoint) {
+            stats.calls += 1;
+            // Welford's online mean: numerically stable, avoids multiplying
+            // a large running average by (n-1) on every update.
+            stats.avg_latency_ms +=
+                (latency_ms as f64 - stats.avg_latency_ms) / stats.calls as f64;
+            stats.last_called = now_utc;
+            if !success {
+                stats.errors += 1;
+            }
+        } else {
+            // Cold path: first request to this endpoint; allocate the key once.
+            // Use `entry` (not bare `insert`) to handle the race where two threads
+            // simultaneously see None from `get_mut`.
+            self.endpoint_stats
+                .entry(endpoint.to_string())
+                .and_modify(|stats| {
+                    stats.calls += 1;
+                    stats.avg_latency_ms +=
+                        (latency_ms as f64 - stats.avg_latency_ms) / stats.calls as f64;
+                    stats.last_called = now_utc;
+                    if !success {
+                        stats.errors += 1;
+                    }
+                })
+                .or_insert_with(|| EndpointStats {
+                    path: endpoint.to_string(),
+                    calls: 1,
+                    errors: if success { 0 } else { 1 },
+                    avg_latency_ms: latency_ms as f64,
+                    last_called: now_utc,
+                });
+        }
 
         if !success {
             self.total_errors.fetch_add(1, Ordering::Relaxed);

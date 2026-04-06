@@ -61,7 +61,7 @@ impl TTSManager {
 
     /// FNV-1a 64-bit hash. Unlike `DefaultHasher`, this is stable across Rust
     /// versions and process restarts — safe for use as a persistent cache key.
-    fn fnv1a_u64(data: &[u8]) -> u64 {
+    pub(crate) fn fnv1a_u64(data: &[u8]) -> u64 {
         const OFFSET_BASIS: u64 = 14695981039346656037;
         const PRIME: u64 = 1099511628211;
         let mut hash = OFFSET_BASIS;
@@ -72,27 +72,31 @@ impl TTSManager {
         hash
     }
 
+    /// Compute a stable FNV-1a 64-bit cache key for a synthesis request.
+    ///
+    /// Streams all fields through the hash in one pass — **zero heap allocation**
+    /// per call.  NUL-byte separators between fields prevent collisions such as
+    /// `("ab","c") == ("a","bc")`.  Replaces the previous `Vec::with_capacity` +
+    /// byte-push approach (1 heap alloc per call).
     fn synthesis_cache_key(text: &str, engine_id: &str, params: &SynthesisParams) -> u64 {
-        // NUL bytes separate fields to prevent collisions like ("ab","c") == ("a","bc")
-        let mut buf = Vec::with_capacity(
-            text.len() + engine_id.len()
-                + params.voice.as_deref().map_or(0, |s| s.len())
-                + params.language.as_deref().map_or(0, |s| s.len())
-                + 4   // field separators
-                + 4   // speed f32 bits (u32)
-                + 4, // pitch f32 bits (u32)
-        );
-        buf.extend_from_slice(text.as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(engine_id.as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(params.voice.as_deref().unwrap_or("").as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(params.language.as_deref().unwrap_or("").as_bytes());
-        buf.push(0);
-        buf.extend_from_slice(&params.speed.to_bits().to_le_bytes());
-        buf.extend_from_slice(&params.pitch.to_bits().to_le_bytes());
-        Self::fnv1a_u64(&buf)
+        const OFFSET: u64 = 14695981039346656037;
+        const PRIME: u64 = 1099511628211;
+        #[inline(always)]
+        fn mix(mut h: u64, bytes: &[u8]) -> u64 {
+            for &b in bytes { h ^= b as u64; h = h.wrapping_mul(PRIME); }
+            h
+        }
+        let sep = &[0u8];
+        let h = mix(OFFSET, text.as_bytes());
+        let h = mix(h, sep);
+        let h = mix(h, engine_id.as_bytes());
+        let h = mix(h, sep);
+        let h = mix(h, params.voice.as_deref().unwrap_or("").as_bytes());
+        let h = mix(h, sep);
+        let h = mix(h, params.language.as_deref().unwrap_or("").as_bytes());
+        let h = mix(h, sep);
+        let h = mix(h, &params.speed.to_bits().to_le_bytes());
+        mix(h, &params.pitch.to_bits().to_le_bytes())
     }
 
     /// Register a TTS engine
