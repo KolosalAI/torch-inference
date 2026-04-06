@@ -1,10 +1,18 @@
 #![allow(dead_code)]
+use crossbeam_queue::ArrayQueue;
 use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinHandle;
+
+// Global epoch for converting AtomicU64 nanos back to Instant in Worker::get_stats().
+static WORKER_EPOCH: OnceLock<Instant> = OnceLock::new();
+#[inline]
+fn worker_epoch() -> Instant {
+    *WORKER_EPOCH.get_or_init(Instant::now)
+}
 
 /// Worker state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,19 +66,22 @@ pub struct Worker {
     tasks_processed: AtomicU64,
     total_processing_time_ms: AtomicU64,
     start_time: Instant,
-    last_active: Arc<parking_lot::Mutex<Option<Instant>>>,
+    /// Nanos since WORKER_EPOCH, or 0 = never active. Stored atomically —
+    /// no mutex needed on the task start/end hot path.
+    last_active: AtomicU64,
     handle: Option<JoinHandle<()>>,
 }
 
 impl Worker {
     pub fn new(id: usize) -> Self {
+        worker_epoch(); // ensure WORKER_EPOCH is initialised before any worker runs
         Self {
             id,
             state: Arc::new(std::sync::atomic::AtomicU8::new(WorkerState::Idle.as_u8())),
             tasks_processed: AtomicU64::new(0),
             total_processing_time_ms: AtomicU64::new(0),
             start_time: Instant::now(),
-            last_active: Arc::new(parking_lot::Mutex::new(None)),
+            last_active: AtomicU64::new(0),
             handle: None,
         }
     }
@@ -91,7 +102,12 @@ impl Worker {
     }
 
     pub fn update_last_active(&self) {
-        *self.last_active.lock() = Some(Instant::now());
+        let nanos = Instant::now()
+            .checked_duration_since(worker_epoch())
+            .unwrap_or(Duration::ZERO)
+            .as_nanos() as u64;
+        // Reserve 0 for "never active"; any real timestamp is at least 1 ns.
+        self.last_active.store(nanos.max(1), Ordering::Relaxed);
     }
 
     pub fn get_stats(&self) -> WorkerStats {
@@ -99,13 +115,20 @@ impl Worker {
         let total_time = self.total_processing_time_ms.load(Ordering::Relaxed);
         let avg_time = if tasks > 0 { total_time / tasks } else { 0 };
 
+        let last_active_nanos = self.last_active.load(Ordering::Relaxed);
+        let last_active = if last_active_nanos == 0 {
+            None
+        } else {
+            Some(worker_epoch() + Duration::from_nanos(last_active_nanos))
+        };
+
         WorkerStats {
             worker_id: self.id,
             state: self.get_state(),
             tasks_processed: tasks,
             total_processing_time_ms: total_time,
             avg_processing_time_ms: avg_time,
-            last_active: *self.last_active.lock(),
+            last_active,
             uptime_secs: self.start_time.elapsed().as_secs(),
         }
     }
@@ -149,11 +172,18 @@ pub struct WorkerPool {
     shutdown: Arc<AtomicBool>,
     scale_notify: Arc<Notify>,
     semaphore: Arc<Semaphore>,
-    idle_workers: Arc<parking_lot::Mutex<Vec<usize>>>,
+    /// Lock-free idle-worker ID queue.  Bounded by `max_workers`.
+    /// `acquire_worker` pops; `release_worker` pushes — both are wait-free.
+    idle_workers: Arc<ArrayQueue<usize>>,
+    /// Count of workers currently in Processing state.
+    /// Incremented by `acquire_worker`, decremented by `release_worker`.
+    /// Makes `active_worker_count()` O(1) without a read-lock.
+    active_count: AtomicUsize,
 }
 
 impl WorkerPool {
     pub fn new(config: WorkerPoolConfig) -> Arc<Self> {
+        let idle_workers = Arc::new(ArrayQueue::new(config.max_workers.max(1)));
         Arc::new(Self {
             config: config.clone(),
             workers: Arc::new(parking_lot::RwLock::new(Vec::new())),
@@ -163,7 +193,8 @@ impl WorkerPool {
             shutdown: Arc::new(AtomicBool::new(false)),
             scale_notify: Arc::new(Notify::new()),
             semaphore: Arc::new(Semaphore::new(config.max_workers)),
-            idle_workers: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            idle_workers,
+            active_count: AtomicUsize::new(0),
         })
     }
 
@@ -204,8 +235,9 @@ impl WorkerPool {
         let worker = Arc::new(Worker::new(worker_id));
         workers.push(worker.clone());
 
-        // Add to idle list
-        self.idle_workers.lock().push(worker_id);
+        // Add to idle queue (push only fails if queue is full, which can't happen
+        // since queue capacity == max_workers and we checked the limit above).
+        let _ = self.idle_workers.push(worker_id);
 
         info!("Added worker {} (total: {})", worker_id, workers.len());
         Ok(())
@@ -227,10 +259,7 @@ impl WorkerPool {
 
         // Fast path: pop the most-recently-added idle candidate and validate it.
         // If stale (worker state changed since enqueue), fall through to O(n) scan.
-        let candidate = {
-            let mut idle = self.idle_workers.lock();
-            idle.pop()
-        };
+        let candidate = self.idle_workers.pop();
 
         let i = match candidate {
             Some(id) if id < workers.len() && workers[id].get_state() == WorkerState::Idle => id,
@@ -249,16 +278,18 @@ impl WorkerPool {
         workers[i].set_state(WorkerState::Stopping);
         workers.remove(i);
 
-        // Update the idle list: drop any stale reference to `i` and shift
-        // all indices that were above the removed slot down by one.
-        let mut idle = self.idle_workers.lock();
-        if let Some(pos) = idle.iter().position(|&x| x == i) {
-            idle.remove(pos);
-        }
-        for val in idle.iter_mut() {
-            if *val > i {
-                *val -= 1;
+        // Drain the idle queue, skip the removed index, decrement all indices
+        // above `i` (Vec::remove shifts them down by one), then re-push.
+        // O(max_workers) — acceptable because remove_idle_worker only fires on
+        // the rare auto-scaler scale-down path (at most once every 5 seconds).
+        let mut pending: Vec<usize> = Vec::new();
+        while let Some(id) = self.idle_workers.pop() {
+            if id != i {
+                pending.push(if id > i { id - 1 } else { id });
             }
+        }
+        for id in pending {
+            let _ = self.idle_workers.push(id);
         }
 
         info!("Removed idle worker {} (total: {})", i, workers.len());
@@ -267,17 +298,13 @@ impl WorkerPool {
 
     /// Get an available worker
     pub fn acquire_worker(&self) -> Option<Arc<Worker>> {
-        // Fast path: try to get from idle queue
-        let idle_id = {
-            let mut idle = self.idle_workers.lock();
-            idle.pop()
-        };
-
-        if let Some(id) = idle_id {
+        // Lock-free pop — ArrayQueue::pop is wait-free.
+        if let Some(id) = self.idle_workers.pop() {
             let workers = self.workers.read();
             if let Some(worker) = workers.get(id) {
                 worker.set_state(WorkerState::Processing);
                 worker.update_last_active();
+                self.active_count.fetch_add(1, Ordering::Relaxed);
                 return Some(worker.clone());
             }
         }
@@ -292,14 +319,9 @@ impl WorkerPool {
         worker.set_state(WorkerState::Idle);
         worker.update_last_active();
 
-        // Add back to idle queue
-        // We need the worker's ID. The Worker struct has it.
-        // But wait, Worker struct definition:
-        // pub struct Worker { id: usize, ... }
-        // We need to access it. It's private in the struct definition above?
-        // Let's check Worker definition.
-
-        self.idle_workers.lock().push(worker.id);
+        self.active_count.fetch_sub(1, Ordering::Relaxed);
+        // Lock-free push — ArrayQueue::push is wait-free.
+        let _ = self.idle_workers.push(worker.id);
 
         self.total_tasks.fetch_add(1, Ordering::Relaxed);
     }
@@ -324,18 +346,9 @@ impl WorkerPool {
         self.workers.read().len()
     }
 
-    /// Get active worker count
+    /// Get active worker count (O(1) — reads an AtomicUsize)
     pub fn active_worker_count(&self) -> usize {
-        let workers = self.workers.read();
-        let mut count = 0;
-
-        for worker in workers.iter() {
-            if worker.get_state() == WorkerState::Processing {
-                count += 1;
-            }
-        }
-
-        count
+        self.active_count.load(Ordering::Relaxed)
     }
 
     /// Start auto-scaling monitor
@@ -697,11 +710,8 @@ mod tests {
     #[tokio::test]
     async fn test_worker_update_last_active() {
         let worker = Worker::new(0);
-        // Initially None
-        {
-            let last = worker.last_active.lock();
-            assert!(last.is_none());
-        }
+        // Initially 0 (never active)
+        assert_eq!(worker.last_active.load(Ordering::Relaxed), 0);
         worker.update_last_active();
         let stats = worker.get_stats();
         assert!(stats.last_active.is_some());
@@ -797,8 +807,8 @@ mod tests {
                 w.set_state(WorkerState::Processing);
             }
         }
-        // Clear idle list too
-        pool.idle_workers.lock().clear();
+        // Clear idle queue
+        while pool.idle_workers.pop().is_some() {}
 
         let result = pool.remove_idle_worker().await;
         assert!(result.is_err());
@@ -1024,11 +1034,11 @@ mod tests {
 
         let w = pool.acquire_worker().unwrap();
         // Idle queue should have one fewer
-        assert_eq!(pool.idle_workers.lock().len(), 1);
+        assert_eq!(pool.idle_workers.len(), 1);
 
         pool.release_worker(w, 50);
         // Idle queue back to 2
-        assert_eq!(pool.idle_workers.lock().len(), 2);
+        assert_eq!(pool.idle_workers.len(), 2);
     }
 
     #[tokio::test]
@@ -1163,29 +1173,28 @@ mod tests {
         assert_eq!(pool.worker_count().await, 2);
     }
 
-    // ── acquire_worker: idle_id out-of-bounds → None (line 288) ─────────────
+    // ── acquire_worker: idle_id out-of-bounds → None ─────────────────────────
     //
-    // The fallback None at line 288 is reached when the idle_workers queue returns
-    // an id that is >= workers.len() (stale index after a removal).  We can inject
-    // this situation by directly manipulating the internal state after the pool is
-    // initialised.
+    // None is returned when the idle queue yields an id >= workers.len() (stale
+    // index after a removal).  With the ArrayQueue (FIFO), we ensure the stale
+    // entry is the only one in the queue by using zero-scaling init (no workers
+    // added) and injecting 999 directly.
     #[tokio::test]
     async fn test_acquire_worker_stale_idle_id_returns_none() {
         let config = WorkerPoolConfig {
-            min_workers: 1,
+            min_workers: 0,
             max_workers: 5,
             enable_auto_scaling: false,
+            enable_zero_scaling: true,
             ..Default::default()
         };
         let pool = WorkerPool::new(config);
-        pool.initialize().await.unwrap(); // 1 worker at index 0
+        pool.initialize().await.unwrap(); // 0 workers added
 
-        // Inject a stale/invalid id (999) into the idle queue so that when
-        // acquire_worker pops it, it cannot find a worker at that index.
-        pool.idle_workers.lock().push(999);
+        // Inject a stale/invalid id (999) — only entry in the queue.
+        let _ = pool.idle_workers.push(999);
 
-        // Pop will return 999 (the last-pushed entry); workers.get(999) is None
-        // → falls through to the None at line 288.
+        // pop() returns 999; workers.get(999) is None → returns None.
         let result = pool.acquire_worker();
         assert!(
             result.is_none(),
@@ -1339,7 +1348,7 @@ mod tests {
                 w.set_state(WorkerState::Processing);
             }
         }
-        pool.idle_workers.lock().clear();
+        pool.idle_workers.pop(); // clear idle queue so active_count check works
 
         // active_count=2, worker_count=2, worker_count - active_count = 0, NOT > 1
         // → the inner if (line 378) is NOT entered.

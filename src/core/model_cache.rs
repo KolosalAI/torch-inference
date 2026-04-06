@@ -24,15 +24,29 @@ fn fnv1a(data: &[u8]) -> u64 {
 }
 
 /// Compute a stable u64 cache key from three independent byte slices.
-/// NUL-byte separators prevent cross-field collisions (e.g. "ab"+"c" ≠ "a"+"bc").
+///
+/// Streams FNV-1a over each slice in turn, inserting NUL-byte separators
+/// between fields so "ab"+"c" ≠ "a"+"bc".  Zero heap allocation — the
+/// previous implementation built a `Vec<u8>` before hashing.
 pub fn cache_key(model_id: &str, input: &[u8], params: &[u8]) -> u64 {
-    let mut data = Vec::with_capacity(model_id.len() + 1 + input.len() + 1 + params.len());
-    data.extend_from_slice(model_id.as_bytes());
-    data.push(0);
-    data.extend_from_slice(input);
-    data.push(0);
-    data.extend_from_slice(params);
-    fnv1a(&data)
+    let mut h = FNV_OFFSET;
+    for &b in model_id.as_bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h ^= 0u64; // NUL separator
+    h = h.wrapping_mul(FNV_PRIME);
+    for &b in input {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h ^= 0u64; // NUL separator
+    h = h.wrapping_mul(FNV_PRIME);
+    for &b in params {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h
 }
 
 // ── CacheStats ────────────────────────────────────────────────────────────────

@@ -114,6 +114,12 @@ impl KeyedRateLimiter {
     }
 
     fn get_or_create_limiter(&self, key: &str) -> Arc<TokenBucket> {
+        // Fast path: key already exists — no String allocation.
+        if let Some(entry) = self.limiters.get(key) {
+            return Arc::clone(&*entry);
+        }
+        // Slow path: insert a new bucket.  `entry()` allocates the String key
+        // only here, which is amortised to zero on the common (already-seen) path.
         self.limiters
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(TokenBucket::new(self.default_capacity, self.default_rate)))
