@@ -230,7 +230,7 @@ impl Cache {
 
         // Collect at most sample_size * 2 non-expired entries — the .take() stops
         // the DashMap iterator early instead of scanning the entire map (O(k) vs O(n)).
-        let all_candidates: Vec<EvictCandidate> = self
+        let mut all_candidates: Vec<EvictCandidate> = self
             .data
             .iter()
             .filter(|e| !e.value().is_expired_at(now))
@@ -243,15 +243,16 @@ impl Cache {
             })
             .collect();
 
+        // Shuffle in-place — equivalent to `choose_multiple(&mut rng, n)` when
+        // n == all_candidates.len(), which is always true here (take(2k) ≤ 2k).
+        // This avoids building a separate Vec<&EvictCandidate> (no &&-reference indirection).
         let mut rng = rand::thread_rng();
-        let candidates: Vec<&EvictCandidate> = all_candidates
-            .choose_multiple(&mut rng, (sample_size * 2).min(all_candidates.len()))
-            .collect();
+        all_candidates.shuffle(&mut rng);
 
         self.eviction_samples
-            .fetch_add(candidates.len() as u64, Ordering::Relaxed);
+            .fetch_add(all_candidates.len() as u64, Ordering::Relaxed);
 
-        if candidates.is_empty() {
+        if all_candidates.is_empty() {
             // Fallback: evict by insertion_order (evict oldest)
             let oldest = self
                 .data
@@ -265,34 +266,33 @@ impl Cache {
             return;
         }
 
-        // SLRU: probationary (access_count == 0, never fetched after insertion) → evict first.
-        // Protected (access_count > 0, fetched at least once) → evict only if no probationary exists.
-        // Tiebreaker: insertion_order (oldest inserted wins).
-        let victim_key = {
-            let probationary: Vec<&&EvictCandidate> =
-                candidates.iter().filter(|c| c.access_count == 0).collect();
+        // SLRU: probationary (access_count == 0) → evict first; tiebreak on last_access then insertion_order.
+        // Use index + swap_remove to MOVE the key string out instead of cloning it a second time.
+        let prob_idx = all_candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.access_count == 0)
+            .min_by_key(|(_, c)| (c.last_access, c.insertion_order))
+            .map(|(i, _)| i);
 
-            if !probationary.is_empty() {
-                probationary
-                    .iter()
-                    .min_by_key(|c| (c.last_access, c.insertion_order))
-                    .map(|c| c.key.clone())
-            } else {
-                candidates
-                    .iter()
-                    .min_by_key(|c| (c.last_access, c.insertion_order))
-                    .map(|c| c.key.clone())
-            }
-        };
+        let victim_idx = prob_idx.or_else(|| {
+            all_candidates
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, c)| (c.last_access, c.insertion_order))
+                .map(|(i, _)| i)
+        });
 
-        if let Some(key) = victim_key {
-            self.data.remove(&key);
-            self.evictions.fetch_add(1, Ordering::Relaxed);
+        if let Some(i) = victim_idx {
+            // swap_remove is O(1) and moves the key — no second String clone.
+            let key = all_candidates.swap_remove(i).key;
             debug!(
                 "Evicted SLRU entry: {} (samples: {})",
                 key,
-                candidates.len()
+                all_candidates.len() + 1  // +1 because we just removed the victim
             );
+            self.data.remove(&key);
+            self.evictions.fetch_add(1, Ordering::Relaxed);
         }
     }
 

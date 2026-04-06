@@ -41,16 +41,14 @@ pub async fn predict(
     deduplicator: web::Data<std::sync::Arc<RequestDeduplicator>>,
     http_req: HttpRequest,
 ) -> impl Responder {
-    let client_ip = http_req
-        .connection_info()
-        .peer_addr()
-        .unwrap_or("unknown")
-        .to_string();
-
-    // Check rate limit
-    if let Err(e) = rate_limiter.is_allowed(&client_ip) {
-        monitor.record_request_end(0, "/predict", false);
-        return actix_web::error::ErrorTooManyRequests(e.message).error_response();
+    // Borrow peer_addr as &str — ConnectionInfo scoped to this block, no String alloc.
+    {
+        let ci = http_req.connection_info();
+        let client_ip = ci.peer_addr().unwrap_or("unknown");
+        if let Err(e) = rate_limiter.is_allowed(client_ip) {
+            monitor.record_request_end(0, "/predict", false);
+            return actix_web::error::ErrorTooManyRequests(e.message).error_response();
+        }
     }
 
     // Check for duplicate request — cache returns Arc<Value>: O(1) clone, no data copy.
