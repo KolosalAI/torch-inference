@@ -221,12 +221,19 @@ impl OnnxModelLoader {
         }
 
         // 3. CoreML (Apple Silicon / macOS)
+        //    Use ALL compute units so the Neural Engine (ANE) and GPU are engaged
+        //    alongside the CPU.  with_subgraphs(true) partitions more ops into
+        //    the CoreML graph; with_compute_units(All) routes them to the fastest
+        //    available silicon.
         #[cfg(target_os = "macos")]
         {
-            info!("Enabling CoreML execution provider");
+            info!("Enabling CoreML execution provider (Neural Engine + GPU + CPU)");
             execution_providers.push(
                 ort::execution_providers::CoreMLExecutionProvider::default()
                     .with_subgraphs(true)
+                    .with_compute_units(
+                        ort::execution_providers::coreml::CoreMLComputeUnits::All,
+                    )
                     .build(),
             );
         }
@@ -237,10 +244,21 @@ impl OnnxModelLoader {
         // Register providers
         builder = builder.with_execution_providers(execution_providers)?;
 
-        // Set graph optimization level (Level3 = all optimizations)
+        // Set graph optimization level (Level3 = all optimizations).
+        // with_intra_threads  — parallelism within a single op (e.g. matmul column splits)
+        // with_inter_threads  — parallelism across independent subgraphs; keep at 1 to
+        //                       avoid fighting with the Tokio/Rayon thread pools.
+        // with_memory_pattern — ORT pre-plans tensor allocations for the graph's memory
+        //                       topology once and reuses the plan every forward pass,
+        //                       eliminating per-call malloc/free overhead.
+        // with_parallel_execution — runs independent graph nodes concurrently when
+        //                       ORT's inter-op pool has capacity.
         let session = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(self.intra_threads)?
+            .with_inter_threads(1)?
+            .with_memory_pattern(true)?
+            .with_parallel_execution(true)?
             .commit_from_file(path)?;
 
         info!("Successfully loaded ONNX model with optimized execution providers");

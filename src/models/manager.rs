@@ -315,11 +315,15 @@ impl ModelManager {
         let idx = rand::random::<usize>() % models.len();
         let model = &models[idx];
 
-        // Run inference
-        let result = self
-            .onnx_loader
-            .infer(model, input, &metadata)
-            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
+        // Run inference — ORT `session.run()` is synchronous and CPU-bound.
+        // `block_in_place` tells Tokio "this thread will block" so the runtime
+        // can migrate other tasks off the current thread before we start.
+        // This keeps the async executor responsive under concurrent load.
+        let result = tokio::task::block_in_place(|| {
+            self.onnx_loader
+                .infer(model, input, &metadata)
+                .map_err(|e| InferenceError::ModelLoadError(e.to_string()))
+        })?;
 
         // Mark as used
         self.registry

@@ -25,6 +25,7 @@ mod worker_pool;
 mod torch_optimization;
 
 use actix_web::{web, App, HttpServer};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 #[cfg(feature = "profiling")]
 use std::sync::Mutex;
@@ -84,12 +85,10 @@ use pprof::ProfilerGuardBuilder;
 #[cfg(feature = "metrics")]
 use crate::telemetry::prometheus;
 
-// Use jemalloc for better memory performance (Unix platforms only, when feature is enabled)
-#[cfg(all(
-    feature = "jemalloc",
-    not(target_env = "msvc"),
-    not(target_os = "macos")
-))]
+// Use jemalloc for better memory performance when feature is enabled.
+// Enabled on all non-MSVC platforms (including macOS) — jemalloc's arena-per-thread
+// allocator significantly outperforms libmalloc for ML workloads with many short-lived tensors.
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
@@ -154,10 +153,55 @@ fn auto_detect_backends() {
     }
 }
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+/// Build a Tokio multi-thread runtime that:
+/// 1. Spawns exactly `num_cpus` worker threads.
+/// 2. Uses a 4 MiB stack per thread (ML call stacks are deep).
+/// 3. Pins each worker thread to its own CPU core on startup, eliminating
+///    scheduler migration overhead and stabilising SIMD latency.
+fn build_runtime() -> tokio::runtime::Runtime {
+    let n_workers = num_cpus::get();
+    let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+
+    // Each Tokio worker picks the next available core ID atomically.
+    static NEXT_CORE: AtomicUsize = AtomicUsize::new(0);
+
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder
+        .worker_threads(n_workers)
+        .thread_stack_size(4 * 1024 * 1024) // 4 MiB — headroom for deep inference stacks
+        .thread_name("torch-worker");
+
+    if !core_ids.is_empty() {
+        builder.on_thread_start(move || {
+            let idx = NEXT_CORE.fetch_add(1, Ordering::Relaxed);
+            let core_id = core_ids[idx % core_ids.len()];
+            core_affinity::set_for_current(core_id);
+        });
+    }
+
+    builder
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime")
+}
+
+fn main() -> std::io::Result<()> {
+    build_runtime().block_on(async_main())
+}
+
+async fn async_main() -> std::io::Result<()> {
     // Auto-detect backend library paths BEFORE logging or ORT initialises.
     auto_detect_backends();
+
+    // Configure Rayon's global thread pool to match the machine's logical CPU count.
+    // ndarray parallel ops, image preprocessing, and any data-parallel work all draw
+    // from this pool.  Setting it explicitly prevents rayon from spawning extra threads
+    // that would compete with Tokio and ORT worker pools.
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .thread_name(|i| format!("rayon-{i}"))
+        .build_global()
+        .unwrap_or_else(|e| tracing::warn!(error = %e, "rayon global pool init failed — using default"));
 
     #[cfg(feature = "profiling")]
     let profiler_guard: Arc<Mutex<Option<pprof::ProfilerGuard<'static>>>> = {

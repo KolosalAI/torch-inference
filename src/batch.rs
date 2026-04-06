@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 
 #[derive(Clone, Debug)]
 pub struct BatchRequest {
@@ -24,6 +25,10 @@ pub struct BatchProcessor {
     processed_batches: AtomicU64,
     total_latency_ms: AtomicU64,
     queue_depth: AtomicUsize,
+    /// Notified immediately when the batch reaches max capacity, so any
+    /// consumer blocked in `notified().await` can dispatch without waiting
+    /// for the poll interval to expire.
+    pub batch_full_notify: Arc<Notify>,
 }
 
 impl BatchProcessor {
@@ -37,6 +42,7 @@ impl BatchProcessor {
             processed_batches: AtomicU64::new(0),
             total_latency_ms: AtomicU64::new(0),
             queue_depth: AtomicUsize::new(0),
+            batch_full_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -65,7 +71,13 @@ impl BatchProcessor {
         self.queue_depth.store(len, Ordering::Relaxed);
         debug!("Request added to batch. Current size: {}", len);
 
-        Ok(len >= self.max_batch_size)
+        let is_full = len >= self.max_batch_size;
+        if is_full {
+            // Wake any consumer that's waiting on the batch-full notification so it
+            // can dispatch immediately without waiting for the adaptive poll interval.
+            self.batch_full_notify.notify_one();
+        }
+        Ok(is_full)
     }
 
     pub fn should_process_batch(&self) -> bool {
@@ -174,6 +186,25 @@ impl BatchProcessor {
         tokio::time::timeout(Duration::from_secs(30), processor)
             .await
             .map_err(|_| "Batch processing timeout".to_string())?
+    }
+
+    /// Wait until the batch is full OR the adaptive timeout expires.
+    ///
+    /// Returns immediately (true) when the `batch_full_notify` fires (batch hit
+    /// max capacity).  Falls back to a `tokio::time::sleep` for the adaptive
+    /// timeout window.  Callers should call `should_process_batch()` afterward
+    /// to confirm the batch is still ready (it may have been drained by another
+    /// consumer between the wake and the lock acquisition).
+    pub async fn wait_for_dispatch(&self) {
+        let timeout_ms = self.get_adaptive_timeout();
+        tokio::select! {
+            _ = self.batch_full_notify.notified() => {
+                debug!("batch_full_notify fired — dispatching immediately");
+            }
+            _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
+                debug!("adaptive timeout ({timeout_ms} ms) elapsed — checking batch");
+            }
+        }
     }
 }
 

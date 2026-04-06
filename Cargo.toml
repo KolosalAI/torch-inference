@@ -119,6 +119,7 @@ bytemuck = { version = "1.14", features = ["derive"] }               # zero-copy
 half = { version = "2.3", features = ["bytemuck", "num-traits"] }    # f16 / bf16 for LLM
 crossbeam-queue = "0.3"                                              # lock-free queues
 core_affinity = "0.8"                                                # CPU core pinning
+rayon = "1.10"                                                       # data-parallel CPU ops (ndarray, image preprocessing)
 tokenizers = { version = "0.19", optional = true, default-features = false } # HuggingFace tokenizer
 
 [dev-dependencies]
