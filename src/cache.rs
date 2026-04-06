@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::clock::coarse_unix_secs;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+#[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]

@@ -1,7 +1,9 @@
 #![allow(dead_code)]
+use std::cmp::Ordering as CmpOrd;
 use log::{debug, info};
 use parking_lot::Mutex;
 use serde_json::Value;
+use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,12 +18,68 @@ pub struct BatchRequest {
     pub timestamp: Instant,
 }
 
+/// Wrapper so `BinaryHeap` yields requests in priority-descending, FIFO order.
+struct OrderedBatchRequest {
+    priority: i32,
+    /// Monotonically increasing sequence number; lower = earlier = higher heap priority for ties.
+    seq: u64,
+    request: BatchRequest,
+}
+
+impl PartialEq for OrderedBatchRequest {
+    fn eq(&self, other: &Self) -> bool { self.seq == other.seq }
+}
+impl Eq for OrderedBatchRequest {}
+impl PartialOrd for OrderedBatchRequest {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrd> { Some(self.cmp(other)) }
+}
+impl Ord for OrderedBatchRequest {
+    fn cmp(&self, other: &Self) -> CmpOrd {
+        // Max-heap: higher priority first; ties broken FIFO (lower seq = earlier).
+        self.priority.cmp(&other.priority)
+            .then_with(|| other.seq.cmp(&self.seq))
+    }
+}
+
+struct BatchQueue {
+    heap: BinaryHeap<OrderedBatchRequest>,
+    next_seq: u64,
+}
+
+impl BatchQueue {
+    fn new() -> Self { Self { heap: BinaryHeap::new(), next_seq: 0 } }
+
+    fn push(&mut self, request: BatchRequest) {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let priority = request.priority;
+        self.heap.push(OrderedBatchRequest { priority, seq, request });
+    }
+
+    fn len(&self) -> usize { self.heap.len() }
+
+    fn oldest_age(&self) -> Option<Duration> {
+        self.heap.iter().map(|o| o.request.timestamp.elapsed()).max()
+    }
+
+    /// Drain all items in priority order — no sort needed (heap already ordered).
+    fn drain_all(&mut self) -> Vec<BatchRequest> {
+        let mut out = Vec::with_capacity(self.heap.len());
+        while let Some(o) = self.heap.pop() { out.push(o.request); }
+        out
+    }
+
+    fn clear(&mut self) {
+        self.heap.clear();
+    }
+}
+
 pub struct BatchProcessor {
     max_batch_size: usize,
     min_batch_size: usize,
     batch_timeout_ms: u64,
     adaptive_timeout_enabled: bool,
-    current_batch: Arc<Mutex<Vec<BatchRequest>>>,
+    current_batch: Arc<Mutex<BatchQueue>>,
     processed_batches: AtomicU64,
     total_latency_ms: AtomicU64,
     queue_depth: AtomicUsize,
@@ -38,7 +96,7 @@ impl BatchProcessor {
             min_batch_size: 1,
             batch_timeout_ms,
             adaptive_timeout_enabled: true,
-            current_batch: Arc::new(Mutex::new(Vec::new())),
+            current_batch: Arc::new(Mutex::new(BatchQueue::new())),
             processed_batches: AtomicU64::new(0),
             total_latency_ms: AtomicU64::new(0),
             queue_depth: AtomicUsize::new(0),
@@ -73,8 +131,6 @@ impl BatchProcessor {
 
         let is_full = len >= self.max_batch_size;
         if is_full {
-            // Wake any consumer that's waiting on the batch-full notification so it
-            // can dispatch immediately without waiting for the adaptive poll interval.
             self.batch_full_notify.notify_one();
         }
         Ok(is_full)
@@ -83,10 +139,10 @@ impl BatchProcessor {
     pub fn should_process_batch(&self) -> bool {
         let (len, oldest_age) = {
             let batch = self.current_batch.lock();
-            if batch.is_empty() {
+            if batch.len() == 0 {
                 return false;
             }
-            let age = batch.first().map(|r| r.timestamp.elapsed());
+            let age = batch.oldest_age();
             (batch.len(), age)
         };
 
@@ -125,26 +181,15 @@ impl BatchProcessor {
         }
     }
 
+    /// Drain all pending requests in priority order.
+    ///
+    /// The `BatchQueue` is a `BinaryHeap` so `drain_all()` already yields
+    /// items in priority-descending / FIFO order — no post-drain sort needed.
     pub fn get_batch(&self) -> Vec<BatchRequest> {
-        let mut requests = {
-            let mut batch = self.current_batch.lock();
-            // Pre-allocate with exact capacity to avoid reallocation
-            let capacity = batch.len();
-            let mut requests = Vec::with_capacity(capacity);
-            std::mem::swap(&mut requests, &mut batch);
-            requests
-        };
-
-        // Sort by priority (higher priority first) - uses unstable sort for better performance
-        requests.sort_unstable_by(|a, b| b.priority.cmp(&a.priority));
-
+        let requests = self.current_batch.lock().drain_all();
         self.queue_depth.store(0, Ordering::Relaxed);
         self.processed_batches.fetch_add(1, Ordering::Relaxed);
-
-        info!(
-            "Processing batch with {} requests (sorted by priority)",
-            requests.len()
-        );
+        info!("Processing batch with {} requests (priority ordered)", requests.len());
         requests
     }
 

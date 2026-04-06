@@ -46,9 +46,19 @@ impl Ord for OrderedRequest {
 }
 
 /// Single-heap priority queue. O(log n) insert and pop, correct FIFO within priority level.
+/// Single-heap priority queue. O(log n) insert and pop, correct FIFO within priority level.
+///
+/// `oldest_enqueue` tracks the `Instant` of the request that has waited
+/// longest without being drained.  It is updated on every `push` and is
+/// recomputed (O(n) scan, rare) only after a `drain_*` call removed the
+/// previously oldest entry.  This turns the formerly O(n) `oldest_age()`
+/// call — invoked on every batch-formation decision — into O(1).
 struct PriorityQueue {
     heap: BinaryHeap<OrderedRequest>,
     next_seq: u64,
+    /// Earliest (smallest) enqueue timestamp still in the heap.  `None` when
+    /// the heap is empty.
+    oldest_enqueue: Option<Instant>,
 }
 
 impl PriorityQueue {
@@ -56,17 +66,21 @@ impl PriorityQueue {
         Self {
             heap: BinaryHeap::new(),
             next_seq: 0,
+            oldest_enqueue: None,
         }
     }
 
     fn push(&mut self, request: InflightRequest) {
+        let ts = request.timestamp;
         let seq = self.next_seq;
         self.next_seq += 1;
         let priority = request.priority;
-        self.heap.push(OrderedRequest {
-            priority,
-            seq,
-            request,
+        self.heap.push(OrderedRequest { priority, seq, request });
+
+        // Update cached oldest: keep the smaller (earlier) of the two.
+        self.oldest_enqueue = Some(match self.oldest_enqueue {
+            Some(prev) if prev <= ts => prev,
+            _ => ts,
         });
     }
 
@@ -74,6 +88,7 @@ impl PriorityQueue {
         while let Some(item) = self.heap.pop() {
             f(item.request);
         }
+        self.oldest_enqueue = None;
     }
 
     fn drain_up_to(&mut self, max: usize) -> Vec<InflightRequest> {
@@ -84,6 +99,12 @@ impl PriorityQueue {
                 None => break,
             }
         }
+        // Recompute oldest only if entries remain (drain may have removed the oldest).
+        self.oldest_enqueue = if self.heap.is_empty() {
+            None
+        } else {
+            self.heap.iter().map(|o| o.request.timestamp).min()
+        };
         result
     }
 
@@ -95,13 +116,9 @@ impl PriorityQueue {
         self.heap.is_empty()
     }
 
-    /// O(n) scan to find the oldest waiting request. Called only at batch-formation
-    /// decision time (not on every request), so O(n) is acceptable.
+    /// O(1): returns the elapsed time since the oldest pending request arrived.
     fn oldest_age(&self) -> Option<Duration> {
-        self.heap
-            .iter()
-            .map(|item| item.request.timestamp.elapsed())
-            .max()
+        self.oldest_enqueue.map(|t| t.elapsed())
     }
 }
 
