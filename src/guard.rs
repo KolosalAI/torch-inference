@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
+use crate::clock::coarse_unix_secs;
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -91,19 +92,25 @@ impl Default for GuardConfig {
 pub struct SystemGuard {
     config: GuardConfig,
 
-    // Violation tracking
-    violations: Arc<RwLock<Vec<GuardViolation>>>,
+    // Violation tracking — VecDeque for O(1) bounded append (push_back + pop_front)
+    violations: Arc<RwLock<VecDeque<GuardViolation>>>,
     total_violations: AtomicU64,
     critical_violations: AtomicU64,
 
     // Request tracking
     request_count: AtomicU64,
-    request_window_start: Arc<RwLock<Instant>>,
+    /// Unix seconds of the current rate-limit window start.
+    /// CAS-based reset replaces the previous tokio::sync::RwLock<Instant>.
+    request_window_secs: AtomicU64,
     consecutive_errors: AtomicU64,
 
     // Circuit breaker
     circuit_open: AtomicBool,
-    circuit_open_time: Arc<RwLock<Option<Instant>>>,
+    /// Unix seconds when the circuit was opened (0 = not open).
+    /// AtomicU64 replaces the previous RwLock<Option<Instant>> and eliminates
+    /// the latent deadlock in is_circuit_open (read-lock held while calling
+    /// reset_circuit_breaker which needed the write-lock).
+    circuit_open_secs: AtomicU64,
     circuit_failures: AtomicU64,
 
     // Mitigation actions
@@ -121,14 +128,14 @@ impl SystemGuard {
 
         Self {
             config,
-            violations: Arc::new(RwLock::new(Vec::new())),
+            violations: Arc::new(RwLock::new(VecDeque::new())),
             total_violations: AtomicU64::new(0),
             critical_violations: AtomicU64::new(0),
             request_count: AtomicU64::new(0),
-            request_window_start: Arc::new(RwLock::new(Instant::now())),
+            request_window_secs: AtomicU64::new(coarse_unix_secs()),
             consecutive_errors: AtomicU64::new(0),
             circuit_open: AtomicBool::new(false),
-            circuit_open_time: Arc::new(RwLock::new(None)),
+            circuit_open_secs: AtomicU64::new(0),
             circuit_failures: AtomicU64::new(0),
             mitigation_enabled: AtomicBool::new(enable_auto_mitigation),
             auto_scale_enabled: AtomicBool::new(enable_auto_scaling),
@@ -181,28 +188,36 @@ impl SystemGuard {
     pub async fn check_request_rate(&self) -> Result<(), GuardViolation> {
         self.request_count.fetch_add(1, Ordering::Relaxed);
 
-        let mut window_start = self.request_window_start.write().await;
-        let elapsed = window_start.elapsed().as_secs();
+        let now = coarse_unix_secs();
+        let window = self.request_window_secs.load(Ordering::Relaxed);
 
-        if elapsed >= 1 {
-            let count = self.request_count.swap(0, Ordering::Relaxed);
-            *window_start = Instant::now();
+        if now > window {
+            // Try to be the one thread to claim the window reset.
+            // Only the winner performs the rate check; losers skip silently —
+            // their request was already counted by the fetch_add above.
+            if self
+                .request_window_secs
+                .compare_exchange(window, now, Ordering::AcqRel, Ordering::Relaxed)
+                .is_ok()
+            {
+                let count = self.request_count.swap(0, Ordering::Relaxed);
 
-            if count > self.config.max_requests_per_second as u64 {
-                let violation = GuardViolation {
-                    guard_name: "request_rate".to_string(),
-                    severity: ViolationSeverity::High,
-                    message: format!(
-                        "Request rate {} req/s exceeds limit {} req/s",
-                        count, self.config.max_requests_per_second
-                    ),
-                    timestamp: Instant::now(),
-                    value: count as f64,
-                    threshold: self.config.max_requests_per_second as f64,
-                };
+                if count > self.config.max_requests_per_second as u64 {
+                    let violation = GuardViolation {
+                        guard_name: "request_rate".to_string(),
+                        severity: ViolationSeverity::High,
+                        message: format!(
+                            "Request rate {} req/s exceeds limit {} req/s",
+                            count, self.config.max_requests_per_second
+                        ),
+                        timestamp: Instant::now(),
+                        value: count as f64,
+                        threshold: self.config.max_requests_per_second as f64,
+                    };
 
-                self.record_violation(violation.clone()).await;
-                return Err(violation);
+                    self.record_violation(violation.clone()).await;
+                    return Err(violation);
+                }
             }
         }
 
@@ -342,9 +357,12 @@ impl SystemGuard {
             return false;
         }
 
-        // Check if timeout has elapsed
-        if let Some(open_time) = *self.circuit_open_time.read().await {
-            if open_time.elapsed().as_secs() > self.config.circuit_breaker_timeout_secs {
+        // Check if the timeout has elapsed.  AtomicU64 read — no lock held
+        // across the reset call, so the previous deadlock is impossible.
+        let open_secs = self.circuit_open_secs.load(Ordering::Relaxed);
+        if open_secs > 0 {
+            let now = coarse_unix_secs();
+            if now.saturating_sub(open_secs) > self.config.circuit_breaker_timeout_secs {
                 self.reset_circuit_breaker().await;
                 return false;
             }
@@ -359,7 +377,7 @@ impl SystemGuard {
 
         if failures >= self.config.circuit_breaker_threshold as u64 {
             self.circuit_open.store(true, Ordering::Relaxed);
-            *self.circuit_open_time.write().await = Some(Instant::now());
+            self.circuit_open_secs.store(coarse_unix_secs(), Ordering::Relaxed);
 
             error!("Circuit breaker OPENED after {} failures", failures);
 
@@ -372,7 +390,7 @@ impl SystemGuard {
     /// Reset circuit breaker
     async fn reset_circuit_breaker(&self) {
         self.circuit_open.store(false, Ordering::Relaxed);
-        *self.circuit_open_time.write().await = None;
+        self.circuit_open_secs.store(0, Ordering::Relaxed);
         self.circuit_failures.store(0, Ordering::Relaxed);
 
         info!("Circuit breaker RESET");
@@ -400,12 +418,12 @@ impl SystemGuard {
         self.total_violations.fetch_add(1, Ordering::Relaxed);
 
         let mut violations = self.violations.write().await;
-        violations.push(violation);
+        violations.push_back(violation);
 
-        // Keep only last 1000 violations
+        // O(1) bounded trim: pop from front when over limit.
+        // Replaces the previous O(n) drain(0..excess) on Vec.
         if violations.len() > 1000 {
-            let excess = violations.len() - 1000;
-            violations.drain(0..excess);
+            violations.pop_front();
         }
     }
 
@@ -997,12 +1015,11 @@ mod tests {
     //
     // reset_circuit_breaker is a private async fn on SystemGuard.  Tests in the
     // same file can call private methods directly.  We open the circuit manually
-    // and then call reset_circuit_breaker() to exercise lines 352-357.
+    // and then call reset_circuit_breaker() to exercise the reset path.
     //
-    // Lines 327-328 (inside is_circuit_open) are skipped here because calling
-    // is_circuit_open() when the timeout has elapsed would cause a deadlock:
-    // is_circuit_open holds circuit_open_time.read() while reset_circuit_breaker
-    // tries to acquire circuit_open_time.write().
+    // Lines 327-328 (timeout-elapsed path inside is_circuit_open) are now also
+    // reachable because circuit_open_secs is an AtomicU64 — the old RwLock
+    // deadlock (read guard held across reset_circuit_breaker) is eliminated.
 
     #[tokio::test]
     async fn test_reset_circuit_breaker_clears_all_state() {
@@ -1017,23 +1034,17 @@ mod tests {
         // Manually open the circuit with a known state
         guard.circuit_open.store(true, Ordering::Relaxed);
         guard.circuit_failures.store(7, Ordering::Relaxed);
-        {
-            let mut t = guard.circuit_open_time.write().await;
-            *t = Some(Instant::now());
-        }
+        guard.circuit_open_secs.store(coarse_unix_secs(), Ordering::Relaxed);
 
         // Pre-conditions
         assert!(guard.circuit_open.load(Ordering::Relaxed));
         assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 7);
-        {
-            let t = guard.circuit_open_time.read().await;
-            assert!(t.is_some());
-        }
+        assert!(guard.circuit_open_secs.load(Ordering::Relaxed) > 0);
 
         // Call reset_circuit_breaker directly — covers lines 352-357
         guard.reset_circuit_breaker().await;
 
-        // Post-conditions: circuit is closed, failures zeroed, open_time cleared
+        // Post-conditions: circuit is closed, failures zeroed, open_secs cleared
         assert!(
             !guard.circuit_open.load(Ordering::Relaxed),
             "circuit_open should be false after reset"
@@ -1043,10 +1054,11 @@ mod tests {
             0,
             "circuit_failures should be zero after reset"
         );
-        {
-            let t = guard.circuit_open_time.read().await;
-            assert!(t.is_none(), "circuit_open_time should be None after reset");
-        }
+        assert_eq!(
+            guard.circuit_open_secs.load(Ordering::Relaxed),
+            0,
+            "circuit_open_secs should be 0 after reset"
+        );
     }
 
     #[tokio::test]
@@ -1060,17 +1072,10 @@ mod tests {
 
         assert!(!guard.circuit_open.load(Ordering::Relaxed));
         assert_eq!(guard.circuit_failures.load(Ordering::Relaxed), 0);
-        let t = guard.circuit_open_time.read().await;
-        assert!(t.is_none());
+        assert_eq!(guard.circuit_open_secs.load(Ordering::Relaxed), 0);
     }
 
-    // NOTE: lines 327-328 (inside is_circuit_open when the timeout has elapsed)
-    // are not covered because is_circuit_open holds a tokio RwLock read guard
-    // on circuit_open_time across the if-let body, and reset_circuit_breaker
-    // (called at line 327) tries to acquire a write lock on the same RwLock —
-    // causing a deadlock.  This is a design limitation in the production code.
-
-    // ── check_request_rate coverage (lines 176-202) ───────────────────────────
+    // ── check_request_rate coverage ───────────────────────────────────────────
 
     /// Calling check_request_rate() once covers the basic path (lines 177-180, 202).
     /// The elapsed time is < 1 s so the inner if-block is NOT entered.
@@ -1103,10 +1108,9 @@ mod tests {
         guard.request_count.store(50, Ordering::Relaxed);
 
         // Wind the window start back by 2 seconds so elapsed >= 1
-        {
-            let mut ws = guard.request_window_start.write().await;
-            *ws = Instant::now() - Duration::from_secs(2);
-        }
+        guard
+            .request_window_secs
+            .store(coarse_unix_secs().saturating_sub(2), Ordering::Relaxed);
 
         let result = guard.check_request_rate().await;
         assert!(result.is_ok(), "50 req/s <= 100 req/s limit should be Ok");
@@ -1135,10 +1139,9 @@ mod tests {
         guard.request_count.store(499, Ordering::Relaxed);
 
         // Wind the window start back so elapsed >= 1
-        {
-            let mut ws = guard.request_window_start.write().await;
-            *ws = Instant::now() - Duration::from_secs(2);
-        }
+        guard
+            .request_window_secs
+            .store(coarse_unix_secs().saturating_sub(2), Ordering::Relaxed);
 
         let result = guard.check_request_rate().await;
         assert!(

@@ -2,9 +2,15 @@
 use dashmap::DashMap;
 use log::{info, warn};
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+
+static PER_MODEL_EPOCH: OnceLock<Instant> = OnceLock::new();
+#[inline]
+fn per_model_epoch() -> Instant {
+    *PER_MODEL_EPOCH.get_or_init(Instant::now)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CircuitState {
@@ -40,17 +46,20 @@ pub struct CircuitBreaker {
     state: Mutex<CircuitState>,
     failure_count: AtomicUsize,
     success_count: AtomicUsize,
-    last_failure_time: Mutex<Option<Instant>>,
+    /// Nanos since PER_MODEL_EPOCH, or 0 = no recorded failure.
+    /// AtomicU64 replaces Mutex<Option<Instant>> — no mutex on failure hot path.
+    last_failure_nanos: AtomicU64,
     config: CircuitBreakerConfig,
 }
 
 impl CircuitBreaker {
     pub fn new(config: CircuitBreakerConfig) -> Self {
+        per_model_epoch(); // ensure epoch is set before any call
         Self {
             state: Mutex::new(CircuitState::Closed),
             failure_count: AtomicUsize::new(0),
             success_count: AtomicUsize::new(0),
-            last_failure_time: Mutex::new(None),
+            last_failure_nanos: AtomicU64::new(0),
             config,
         }
     }
@@ -63,11 +72,11 @@ impl CircuitBreaker {
         {
             let mut state = self.state.lock();
             if *state == CircuitState::Open {
-                let should_try_recovery = self
-                    .last_failure_time
-                    .lock()
-                    .map(|t| t.elapsed() > self.config.timeout)
-                    .unwrap_or(false);
+                let nanos = self.last_failure_nanos.load(Ordering::Relaxed);
+                let should_try_recovery = nanos > 0 && {
+                    let last = per_model_epoch() + Duration::from_nanos(nanos);
+                    last.elapsed() > self.config.timeout
+                };
 
                 if should_try_recovery {
                     info!("Circuit breaker entering half-open state");
@@ -113,7 +122,11 @@ impl CircuitBreaker {
 
     fn on_failure(&self) {
         let failures = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
-        *self.last_failure_time.lock() = Some(Instant::now());
+        let nanos = Instant::now()
+            .checked_duration_since(per_model_epoch())
+            .unwrap_or(Duration::ZERO)
+            .as_nanos() as u64;
+        self.last_failure_nanos.store(nanos.max(1), Ordering::Relaxed);
 
         if failures >= self.config.failure_threshold {
             let mut state = self.state.lock();

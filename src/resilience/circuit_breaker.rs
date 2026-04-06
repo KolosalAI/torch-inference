@@ -1,7 +1,14 @@
 #![allow(dead_code)]
 use log::{info, warn};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+static CB_EPOCH: OnceLock<Instant> = OnceLock::new();
+#[inline]
+fn cb_epoch() -> Instant {
+    *CB_EPOCH.get_or_init(Instant::now)
+}
 
 #[derive(Debug, Clone)]
 pub struct CircuitBreakerConfig {
@@ -21,17 +28,20 @@ pub struct CircuitBreaker {
     state: parking_lot::Mutex<CircuitState>,
     failure_count: std::sync::atomic::AtomicU32,
     success_count: std::sync::atomic::AtomicU32,
-    last_failure_time: parking_lot::Mutex<Option<Instant>>,
+    /// Nanos since CB_EPOCH, or 0 = no recorded failure.
+    /// AtomicU64 replaces parking_lot::Mutex<Option<Instant>>.
+    last_failure_nanos: AtomicU64,
     config: CircuitBreakerConfig,
 }
 
 impl CircuitBreaker {
     pub fn new(config: CircuitBreakerConfig) -> Self {
+        cb_epoch(); // ensure epoch is set before any call
         Self {
             state: parking_lot::Mutex::new(CircuitState::Closed),
             failure_count: std::sync::atomic::AtomicU32::new(0),
             success_count: std::sync::atomic::AtomicU32::new(0),
-            last_failure_time: parking_lot::Mutex::new(None),
+            last_failure_nanos: AtomicU64::new(0),
             config,
         }
     }
@@ -45,11 +55,11 @@ impl CircuitBreaker {
         {
             let mut state = self.state.lock();
             if *state == CircuitState::Open {
-                let should_retry = self
-                    .last_failure_time
-                    .lock()
-                    .map(|t| t.elapsed() >= self.config.timeout)
-                    .unwrap_or(false);
+                let nanos = self.last_failure_nanos.load(Ordering::Relaxed);
+                let should_retry = nanos > 0 && {
+                    let last = cb_epoch() + Duration::from_nanos(nanos);
+                    last.elapsed() >= self.config.timeout
+                };
 
                 if should_retry {
                     info!("Circuit breaker transitioning to HalfOpen");
@@ -97,7 +107,11 @@ impl CircuitBreaker {
 
     fn on_failure(&self) {
         self.success_count.store(0, Ordering::Relaxed);
-        *self.last_failure_time.lock() = Some(Instant::now());
+        let nanos = Instant::now()
+            .checked_duration_since(cb_epoch())
+            .unwrap_or(Duration::ZERO)
+            .as_nanos() as u64;
+        self.last_failure_nanos.store(nanos.max(1), Ordering::Relaxed);
 
         let failure_count = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -125,7 +139,7 @@ impl CircuitBreaker {
         *self.state.lock() = CircuitState::Closed;
         self.failure_count.store(0, Ordering::Relaxed);
         self.success_count.store(0, Ordering::Relaxed);
-        *self.last_failure_time.lock() = None;
+        self.last_failure_nanos.store(0, Ordering::Relaxed);
         info!("Circuit breaker reset");
     }
 }
