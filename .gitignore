@@ -96,3 +96,8 @@ config.optimized.toml
 
 # Node.js dependencies
 node_modules/
+
+# Playwright e2e test output (all artifacts land under tests/e2e/results/)
+tests/e2e/results/
+tests/e2e/test-results/
+tests/e2e/playwright-report/
