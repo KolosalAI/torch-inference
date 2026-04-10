@@ -112,38 +112,39 @@ impl TTSEngine for VITSEngine {
             params.speed
         );
 
-        // Calculate duration based on text length
+        // Delegate to the shared Kokoro ONNX backend when available.
+        if let Some(backend) = crate::core::onnx_backend::get_kokoro_onnx_backend() {
+            let kokoro_voice =
+                crate::core::onnx_backend::map_voice(params.voice.as_deref());
+            let mapped = SynthesisParams {
+                voice: Some(kokoro_voice.to_string()),
+                ..params.clone()
+            };
+            log::info!("VITS: delegating to Kokoro ONNX (voice={})", kokoro_voice);
+            return backend.synthesize(text, &mapped).await;
+        }
+
+        // No ONNX model available — fall back to parametric sine-wave synthesis.
+        log::warn!("VITS: Kokoro ONNX backend unavailable, using parametric fallback");
+
         let words = text.split_whitespace().count().max(1);
-        let base_duration = words as f32 / 2.8; // ~2.8 words per second
+        let base_duration = words as f32 / 2.8;
         let duration = (base_duration / params.speed).max(0.3);
         let sample_count = (self.config.sample_rate as f32 * duration) as usize;
 
-        log::info!(
-            "VITS: Synthesizing {} samples (~{:.2}s)",
-            sample_count,
-            duration
-        );
-
-        // VITS parametric synthesis (fast, clear)
-        let mut samples = Vec::with_capacity(sample_count);
-
-        // VITS typically uses a lower base pitch and cleaner harmonics
         let base_freq = match params.pitch {
-            p if p < 0.9 => 180.0, // Lower pitch
-            p if p > 1.1 => 260.0, // Higher pitch
-            _ => 210.0,            // Normal pitch
+            p if p < 0.9 => 180.0,
+            p if p > 1.1 => 260.0,
+            _ => 210.0,
         };
 
+        let mut samples = Vec::with_capacity(sample_count);
         for i in 0..sample_count {
             let t = i as f32 / self.config.sample_rate as f32;
             let progress = t / duration;
-
-            // Clean sine wave with harmonics (VITS style - less variation)
             let fundamental = (2.0 * std::f32::consts::PI * base_freq * t).sin() * 0.4;
             let harmonic2 = (2.0 * std::f32::consts::PI * base_freq * 2.0 * t).sin() * 0.2;
             let harmonic3 = (2.0 * std::f32::consts::PI * base_freq * 3.0 * t).sin() * 0.1;
-
-            // Simple envelope
             let env = if t < 0.02 {
                 t / 0.02
             } else if t > duration - 0.05 {
@@ -151,13 +152,10 @@ impl TTSEngine for VITSEngine {
             } else {
                 0.9 + 0.1 * (progress * 2.0 * std::f32::consts::PI).sin()
             };
-
-            let sample = (fundamental + harmonic2 + harmonic3) * env * 0.6;
-            samples.push(sample.clamp(-1.0, 1.0));
+            samples.push((fundamental + harmonic2 + harmonic3).mul_add(env * 0.6, 0.0).clamp(-1.0, 1.0));
         }
 
-        log::info!("VITS: Synthesis completed successfully");
-
+        log::info!("VITS: Synthesis completed (parametric fallback)");
         Ok(AudioData {
             samples,
             sample_rate: self.config.sample_rate,

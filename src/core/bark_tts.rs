@@ -129,50 +129,45 @@ impl TTSEngine for BarkEngine {
             &text[..text.len().min(40)]
         );
 
-        // Bark is slower but more creative
+        // Delegate to the shared Kokoro ONNX backend when available.
+        if let Some(backend) = crate::core::onnx_backend::get_kokoro_onnx_backend() {
+            let kokoro_voice =
+                crate::core::onnx_backend::map_voice(params.voice.as_deref());
+            let mapped = SynthesisParams {
+                voice: Some(kokoro_voice.to_string()),
+                ..params.clone()
+            };
+            log::info!("Bark: delegating to Kokoro ONNX (voice={})", kokoro_voice);
+            return backend.synthesize(text, &mapped).await;
+        }
+
+        // No ONNX model available — fall back to parametric synthesis.
+        log::warn!("Bark: Kokoro ONNX backend unavailable, using parametric fallback");
+
         let words = text.split_whitespace().count().max(1);
-        let base_duration = words as f32 / 2.0; // Slower, more natural
+        let base_duration = words as f32 / 2.0;
         let duration = (base_duration / params.speed).max(0.5);
         let sample_count = (self.config.sample_rate as f32 * duration) as usize;
 
-        log::info!(
-            "Bark: Synthesizing {} samples (~{:.2}s)",
-            sample_count,
-            duration
-        );
-
         let mut samples = Vec::with_capacity(sample_count);
-
-        // Bark style: more natural, includes background textures
         let base_freq = 200.0 * params.pitch;
 
         for i in 0..sample_count {
             let t = i as f32 / self.config.sample_rate as f32;
             let progress = t / duration;
-
-            // Natural prosody with more variation
             let prosody = 1.0
                 + 0.15 * (progress * 2.5 * std::f32::consts::PI).sin()
                 + 0.05 * (progress * 7.0 * std::f32::consts::PI).sin();
-
             let freq = base_freq * prosody;
-
-            // Voice with natural texture
             let voice = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.3;
             let h2 = (2.0 * std::f32::consts::PI * freq * 1.8 * t).sin() * 0.15;
             let h3 = (2.0 * std::f32::consts::PI * freq * 2.7 * t).sin() * 0.08;
-
-            // Add breath noise (Bark signature)
             let noise = ((i as f32 * 991.0).sin() * 0.5 + 0.5) * 0.12;
-
-            // Occasional crackle for naturalness
             let crackle = if i % 1000 < 5 {
                 ((i as f32 * 13.0).sin() * 0.5 + 0.5) * 0.05
             } else {
                 0.0
             };
-
-            // Word-level envelope
             let word_progress = (progress * words as f32).fract();
             let env = if word_progress < 0.08 {
                 word_progress / 0.08
@@ -181,8 +176,6 @@ impl TTSEngine for BarkEngine {
             } else {
                 0.92 + 0.08 * (word_progress * 6.0).sin()
             };
-
-            // Global fade
             let fade = if t < 0.04 {
                 t / 0.04
             } else if t > duration - 0.1 {
@@ -190,13 +183,11 @@ impl TTSEngine for BarkEngine {
             } else {
                 1.0
             };
-
             let sample = (voice + h2 + h3 + noise + crackle) * env * fade * 0.5;
             samples.push(sample.clamp(-1.0, 1.0));
         }
 
-        log::info!("Bark: Synthesis completed successfully");
-
+        log::info!("Bark: Synthesis completed (parametric fallback)");
         Ok(AudioData {
             samples,
             sample_rate: self.config.sample_rate,

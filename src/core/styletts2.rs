@@ -110,49 +110,48 @@ impl TTSEngine for StyleTTS2Engine {
             &text[..text.len().min(40)]
         );
 
-        // StyleTTS2 is known for high quality and expressiveness
+        // Delegate to the shared Kokoro ONNX backend when available.
+        if let Some(backend) = crate::core::onnx_backend::get_kokoro_onnx_backend() {
+            let kokoro_voice =
+                crate::core::onnx_backend::map_voice(params.voice.as_deref());
+            let mapped = SynthesisParams {
+                voice: Some(kokoro_voice.to_string()),
+                ..params.clone()
+            };
+            log::info!(
+                "StyleTTS2: delegating to Kokoro ONNX (voice={})",
+                kokoro_voice
+            );
+            return backend.synthesize(text, &mapped).await;
+        }
+
+        // No ONNX model available — fall back to parametric synthesis.
+        log::warn!("StyleTTS2: Kokoro ONNX backend unavailable, using parametric fallback");
+
         let words = text.split_whitespace().count().max(1);
-        let base_duration = words as f32 / 2.3; // Slower, more expressive
+        let base_duration = words as f32 / 2.3;
         let duration = (base_duration / params.speed).max(0.5);
         let sample_count = (self.config.sample_rate as f32 * duration) as usize;
 
-        log::info!(
-            "StyleTTS2: Synthesizing {} samples (~{:.2}s)",
-            sample_count,
-            duration
-        );
-
         let mut samples = Vec::with_capacity(sample_count);
-
-        // StyleTTS2 style: rich harmonics with emotional variation
         let base_pitch = 235.0 * params.pitch;
 
         for i in 0..sample_count {
             let t = i as f32 / self.config.sample_rate as f32;
             let progress = t / duration;
-
-            // Emotional prosody (more variation)
             let emotion_curve = if text.contains('!') {
-                // Excited: higher pitch, more energy
                 1.15 + 0.1 * (progress * 4.0 * std::f32::consts::PI).sin()
             } else if text.contains('?') {
-                // Questioning: rising intonation
                 1.0 + 0.2 * progress
             } else {
-                // Neutral with subtle variation
                 1.0 + 0.05 * (progress * 3.0 * std::f32::consts::PI).sin()
             };
-
             let freq = base_pitch * emotion_curve;
-
-            // Rich harmonic content (premium quality)
             let h1 = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.35;
             let h2 = (2.0 * std::f32::consts::PI * freq * 1.5 * t).sin() * 0.20;
             let h3 = (2.0 * std::f32::consts::PI * freq * 2.5 * t).sin() * 0.15;
             let h4 = (2.0 * std::f32::consts::PI * freq * 3.5 * t).sin() * 0.10;
             let h5 = (2.0 * std::f32::consts::PI * freq * 5.0 * t).sin() * 0.05;
-
-            // Expressive envelope with word boundaries
             let word_phase = (progress * words as f32).fract();
             let word_env = if word_phase < 0.1 {
                 word_phase / 0.1
@@ -161,8 +160,6 @@ impl TTSEngine for StyleTTS2Engine {
             } else {
                 0.95
             };
-
-            // Global envelope
             let global_env = if t < 0.03 {
                 t / 0.03
             } else if t > duration - 0.08 {
@@ -170,13 +167,11 @@ impl TTSEngine for StyleTTS2Engine {
             } else {
                 1.0
             };
-
             let sample = (h1 + h2 + h3 + h4 + h5) * word_env * global_env * 0.55;
             samples.push(sample.clamp(-1.0, 1.0));
         }
 
-        log::info!("StyleTTS2: Synthesis completed successfully");
-
+        log::info!("StyleTTS2: Synthesis completed (parametric fallback)");
         Ok(AudioData {
             samples,
             sample_rate: self.config.sample_rate,

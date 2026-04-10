@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_variables, unreachable_code)]
 /// Piper TTS Engine - Neural TTS using ONNX Runtime
-use anyhow::{bail, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -43,9 +43,9 @@ impl PiperTTSEngine {
         let model_path = PathBuf::from(model_path);
         let config_path = PathBuf::from(config_path);
 
-        // Verify files exist
+        // Model file is optional — synthesis will delegate to the shared Kokoro ONNX backend
         if !model_path.exists() {
-            bail!("Model file not found: {:?}", model_path);
+            log::info!("Piper model not found at {:?}; synthesis will use Kokoro ONNX fallback", model_path);
         }
 
         // Load config if it exists
@@ -125,16 +125,16 @@ impl PiperTTSEngine {
             supports_streaming: false,
         };
 
-        // Check if ONNX model exists
+        // Check if ONNX model exists; Piper can still function via the
+        // shared Kokoro ONNX backend even without its own model file.
         let has_onnx = model_path.exists();
         if has_onnx {
             log::info!("[OK] Piper ONNX model found at: {:?}", model_path);
-            #[cfg(not(feature = "onnx"))]
-            {
-                bail!("ONNX feature not enabled. Compile with --features onnx to use Piper TTS");
-            }
         } else {
-            bail!("Piper model not found at {:?}", model_path);
+            log::info!(
+                "Piper model not found at {:?}; will delegate synthesis to shared Kokoro ONNX backend",
+                model_path
+            );
         }
 
         Ok(Self {
@@ -180,7 +180,22 @@ impl TTSEngine for PiperTTSEngine {
 
     async fn synthesize(&self, text: &str, params: &SynthesisParams) -> Result<AudioData> {
         self.validate_text(text)?;
-        bail!("Piper TTS requires ONNX Runtime. Please use Windows SAPI engine or compile with --features onnx")
+
+        // Delegate to shared Kokoro ONNX backend (same as other stub engines)
+        if let Some(backend) = crate::core::onnx_backend::get_kokoro_onnx_backend() {
+            let kokoro_voice = crate::core::onnx_backend::map_voice(params.voice.as_deref());
+            let mapped = SynthesisParams {
+                voice: Some(kokoro_voice.to_string()),
+                ..params.clone()
+            };
+            match backend.synthesize(text, &mapped).await {
+                Ok(audio) => return Ok(audio),
+                Err(e) => tracing::warn!(error = %e, "Piper: Kokoro ONNX backend error, using fallback"),
+            }
+        }
+
+        // Parametric fallback
+        self.synthesize_fallback(text, params)
     }
 
     fn list_voices(&self) -> Vec<VoiceInfo> {

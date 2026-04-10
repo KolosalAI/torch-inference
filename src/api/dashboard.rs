@@ -158,20 +158,29 @@ pub async fn dashboard_stream(
 mod tests {
     use super::*;
 
+    fn make_metrics(total_req: u64, total_errors: u64) -> DashboardMetrics {
+        let error_rate = if total_req > 0 {
+            total_errors as f64 / total_req as f64
+        } else {
+            0.0
+        };
+        DashboardMetrics {
+            uptime_s: 3600,
+            active_req: 2,
+            total_req,
+            avg_latency_ms: 38.5,
+            error_rate,
+            throughput_per_s: 12.3,
+            cpu_pct: 45.0,
+            mem_used_mb: 1024,
+            mem_total_mb: 8192,
+        }
+    }
+
     #[test]
     fn dashboard_event_serializes_all_fields() {
         let event = DashboardEvent {
-            metrics: DashboardMetrics {
-                uptime_s: 3600,
-                active_req: 2,
-                total_req: 500,
-                avg_latency_ms: 38.5,
-                error_rate: 0.01,
-                throughput_per_s: 12.3,
-                cpu_pct: 45.0,
-                mem_used_mb: 1024,
-                mem_total_mb: 8192,
-            },
+            metrics: make_metrics(500, 5),
             gpu: vec![DashboardGpu {
                 name: "TestGPU".to_string(),
                 util_pct: Some(30),
@@ -196,5 +205,179 @@ mod tests {
         assert!(json.contains("\"TestGPU\""));
         assert!(json.contains("\"test/model\""));
         assert!(json.contains("\"progress\":0.5"));
+    }
+
+    #[test]
+    fn error_rate_is_zero_when_no_requests() {
+        let m = make_metrics(0, 0);
+        assert_eq!(m.error_rate, 0.0);
+    }
+
+    #[test]
+    fn error_rate_calculated_correctly() {
+        let m = make_metrics(100, 10);
+        assert!((m.error_rate - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn dashboard_gpu_with_no_optional_fields_serializes() {
+        let gpu = DashboardGpu {
+            name: "iGPU".to_string(),
+            util_pct: None,
+            temp_c: None,
+            vram_free_mb: 512,
+            vram_total_mb: 1024,
+        };
+        let json = serde_json::to_string(&gpu).unwrap();
+        assert!(json.contains("\"iGPU\""));
+        assert!(json.contains("\"util_pct\":null"));
+        assert!(json.contains("\"temp_c\":null"));
+        assert!(json.contains("\"vram_free_mb\":512"));
+    }
+
+    #[test]
+    fn dashboard_gpu_with_all_fields_serializes() {
+        let gpu = DashboardGpu {
+            name: "RTX 4090".to_string(),
+            util_pct: Some(87),
+            temp_c: Some(72),
+            vram_free_mb: 4096,
+            vram_total_mb: 24576,
+        };
+        let json = serde_json::to_string(&gpu).unwrap();
+        assert!(json.contains("\"util_pct\":87"));
+        assert!(json.contains("\"temp_c\":72"));
+        assert!(json.contains("\"vram_total_mb\":24576"));
+    }
+
+    #[test]
+    fn dashboard_download_without_total_mb_serializes() {
+        let dl = DashboardDownload {
+            id: "dl-1".to_string(),
+            model_name: "llama/llama-3".to_string(),
+            status: "Pending".to_string(),
+            progress: 0.0,
+            downloaded_mb: 0,
+            total_mb: None,
+        };
+        let json = serde_json::to_string(&dl).unwrap();
+        assert!(json.contains("\"total_mb\":null"));
+        assert!(json.contains("\"progress\":0.0"));
+    }
+
+    #[test]
+    fn dashboard_download_with_total_mb_serializes() {
+        let dl = DashboardDownload {
+            id: "dl-2".to_string(),
+            model_name: "whisper/base".to_string(),
+            status: "Completed".to_string(),
+            progress: 1.0,
+            downloaded_mb: 142,
+            total_mb: Some(142),
+        };
+        let json = serde_json::to_string(&dl).unwrap();
+        assert!(json.contains("\"total_mb\":142"));
+        assert!(json.contains("\"progress\":1.0"));
+        assert!(json.contains("\"Completed\""));
+    }
+
+    #[test]
+    fn dashboard_event_with_empty_gpu_and_downloads_serializes() {
+        let event = DashboardEvent {
+            metrics: make_metrics(0, 0),
+            gpu: vec![],
+            downloads: vec![],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"gpu\":[]"));
+        assert!(json.contains("\"downloads\":[]"));
+    }
+
+    #[test]
+    fn sse_frame_format_is_correct() {
+        let event = DashboardEvent {
+            metrics: make_metrics(10, 1),
+            gpu: vec![],
+            downloads: vec![],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let frame = format!("data: {}\n\n", json);
+        assert!(frame.starts_with("data: {"));
+        assert!(frame.ends_with("\n\n"));
+        // Must be valid JSON after stripping the "data: " prefix and trailing newlines
+        let payload = frame.trim_start_matches("data: ").trim_end();
+        let reparsed: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert!(reparsed["metrics"]["total_req"].is_number());
+    }
+
+    #[test]
+    fn multiple_gpu_devices_serialize() {
+        let event = DashboardEvent {
+            metrics: make_metrics(1, 0),
+            gpu: vec![
+                DashboardGpu {
+                    name: "GPU0".to_string(),
+                    util_pct: Some(50),
+                    temp_c: Some(60),
+                    vram_free_mb: 4000,
+                    vram_total_mb: 8000,
+                },
+                DashboardGpu {
+                    name: "GPU1".to_string(),
+                    util_pct: Some(70),
+                    temp_c: Some(65),
+                    vram_free_mb: 3500,
+                    vram_total_mb: 8000,
+                },
+            ],
+            downloads: vec![],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"GPU0\""));
+        assert!(json.contains("\"GPU1\""));
+    }
+
+    #[test]
+    fn throughput_and_latency_fields_present() {
+        let m = make_metrics(1000, 2);
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(json.contains("\"throughput_per_s\""));
+        assert!(json.contains("\"avg_latency_ms\""));
+        assert!(json.contains("\"mem_used_mb\""));
+        assert!(json.contains("\"mem_total_mb\""));
+    }
+
+    #[test]
+    fn dashboard_metrics_debug_format() {
+        let m = make_metrics(5, 0);
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("DashboardMetrics"));
+    }
+
+    #[test]
+    fn dashboard_gpu_debug_format() {
+        let g = DashboardGpu {
+            name: "X".to_string(),
+            util_pct: None,
+            temp_c: None,
+            vram_free_mb: 0,
+            vram_total_mb: 0,
+        };
+        let debug = format!("{:?}", g);
+        assert!(debug.contains("DashboardGpu"));
+    }
+
+    #[test]
+    fn dashboard_download_debug_format() {
+        let d = DashboardDownload {
+            id: "x".to_string(),
+            model_name: "y".to_string(),
+            status: "z".to_string(),
+            progress: 0.0,
+            downloaded_mb: 0,
+            total_mb: None,
+        };
+        let debug = format!("{:?}", d);
+        assert!(debug.contains("DashboardDownload"));
     }
 }

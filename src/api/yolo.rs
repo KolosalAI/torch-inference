@@ -120,81 +120,45 @@ pub async fn detect_objects(
         }
     }
 
-    // Load model
+    // Model name (used in response metadata)
     let model_name = format!(
         "yolo{}{}",
         version.as_str().to_lowercase().replace("yolo", ""),
         size.suffix()
     );
-    let model_path = state
-        .models_dir
-        .join(&model_name)
-        .join(format!("{}.pt", model_name));
-
-    if !model_path.exists() {
-        // Cleanup temp file
-        let _ = fs::remove_file(&temp_file).await;
-
-        return Err(ApiError::NotFound(format!(
-            "Model not found: {}. Please download it first.",
-            model_name
-        )));
-    }
 
     // Load COCO class names
     let class_names = load_coco_names();
 
-    // Create detector
+    // ── PyTorch path ──────────────────────────────────────────────────────────
     #[cfg(feature = "torch")]
-    let detector = {
+    {
+        let model_path = state
+            .models_dir
+            .join(&model_name)
+            .join(format!("{}.pt", model_name));
+
+        if !model_path.exists() {
+            let _ = fs::remove_file(&temp_file).await;
+            return Err(ApiError::NotFound(format!(
+                "Model not found: {}. Please download it first.",
+                model_name
+            )));
+        }
+
         use tch::Device;
         let mut detector =
             YoloDetector::new(&model_path, version, size, class_names, Some(Device::Cpu))
                 .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
         detector.set_conf_threshold(query.conf_threshold);
         detector.set_iou_threshold(query.iou_threshold);
-        detector
-    };
 
-    #[cfg(not(feature = "torch"))]
-    {
+        let raw_results = detector
+            .detect(&temp_file)
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+        let (img_w, img_h) = image::image_dimensions(&temp_file).unwrap_or((640, 640));
         let _ = fs::remove_file(&temp_file).await;
-        let data = EnrichedYoloDetectResponse {
-            success: false,
-            results: None,
-            error: Some("PyTorch not enabled".to_string()),
-        };
-        return Ok(HttpResponse::Ok().json(Envelope::new(
-            data,
-            ResponseMeta {
-                latency_ms: start.elapsed().as_secs_f64() * 1000.0,
-                model_id: "yolo-unavailable".to_string(),
-                postprocessing_applied: false,
-                postprocess_steps: vec![],
-                warnings: vec![],
-                version: env!("CARGO_PKG_VERSION"),
-                request_id: get_correlation_id(&http_req).as_str().to_string(),
-            },
-        )));
-    }
 
-    // Perform detection
-    #[cfg(feature = "torch")]
-    let raw_results = detector
-        .detect(&temp_file)
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
-    // Get image dimensions for post-processing
-    #[cfg(feature = "torch")]
-    let (img_w, img_h) = image::image_dimensions(&temp_file).unwrap_or((640, 640));
-
-    // Cleanup temp file
-    let _ = fs::remove_file(&temp_file).await;
-
-    #[cfg(feature = "torch")]
-    {
-        // Post-process
         let pp = postprocess::yolo::process(raw_results, img_w, img_h, &config.postprocess.yolo);
         let (enriched, pp_steps, pp_warnings) = if !query.skip_postprocess {
             (pp.results, pp.steps, pp.warnings)
@@ -208,7 +172,7 @@ pub async fn detect_objects(
             error: None,
         };
 
-        let envelope = Envelope::new(
+        return Ok(HttpResponse::Ok().json(Envelope::new(
             data,
             ResponseMeta {
                 latency_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -219,10 +183,61 @@ pub async fn detect_objects(
                 version: env!("CARGO_PKG_VERSION"),
                 request_id: get_correlation_id(&http_req).as_str().to_string(),
             },
-        );
-
-        Ok(HttpResponse::Ok().json(envelope))
+        )));
     }
+
+    // ── ORT path (no --features torch) ────────────────────────────────────────
+    // Uses YOLOv8n ONNX model from models/yolo/
+    let ort_model_path = std::path::Path::new("models/yolo/yolov8n.onnx");
+    if !ort_model_path.exists() {
+        let _ = fs::remove_file(&temp_file).await;
+        return Err(ApiError::NotFound(
+            "YOLO ORT model not found at models/yolo/yolov8n.onnx".to_string(),
+        ));
+    }
+
+    let mut detector =
+        crate::core::ort_yolo::OrtYoloDetector::new(ort_model_path, class_names)
+            .map_err(|e| ApiError::InternalError(format!("YOLO init: {}", e)))?;
+    detector.set_conf_threshold(query.conf_threshold);
+    detector.set_iou_threshold(query.iou_threshold);
+
+    let image_bytes = tokio::fs::read(&temp_file)
+        .await
+        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    let (img_w, img_h) = image::image_dimensions(&temp_file).unwrap_or((640, 640));
+    let _ = fs::remove_file(&temp_file).await;
+
+    let raw_results = tokio::task::spawn_blocking(move || detector.detect_bytes(&image_bytes))
+        .await
+        .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
+        .map_err(|e| ApiError::InternalError(format!("YOLO detect: {}", e)))?;
+
+    let pp = postprocess::yolo::process(raw_results, img_w, img_h, &config.postprocess.yolo);
+    let (enriched, pp_steps, pp_warnings) = if !query.skip_postprocess {
+        (pp.results, pp.steps, pp.warnings)
+    } else {
+        (pp.results, vec![], vec![])
+    };
+
+    let data = EnrichedYoloDetectResponse {
+        success: true,
+        results: Some(enriched),
+        error: None,
+    };
+
+    Ok(HttpResponse::Ok().json(Envelope::new(
+        data,
+        ResponseMeta {
+            latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+            model_id: format!("yolov8n-ort/{}", model_name),
+            postprocessing_applied: !query.skip_postprocess && !pp_steps.is_empty(),
+            postprocess_steps: pp_steps,
+            warnings: pp_warnings,
+            version: env!("CARGO_PKG_VERSION"),
+            request_id: get_correlation_id(&http_req).as_str().to_string(),
+        },
+    )))
 }
 
 /// Get information about a specific YOLO model

@@ -49,6 +49,7 @@ use crate::telemetry::init_structured_logging;
 // ── No-op stub backends (replaced at runtime when a real model is loaded) ────
 
 /// Stub classification backend — returns a "not configured" error.
+/// Used as fallback when the ONNX model file is not present.
 struct NoOpClassificationBackend;
 
 #[async_trait::async_trait]
@@ -58,25 +59,7 @@ impl crate::api::classify::ClassificationBackend for NoOpClassificationBackend {
         _batch: ndarray::Array4<f32>,
         _top_k: usize,
     ) -> anyhow::Result<Vec<Vec<crate::api::classify::Prediction>>> {
-        anyhow::bail!("no classification model loaded")
-    }
-}
-
-/// Stub LLM backend — returns an empty model list and a "not configured" error.
-struct NoOpLlmBackend;
-
-#[async_trait::async_trait]
-impl crate::api::llm::LlmBackend for NoOpLlmBackend {
-    fn list_models(&self) -> Vec<crate::api::llm::ModelInfo> {
-        vec![]
-    }
-    async fn complete(
-        &self,
-        _model: &str,
-        _prompt: &str,
-        _params: crate::core::llm::SamplingParams,
-    ) -> anyhow::Result<(String, usize)> {
-        anyhow::bail!("no LLM model loaded")
+        anyhow::bail!("no classification model loaded — place efficientnet-lite4-11.onnx in models/classify/")
     }
 }
 
@@ -555,15 +538,29 @@ async fn async_main() -> std::io::Result<()> {
         start_time,
     });
     let classify_state = web::Data::new(crate::api::classify::ClassifyState {
-        backend: std::sync::Arc::new(NoOpClassificationBackend),
-    });
-    let llm_state = web::Data::new(crate::api::llm::LlmState {
-        #[cfg(feature = "candle")]
-        // TODO: call backend.load_model(model_id, model_dir) here for models
-        // configured in config.models.auto_load before accepting requests.
-        backend: std::sync::Arc::new(crate::core::llm::CandleLlmBackend::new()),
-        #[cfg(not(feature = "candle"))]
-        backend: std::sync::Arc::new(NoOpLlmBackend),
+        backend: {
+            let model_path = std::path::Path::new("models/classify/efficientnet-lite4-11.onnx");
+            let labels_path = std::path::Path::new("models/classify/imagenet1000.txt");
+            if model_path.exists() && labels_path.exists() {
+                match crate::core::ort_classify::OrtClassificationBackend::new(model_path, labels_path) {
+                    Ok(backend) => {
+                        tracing::info!("classification backend: ORT EfficientNet-Lite4");
+                        std::sync::Arc::new(backend) as std::sync::Arc<dyn crate::api::classify::ClassificationBackend>
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "ORT classification backend failed to load, using NoOp");
+                        std::sync::Arc::new(NoOpClassificationBackend) as std::sync::Arc<dyn crate::api::classify::ClassificationBackend>
+                    }
+                }
+            } else {
+                tracing::warn!(
+                    model = ?model_path,
+                    labels = ?labels_path,
+                    "classification model files missing, using NoOp backend"
+                );
+                std::sync::Arc::new(NoOpClassificationBackend) as std::sync::Arc<dyn crate::api::classify::ClassificationBackend>
+            }
+        },
     });
     let yolo_state = web::Data::new(crate::api::yolo::YoloState {
         models_dir: config.models.cache_dir.clone(),
@@ -600,6 +597,7 @@ async fn async_main() -> std::io::Result<()> {
     tracing::info!(workers = worker_count, "server started successfully");
     let server = HttpServer::new(move || {
         App::new()
+            .app_data(web::JsonConfig::default().limit(50 * 1024 * 1024))
             .app_data(config_data.clone())
             .app_data(model_mgr.clone())
             .app_data(infer_engine.clone())
@@ -615,7 +613,6 @@ async fn async_main() -> std::io::Result<()> {
             .app_data(tts_state.clone())
             .app_data(performance_state.clone())
             .app_data(classify_state.clone())
-            .app_data(llm_state.clone())
             .app_data(yolo_state.clone())
             .app_data(nn_state.clone())
             // CorrelationIdMiddleware runs first (innermost), RequestLogger runs last (outermost)
@@ -642,11 +639,12 @@ async fn async_main() -> std::io::Result<()> {
             .configure(handlers::configure_routes)
             .configure(crate::api::tts::configure_routes)
             .configure(crate::api::classify::configure_routes)
-            .configure(crate::api::llm::configure_routes)
             .configure(crate::api::registry::configure)
             .configure(api::models::configure)
             .configure(crate::api::yolo::configure)
             .configure(crate::api::inference::configure)
+            .configure(crate::api::ws_audio::configure_routes)
+            .configure(crate::api::ws_infer::configure_routes)
     })
     .workers(worker_count)
     .keep_alive(Duration::from_secs(75))

@@ -134,34 +134,35 @@ impl TTSEngine for XTTSEngine {
             &text[..text.len().min(40)]
         );
 
-        // XTTS: high quality multilingual
+        // Delegate to the shared Kokoro ONNX backend when available.
+        if let Some(backend) = crate::core::onnx_backend::get_kokoro_onnx_backend() {
+            let kokoro_voice =
+                crate::core::onnx_backend::map_voice(params.voice.as_deref());
+            let mapped = SynthesisParams {
+                voice: Some(kokoro_voice.to_string()),
+                ..params.clone()
+            };
+            log::info!("XTTS: delegating to Kokoro ONNX (voice={})", kokoro_voice);
+            return backend.synthesize(text, &mapped).await;
+        }
+
+        // No ONNX model available — fall back to parametric synthesis.
+        log::warn!("XTTS: Kokoro ONNX backend unavailable, using parametric fallback");
+
         let words = text.split_whitespace().count().max(1);
         let base_duration = words as f32 / 2.4;
         let duration = (base_duration / params.speed).max(0.4);
         let sample_count = (self.config.sample_rate as f32 * duration) as usize;
 
-        log::info!(
-            "XTTS: Synthesizing {} samples (~{:.2}s)",
-            sample_count,
-            duration
-        );
-
         let mut samples = Vec::with_capacity(sample_count);
-
-        // XTTS style: premium quality with voice cloning characteristics
         let base_freq = 230.0 * params.pitch;
 
         for i in 0..sample_count {
             let t = i as f32 / self.config.sample_rate as f32;
             let progress = t / duration;
-
-            // Smooth prosody (XTTS is known for natural flow)
             let smooth_curve = 1.0 + 0.12 * (progress * 1.5 * std::f32::consts::PI).sin();
             let micro_var = 0.03 * (t * 8.5).sin();
-
             let freq = base_freq * (smooth_curve + micro_var);
-
-            // Premium voice with multiple formants
             let f1 = (2.0 * std::f32::consts::PI * 800.0 * t).sin()
                 * (2.0 * std::f32::consts::PI * freq * t).sin()
                 * 0.32;
@@ -171,11 +172,7 @@ impl TTSEngine for XTTSEngine {
             let f3 = (2.0 * std::f32::consts::PI * 2400.0 * t).sin()
                 * (2.0 * std::f32::consts::PI * freq * t).sin()
                 * 0.12;
-
-            // Subtle breathiness for naturalness
             let breath = ((i as f32 * 1237.0).sin() * 0.5 + 0.5) * 0.06;
-
-            // Smooth word transitions
             let word_pos = (progress * words as f32).fract();
             let transition_env = if word_pos < 0.05 {
                 word_pos / 0.05
@@ -184,8 +181,6 @@ impl TTSEngine for XTTSEngine {
             } else {
                 0.97
             };
-
-            // Gentle global envelope
             let global_env = if t < 0.025 {
                 t / 0.025
             } else if t > duration - 0.075 {
@@ -193,13 +188,11 @@ impl TTSEngine for XTTSEngine {
             } else {
                 1.0
             };
-
             let sample = (f1 + f2 + f3 + breath) * transition_env * global_env * 0.6;
             samples.push(sample.clamp(-1.0, 1.0));
         }
 
-        log::info!("XTTS: Synthesis completed successfully");
-
+        log::info!("XTTS: Synthesis completed (parametric fallback)");
         Ok(AudioData {
             samples,
             sample_rate: self.config.sample_rate,

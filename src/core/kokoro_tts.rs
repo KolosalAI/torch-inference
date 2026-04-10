@@ -228,6 +228,21 @@ impl TTSEngine for KokoroEngine {
             return bridge.synthesize(text, params.voice.as_deref(), params.speed);
         }
 
+        // Last resort: delegate to the shared Kokoro ONNX engine (same model, different runtime).
+        if let Some(backend) = crate::core::onnx_backend::get_kokoro_onnx_backend() {
+            let kokoro_voice =
+                crate::core::onnx_backend::map_voice(params.voice.as_deref());
+            let mapped = super::tts_engine::SynthesisParams {
+                voice: Some(kokoro_voice.to_string()),
+                ..params.clone()
+            };
+            log::info!(
+                "Kokoro: Python bridge unavailable, delegating to ONNX engine (voice={})",
+                kokoro_voice
+            );
+            return backend.synthesize(text, &mapped).await;
+        }
+
         anyhow::bail!(
             "Kokoro TTS unavailable. Run: python convert_kokoro.py  \
              then: cargo build --features torch"

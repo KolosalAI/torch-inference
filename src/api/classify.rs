@@ -8,9 +8,11 @@
 /// the endpoint can be unit-tested with a mock without a real `.onnx` file.
 use actix_web::{web, HttpRequest, HttpResponse};
 use async_trait::async_trait;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::config::Config;
 use crate::core::image_pipeline::{ImagePipeline, PreprocessConfig};
@@ -179,7 +181,119 @@ pub async fn batch_classify(
 
 /// Configure /classify routes.
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/classify").route("/batch", web::post().to(batch_classify)));
+    cfg.service(
+        web::scope("/classify")
+            .route("/batch", web::post().to(batch_classify))
+            .route("/stream", web::post().to(stream_classify)),
+    );
+}
+
+// ── SSE streaming batch classify ──────────────────────────────────────────────
+
+/// POST /classify/stream
+///
+/// Accepts the same JSON body as `/classify/batch` but returns
+/// `text/event-stream` (SSE), emitting one event per image so the client sees
+/// results progressively instead of waiting for the whole batch.
+///
+/// **Event format (JSON in the `data:` field)**
+/// ```text
+/// data: {"idx":0,"total":5,"ms":9.1,"predictions":[{"label":"cat","confidence":0.95,"class_id":281},...]}
+/// data: {"idx":1,"total":5,"ms":8.6,"predictions":[...]}
+/// data: {"type":"done","total":5,"batch_ms":47.2}
+/// ```
+pub async fn stream_classify(
+    req: web::Json<BatchClassifyRequest>,
+    state: web::Data<ClassifyState>,
+) -> Result<HttpResponse, ApiError> {
+    if req.images.is_empty() {
+        return Err(ApiError::BadRequest("images must not be empty".to_string()));
+    }
+    if req.images.len() > 128 {
+        return Err(ApiError::BadRequest("batch too large (max 128)".to_string()));
+    }
+    let top_k    = req.top_k.max(1).min(1000);
+    let width    = req.model_width.max(1).min(4096);
+    let height   = req.model_height.max(1).min(4096);
+    let images   = req.into_inner().images;
+    let total    = images.len();
+    let backend  = state.into_inner().backend.clone();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
+
+    tokio::spawn(async move {
+        use base64::Engine as _;
+        let batch_start = Instant::now();
+
+        for (idx, b64) in images.iter().enumerate() {
+            let img_start = Instant::now();
+
+            let raw = match base64::engine::general_purpose::STANDARD.decode(b64) {
+                Ok(b) => b,
+                Err(e) => {
+                    let ev = sse_event(&serde_json::json!({
+                        "idx": idx, "total": total, "error": e.to_string()
+                    }));
+                    let _ = tx.send(Ok(ev)).await;
+                    continue;
+                }
+            };
+
+            let cfg = PreprocessConfig::imagenet(width, height);
+            let pipeline = ImagePipeline::new(cfg);
+            let batch = match pipeline.preprocess_batch(&[raw]) {
+                Ok(b) => b,
+                Err(e) => {
+                    let ev = sse_event(&serde_json::json!({
+                        "idx": idx, "total": total, "error": e.to_string()
+                    }));
+                    let _ = tx.send(Ok(ev)).await;
+                    continue;
+                }
+            };
+
+            let preds = match backend.classify_nchw(batch, top_k).await {
+                Ok(mut v) => v.pop().unwrap_or_default(),
+                Err(e) => {
+                    let ev = sse_event(&serde_json::json!({
+                        "idx": idx, "total": total, "error": e.to_string()
+                    }));
+                    let _ = tx.send(Ok(ev)).await;
+                    continue;
+                }
+            };
+
+            let ms = img_start.elapsed().as_secs_f64() * 1000.0;
+            let ev = sse_event(&serde_json::json!({
+                "idx": idx,
+                "total": total,
+                "ms": (ms * 10.0).round() / 10.0,
+                "predictions": preds,
+            }));
+            if tx.send(Ok(ev)).await.is_err() {
+                break;
+            }
+        }
+
+        let batch_ms = batch_start.elapsed().as_secs_f64() * 1000.0;
+        let done = sse_event(&serde_json::json!({
+            "type": "done",
+            "total": total,
+            "batch_ms": (batch_ms * 10.0).round() / 10.0,
+        }));
+        let _ = tx.send(Ok(done)).await;
+    });
+
+    let stream = ReceiverStream::new(rx);
+    Ok(HttpResponse::Ok()
+        .content_type("text/event-stream; charset=utf-8")
+        .insert_header(("Cache-Control", "no-cache"))
+        .insert_header(("X-Accel-Buffering", "no"))
+        .streaming(stream))
+}
+
+fn sse_event(json: &serde_json::Value) -> Bytes {
+    Bytes::from(format!("data: {}\n\n", json))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

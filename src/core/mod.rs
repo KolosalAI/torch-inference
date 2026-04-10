@@ -21,6 +21,9 @@ pub mod tts_pipeline;
 pub mod bark_tts;
 pub mod kokoro_onnx;
 pub mod kokoro_tts;
+pub mod onnx_backend;
+pub mod ort_classify;
+pub mod ort_yolo;
 pub mod piper_tts;
 pub mod styletts2;
 pub mod tts_engine;
@@ -47,9 +50,4 @@ pub mod yolo; // YOLO object detection (v5, v8, v10, v11, v12)
 // PyTorch auto-detection
 pub mod torch_autodetect;
 
-// LLM inference subsystem (PagedAttention + continuous batching + speculative decoding)
-#[cfg(feature = "llm")]
-pub mod llm;
-// Always compile the LLM subsystem in test/dev builds so tests run without feature flags.
-#[cfg(not(feature = "llm"))]
-pub mod llm;
+

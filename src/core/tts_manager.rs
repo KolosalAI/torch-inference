@@ -266,34 +266,25 @@ impl TTSManager {
             }
         }
 
-        // Load Piper neural TTS only if ONNX feature is enabled
-        #[cfg(feature = "onnx")]
+        // Load Piper neural TTS — always attempt; synthesize() falls back to Kokoro ONNX backend
+        // when the native Piper model file is absent.
         {
             let piper_model_path = PathBuf::from("models/tts/piper_lessac/model.onnx");
             let piper_config_path = PathBuf::from("models/tts/piper_lessac/config.json");
 
-            if piper_model_path.exists() {
-                log::info!("Loading Piper neural TTS engine...");
-                let piper_config = serde_json::json!({
-                    "model_path": piper_model_path.to_string_lossy(),
-                    "config_path": piper_config_path.to_string_lossy()
-                });
+            log::info!("Loading Piper neural TTS engine...");
+            let piper_config = serde_json::json!({
+                "model_path": piper_model_path.to_string_lossy(),
+                "config_path": piper_config_path.to_string_lossy()
+            });
 
-                match self
-                    .load_engine("piper".to_string(), "piper", piper_config)
-                    .await
-                {
-                    Ok(_) => log::info!("[OK] Piper neural TTS engine loaded successfully"),
-                    Err(e) => log::warn!("[WARN]  Failed to load Piper engine: {}", e),
-                }
-            } else {
-                log::info!("[WARN]  Piper model not found. Skipping Piper TTS.");
+            match self
+                .load_engine("piper".to_string(), "piper", piper_config)
+                .await
+            {
+                Ok(_) => log::info!("[OK] Piper neural TTS engine loaded (uses Kokoro ONNX fallback if model absent)"),
+                Err(e) => log::warn!("[WARN]  Failed to load Piper engine: {}", e),
             }
-        }
-
-        #[cfg(not(feature = "onnx"))]
-        {
-            log::info!("[WARN]  ONNX feature not enabled. Piper TTS requires ONNX runtime (compile with --features onnx)");
         }
 
         // Load VITS TTS engine

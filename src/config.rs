@@ -181,7 +181,6 @@ pub struct AuthConfig {
     #[serde(default)]
     pub refresh_token_expire_days: u32,
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelsConfig {
     #[serde(default)]

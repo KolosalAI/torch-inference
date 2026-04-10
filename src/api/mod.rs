@@ -17,5 +17,8 @@ pub mod types;
 pub mod classification;
 pub mod classify; // batched image classification (ImagePipeline + ORT backend)
 pub mod inference;
-pub mod llm; // OpenAI-compatible LLM completions API
+
 pub mod yolo; // YOLO object detection
+
+pub mod ws_audio; // WebSocket audio pipeline (TTS streaming + STT)
+pub mod ws_infer; // WebSocket streaming inference (detect + classify)

@@ -34,6 +34,7 @@
     --text:      #0D0E0F;
     --text-muted:#6A6F73;
     --text-dim:  #9C9FA1;
+    --input-bg:  #FFFFFF;
     --radius:    10px;
     --font:      'Inter', system-ui, sans-serif;
     --mono:      'Geist Mono', monospace;
@@ -338,6 +339,14 @@
   }
   .subtab:hover { color: var(--text); }
   .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .ws-tab {
+    padding: 6px 14px; font-size: 12px; font-weight: 500; color: var(--text-muted);
+    cursor: pointer; border: none; background: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    font-family: var(--font); transition: color .15s;
+  }
+  .ws-tab:hover { color: var(--text); }
+  .ws-tab.active-ws-tab { color: var(--accent); border-bottom-color: var(--accent); }
   .live-badge {
     display: inline-flex; align-items: center; gap: 5px;
     font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 20px;
@@ -352,6 +361,11 @@
     0%,100% { opacity: 1; box-shadow: 0 0 4px #3ABC3F; }
     50%      { opacity: .4; box-shadow: none; }
   }
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50%      { opacity: 0.3; }
+  }
+  .btn-danger { background: var(--red) !important; color: #fff !important; border-color: var(--red) !important; }
   .dash-stat-grid {
     display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
   }
@@ -433,17 +447,17 @@
     flex-shrink: 0; font-size: 10px; font-weight: 600; letter-spacing: .04em;
     text-transform: uppercase; padding: 2px 8px; border-radius: 20px;
   }
-  .task-llm        { background: #F0F6FE; color: #0052C4; }
   .task-tts        { background: #F5F0FE; color: #6C27CC; }
   .task-classify   { background: #FFF3E0; color: #B85C00; }
   .task-detection  { background: #F3FBF4; color: #2E9632; }
   .task-other      { background: var(--bg); color: var(--text-muted); }
   .model-card-arch { font-size: 11px; color: var(--text-muted); font-family: var(--mono); }
+  .model-card-note { font-size: 11px; color: var(--text-dim); margin: 4px 0 6px; line-height: 1.4; }
   .model-card-meta { display: flex; gap: 14px; }
   .model-meta-item { font-size: 11px; color: var(--text-dim); }
   .model-meta-item span { color: var(--text); font-weight: 500; }
-  .model-card-actions { margin-top: auto; }
-  .model-card-actions .btn { width: 100%; justify-content: center; height: 32px; font-size: 12px; }
+  .model-card-actions { margin-top: auto; display: flex; gap: 6px; }
+  .model-card-actions .btn { flex: 1; justify-content: center; height: 32px; font-size: 12px; }
   .model-card-actions .btn.downloaded {
     background: var(--green-bg); border-color: rgba(58,188,63,.3);
     color: var(--green-text); cursor: default;
@@ -479,6 +493,74 @@
   .mdl-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 28px 0; }
   #mdl-avail-error, #mdl-dl-error { font-size: 12px; color: var(--red); margin-top: 6px; display: none; }
   #mdl-avail-loading, #mdl-down-loading { font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px 0; }
+
+  /* ── Dark mode ─────────────────────────────────────────── */
+  [data-theme="dark"] {
+    --bg:        #0D0E0F;
+    --surface:   #161718;
+    --surface2:  #1E1F21;
+    --border:    #2A2D30;
+    --border2:   #252829;
+    --accent:    #4D94FF;
+    --accent-hi: #6BA8FF;
+    --accent-lo: #1A5FCC;
+    --accent-bg: #0D1F3C;
+    --green:     #3ABC3F;
+    --green-bg:  #0D2610;
+    --green-text:#5BD460;
+    --red:       #FF4D4D;
+    --red-bg:    #2A0D0D;
+    --red-text:  #FF6B6B;
+    --yellow:    #FFA931;
+    --yellow-bg: #2A1F0A;
+    --yellow-text:#FFBE5C;
+    --text:      #E8EAEC;
+    --text-muted:#8B9299;
+    --text-dim:  #5A6169;
+    --input-bg:  #1E1F21;
+  }
+  [data-theme="dark"] .response-box { background: #1a1b1d; }
+  [data-theme="dark"] .chat-history { background: #1a1b1d; }
+  [data-theme="dark"] .btn-ghost { background:#1E1F21; color:#E8EAEC; border-color:#2A2D30; }
+  [data-theme="dark"] .btn-ghost:hover:not(:disabled) { background:#252829; }
+
+  /* ── Theme toggle button ───────────────────────────────── */
+  .btn-theme-toggle {
+    width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; font-size: 16px;
+    transition: color .15s, border-color .15s;
+  }
+  .btn-theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* ── Markdown in chat bubbles ──────────────────────────── */
+  .msg-body pre { background: rgba(0,0,0,0.06); border-radius: 6px; padding: 10px; overflow-x: auto; font-family: var(--mono); font-size: 12px; margin: 6px 0; white-space: pre-wrap; }
+  .msg-body code { background: rgba(0,0,0,0.07); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+  .msg-body pre code { background: none; padding: 0; }
+  .msg-body h3, .msg-body h4 { margin: 8px 0 4px; font-size: 14px; }
+  .msg-body ul, .msg-body ol { padding-left: 20px; margin: 4px 0; }
+  .msg-body li { margin: 2px 0; }
+  .msg-body strong { font-weight: 700; }
+  .msg-body em { font-style: italic; }
+  .msg-cursor { display: inline-block; animation: blink 1s step-end infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* ── Metrics bar ───────────────────────────────────────── */
+  .metrics-bar { display:flex; gap:14px; font-size:11px; color:var(--text-dim); padding:6px 2px; font-family:var(--mono); flex-wrap:wrap; }
+  .metric-item { display:flex; align-items:center; gap:4px; }
+
+  /* ── Stat tile (System > Performance) ─────────────────── */
+  .stat-tile {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 14px 16px;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.08);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat-tile .stat-label { font-size: 11px; color: var(--text-dim); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-tile .stat-value { font-size: 18px; font-weight: 700; font-family: var(--mono); color: var(--accent); }
+
+  /* ── System prompt field ───────────────────────────────── */
+  .system-prompt-field textarea { border-left: 3px solid var(--accent); border-radius: 0 12px 12px 0; }
 </style>
 </head>
 <body>
@@ -491,6 +573,9 @@
       <span class="logo-sub">Inference</span>
     </div>
     <div class="topbar-right">
+      <button class="btn-theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
+        <i class="ri-moon-line" id="theme-icon"></i>
+      </button>
       <span class="badge">
         <span class="dot" id="health-dot" style="background:var(--text-dim);box-shadow:none"></span>
         <span id="health-text">checking</span>
@@ -510,14 +595,11 @@
       <button class="nav-item" onclick="show('classify',this)">
         <i class="nav-icon ri-image-line"></i> Classify
       </button>
-      <button class="nav-item" onclick="show('llm',this)">
-        <i class="nav-icon ri-chat-3-line"></i> LLM Chat
-      </button>
-      <button class="nav-item" onclick="show('completion',this)">
-        <i class="nav-icon ri-edit-line"></i> Completion
-      </button>
       <button class="nav-item" onclick="show('audio',this)">
         <i class="nav-icon ri-mic-line"></i> Audio
+      </button>
+      <button class="nav-item" onclick="show('detect',this)">
+        <i class="nav-icon ri-focus-3-line"></i> Detection
       </button>
       <button class="nav-item" onclick="showDashboard(this)">
         <i class="nav-icon ri-dashboard-3-line"></i> Dashboard
@@ -572,6 +654,10 @@
         <div class="panel-title">TTS Stream</div>
         <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
       </div>
+      <div id="tts-no-engine-banner" style="display:none;padding:12px 16px;background:var(--yellow-bg);border:1px solid var(--yellow);border-radius:10px;font-size:13px;color:var(--yellow-text);margin-bottom:4px">
+        <i class="ri-alert-line"></i> <strong>No TTS engine loaded.</strong>
+        Go to <a href="#" onclick="showModels()" style="color:inherit;font-weight:600;text-decoration:underline">Models → Download</a> and download a Kokoro TTS model first.
+      </div>
       <div class="card">
         <div class="card-title">Input</div>
         <div class="field">
@@ -598,114 +684,194 @@
         <div style="display:flex;gap:8px;margin-top:6px">
           <button class="btn btn-primary" id="tts-btn" onclick="runTTS()"><i class="ri-play-line"></i> Synthesise</button>
           <button class="btn btn-ghost" onclick="stopTTS()"><i class="ri-stop-line"></i> Stop</button>
+          <button class="btn btn-ghost" onclick="copyCurl('tts')" title="Copy as cURL"><i class="ri-terminal-line"></i> cURL</button>
+          <button class="btn btn-ghost" onclick="copyPython('tts')" title="Copy as Python"><i class="ri-code-line"></i> Python</button>
         </div>
       </div>
       <div class="card">
         <div class="card-title">Output</div>
         <div class="response-box" id="tts-status">waiting…</div>
+        <div class="metrics-bar" id="tts-metrics" style="display:none">
+          <span class="metric-item" id="tts-metric-time">—</span>
+        </div>
         <div id="tts-audio-wrap"><audio id="tts-audio" controls></audio></div>
       </div>
+
+      <!-- TTS API Endpoints Reference -->
+      <div class="card">
+        <div class="card-title">API Endpoints</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Copy-paste ready commands for integrating TTS into your application.</div>
+        <!-- language tabs -->
+        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:12px;flex-wrap:wrap" id="tts-ep-tabs">
+          <button class="ws-tab active-ws-tab" onclick="ttsSwitchEp('curl')">cURL</button>
+          <button class="ws-tab" onclick="ttsSwitchEp('python')">Python</button>
+          <button class="ws-tab" onclick="ttsSwitchEp('js')">JavaScript</button>
+          <button class="ws-tab" onclick="ttsSwitchEp('go')">Go</button>
+          <button class="ws-tab" onclick="ttsSwitchEp('rust')">Rust</button>
+          <button class="ws-tab" onclick="ttsSwitchEp('node')">Node.js</button>
+        </div>
+        <!-- code panes -->
+        <div id="tts-ep-curl">
+          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-curl-code"></code></pre>
+          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('curl')"><i class="ri-clipboard-line"></i> Copy</button>
+        </div>
+        <div id="tts-ep-python" style="display:none">
+          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-python-code"></code></pre>
+          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('python')"><i class="ri-clipboard-line"></i> Copy</button>
+        </div>
+        <div id="tts-ep-js" style="display:none">
+          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-js-code"></code></pre>
+          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('js')"><i class="ri-clipboard-line"></i> Copy</button>
+        </div>
+        <div id="tts-ep-go" style="display:none">
+          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-go-code"></code></pre>
+          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('go')"><i class="ri-clipboard-line"></i> Copy</button>
+        </div>
+        <div id="tts-ep-rust" style="display:none">
+          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-rust-code"></code></pre>
+          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('rust')"><i class="ri-clipboard-line"></i> Copy</button>
+        </div>
+        <div id="tts-ep-node" style="display:none">
+          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-node-code"></code></pre>
+          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('node')"><i class="ri-clipboard-line"></i> Copy</button>
+        </div>
+      </div>
+
     </section>
 
     <!-- Classify -->
     <section class="panel" id="panel-classify">
       <div class="panel-header">
         <div class="panel-title">Image Classification</div>
-        <div class="panel-desc">SIMD-fused preprocessing + batched ORT inference via <span class="ep-code">POST /classify/batch</span>.</div>
+        <div class="panel-desc">SIMD-fused preprocessing + batched ORT inference via <span class="ep-code">POST /classify/batch</span> · stream via <span class="ep-code">POST /classify/stream</span> · live via <span class="ep-code">GET /ws/classify</span>.</div>
       </div>
-      <div class="card">
-        <div class="card-title">Upload Image</div>
-        <div class="dropzone" id="dropzone"
-             onclick="document.getElementById('img-file').click()"
-             ondragover="event.preventDefault();this.classList.add('over')"
-             ondragleave="this.classList.remove('over')"
-             ondrop="handleDrop(event)">
-          <div class="drop-icon"><i class="ri-image-add-line"></i></div>
-          <div>Click to upload or drag &amp; drop</div>
-          <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
-          <input type="file" id="img-file" accept="image/jpeg,image/png" onchange="handleFile(this.files[0])" />
-        </div>
-        <img id="img-preview" alt="preview" />
-        <div class="field" style="margin-top:12px">
-          <label>Model</label>
-          <div class="model-select-row">
-            <select id="cls-model"><option value="default">default</option></select>
-            <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
-          </div>
-        </div>
-        <div class="row">
-          <div class="field"><label>Top-K</label><input type="number" id="cls-topk" value="5" min="1" max="1000" /></div>
-          <div class="field"><label>Width</label><input type="number" id="cls-w" value="224" /></div>
-          <div class="field"><label>Height</label><input type="number" id="cls-h" value="224" /></div>
-        </div>
-        <button class="btn btn-primary" style="margin-top:8px" id="cls-btn" onclick="runClassify()" disabled><i class="ri-image-line"></i> Classify</button>
-      </div>
-      <div class="card">
-        <div class="card-title">Predictions</div>
-        <div class="response-box" id="cls-out">waiting for image…</div>
-      </div>
-    </section>
 
-    <!-- LLM Chat -->
-    <section class="panel" id="panel-llm">
-      <div class="panel-header">
-        <div class="panel-title">LLM Chat</div>
-        <div class="panel-desc">OpenAI-compatible chat via <span class="ep-code">POST /v1/chat/completions</span>.</div>
+      <!-- Sub-tabs -->
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+        <button id="cls-tab-file" class="ws-tab active-ws-tab" onclick="clsTab('file')"><i class="ri-image-add-line"></i> File / Batch</button>
+        <button id="cls-tab-live" class="ws-tab"               onclick="clsTab('live')"><i class="ri-live-line"></i> Live Stream</button>
       </div>
-      <div class="card">
-        <div class="card-title">Conversation</div>
-        <div class="chat-history" id="chat-history"></div>
-        <div class="chat-input-row">
-          <textarea id="chat-input" placeholder="Type a message… (Enter to send)" rows="1"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-          <button class="btn btn-primary" id="chat-btn" onclick="sendChat()">Send</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Parameters</div>
-        <div class="row">
-          <div class="field">
+
+      <!-- File/batch pane (original) -->
+      <div id="cls-pane-file">
+        <div class="card">
+          <div class="card-title">Upload Image</div>
+          <div class="dropzone" id="dropzone"
+               onclick="document.getElementById('img-file').click()"
+               ondragover="event.preventDefault();this.classList.add('over')"
+               ondragleave="this.classList.remove('over')"
+               ondrop="handleDrop(event)">
+            <div class="drop-icon"><i class="ri-image-add-line"></i></div>
+            <div>Click to upload or drag &amp; drop</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
+            <input type="file" id="img-file" accept="image/jpeg,image/png" multiple onchange="handleFile(this.files)" />
+          </div>
+          <img id="img-preview" alt="preview" />
+          <div class="field" style="margin-top:12px">
             <label>Model</label>
             <div class="model-select-row">
-              <select id="chat-model"><option value="default">default</option></select>
+              <select id="cls-model"><option value="default">default</option></select>
               <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
             </div>
           </div>
-          <div class="field"><label>Max Tokens</label><input type="number" id="chat-maxtok" value="256" min="1" /></div>
-          <div class="field"><label>Temperature</label><input type="number" id="chat-temp" value="0.7" min="0" max="2" step="0.05" /></div>
+          <div class="row">
+            <div class="field"><label>Top-K</label><input type="number" id="cls-topk" value="5" min="1" max="1000" /></div>
+            <div class="field"><label>Width</label><input type="number" id="cls-w" value="224" /></div>
+            <div class="field"><label>Height</label><input type="number" id="cls-h" value="224" /></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-primary" id="cls-btn" onclick="runClassify()" disabled><i class="ri-image-line"></i> Classify</button>
+            <button class="btn btn-ghost" id="cls-stream-btn" onclick="runClassifyStream()" disabled><i class="ri-broadcast-line"></i> Stream</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-ghost" onclick="copyCurl('cls')" title="Copy as cURL"><i class="ri-terminal-line"></i> cURL</button>
+            <button class="btn btn-ghost" onclick="copyPython('cls')" title="Copy as Python"><i class="ri-code-line"></i> Python</button>
+          </div>
         </div>
-        <button class="btn btn-ghost" style="margin-top:4px" onclick="clearChat()"><i class="ri-close-line"></i> Clear chat</button>
+        <div class="card">
+          <div class="card-title">Predictions</div>
+          <div class="response-box" id="cls-out">waiting for image…</div>
+          <div class="metrics-bar" id="cls-metrics" style="display:none">
+            <span class="metric-item" id="cls-metric-time">—</span>
+          </div>
+        </div>
       </div>
-    </section>
 
-    <!-- Completion -->
-    <section class="panel" id="panel-completion">
-      <div class="panel-header">
-        <div class="panel-title">Text Completion</div>
-        <div class="panel-desc">Raw prompt continuation via <span class="ep-code">POST /v1/completions</span>.</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Prompt</div>
-        <div class="field">
-          <textarea id="cmp-prompt" style="min-height:130px">The key advantages of PagedAttention for LLM inference are:</textarea>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>Model</label>
-            <div class="model-select-row">
-              <select id="cmp-model"><option value="default">default</option></select>
-              <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
+      <!-- Live stream pane -->
+      <div id="cls-pane-live" style="display:none">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div>
+              <div class="card-title" style="margin-bottom:2px"><i class="ri-live-line" style="color:var(--accent)"></i> Live Classification Stream</div>
+              <div style="font-size:12px;color:var(--text-muted)">WebSocket <span class="ep-code">GET /ws/classify</span> — JPEG frames → top-K labels</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="cls-ws-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
+              <span id="cls-ws-label" style="font-size:12px;color:var(--text-muted)">disconnected</span>
+              <button class="btn btn-ghost" id="cls-ws-btn" onclick="clsWsToggle()" style="padding:4px 12px;font-size:12px">Connect</button>
             </div>
           </div>
-          <div class="field"><label>Max Tokens</label><input type="number" id="cmp-maxtok" value="128" min="1" /></div>
-          <div class="field"><label>Temperature</label><input type="number" id="cmp-temp" value="0.7" min="0" max="2" step="0.05" /></div>
-          <div class="field"><label>Top-P</label><input type="number" id="cmp-topp" value="1.0" min="0" max="1" step="0.05" /></div>
+
+          <div style="display:grid;grid-template-columns:1fr 280px;gap:16px">
+            <!-- Camera/video column -->
+            <div>
+              <div style="position:relative;background:#0d1117;border-radius:8px;overflow:hidden;min-height:240px">
+                <video id="cls-video" autoplay muted playsinline
+                       style="width:100%;display:none;border-radius:8px"></video>
+                <div id="cls-live-placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;flex-direction:column;gap:8px">
+                  <i class="ri-camera-off-line" style="font-size:28px"></i>
+                  <span>Start camera or open a video file</span>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+                <button class="btn btn-primary" id="cls-cam-btn" onclick="clsStartCamera()" disabled>
+                  <i class="ri-camera-line"></i> Camera
+                </button>
+                <button class="btn btn-ghost" id="cls-vid-btn" onclick="document.getElementById('cls-vid-file').click()" disabled>
+                  <i class="ri-film-line"></i> Video File
+                </button>
+                <input type="file" id="cls-vid-file" accept="video/*" onchange="clsOpenVideo(this.files[0])" style="display:none" />
+                <button class="btn btn-ghost" id="cls-stop-src-btn" onclick="clsStopSource()" style="display:none">
+                  <i class="ri-stop-line"></i> Stop
+                </button>
+                <div class="field" style="flex:0 0 auto;margin:0">
+                  <label style="font-size:11px">FPS cap</label>
+                  <select id="cls-fps" style="padding:4px 6px;font-size:12px">
+                    <option value="5">5 fps</option>
+                    <option value="10" selected>10 fps</option>
+                    <option value="15">15 fps</option>
+                    <option value="24">24 fps</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Live labels column -->
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Config</div>
+                <div class="field"><label>Top-K</label>
+                  <input type="number" id="cls-live-topk" value="5" min="1" max="20" style="width:100%" />
+                </div>
+                <div class="row" style="gap:8px">
+                  <div class="field"><label>Width</label><input type="number" id="cls-live-w" value="224" /></div>
+                  <div class="field"><label>Height</label><input type="number" id="cls-live-h" value="224" /></div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Live Labels</div>
+                <div id="cls-live-preds" style="font-size:12px;line-height:2"></div>
+              </div>
+              <div>
+                <div style="font-size:12px;color:var(--text-muted);line-height:1.9">
+                  <div>Frame: <strong id="cls-stat-frame">0</strong></div>
+                  <div>Latency: <strong id="cls-stat-ms">—</strong> ms</div>
+                  <div>FPS: <strong id="cls-stat-fps">—</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <button class="btn btn-primary" style="margin-top:4px" id="cmp-btn" onclick="runCompletion()"><i class="ri-play-line"></i> Complete</button>
-      </div>
-      <div class="card">
-        <div class="card-title">Result</div>
-        <div class="response-box" id="cmp-out">waiting…</div>
       </div>
     </section>
 
@@ -745,15 +911,257 @@
               <i class="ri-file-music-line"></i> Transcribe
             </button>
             <button class="btn btn-ghost" onclick="stopAudio()"><i class="ri-stop-line"></i> Stop</button>
+            <button class="btn btn-ghost" id="audio-record-btn" onclick="toggleAudioRecord()"><i class="ri-mic-2-line"></i> Record</button>
+            <button class="btn btn-ghost" onclick="copyCurl('audio')" title="Copy as cURL"><i class="ri-terminal-line"></i> cURL</button>
+          </div>
+          <div id="audio-record-status" style="display:none;font-size:12px;margin-top:8px;color:var(--accent);align-items:center;gap:6px">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block;animation:pulse 1s infinite"></span>
+            <span id="audio-record-label">Recording…</span>
           </div>
         </div>
         <div class="card">
           <div class="card-title">Result</div>
           <div class="response-box" id="audio-result-text" style="min-height:80px">Upload a file to transcribe.</div>
+          <div class="metrics-bar" id="audio-metrics" style="display:none">
+            <span class="metric-item" id="audio-metric-time">—</span>
+          </div>
           <div id="audio-meta" style="font-size:12px;color:var(--text-muted);margin-top:6px;display:none"></div>
           <div id="audio-segments" style="display:none;margin-top:10px">
             <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Segments</div>
             <div id="audio-segments-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WebSocket Audio Stream -->
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div>
+            <div class="card-title" style="margin-bottom:2px"><i class="ri-wifi-line" style="color:var(--accent)"></i> WebSocket Audio Stream</div>
+            <div style="font-size:12px;color:var(--text-muted)">Low-latency duplex audio via <span class="ep-code">GET /audio/ws</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="ws-status-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
+            <span id="ws-status-label" style="font-size:12px;color:var(--text-muted)">disconnected</span>
+            <button class="btn btn-ghost" id="ws-connect-btn" onclick="wsAudioToggle()" style="padding:4px 12px;font-size:12px">Connect</button>
+          </div>
+        </div>
+
+        <!-- Sub-tabs -->
+        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px">
+          <button id="ws-tab-tts" class="ws-tab active-ws-tab" onclick="wsTab('tts')"><i class="ri-broadcast-line"></i> Live TTS</button>
+          <button id="ws-tab-stt" class="ws-tab" onclick="wsTab('stt')"><i class="ri-mic-2-line"></i> Live STT</button>
+        </div>
+
+        <!-- Live TTS pane -->
+        <div id="ws-pane-tts">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div>
+              <div class="field">
+                <label>Text to speak</label>
+                <textarea id="ws-tts-text" rows="4" style="width:100%;resize:vertical;font-size:13px;padding:8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit" placeholder="Enter text…"></textarea>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <div class="field">
+                  <label>Voice / Engine</label>
+                  <input id="ws-tts-voice" type="text" placeholder="af_heart (or blank for default)" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+                </div>
+                <div class="field" style="flex:0 0 100px">
+                  <label>Speed</label>
+                  <input id="ws-tts-speed" type="number" value="1.0" min="0.25" max="4.0" step="0.05" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="btn btn-primary" id="ws-tts-btn" onclick="wsTtsSpeak()" disabled><i class="ri-play-circle-line"></i> Speak</button>
+                <button class="btn btn-ghost" id="ws-tts-stop-btn" onclick="wsTtsStop()" disabled><i class="ri-stop-circle-line"></i> Stop</button>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Waveform</div>
+              <canvas id="ws-tts-canvas" width="320" height="80" style="width:100%;border-radius:6px;background:#0d1117"></canvas>
+              <div id="ws-tts-status" style="font-size:12px;color:var(--text-muted);margin-top:6px">—</div>
+              <div id="ws-tts-metrics" style="font-size:11px;color:var(--text-dim);margin-top:4px;display:none">
+                <span id="ws-tts-dur">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live STT pane -->
+        <div id="ws-pane-stt" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div>
+              <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+                Press <strong>Record</strong> to stream microphone audio to the server for real-time transcription.
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn btn-primary" id="ws-stt-btn" onclick="wsSttToggle()" disabled>
+                  <i class="ri-mic-line"></i> Record
+                </button>
+                <span id="ws-stt-rec-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
+                <span id="ws-stt-rec-label" style="font-size:12px;color:var(--text-muted)">idle</span>
+              </div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:10px">Sends raw PCM f32le @16kHz mono.</div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Mic waveform</div>
+              <canvas id="ws-stt-canvas" width="320" height="80" style="width:100%;border-radius:6px;background:#0d1117"></canvas>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-top:10px;margin-bottom:4px">Transcript</div>
+              <div class="response-box" id="ws-stt-result" style="min-height:60px">Transcript appears here.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Detection -->
+    <section class="panel" id="panel-detect">
+      <div class="panel-header">
+        <div class="panel-title">Object Detection</div>
+        <div class="panel-desc">YOLO object detection via <span class="ep-code">POST /yolo/detect</span> or live stream via <span class="ep-code">GET /ws/detect</span>.</div>
+      </div>
+
+      <!-- Sub-tabs -->
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+        <button id="det-tab-file"   class="ws-tab active-ws-tab" onclick="detTab('file')"><i class="ri-image-add-line"></i> File</button>
+        <button id="det-tab-live"   class="ws-tab"               onclick="detTab('live')"><i class="ri-live-line"></i> Live Stream</button>
+      </div>
+
+      <!-- File upload pane (original) -->
+      <div id="det-pane-file">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div class="card">
+            <div class="card-title">Input</div>
+            <div class="dropzone" id="detect-dropzone"
+                 onclick="document.getElementById('detect-file').click()"
+                 ondragover="event.preventDefault();this.classList.add('over')"
+                 ondragleave="this.classList.remove('over')"
+                 ondrop="handleDetectDrop(event)">
+              <div class="drop-icon"><i class="ri-image-add-line"></i></div>
+              <div>Click to upload or drag &amp; drop</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
+              <input type="file" id="detect-file" accept="image/jpeg,image/png" onchange="handleDetectFile(this.files[0])" />
+            </div>
+            <div class="row" style="margin-top:12px">
+              <div class="field">
+                <label>Model Version</label>
+                <select id="detect-version">
+                  <option value="v8">v8</option>
+                  <option value="v5">v5</option>
+                  <option value="v10">v10</option>
+                  <option value="v11">v11</option>
+                  <option value="v12">v12</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Model Size</label>
+                <select id="detect-size">
+                  <option value="n">nano</option>
+                  <option value="s">small</option>
+                  <option value="m">medium</option>
+                  <option value="l">large</option>
+                  <option value="x">xlarge</option>
+                </select>
+              </div>
+            </div>
+            <div class="field" style="margin-top:8px">
+              <label>Confidence Threshold</label>
+              <input type="number" id="detect-conf" value="0.5" min="0" max="1" step="0.05" />
+            </div>
+            <button class="btn btn-primary" style="margin-top:8px" id="detect-btn" onclick="runDetect()" disabled>
+              <i class="ri-focus-3-line"></i> Detect
+            </button>
+          </div>
+          <div class="card">
+            <div class="card-title">Result</div>
+            <canvas id="detect-canvas" style="max-width:100%;border-radius:8px;display:none"></canvas>
+            <div class="response-box" id="detect-out" style="margin-top:8px">Upload an image to detect objects.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live stream pane -->
+      <div id="det-pane-live" style="display:none">
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div>
+              <div class="card-title" style="margin-bottom:2px"><i class="ri-live-line" style="color:var(--accent)"></i> Live Detection Stream</div>
+              <div style="font-size:12px;color:var(--text-muted)">WebSocket <span class="ep-code">GET /ws/detect</span> — JPEG frames → bounding boxes</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span id="det-ws-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
+              <span id="det-ws-label" style="font-size:12px;color:var(--text-muted)">disconnected</span>
+              <button class="btn btn-ghost" id="det-ws-btn" onclick="detWsToggle()" style="padding:4px 12px;font-size:12px">Connect</button>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 280px;gap:16px">
+            <!-- Canvas column -->
+            <div>
+              <div style="position:relative;background:#0d1117;border-radius:8px;overflow:hidden;min-height:240px">
+                <video id="det-video" autoplay muted playsinline
+                       style="width:100%;display:none;border-radius:8px"></video>
+                <canvas id="det-live-canvas"
+                        style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
+                <div id="det-live-placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-size:13px;flex-direction:column;gap:8px">
+                  <i class="ri-camera-off-line" style="font-size:28px"></i>
+                  <span>Start camera or open a video file</span>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+                <button class="btn btn-primary" id="det-cam-btn" onclick="detStartCamera()" disabled>
+                  <i class="ri-camera-line"></i> Camera
+                </button>
+                <button class="btn btn-ghost" id="det-vid-btn" onclick="document.getElementById('det-vid-file').click()" disabled>
+                  <i class="ri-film-line"></i> Video File
+                </button>
+                <input type="file" id="det-vid-file" accept="video/*" onchange="detOpenVideo(this.files[0])" style="display:none" />
+                <button class="btn btn-ghost" id="det-stop-src-btn" onclick="detStopSource()" style="display:none">
+                  <i class="ri-stop-line"></i> Stop
+                </button>
+                <div class="field" style="flex:0 0 auto;margin:0">
+                  <label style="font-size:11px">FPS cap</label>
+                  <select id="det-fps" style="padding:4px 6px;font-size:12px">
+                    <option value="5">5 fps</option>
+                    <option value="10" selected>10 fps</option>
+                    <option value="15">15 fps</option>
+                    <option value="24">24 fps</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stats / config column -->
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Config</div>
+                <div class="field"><label>Version</label>
+                  <select id="det-live-version">
+                    <option value="v8" selected>v8</option><option value="v5">v5</option>
+                    <option value="v10">v10</option><option value="v11">v11</option>
+                  </select>
+                </div>
+                <div class="field"><label>Size</label>
+                  <select id="det-live-size">
+                    <option value="n" selected>nano</option><option value="s">small</option>
+                    <option value="m">medium</option>
+                  </select>
+                </div>
+                <div class="field"><label>Confidence</label>
+                  <input type="number" id="det-live-conf" value="0.5" min="0" max="1" step="0.05" style="width:100%" />
+                </div>
+              </div>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Stats</div>
+                <div style="font-size:12px;color:var(--text-muted);line-height:1.9">
+                  <div>Frame: <strong id="det-stat-frame">0</strong></div>
+                  <div>Latency: <strong id="det-stat-ms">—</strong> ms</div>
+                  <div>Objects: <strong id="det-stat-count">0</strong></div>
+                  <div>FPS: <strong id="det-stat-fps">—</strong></div>
+                </div>
+              </div>
+              <div id="det-live-labels" style="font-size:11px;color:var(--text-muted);max-height:120px;overflow-y:auto"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -766,9 +1174,7 @@
         <button class="tab active" id="dash-tab-overview"    onclick="switchDashTab('overview')">
           <i class="tab-icon ri-bar-chart-line"></i> Overview
         </button>
-        <button class="tab"        id="dash-tab-playground"  onclick="switchDashTab('playground')">
-          <i class="tab-icon ri-flashlight-line"></i> Playground
-        </button>
+
       </div>
 
       <!-- ── Overview ─────────────────────────────────────── -->
@@ -827,7 +1233,7 @@
           <div class="dl-form-row">
             <div class="field narrow">
               <label>Source</label>
-              <select id="dl-source">
+              <select id="dl-source" onchange="toggleDlRevision()">
                 <option value="huggingface">HuggingFace</option>
                 <option value="url">URL</option>
               </select>
@@ -857,155 +1263,7 @@
       </div><!-- /#dash-overview -->
 
       <!-- ── Playground ────────────────────────────────────── -->
-      <div id="dash-playground" style="display:none">
 
-        <div class="subtab-bar">
-          <button class="subtab active" id="pg-tab-tts"        onclick="switchPgTab('tts')"><i class="ri-music-2-line"></i> TTS Stream</button>
-          <button class="subtab"        id="pg-tab-classify"   onclick="switchPgTab('classify')"><i class="ri-image-line"></i> Classify</button>
-          <button class="subtab"        id="pg-tab-llm"        onclick="switchPgTab('llm')"><i class="ri-chat-3-line"></i> LLM Chat</button>
-          <button class="subtab"        id="pg-tab-completion" onclick="switchPgTab('completion')"><i class="ri-edit-line"></i> Completion</button>
-        </div>
-
-        <!-- TTS sub-tab -->
-        <div id="pg-tts">
-          <div class="panel-header">
-            <div class="panel-title">TTS Stream</div>
-            <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
-          </div>
-          <div class="card">
-            <div class="card-title">Input</div>
-            <div class="field">
-              <label>Text</label>
-              <textarea id="pg-tts-text">Hello! This is a streaming TTS demo from Kolosal Inference.</textarea>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>Engine</label>
-                <div class="model-select-row">
-                  <select id="pg-tts-engine" onchange="loadVoicesForEngine(this.value,'pg-tts-voice')"><option value="">default</option></select>
-                  <button class="btn-refresh" title="Refresh engines" onclick="refreshTtsSelects()"><i class="ri-refresh-line"></i></button>
-                </div>
-              </div>
-              <div class="field"><label>Voice (optional)</label><select id="pg-tts-voice"><option value="">default</option></select></div>
-              <div class="field"><label>Speed</label><input type="number" id="pg-tts-speed" value="1.0" min="0.5" max="2.0" step="0.1" /></div>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:6px">
-              <button class="btn btn-primary" id="pg-tts-btn" onclick="runPgTTS()"><i class="ri-play-line"></i> Synthesise</button>
-              <button class="btn btn-ghost" onclick="stopPgTTS()"><i class="ri-stop-line"></i> Stop</button>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-title">Output</div>
-            <div class="response-box" id="pg-tts-status">waiting…</div>
-            <div id="pg-tts-audio-wrap" style="margin-top:12px;display:none">
-              <audio id="pg-tts-audio" controls style="width:100%"></audio>
-            </div>
-          </div>
-        </div>
-
-        <!-- Classify sub-tab -->
-        <div id="pg-classify" style="display:none">
-          <div class="panel-header">
-            <div class="panel-title">Image Classification</div>
-            <div class="panel-desc">SIMD-fused preprocessing + batched ORT inference via <span class="ep-code">POST /classify/batch</span>.</div>
-          </div>
-          <div class="card">
-            <div class="card-title">Upload Image</div>
-            <div class="dropzone" id="pg-dropzone"
-                 onclick="document.getElementById('pg-img-file').click()"
-                 ondragover="event.preventDefault();this.classList.add('over')"
-                 ondragleave="this.classList.remove('over')"
-                 ondrop="handlePgDrop(event)">
-              <div class="drop-icon"><i class="ri-image-add-line"></i></div>
-              <div>Click to upload or drag &amp; drop</div>
-              <div style="font-size:11px;color:var(--text-dim);margin-top:4px">JPEG / PNG</div>
-              <input type="file" id="pg-img-file" accept="image/jpeg,image/png" onchange="handlePgFile(this.files[0])" />
-            </div>
-            <img id="pg-img-preview" alt="preview" style="max-width:200px;border-radius:8px;margin-top:10px;display:none" />
-            <div class="field" style="margin-top:12px">
-              <label>Model</label>
-              <div class="model-select-row">
-                <select id="pg-cls-model"><option value="default">default</option></select>
-                <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
-              </div>
-            </div>
-            <div class="row">
-              <div class="field"><label>Top-K</label><input type="number" id="pg-cls-topk" value="5" min="1" max="1000" /></div>
-              <div class="field"><label>Width</label><input type="number" id="pg-cls-w" value="224" /></div>
-              <div class="field"><label>Height</label><input type="number" id="pg-cls-h" value="224" /></div>
-            </div>
-            <button class="btn btn-primary" style="margin-top:8px" id="pg-cls-btn" onclick="runPgClassify()" disabled><i class="ri-image-line"></i> Classify</button>
-          </div>
-          <div class="card">
-            <div class="card-title">Predictions</div>
-            <div class="response-box" id="pg-cls-out">waiting for image…</div>
-          </div>
-        </div>
-
-        <!-- LLM Chat sub-tab -->
-        <div id="pg-llm" style="display:none">
-          <div class="panel-header">
-            <div class="panel-title">LLM Chat</div>
-            <div class="panel-desc">OpenAI-compatible chat via <span class="ep-code">POST /v1/chat/completions</span>.</div>
-          </div>
-          <div class="card">
-            <div class="card-title">Conversation</div>
-            <div class="chat-history" id="pg-chat-history"></div>
-            <div class="chat-input-row">
-              <textarea id="pg-chat-input" placeholder="Type a message… (Enter to send)" rows="1"
-                onkeydown="if(event.key==='Enter'&amp;&amp;!event.shiftKey){event.preventDefault();sendPgChat();}"></textarea>
-              <button class="btn btn-primary" id="pg-chat-btn" onclick="sendPgChat()">Send</button>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-title">Parameters</div>
-            <div class="row">
-              <div class="field">
-                <label>Model</label>
-                <div class="model-select-row">
-                  <select id="pg-chat-model"><option value="default">default</option></select>
-                  <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
-                </div>
-              </div>
-              <div class="field"><label>Max Tokens</label><input type="number" id="pg-chat-maxtok" value="256" min="1" /></div>
-              <div class="field"><label>Temperature</label><input type="number" id="pg-chat-temp" value="0.7" min="0" max="2" step="0.05" /></div>
-            </div>
-            <button class="btn btn-ghost" style="margin-top:4px" onclick="clearPgChat()"><i class="ri-close-line"></i> Clear chat</button>
-          </div>
-        </div>
-
-        <!-- Completion sub-tab -->
-        <div id="pg-completion" style="display:none">
-          <div class="panel-header">
-            <div class="panel-title">Text Completion</div>
-            <div class="panel-desc">Raw prompt continuation via <span class="ep-code">POST /v1/completions</span>.</div>
-          </div>
-          <div class="card">
-            <div class="card-title">Prompt</div>
-            <div class="field">
-              <textarea id="pg-cmp-prompt" style="min-height:130px">The key advantages of PagedAttention for LLM inference are:</textarea>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>Model</label>
-                <div class="model-select-row">
-                  <select id="pg-cmp-model"><option value="default">default</option></select>
-                  <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
-                </div>
-              </div>
-              <div class="field"><label>Max Tokens</label><input type="number" id="pg-cmp-maxtok" value="128" min="1" /></div>
-              <div class="field"><label>Temperature</label><input type="number" id="pg-cmp-temp" value="0.7" min="0" max="2" step="0.05" /></div>
-              <div class="field"><label>Top-P</label><input type="number" id="pg-cmp-topp" value="1.0" min="0" max="1" step="0.05" /></div>
-            </div>
-            <button class="btn btn-primary" style="margin-top:4px" id="pg-cmp-btn" onclick="runPgCompletion()"><i class="ri-play-line"></i> Complete</button>
-          </div>
-          <div class="card">
-            <div class="card-title">Result</div>
-            <div class="response-box" id="pg-cmp-out">waiting…</div>
-          </div>
-        </div>
-
-      </div><!-- /#dash-playground -->
 
     </section><!-- /#panel-dashboard -->
 
@@ -1028,12 +1286,14 @@
         <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
           <input type="text" id="mdl-search" placeholder="Filter by name, task, architecture…"
             style="max-width:320px" oninput="filterModelCatalog()" />
-          <select id="mdl-filter-task" style="max-width:160px" onchange="filterModelCatalog()">
+          <select id="mdl-filter-task" style="max-width:180px" onchange="filterModelCatalog()">
             <option value="">All tasks</option>
-            <option value="llm">LLM</option>
             <option value="tts">TTS</option>
-            <option value="classification">Classification</option>
-            <option value="detection">Detection</option>
+            <option value="image-classification">Image Classification</option>
+            <option value="speech-to-text">Speech-to-Text</option>
+            <option value="object-detection">Object Detection</option>
+            <option value="text-classification">Text Classification</option>
+            <option value="feature-extraction">Feature Extraction</option>
           </select>
           <button class="btn btn-ghost" style="height:36px;padding:0 12px;font-size:13px" onclick="loadAvailableModels()">
             <i class="ri-refresh-line"></i> Refresh
@@ -1125,6 +1385,10 @@
         </div>
         <div class="card" style="padding:12px;min-height:240px">
           <div id="logs-viewer-header" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;font-family:var(--mono)">Select a file to view</div>
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input type="text" id="log-search" placeholder="Search in log…" style="flex:1" oninput="searchLog()" />
+            <span id="log-search-count" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
+          </div>
           <pre id="logs-viewer-content" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;font-family:var(--mono);max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:var(--text)">—</pre>
         </div>
       </div>
@@ -1201,14 +1465,6 @@
         </div>
       </div>
       <div class="card">
-        <div class="card-title">LLM — OpenAI-compatible</div>
-        <div class="endpoint-list">
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/v1/models</span><span class="ep-desc">List available models</span></div>
-          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/v1/completions</span><span class="ep-desc">Text completion</span></div>
-          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/v1/chat/completions</span><span class="ep-desc">Chat completion</span></div>
-        </div>
-      </div>
-      <div class="card">
         <div class="card-title">System</div>
         <div class="endpoint-list">
           <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/health</span><span class="ep-desc">Liveness + readiness</span></div>
@@ -1232,6 +1488,7 @@ function show(id, btn) {
   document.getElementById('panel-' + id).classList.add('active');
   btn.classList.add('active');
   if (id === 'models') switchMdlTab('available');
+  if (id === 'tts')    loadTtsHealth();
   if (id === 'audio')  loadAudioHealth();
   if (id === 'logs')   loadLogs();
   if (id === 'system') switchSysTab('info');
@@ -1242,6 +1499,17 @@ function setBox(id, text, cls) {
   const el = document.getElementById(id);
   el.textContent = text;
   el.className   = 'response-box' + (cls ? ' ' + cls : '');
+}
+
+async function safeJson(resp) {
+  const text = await resp.text();
+  try { return JSON.parse(text); }
+  catch (_) {
+    const hint = resp.ok
+      ? 'Server returned non-JSON response'
+      : `HTTP ${resp.status}: ${text.slice(0, 300)}`;
+    throw new Error(hint);
+  }
 }
 function fmtUptime(s) {
   if (s == null) return '—';
@@ -1262,7 +1530,7 @@ function setBtnLoading(id, loading) {
 async function fetchHealth() {
   try {
     const r    = await fetch('/health');
-    const data = await r.json();
+    const data = await safeJson(r);
     const ok   = r.ok && data.healthy !== false;
     const dot  = document.getElementById('health-dot');
     dot.style.background  = ok ? 'var(--green)' : 'var(--red)';
@@ -1304,6 +1572,7 @@ async function runTTS() {
 
   ttsController = new AbortController();
   const chunks  = [];
+  const t0 = performance.now();
 
   try {
     const body = { text, speed };
@@ -1333,6 +1602,7 @@ async function runTTS() {
 
     /* assemble PCM16-LE → WAV blob → play */
     const total  = chunks.reduce((s, c) => s + c.byteLength, 0);
+    if (total === 0) { setBox('tts-status', 'No audio received — engine may not be loaded.', 'error'); return; }
     const pcm    = new Uint8Array(total);
     let   off    = 0;
     for (const c of chunks) { pcm.set(c, off); off += c.byteLength; }
@@ -1342,11 +1612,15 @@ async function runTTS() {
     const audio = document.getElementById('tts-audio');
     audio.src   = url;
     document.getElementById('tts-audio-wrap').style.display = 'block';
-    audio.play();
+    audio.play().catch(e => setBox('tts-status', 'Playback error: ' + e.message, 'error'));
     setBox('tts-status', 'Done — ' + total + ' bytes, ' + chunks.length + ' chunks. Playing.', 'ok');
+    showMetrics('tts', (performance.now() - t0).toFixed(0));
   } catch (e) {
     if (e.name === 'AbortError') {
       setBox('tts-status', 'Stopped.');
+    } else if (e.message && e.message.includes('No TTS engine available')) {
+      setBox('tts-status', 'No TTS engine loaded. Download a Kokoro TTS model from Models → Download.', 'error');
+      document.getElementById('tts-no-engine-banner').style.display = '';
     } else {
       setBox('tts-status', 'Error: ' + e.message, 'error');
     }
@@ -1356,6 +1630,104 @@ async function runTTS() {
 }
 
 function stopTTS() { ttsController && ttsController.abort(); }
+
+/* ── TTS Endpoint code snippets ─────────────────────────── */
+const TTS_EP_LANGS = ['curl','python','js','go','rust','node'];
+let   ttsEpActive  = 'curl';
+
+function ttsSwitchEp(lang) {
+  ttsEpActive = lang;
+  TTS_EP_LANGS.forEach(l => {
+    const pane = document.getElementById('tts-ep-' + l);
+    if (pane) pane.style.display = l === lang ? '' : 'none';
+  });
+  document.querySelectorAll('#tts-ep-tabs .ws-tab').forEach((btn, i) => {
+    btn.classList[TTS_EP_LANGS[i] === lang ? 'add' : 'remove']('active-ws-tab');
+  });
+  renderTtsEpSnippets();
+}
+
+function renderTtsEpSnippets() {
+  const base = window.location.origin;
+  const snips = {
+    curl: `# Streaming TTS — saves raw PCM16-LE then wraps to WAV\ncurl -sS -X POST "${base}/tts/stream" \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":"Hello world","speed":1.0}' \\\n  --output audio.raw\n\n# Optional: add engine & voice\ncurl -sS -X POST "${base}/tts/stream" \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":"Hello","engine":"kokoro","voice":"af_heart","speed":1.0}' \\\n  --output audio.raw\n\n# List available engines\ncurl "${base}/tts/engines"\n\n# List voices for an engine\ncurl "${base}/tts/engines/kokoro/voices"`,
+    python: `import requests, wave, struct\n\nbase = "${base}"\n\n# Streaming synthesis\nresp = requests.post(\n    f"{base}/tts/stream",\n    json={"text": "Hello world", "speed": 1.0},\n    stream=True,\n    timeout=60,\n)\nresp.raise_for_status()\n\npcm = b"".join(resp.iter_content(chunk_size=4096))\n\n# Save as WAV (PCM16-LE, 24kHz, mono)\nwith wave.open("output.wav", "wb") as wf:\n    wf.setnchannels(1)\n    wf.setsampwidth(2)  # 16-bit\n    wf.setframerate(24000)\n    wf.writeframes(pcm)\n\nprint(f"Saved {len(pcm)} bytes → output.wav")\n\n# With engine & voice\nresp2 = requests.post(\n    f"{base}/tts/stream",\n    json={"text": "Hi there", "engine": "kokoro", "voice": "af_heart"},\n    stream=True,\n)\npcm2 = b"".join(resp2.iter_content(4096))`,
+    js: `// Browser — Fetch + ReadableStream + Web Audio\nconst base = "${base}";\n\nasync function synthesise(text, opts = {}) {\n  const resp = await fetch(\`\${base}/tts/stream\`, {\n    method: "POST",\n    headers: { "Content-Type": "application/json" },\n    body: JSON.stringify({ text, speed: 1.0, ...opts }),\n  });\n  if (!resp.ok) throw new Error(await resp.text());\n\n  const reader = resp.body.getReader();\n  const chunks = [];\n  while (true) {\n    const { done, value } = await reader.read();\n    if (done) break;\n    chunks.push(value);\n  }\n\n  // Build WAV header around PCM16-LE\n  const pcm = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));\n  let off = 0; chunks.forEach(c => { pcm.set(c, off); off += c.length; });\n  const wav = buildWav(pcm, 24000, 1);\n  const url = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));\n  new Audio(url).play();\n}\n\nfunction buildWav(pcm, sr, ch) {\n  const buf = new ArrayBuffer(44 + pcm.byteLength);\n  const v = new DataView(buf);\n  const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));\n  w(0,"RIFF"); v.setUint32(4,36+pcm.byteLength,true); w(8,"WAVE");\n  w(12,"fmt "); v.setUint32(16,16,true); v.setUint16(20,1,true);\n  v.setUint16(22,ch,true); v.setUint32(24,sr,true);\n  v.setUint32(28,sr*ch*2,true); v.setUint16(32,ch*2,true);\n  v.setUint16(34,16,true); w(36,"data"); v.setUint32(40,pcm.byteLength,true);\n  new Uint8Array(buf,44).set(pcm); return buf;\n}\n\nsynthesize("Hello world");`,
+    go: `package main\n\nimport (\n\t"bytes"\n\t"encoding/binary"\n\t"encoding/json"\n\t"fmt"\n\t"io"\n\t"net/http"\n\t"os"\n)\n\nconst base = "${base}"\n\nfunc synthesize(text string) ([]byte, error) {\n\tbody, _ := json.Marshal(map[string]interface{}{\n\t\t"text":  text,\n\t\t"speed": 1.0,\n\t})\n\tresp, err := http.Post(base+"/tts/stream",\n\t\t"application/json", bytes.NewReader(body))\n\tif err != nil { return nil, err }\n\tdefer resp.Body.Close()\n\tif resp.StatusCode != 200 {\n\t\treturn nil, fmt.Errorf("HTTP %d", resp.StatusCode)\n\t}\n\treturn io.ReadAll(resp.Body)\n}\n\nfunc writeWav(pcm []byte, path string) error {\n\tf, err := os.Create(path)\n\tif err != nil { return err }\n\tdefer f.Close()\n\t// WAV header: PCM16-LE, 24kHz, mono\n\theader := struct{ riff [4]byte; size uint32; wave [4]byte\n\t\tfmt_ [4]byte; fmtSz uint32; audioFmt, ch uint16\n\t\tsr, byteRate uint32; blockAlign, bitsPerSample uint16\n\t\tdata [4]byte; dataSz uint32\n\t}{\n\t\t[4]byte{'R','I','F','F'}, uint32(36+len(pcm)),\n\t\t[4]byte{'W','A','V','E'}, [4]byte{'f','m','t',' '}, 16,\n\t\t1, 1, 24000, 48000, 2, 16,\n\t\t[4]byte{'d','a','t','a'}, uint32(len(pcm)),\n\t}\n\tbinary.Write(f, binary.LittleEndian, header)\n\tf.Write(pcm)\n\treturn nil\n}\n\nfunc main() {\n\tpcm, err := synthesize("Hello world")\n\tif err != nil { panic(err) }\n\twriteWav(pcm, "output.wav")\n\tfmt.Println("Saved output.wav")\n}`,
+    rust: `// Cargo.toml: reqwest = { version = "0.12", features = ["json","blocking"] }\nuse std::{io::Write, fs::File};\n\nconst BASE: &str = "${base}";\n\nfn main() -> anyhow::Result<()> {\n    let client = reqwest::blocking::Client::new();\n    let resp = client\n        .post(format!("{BASE}/tts/stream"))\n        .json(&serde_json::json!({ "text": "Hello world", "speed": 1.0 }))\n        .send()?;\n    resp.error_for_status_ref()?;\n    let pcm = resp.bytes()?;\n\n    // Write WAV (PCM16-LE, 24kHz, mono)\n    let mut f = File::create("output.wav")?;\n    let data_len = pcm.len() as u32;\n    let header: &[u8] = &[\n        b'R',b'I',b'F',b'F',\n        (36+data_len).to_le_bytes()[0], (36+data_len).to_le_bytes()[1],\n        (36+data_len).to_le_bytes()[2], (36+data_len).to_le_bytes()[3],\n        b'W',b'A',b'V',b'E', b'f',b'm',b't',b' ',\n        16,0,0,0, 1,0, 1,0,\n        0x80,0xBB,0,0, 0,0x77,1,0, 2,0, 16,0,\n        b'd',b'a',b't',b'a',\n        data_len.to_le_bytes()[0], data_len.to_le_bytes()[1],\n        data_len.to_le_bytes()[2], data_len.to_le_bytes()[3],\n    ];\n    f.write_all(header)?;\n    f.write_all(&pcm)?;\n    println!("Saved {} bytes → output.wav", pcm.len());\n    Ok(())\n}`,
+    node: `// Node.js 18+ (native fetch + fs)\nimport { writeFileSync } from "fs";\n\nconst BASE = "${base}";\n\nasync function synthesize(text, opts = {}) {\n  const resp = await fetch(\`\${BASE}/tts/stream\`, {\n    method: "POST",\n    headers: { "Content-Type": "application/json" },\n    body: JSON.stringify({ text, speed: 1.0, ...opts }),\n  });\n  if (!resp.ok) throw new Error(await resp.text());\n  const buf = Buffer.from(await resp.arrayBuffer());\n  return buf; // raw PCM16-LE\n}\n\n// Build WAV from PCM16-LE\nfunction toWav(pcm) {\n  const hdr = Buffer.alloc(44);\n  hdr.write("RIFF", 0); hdr.writeUInt32LE(36+pcm.length, 4);\n  hdr.write("WAVE", 8); hdr.write("fmt ", 12);\n  hdr.writeUInt32LE(16,16); hdr.writeUInt16LE(1,20);\n  hdr.writeUInt16LE(1,22); hdr.writeUInt32LE(24000,24);\n  hdr.writeUInt32LE(48000,28); hdr.writeUInt16LE(2,32);\n  hdr.writeUInt16LE(16,34); hdr.write("data",36);\n  hdr.writeUInt32LE(pcm.length,40);\n  return Buffer.concat([hdr, pcm]);\n}\n\nconst pcm = await synthesize("Hello world");\nwriteFileSync("output.wav", toWav(pcm));\nconsole.log(\`Saved \${pcm.length} bytes → output.wav\`);`,
+  };
+  TTS_EP_LANGS.forEach(l => {
+    const el = document.getElementById('tts-ep-' + l + '-code');
+    if (el) el.textContent = snips[l] || '';
+  });
+}
+
+function copyTtsEp(lang) {
+  const el = document.getElementById('tts-ep-' + lang + '-code');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => showCopyFeedback('Copied ' + lang + '!'));
+}
+
+/* ── Audio microphone recording ─────────────────────────── */
+let audioRecorder = null;
+let audioRecordChunks = [];
+let audioRecordTimer = null;
+let audioRecordSecs = 0;
+
+async function toggleAudioRecord() {
+  if (audioRecorder && audioRecorder.state === 'recording') {
+    audioRecorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioRecordChunks = [];
+    audioRecorder = new MediaRecorder(stream);
+    audioRecordSecs = 0;
+    audioRecorder.ondataavailable = e => { if (e.data.size) audioRecordChunks.push(e.data); };
+    audioRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(audioRecordTimer);
+      const btn   = document.getElementById('audio-record-btn');
+      const badge = document.getElementById('audio-record-status');
+      if (btn)   { btn.innerHTML = '<i class="ri-mic-2-line"></i> Record'; btn.classList.remove('btn-danger'); }
+      if (badge) badge.style.display = 'none';
+      const blob = new Blob(audioRecordChunks, { type: audioRecordChunks[0]?.type || 'audio/webm' });
+      const file = new File([blob], 'recording.webm', { type: blob.type });
+      handleAudioFile(file);
+      // Auto-transcribe
+      document.getElementById('audio-btn').disabled = false;
+      runAudio();
+    };
+    audioRecorder.start(200);
+    const btn   = document.getElementById('audio-record-btn');
+    const badge = document.getElementById('audio-record-status');
+    if (btn)   { btn.innerHTML = '<i class="ri-stop-circle-line"></i> Stop'; btn.classList.add('btn-danger'); }
+    if (badge) badge.style.display = 'flex';
+    audioRecordTimer = setInterval(() => {
+      audioRecordSecs++;
+      const label = document.getElementById('audio-record-label');
+      if (label) label.textContent = `Recording… ${audioRecordSecs}s`;
+    }, 1000);
+  } catch (e) { alert('Microphone error: ' + e.message); }
+}
+
+async function loadTtsHealth() {
+  try {
+    const r = await fetch('/tts/health');
+    const d = r.ok ? await safeJson(r).catch(() => ({})) : {};
+    const noEngine = !d.engines_loaded || d.engines_loaded === 0;
+    const el = document.getElementById('tts-no-engine-banner');
+    if (el) el.style.display = noEngine ? '' : 'none';
+    if (noEngine) setBox('tts-status', 'No TTS engine loaded — see banner above.', 'error');
+  } catch (_) {}
+}
+
+function showModels() {
+  const btn = document.querySelector('.nav-item[onclick*="models"]');
+  if (btn) { show('models', btn); btn.click(); }
+}
 
 function buildWav(pcm, sampleRate, ch) {
   const len = pcm.byteLength;
@@ -1372,56 +1744,73 @@ function buildWav(pcm, sampleRate, ch) {
 }
 
 /* ── Image classify ────────────────────────────────────── */
-let imgBase64 = null;
+let imgBase64List = [];
 
 function handleDrop(e) {
   e.preventDefault();
   document.getElementById('dropzone').classList.remove('over');
-  const f = e.dataTransfer.files[0];
-  if (f) handleFile(f);
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files);
 }
 
-function handleFile(f) {
-  if (!f) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const dataUrl = ev.target.result;
-    imgBase64 = dataUrl.split(',')[1];
-    const preview = document.getElementById('img-preview');
-    preview.src = dataUrl;
-    preview.style.display = 'block';
-    document.getElementById('cls-btn').disabled = false;
-    setBox('cls-out', 'Image loaded — click Classify.');
-  };
-  reader.readAsDataURL(f);
+function handleFile(files) {
+  if (!files || files.length === 0) return;
+  imgBase64List = [];
+  const fileArr = Array.from(files);
+  const preview = document.getElementById('img-preview');
+  preview.style.display = 'none';
+  let loaded = 0;
+  fileArr.forEach((f, i) => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      imgBase64List[i] = ev.target.result.split(',')[1];
+      loaded++;
+      if (loaded === fileArr.length) {
+        if (fileArr.length === 1) {
+          preview.src = ev.target.result;
+          preview.style.display = 'block';
+        }
+        document.getElementById('cls-btn').disabled = false;
+        document.getElementById('cls-stream-btn').disabled = false;
+        setBox('cls-out', fileArr.length + ' image(s) loaded — click Classify.');
+      }
+    };
+    reader.readAsDataURL(f);
+  });
 }
 
 async function runClassify() {
-  if (!imgBase64) return;
+  if (!imgBase64List.length) return;
   document.getElementById('cls-btn').disabled = true;
   setBox('cls-out', 'Sending to /classify/batch…', 'stream');
+  const t0 = performance.now();
   try {
     const resp = await fetch('/classify/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        images:       [imgBase64],
+        images:       imgBase64List,
         top_k:        parseInt(document.getElementById('cls-topk').value) || 5,
         model_width:  parseInt(document.getElementById('cls-w').value)    || 224,
         model_height: parseInt(document.getElementById('cls-h').value)    || 224,
       }),
     });
-    const data = await resp.json();
+    const data = await safeJson(resp);
     if (!resp.ok) throw new Error(data.error || JSON.stringify(data));
-    const preds = data.results && data.results[0] ? data.results[0] : [];
-    if (preds.length === 0) {
+    const elapsed = (performance.now() - t0).toFixed(0);
+    const results = data?.data?.results || data?.results || [];
+    if (!results.length || !results[0]) {
       setBox('cls-out', '(no predictions — no model loaded on this backend)');
     } else {
-      const lines = preds.map((p, i) =>
-        (i + 1) + '.  ' + p.label.padEnd(32) + (p.confidence * 100).toFixed(2) + '%'
-      ).join('\n');
+      const lines = results.map((preds, idx) => {
+        const header = imgBase64List.length > 1 ? 'Image ' + (idx + 1) + ':\n' : '';
+        const predLines = (preds || []).map((p, i) =>
+          (i + 1) + '.  ' + p.label.padEnd(32) + (p.confidence * 100).toFixed(2) + '%'
+        ).join('\n');
+        return header + predLines;
+      }).join('\n\n');
       setBox('cls-out', lines, 'ok');
     }
+    showMetrics('cls', elapsed);
   } catch (e) {
     setBox('cls-out', 'Error: ' + e.message, 'error');
   } finally {
@@ -1429,108 +1818,6 @@ async function runClassify() {
   }
 }
 
-/* ── LLM Chat ──────────────────────────────────────────── */
-const chatHistory = [];
-
-function appendMsg(role, content) {
-  chatHistory.push({ role, content });
-  const hist     = document.getElementById('chat-history');
-  const isCls    = role === 'user' ? 'user' : 'asst';
-  const outer    = document.createElement('div');
-  outer.className = 'msg ' + isCls;
-  const roleEl   = document.createElement('div');
-  roleEl.className = 'msg-role';
-  roleEl.textContent = role === 'user' ? 'you' : 'assistant';
-  const bodyEl   = document.createElement('div');
-  bodyEl.className = 'msg-body';
-  bodyEl.textContent = content;          // textContent — no XSS risk
-  outer.appendChild(roleEl);
-  outer.appendChild(bodyEl);
-  hist.appendChild(outer);
-  hist.scrollTop = hist.scrollHeight;
-}
-
-/* seed the welcome message */
-appendMsg('assistant', "Hi! I'm the Kolosal inference endpoint. Ask me anything — I'll forward it to the LLM backend.");
-
-async function sendChat() {
-  const inp = document.getElementById('chat-input');
-  const msg = inp.value.trim();
-  if (!msg) return;
-  inp.value = '';
-  appendMsg('user', msg);
-
-  const btn = document.getElementById('chat-btn');
-  btn.disabled = true;
-  btn.textContent = '…';
-
-  try {
-    const messages = chatHistory.map(m => ({
-      role:    m.role === 'asst' ? 'assistant' : m.role,
-      content: m.content,
-    }));
-    const resp = await fetch('/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model:       document.getElementById('chat-model').value || 'default',
-        messages,
-        max_tokens:  parseInt(document.getElementById('chat-maxtok').value) || 256,
-        temperature: parseFloat(document.getElementById('chat-temp').value) || 0.7,
-      }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || JSON.stringify(data));
-    const text = (data.choices && data.choices[0] && data.choices[0].message)
-      ? data.choices[0].message.content
-      : '(empty response)';
-    appendMsg('assistant', text);
-  } catch (e) {
-    appendMsg('assistant', 'Error: ' + e.message);
-  } finally {
-    btn.disabled  = false;
-    btn.textContent = 'Send';
-  }
-}
-
-function clearChat() {
-  chatHistory.length = 0;
-  document.getElementById('chat-history').textContent = '';
-  appendMsg('assistant', "Chat cleared. Ask me anything!");
-}
-
-/* ── Text Completion ───────────────────────────────────── */
-async function runCompletion() {
-  const prompt = document.getElementById('cmp-prompt').value.trim();
-  if (!prompt) return;
-  document.getElementById('cmp-btn').disabled = true;
-  setBox('cmp-out', 'Sending to /v1/completions…', 'stream');
-  try {
-    const resp = await fetch('/v1/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model:       document.getElementById('cmp-model').value  || 'default',
-        prompt,
-        max_tokens:  parseInt(document.getElementById('cmp-maxtok').value)  || 128,
-        temperature: parseFloat(document.getElementById('cmp-temp').value)  || 0.7,
-        top_p:       parseFloat(document.getElementById('cmp-topp').value)  || 1.0,
-      }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || JSON.stringify(data));
-    const text  = (data.choices && data.choices[0]) ? data.choices[0].text : '(empty)';
-    const usage = data.usage;
-    const footer = usage
-      ? '\n\n── ' + usage.prompt_tokens + 'p + ' + usage.completion_tokens + 'c = ' + usage.total_tokens + 't'
-      : '';
-    setBox('cmp-out', text + footer, 'ok');
-  } catch (e) {
-    setBox('cmp-out', 'Error: ' + e.message, 'error');
-  } finally {
-    document.getElementById('cmp-btn').disabled = false;
-  }
-}
 /* ── XSS-safe helper ────────────────────────────────────── */
 function escHtml(str) {
   return String(str)
@@ -1539,6 +1826,43 @@ function escHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/* ── Markdown renderer ──────────────────────────────────── */
+function renderMarkdown(text) {
+  /* 1. protect fenced code blocks first */
+  const codeBlocks = [];
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push('<pre><code' + (lang ? ' class="lang-' + escHtml(lang) + '"' : '') + '>' + escHtml(code) + '</code></pre>');
+    return '\x00CODE' + idx + '\x00';
+  });
+  /* 2. escape html */
+  text = escHtml(text);
+  /* 3. inline code */
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  /* 4. bold / italic */
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  text = text.replace(/_(.+?)_/g, '<em>$1</em>');
+  /* 5. headers */
+  text = text.replace(/^### (.+)$/gm, '<h4>$1</h4>');
+  text = text.replace(/^## (.+)$/gm, '<h3>$1</h3>');
+  /* 6. lists */
+  text = text.replace(/((?:^- .+\n?)+)/gm, (block) => {
+    const items = block.trim().split('\n').map(l => '<li>' + l.replace(/^- /, '') + '</li>').join('');
+    return '<ul>' + items + '</ul>';
+  });
+  text = text.replace(/((?:^\d+\. .+\n?)+)/gm, (block) => {
+    const items = block.trim().split('\n').map(l => '<li>' + l.replace(/^\d+\. /, '') + '</li>').join('');
+    return '<ol>' + items + '</ol>';
+  });
+  /* 7. paragraphs */
+  text = text.replace(/\n\n/g, '<br><br>');
+  text = text.replace(/\n/g, '<br>');
+  /* 8. restore code blocks */
+  text = text.replace(/\x00CODE(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i)]);
+  return text;
 }
 
 /* ── Dashboard ─────────────────────────────────────────── */
@@ -1694,7 +2018,7 @@ function updateDownloadsList(downloads) {
                       : statusLower.includes('complet')  ? 'completed'
                       : statusLower.includes('fail')     ? 'failed' : 'pending';
     const fillCls     = badgeCls === 'completed' ? ' done' : badgeCls === 'failed' ? ' failed' : '';
-    const pct         = Math.round((t.progress || 0) * 100);
+    const pct         = Math.min(100, Math.round(t.progress || 0));
     const dlMB        = t.downloaded_mb || 0;
     const totStr      = t.total_mb != null ? t.total_mb + ' MB' : '?';
 
@@ -1736,8 +2060,9 @@ async function submitDownload() {
   if (!repo) { showDlError('Repo ID or URL is required.'); return; }
   btn.disabled = true;
   if (errEl) errEl.style.display = 'none';
+  const name = repo.split('/').pop() || repo;
   const body = {
-    model_name:  repo.split('/').pop() || repo,
+    model_name:  name,
     source_type: source,
   };
   if (source === 'huggingface') {
@@ -1747,13 +2072,21 @@ async function submitDownload() {
     body.url = repo;
   }
   try {
-    const res = await fetch('/api/models/download', {
+    const res = await fetch('/models/download', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       const t = await res.text();
       showDlError(res.status + ' — ' + t);
+    } else {
+      const data = await safeJson(res).catch(() => ({}));
+      const taskId = data.task_id || data.id;
+      if (taskId) {
+        const empty = document.getElementById('dl-tasks-empty');
+        if (empty) empty.style.display = 'none';
+        pollMdlDownload(taskId, name, 'dl-tasks-list');
+      }
     }
   } catch (e) {
     showDlError('Network error: ' + e.message);
@@ -1771,29 +2104,8 @@ function showDlError(msg) {
 
 /* ── Dashboard tab switching ───────────────────────────── */
 function switchDashTab(tab) {
-  const overview   = document.getElementById('dash-overview');
-  const playground = document.getElementById('dash-playground');
-  const tOv        = document.getElementById('dash-tab-overview');
-  const tPg        = document.getElementById('dash-tab-playground');
-  if (!overview || !playground) return;
-  if (tab === 'overview') {
-    overview.style.display   = '';     playground.style.display = 'none';
-    tOv.classList.add('active');       tPg.classList.remove('active');
-  } else {
-    overview.style.display   = 'none'; playground.style.display = '';
-    tOv.classList.remove('active');    tPg.classList.add('active');
-  }
-}
-
-/* ── Playground sub-tab switching ──────────────────────── */
-const PG_SUBTABS = ['tts', 'classify', 'llm', 'completion'];
-function switchPgTab(tab) {
-  PG_SUBTABS.forEach(id => {
-    const el  = document.getElementById('pg-' + id);
-    const btn = document.getElementById('pg-tab-' + id);
-    if (el)  el.style.display  = id === tab ? '' : 'none';
-    if (btn) btn.classList[id === tab ? 'add' : 'remove']('active');
-  });
+  const overview = document.getElementById('dash-overview');
+  if (overview) overview.style.display = '';
 }
 
 /* ── Playground TTS ─────────────────────────────────────── */
@@ -1808,6 +2120,7 @@ async function runPgTTS() {
   setBox('pg-tts-status', 'Connecting to /tts/stream…', 'stream');
   pgTtsController = new AbortController();
   const chunks = [];
+  const t0 = performance.now();
   try {
     const body = { text, speed };
     if (engine) body.engine = engine;
@@ -1835,111 +2148,81 @@ async function runPgTTS() {
     document.getElementById('pg-tts-audio-wrap').style.display = 'block';
     audio.play();
     setBox('pg-tts-status', 'Done — ' + total + ' bytes. Playing.', 'ok');
+    showMetrics('pg-tts', (performance.now() - t0).toFixed(0));
   } catch (e) {
     if (e.name === 'AbortError') setBox('pg-tts-status', 'Stopped.');
-    else setBox('pg-tts-status', 'Error: ' + e.message, 'error');
+    else if (e.message && e.message.includes('No TTS engine available'))  {
+      setBox('pg-tts-status', 'No TTS engine loaded. Download a Kokoro TTS model from Models → Download.', 'error');
+      const bnr = document.getElementById('pg-tts-no-engine-banner');
+      if (bnr) bnr.style.display = '';
+    } else setBox('pg-tts-status', 'Error: ' + e.message, 'error');
   } finally { document.getElementById('pg-tts-btn').disabled = false; }
 }
 function stopPgTTS() { pgTtsController && pgTtsController.abort(); }
 
 /* ── Playground Classify ────────────────────────────────── */
-let pgImgBase64 = null;
+let pgImgBase64List = [];
 function handlePgDrop(e) {
   e.preventDefault();
   document.getElementById('pg-dropzone').classList.remove('over');
-  const f = e.dataTransfer.files[0]; if (f) handlePgFile(f);
+  if (e.dataTransfer.files.length) handlePgFile(e.dataTransfer.files);
 }
-function handlePgFile(f) {
-  if (!f) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const dataUrl = ev.target.result;
-    pgImgBase64   = dataUrl.split(',')[1];
-    const preview = document.getElementById('pg-img-preview');
-    preview.src   = dataUrl; preview.style.display = 'block';
-    document.getElementById('pg-cls-btn').disabled = false;
-    setBox('pg-cls-out', 'Image loaded — click Classify.');
-  };
-  reader.readAsDataURL(f);
+function handlePgFile(files) {
+  if (!files || files.length === 0) return;
+  pgImgBase64List = [];
+  const fileArr = Array.from(files);
+  const preview = document.getElementById('pg-img-preview');
+  preview.style.display = 'none';
+  let loaded = 0;
+  fileArr.forEach((f, i) => {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      pgImgBase64List[i] = ev.target.result.split(',')[1];
+      loaded++;
+      if (loaded === fileArr.length) {
+        if (fileArr.length === 1) {
+          preview.src = ev.target.result;
+          preview.style.display = 'block';
+        }
+        document.getElementById('pg-cls-btn').disabled = false;
+        setBox('pg-cls-out', fileArr.length + ' image(s) loaded — click Classify.');
+      }
+    };
+    reader.readAsDataURL(f);
+  });
 }
 async function runPgClassify() {
-  if (!pgImgBase64) return;
+  if (!pgImgBase64List.length) return;
   const topk = parseInt(document.getElementById('pg-cls-topk').value) || 5;
   const w    = parseInt(document.getElementById('pg-cls-w').value)    || 224;
   const h    = parseInt(document.getElementById('pg-cls-h').value)    || 224;
   document.getElementById('pg-cls-btn').disabled = true;
   setBox('pg-cls-out', 'Classifying…', 'stream');
+  const t0 = performance.now();
   try {
     const res = await fetch('/classify/batch', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: [pgImgBase64], top_k: topk, model_width: w, model_height: h }),
+      body: JSON.stringify({ images: pgImgBase64List, top_k: topk, model_width: w, model_height: h }),
     });
-    const data = await res.json();
-    setBox('pg-cls-out', JSON.stringify(data, null, 2), res.ok ? 'ok' : 'error');
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(data.error || JSON.stringify(data));
+    const elapsed = (performance.now() - t0).toFixed(0);
+    const results = data?.data?.results || data?.results || [];
+    if (!results.length || !results[0]) {
+      setBox('pg-cls-out', '(no predictions)');
+    } else {
+      const lines = results.map((preds, idx) => {
+        const header = pgImgBase64List.length > 1 ? 'Image ' + (idx + 1) + ':\n' : '';
+        const predLines = (preds || []).map((p, i) =>
+          (i + 1) + '.  ' + p.label.padEnd(32) + (p.confidence * 100).toFixed(2) + '%'
+        ).join('\n');
+        return header + predLines;
+      }).join('\n\n');
+      setBox('pg-cls-out', lines, 'ok');
+    }
+    showMetrics('pg-cls', elapsed);
   } catch (e) { setBox('pg-cls-out', 'Error: ' + e.message, 'error'); }
   finally { document.getElementById('pg-cls-btn').disabled = false; }
-}
-
-/* ── Playground LLM Chat ────────────────────────────────── */
-let pgChatHistory = [];
-function clearPgChat() {
-  pgChatHistory = [];
-  const h = document.getElementById('pg-chat-history');
-  if (h) while (h.firstChild) h.removeChild(h.firstChild);
-}
-function appendPgMsg(role, text) {
-  const container = document.getElementById('pg-chat-history');
-  if (!container) return;
-  const div  = document.createElement('div');  div.className  = 'msg ' + (role === 'user' ? 'user' : 'asst');
-  const rlEl = document.createElement('div');  rlEl.className = 'msg-role';
-  rlEl.textContent = role === 'user' ? 'You' : 'Assistant';
-  const body = document.createElement('div');  body.className = 'msg-body';
-  body.textContent = text;   // textContent — XSS safe
-  div.appendChild(rlEl); div.appendChild(body); container.appendChild(div);
-  div.scrollIntoView({ behavior: 'smooth' });
-}
-async function sendPgChat() {
-  const input  = document.getElementById('pg-chat-input');
-  const text   = input.value.trim(); if (!text) return;
-  input.value  = '';
-  const model  = document.getElementById('pg-chat-model').value.trim()    || 'default';
-  const maxtok = parseInt(document.getElementById('pg-chat-maxtok').value) || 256;
-  const temp   = parseFloat(document.getElementById('pg-chat-temp').value) || 0.7;
-  pgChatHistory.push({ role: 'user', content: text });
-  appendPgMsg('user', text);
-  document.getElementById('pg-chat-btn').disabled = true;
-  try {
-    const res  = await fetch('/v1/chat/completions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: pgChatHistory, max_tokens: maxtok, temperature: temp }),
-    });
-    const data  = await res.json();
-    const reply = data.choices?.[0]?.message?.content || JSON.stringify(data);
-    pgChatHistory.push({ role: 'assistant', content: reply });
-    appendPgMsg('assistant', reply);
-  } catch (e) { appendPgMsg('assistant', 'Error: ' + e.message); }
-  finally { document.getElementById('pg-chat-btn').disabled = false; }
-}
-
-/* ── Playground Completion ──────────────────────────────── */
-async function runPgCompletion() {
-  const prompt  = document.getElementById('pg-cmp-prompt').value;
-  const model   = document.getElementById('pg-cmp-model').value.trim()    || 'default';
-  const maxtok  = parseInt(document.getElementById('pg-cmp-maxtok').value) || 128;
-  const temp    = parseFloat(document.getElementById('pg-cmp-temp').value) || 0.7;
-  const topp    = parseFloat(document.getElementById('pg-cmp-topp').value) || 1.0;
-  document.getElementById('pg-cmp-btn').disabled = true;
-  setBox('pg-cmp-out', 'Generating…', 'stream');
-  try {
-    const res  = await fetch('/v1/completions', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt, max_tokens: maxtok, temperature: temp, top_p: topp }),
-    });
-    const data = await res.json();
-    const txt  = data.choices?.[0]?.text || JSON.stringify(data, null, 2);
-    setBox('pg-cmp-out', txt, res.ok ? 'ok' : 'error');
-  } catch (e) { setBox('pg-cmp-out', 'Error: ' + e.message, 'error'); }
-  finally { document.getElementById('pg-cmp-btn').disabled = false; }
 }
 
 /* ── DOM helpers ────────────────────────────────────────────── */
@@ -1952,7 +2235,6 @@ function mkEl(tag, cls, text) {
 function clearEl(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
 
 /* ── Model select population ────────────────────────────────── */
-const LLM_SEL  = ['chat-model', 'cmp-model', 'pg-chat-model', 'pg-cmp-model'];
 const CLS_SEL  = ['cls-model', 'pg-cls-model'];
 const TTS_SEL  = ['tts-engine', 'pg-tts-engine'];
 
@@ -1962,7 +2244,7 @@ function fillSelect(id, items, valueFn, labelFn, defLabel) {
   const prev = sel.value;
   clearEl(sel);
   const defOpt = document.createElement('option');
-  defOpt.value = 'default'; defOpt.textContent = defLabel || 'default'; sel.appendChild(defOpt);
+  defOpt.value = ''; defOpt.textContent = defLabel || 'default'; sel.appendChild(defOpt);
   items.forEach(item => {
     const opt = document.createElement('option');
     opt.value = valueFn(item); opt.textContent = labelFn(item); sel.appendChild(opt);
@@ -1972,13 +2254,12 @@ function fillSelect(id, items, valueFn, labelFn, defLabel) {
 
 async function refreshModelSelects() {
   try {
-    const r = await fetch('/api/models/downloaded');
+    const r = await fetch('/models/managed');
     if (!r.ok) return;
-    const data   = await r.json();
+    const data   = await safeJson(r);
     const models = Array.isArray(data) ? data : (data.models || []);
     const idOf   = m => m.id || m.model_id || m.name || '';
     const nameOf = m => m.name || m.id || m.model_id || '—';
-    LLM_SEL.forEach(id => fillSelect(id, models, idOf, nameOf, 'default'));
     CLS_SEL.forEach(id => fillSelect(id, models, idOf, nameOf, 'default'));
   } catch (_) {}
 }
@@ -1987,11 +2268,12 @@ async function refreshTtsSelects() {
   try {
     const r = await fetch('/tts/engines');
     if (!r.ok) return;
-    const data    = await r.json();
+    const data    = await safeJson(r);
     const engines = Array.isArray(data) ? data : (data.engines || []);
-    const idOf    = e => (typeof e === 'string' ? e : (e.name || e.id || ''));
-    TTS_SEL.forEach(id => fillSelect(id, engines, idOf, idOf, 'default'));
-    const firstId = engines.length ? idOf(engines[0]) : '';
+    const valOf   = e => (typeof e === 'string' ? e : (e.id   || e.name || ''));
+    const labelOf = e => (typeof e === 'string' ? e : (e.name || e.id   || ''));
+    TTS_SEL.forEach(id => fillSelect(id, engines, valOf, labelOf, 'default'));
+    const firstId = engines.length ? valOf(engines[0]) : '';
     if (firstId) {
       loadVoicesForEngine(firstId, 'tts-voice');
       loadVoicesForEngine(firstId, 'pg-tts-voice');
@@ -2009,7 +2291,7 @@ async function loadVoicesForEngine(engineId, voiceSelectId) {
   try {
     const r = await fetch('/tts/engines/' + encodeURIComponent(engineId) + '/voices');
     if (!r.ok) return;
-    const data   = await r.json();
+    const data   = await safeJson(r);
     const voices = Array.isArray(data) ? data : (data.voices || []);
     voices.forEach(v => {
       const opt = document.createElement('option');
@@ -2022,8 +2304,84 @@ async function loadVoicesForEngine(engineId, voiceSelectId) {
 
 refreshModelSelects();
 refreshTtsSelects();
+renderTtsEpSnippets();
 
 /* ── Models panel ───────────────────────────────────────────── */
+/* — Model catalog — */
+const PREDEFINED_MODELS = [
+  // TTS
+  {id:'windows-sapi',name:'Windows SAPI',model_type:'tts',architecture:'Neural TTS',size:'Built-in',url:'',note:'Native Windows speech synthesis'},
+  {id:'fish-speech-v1.5',name:'Fish Speech v1.5',model_type:'tts',architecture:'VQGAN + Llama',size:'~1 GB',url:'https://huggingface.co/fishaudio/fish-speech-1.5',note:'Multilingual voice cloning'},
+  {id:'styletts2',name:'StyleTTS 2',model_type:'tts',architecture:'StyleTTS2',size:'~500 MB',url:'https://huggingface.co/yl4579/StyleTTS2-LJSpeech',note:'Base model for Kokoro'},
+  {id:'kokoro-v0.19',name:'Kokoro v0.19',model_type:'tts',architecture:'StyleTTS2 + ISTFTNet',size:'312 MB',url:'https://huggingface.co/hexgrad/kLegacy/resolve/main/v0.19/kokoro-v0_19.pth',note:''},
+  {id:'xtts-v2',name:'XTTS v2',model_type:'tts',architecture:'Transformer + HiFiGAN',size:'~2 GB',url:'https://huggingface.co/coqui/XTTS-v2',note:'Coqui zero-shot voice cloning'},
+  {id:'piper-lessac',name:'Piper (Lessac)',model_type:'tts',architecture:'VITS (ONNX)',size:'60 MB',url:'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx',note:'Lightweight fast ONNX TTS'},
+  {id:'melotts',name:'MeloTTS',model_type:'tts',architecture:'VITS',size:'~200 MB',url:'https://huggingface.co/myshell-ai/MeloTTS-English',note:'Real-time CPU inference, multiple accents'},
+  {id:'metavoice',name:'MetaVoice',model_type:'tts',architecture:'Transformer',size:'~1 GB',url:'https://huggingface.co/metavoiceio/metavoice-1B-v0.1',note:'1B parameter model'},
+  {id:'openvoice',name:'OpenVoice',model_type:'tts',architecture:'VITS',size:'~600 MB',url:'https://huggingface.co/myshell-ai/OpenVoice',note:'Tone color cloning'},
+  {id:'kokoro-v1.0',name:'Kokoro v1.0',model_type:'tts',architecture:'StyleTTS2 + ISTFTNet',size:'312 MB',url:'https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.pth',note:''},
+  {id:'kokoro-onnx',name:'Kokoro v1.0 (ONNX)',model_type:'tts',architecture:'StyleTTS2 + ISTFTNet (ONNX)',size:'326 MB',url:'https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/kokoro-v1_0.onnx',note:'No PyTorch required'},
+  {id:'kokoro-onnx-int8',name:'Kokoro v1.0 INT8 (ONNX)',model_type:'tts',architecture:'StyleTTS2 + ISTFTNet (ONNX INT8)',size:'83 MB',url:'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx',note:'INT8 quantized — 4× smaller, faster on CPU'},
+  {id:'f5-tts',name:'F5-TTS v1',model_type:'tts',architecture:'Flow Matching (DiT)',size:'~736 MB',url:'https://huggingface.co/SWivid/F5-TTS',note:'Zero-shot voice cloning via flow matching'},
+  {id:'parler-tts-mini',name:'Parler-TTS Mini v1',model_type:'tts',architecture:'Conditional Transformer (0.9B)',size:'~3.6 GB',url:'https://huggingface.co/parler-tts/parler-tts-mini-v1',note:'Controllable via natural language prompt'},
+  {id:'chatterbox',name:'Chatterbox TTS',model_type:'tts',architecture:'Llama 0.5B backbone',size:'~2.1 GB',url:'https://huggingface.co/ResembleAI/chatterbox',note:'Emotion exaggeration control, 23 languages'},
+  {id:'outetts-0.3-500m',name:'OuteTTS 0.3 (500M)',model_type:'tts',architecture:'Qwen2.5-0.5B based',size:'~1 GB',url:'https://huggingface.co/OuteAI/OuteTTS-0.3-500M',note:'Multilingual with voice cloning, 6 languages'},
+  {id:'sesame-csm-1b',name:'Sesame CSM 1B',model_type:'tts',architecture:'Llama backbone + RVQ (1B)',size:'~3.8 GB',url:'https://huggingface.co/sesame/csm-1b',note:'SOTA conversational speech, MOS 4.7'},
+  {id:'cosyvoice2-0.5b',name:'CosyVoice2 0.5B',model_type:'tts',architecture:'LLM-based TTS (0.5B)',size:'~2 GB',url:'https://huggingface.co/FunAudioLLM/CosyVoice2-0.5B',note:'SOTA speaker similarity, 9 languages + dialects'},
+  {id:'index-tts-2',name:'IndexTTS-2',model_type:'tts',architecture:'Zero-shot controllable TTS',size:'~2 GB',url:'https://huggingface.co/IndexTeam/IndexTTS-2',note:'2025 SOTA expressiveness control'},
+  {id:'melotts-english-v3',name:'MeloTTS English v3',model_type:'tts',architecture:'VITS/VITS2',size:'~208 MB',url:'https://huggingface.co/myshell-ai/MeloTTS-English-v3',note:'Fast CPU inference, US/UK/Indian/Australian accents'},
+  {id:'bark',name:'Bark',model_type:'tts',architecture:'Transformer (generative audio)',size:'~5.5 GB',url:'https://huggingface.co/suno/bark',note:'Speech + music + sound effects from text'},
+  {id:'bark-small',name:'Bark Small',model_type:'tts',architecture:'Transformer (generative audio)',size:'~1.5 GB',url:'https://huggingface.co/suno/bark-small',note:'Smaller/faster Bark'},
+  {id:'amphion-maskgct',name:'Amphion MaskGCT',model_type:'tts',architecture:'Masked Generative Codec Transformer',size:'~2 GB',url:'https://huggingface.co/amphion/MaskGCT',note:'Zero-shot voice cloning, strong multilingual'},
+  {id:'matcha-tts',name:'Matcha-TTS',model_type:'tts',architecture:'Conditional Flow Matching',size:'~200 MB',url:'https://huggingface.co/shivammehta25/Matcha-TTS',note:'Fast ODE-based synthesis, ONNX exportable'},
+  {id:'vits-vctk',name:'VITS VCTK',model_type:'tts',architecture:'VITS',size:'~175 MB',url:'https://huggingface.co/jaywalnut310/vits',note:'Multi-speaker, 109 VCTK speakers'},
+  // Image Classification
+  {id:'eva02-large-patch14-448',name:'EVA-02 Large',model_type:'image-classification',architecture:'Vision Transformer (ViT)',size:'~1.2 GB',url:'https://huggingface.co/timm/eva02_large_patch14_448.mim_m38m_ft_in22k_in1k',note:'SOTA ImageNet-1K, 90.1% Top-1'},
+  {id:'eva-giant-patch14-560',name:'EVA Giant',model_type:'image-classification',architecture:'Vision Transformer (ViT)',size:'~4.0 GB',url:'https://huggingface.co/timm/eva_giant_patch14_560.m30m_ft_in22k_in1k',note:'Giant ViT, ImageNet-22K pretrained'},
+  {id:'convnextv2-huge-512',name:'ConvNeXt V2 Huge',model_type:'image-classification',architecture:'ConvNet',size:'~2.6 GB',url:'https://huggingface.co/timm/convnextv2_huge.fcmae_ft_in22k_in1k_512',note:'SOTA ConvNet with masked autoencoder pretraining'},
+  {id:'convnext-xxlarge-clip',name:'ConvNeXt XXLarge CLIP',model_type:'image-classification',architecture:'ConvNet',size:'~3.5 GB',url:'https://huggingface.co/timm/convnext_xxlarge.clip_laion2b_soup_ft_in1k',note:'CLIP-pretrained with model soup fine-tuning'},
+  {id:'maxvit-xlarge-512',name:'MaxViT XLarge',model_type:'image-classification',architecture:'Hybrid (Conv + Attention)',size:'~1.8 GB',url:'https://huggingface.co/timm/maxvit_xlarge_tf_512.in21k_ft_in1k',note:'Multi-axis attention, ImageNet-21K pretrained'},
+  {id:'coatnet-3-rw-224',name:'CoAtNet-3',model_type:'image-classification',architecture:'Hybrid (Conv + Attention)',size:'~700 MB',url:'https://huggingface.co/timm/coatnet_3_rw_224.sw_in1k',note:'Efficient hybrid architecture'},
+  {id:'efficientnetv2-xl',name:'EfficientNetV2 XL',model_type:'image-classification',architecture:'EfficientNet',size:'~850 MB',url:'https://huggingface.co/timm/tf_efficientnetv2_xl.in21k_ft_in1k',note:'Efficient training with progressive learning'},
+  {id:'mobilenetv4-hybrid-large',name:'MobileNetV4 Hybrid Large',model_type:'image-classification',architecture:'MobileNet',size:'~140 MB',url:'https://huggingface.co/timm/mobilenetv4_hybrid_large.e600_r448_in1k',note:'Edge/mobile optimized, high efficiency'},
+  {id:'vit-giant-patch14-224',name:'ViT Giant (CLIP)',model_type:'image-classification',architecture:'Vision Transformer (ViT)',size:'~5.0 GB',url:'https://huggingface.co/timm/vit_giant_patch14_224.clip_laion2b',note:'CLIP-pretrained on LAION-2B'},
+  {id:'beit-large-patch16-512',name:'BEiT Large',model_type:'image-classification',architecture:'BEiT',size:'~1.2 GB',url:'https://huggingface.co/timm/beit_large_patch16_512.in22k_ft_in22k_in1k',note:'BERT-style masked image modeling pretraining'},
+  {id:'swin-large-patch4-384',name:'Swin Transformer Large',model_type:'image-classification',architecture:'Swin Transformer',size:'~790 MB',url:'https://huggingface.co/timm/swin_large_patch4_window12_384.ms_in22k_ft_in1k',note:'Hierarchical shifted-window attention'},
+  {id:'deit3-huge-patch14-224',name:'DeiT-III Huge',model_type:'image-classification',architecture:'Vision Transformer (DeiT)',size:'~2.5 GB',url:'https://huggingface.co/timm/deit3_huge_patch14_224.fb_in22k_ft_in1k',note:'Data-efficient image transformer v3'},
+  {id:'resnet34',name:'ResNet-34',model_type:'image-classification',architecture:'ResNet',size:'83.3 MB',url:'https://download.pytorch.org/models/resnet34-b627a593.pth',note:'Classic 34-layer residual network'},
+  {id:'resnet50',name:'ResNet-50',model_type:'image-classification',architecture:'ResNet',size:'97.8 MB',url:'https://download.pytorch.org/models/resnet50-11ad3fa6.pth',note:'Standard benchmark baseline'},
+  {id:'resnet101',name:'ResNet-101',model_type:'image-classification',architecture:'ResNet',size:'170.5 MB',url:'https://download.pytorch.org/models/resnet101-cd907fc2.pth',note:'101-layer residual network'},
+  {id:'resnet152',name:'ResNet-152',model_type:'image-classification',architecture:'ResNet',size:'230.5 MB',url:'https://download.pytorch.org/models/resnet152-f82ba261.pth',note:'Deepest standard ResNet'},
+  {id:'mobilenet-v3-small',name:'MobileNetV3 Small',model_type:'image-classification',architecture:'MobileNetV3',size:'9.8 MB',url:'https://download.pytorch.org/models/mobilenet_v3_small-047dcff4.pth',note:'Ultra-lightweight, CPU/edge optimized'},
+  {id:'mobilenet-v3-large',name:'MobileNetV3 Large',model_type:'image-classification',architecture:'MobileNetV3',size:'21.1 MB',url:'https://download.pytorch.org/models/mobilenet_v3_large-8738ca79.pth',note:'CPU-friendly, better accuracy than V2'},
+  // Speech-to-Text
+  {id:'whisper-small',name:'Whisper Small',model_type:'speech-to-text',architecture:'Whisper',size:'244 MB',url:'https://huggingface.co/openai/whisper-small',note:'39M params — fast multilingual transcription'},
+  {id:'whisper-medium',name:'Whisper Medium',model_type:'speech-to-text',architecture:'Whisper',size:'769 MB',url:'https://huggingface.co/openai/whisper-medium',note:'307M params — good accuracy/speed balance'},
+  {id:'whisper-large',name:'Whisper Large',model_type:'speech-to-text',architecture:'Whisper',size:'~1.5 GB',url:'https://huggingface.co/openai/whisper-large',note:'High accuracy multilingual'},
+  {id:'whisper-large-v3',name:'Whisper Large v3',model_type:'speech-to-text',architecture:'Whisper',size:'~1.5 GB',url:'https://huggingface.co/openai/whisper-large-v3',note:'Best multilingual accuracy, updated tokenizer'},
+  {id:'whisper-turbo',name:'Whisper Turbo',model_type:'speech-to-text',architecture:'Whisper',size:'809 MB',url:'https://huggingface.co/openai/whisper-large-v3-turbo',note:'Distilled large-v3 — near-large accuracy, 8× faster'},
+  // Object Detection
+  {id:'yolov8x',name:'YOLOv8 XLarge',model_type:'object-detection',architecture:'YOLOv8',size:'136.7 MB',url:'https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8x.pt',note:'Highest accuracy YOLOv8, 41.8% mAP'},
+  {id:'yolov5m',name:'YOLOv5 Medium',model_type:'object-detection',architecture:'YOLOv5',size:'42.2 MB',url:'https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5m.pt',note:'Balanced speed/accuracy'},
+  {id:'yolov5l',name:'YOLOv5 Large',model_type:'object-detection',architecture:'YOLOv5',size:'93.2 MB',url:'https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5l.pt',note:'High accuracy'},
+  {id:'yolov5x',name:'YOLOv5 XLarge',model_type:'object-detection',architecture:'YOLOv5',size:'170.3 MB',url:'https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5x.pt',note:'Maximum accuracy in YOLOv5 family'},
+  {id:'yolov9c',name:'YOLOv9 Compact',model_type:'object-detection',architecture:'YOLOv9 (GELAN + PGI)',size:'51.5 MB',url:'https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov9c.pt',note:'53.0% mAP50-95'},
+  {id:'yolov9e',name:'YOLOv9 Extended',model_type:'object-detection',architecture:'YOLOv9 (GELAN + PGI)',size:'115.5 MB',url:'https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov9e.pt',note:'55.5% mAP50-95, SOTA YOLO'},
+  {id:'yolov10n',name:'YOLOv10 Nano',model_type:'object-detection',architecture:'YOLOv10 (NMS-free)',size:'5.6 MB',url:'https://github.com/THU-MIG/yolov10/releases/download/v1.1/yolov10n.pt',note:'NMS-free, 38.5% mAP, real-time'},
+  {id:'yolov10s',name:'YOLOv10 Small',model_type:'object-detection',architecture:'YOLOv10 (NMS-free)',size:'16.5 MB',url:'https://github.com/THU-MIG/yolov10/releases/download/v1.1/yolov10s.pt',note:'NMS-free, 46.2% mAP'},
+  {id:'yolov10m',name:'YOLOv10 Medium',model_type:'object-detection',architecture:'YOLOv10 (NMS-free)',size:'32.1 MB',url:'https://github.com/THU-MIG/yolov10/releases/download/v1.1/yolov10m.pt',note:'NMS-free, 51.1% mAP'},
+  {id:'yolov10b',name:'YOLOv10 Balanced',model_type:'object-detection',architecture:'YOLOv10 (NMS-free)',size:'37.4 MB',url:'https://github.com/THU-MIG/yolov10/releases/download/v1.1/yolov10b.pt',note:'Wider, 52.7% mAP'},
+  {id:'yolov10l',name:'YOLOv10 Large',model_type:'object-detection',architecture:'YOLOv10 (NMS-free)',size:'49.0 MB',url:'https://github.com/THU-MIG/yolov10/releases/download/v1.1/yolov10l.pt',note:'NMS-free, 53.4% mAP'},
+  {id:'yolov10x',name:'YOLOv10 XLarge',model_type:'object-detection',architecture:'YOLOv10 (NMS-free)',size:'58.8 MB',url:'https://github.com/THU-MIG/yolov10/releases/download/v1.1/yolov10x.pt',note:'Highest accuracy in YOLOv10, 54.4% mAP'},
+  // Text Classification
+  {id:'bert-base-uncased',name:'BERT Base Uncased',model_type:'text-classification',architecture:'BERT',size:'417.7 MB',url:'https://huggingface.co/bert-base-uncased',note:'General-purpose BERT — fine-tune for downstream tasks'},
+  {id:'roberta-base',name:'RoBERTa Base',model_type:'text-classification',architecture:'RoBERTa',size:'476.5 MB',url:'https://huggingface.co/roberta-base',note:'Stronger pretraining than BERT'},
+  {id:'bart-large-mnli',name:'BART Large MNLI',model_type:'text-classification',architecture:'BART',size:'1.63 GB',url:'https://huggingface.co/facebook/bart-large-mnli',note:'Zero-shot text classification via NLI'},
+  // Feature Extraction
+  {id:'all-mpnet-base-v2',name:'all-mpnet-base-v2',model_type:'feature-extraction',architecture:'MPNet',size:'438 MB',url:'https://huggingface.co/sentence-transformers/all-mpnet-base-v2',note:'Best quality sentence embeddings, 768-dim'},
+  {id:'paraphrase-multilingual-mpnet',name:'paraphrase-multilingual-mpnet-base-v2',model_type:'feature-extraction',architecture:'XLM-RoBERTa + MPNet',size:'1.11 GB',url:'https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2',note:'50+ language sentence embeddings'},
+];
+
 const MDL_SUBTABS = ['available', 'downloaded', 'sota', 'download'];
 function switchMdlTab(tab) {
   MDL_SUBTABS.forEach(id => {
@@ -2046,25 +2404,43 @@ async function loadAvailableModels() {
   const err  = document.getElementById('mdl-avail-error');
   if (!grid) return;
   clearEl(grid); err.style.display = 'none'; load.style.display = '';
+  // Start with built-in registry — always works offline
+  let catalog = PREDEFINED_MODELS.map(m => ({...m}));
   try {
-    const r    = await fetch('/api/models');
-    const data = await r.json();
-    availableCatalog = Array.isArray(data) ? data : (data.models || []);
-    renderCatalog(availableCatalog);
-  } catch (e) {
-    err.textContent = 'Failed to load catalog: ' + e.message; err.style.display = 'block';
-    const msg = mkEl('div', 'mdl-empty', 'Could not reach /api/models.');
-    grid.appendChild(msg);
-  } finally { load.style.display = 'none'; }
+    const r = await fetch('/models/available');
+    if (r.ok) {
+      const data = await safeJson(r);
+      const apiModels = Array.isArray(data) ? data : (data.models || []);
+      // Merge downloaded/loaded status from API into predefined entries
+      const apiMap = {};
+      apiModels.forEach(m => { const k = m.id || m.model_id || m.name; if (k) apiMap[k] = m; });
+      catalog = catalog.map(m => {
+        const api = apiMap[m.id] || apiMap[m.name];
+        return api ? {...m, status: api.status || m.status} : m;
+      });
+      // Append any API models not in predefined list
+      apiModels.forEach(m => {
+        const k = m.id || m.model_id || m.name || '';
+        if (!catalog.find(c => c.id === k || c.name === k)) catalog.push(m);
+      });
+    }
+  } catch (_) { /* use local data — no error shown */ }
+  availableCatalog = catalog;
+  renderCatalog(availableCatalog);
+  load.style.display = 'none';
 }
 
 function taskBadgeCls(task) {
   const t = (task || '').toLowerCase();
-  if (t.includes('llm') || t.includes('language') || t.includes('chat') || t.includes('text')) return 'task-llm';
   if (t.includes('tts') || t.includes('speech') || t.includes('audio')) return 'task-tts';
   if (t.includes('classif') || t.includes('vision')) return 'task-classify';
   if (t.includes('detect') || t.includes('yolo')) return 'task-detection';
   return 'task-other';
+}
+
+function taskLabel(t) {
+  const map = {'tts':'TTS','image-classification':'Image Classif.','speech-to-text':'Speech-to-Text','object-detection':'Object Detection','text-classification':'Text Classif.','feature-extraction':'Feature Extraction'};
+  return map[t] || t;
 }
 
 function buildModelCard(m) {
@@ -2074,10 +2450,11 @@ function buildModelCard(m) {
   const top  = mkEl('div', 'model-card-top');
   top.appendChild(mkEl('div', 'model-card-name', m.name || m.id || m.model_id || '—'));
   const task = m.task || m.model_type || 'other';
-  top.appendChild(mkEl('span', 'model-task-badge ' + taskBadgeCls(task), task));
+  top.appendChild(mkEl('span', 'model-task-badge ' + taskBadgeCls(task), taskLabel(task)));
   card.appendChild(top);
 
   if (m.architecture) card.appendChild(mkEl('div', 'model-card-arch', m.architecture));
+  if (m.note) card.appendChild(mkEl('div', 'model-card-note', m.note));
 
   // meta row
   const meta = mkEl('div', 'model-card-meta');
@@ -2089,23 +2466,39 @@ function buildModelCard(m) {
   }
   card.appendChild(meta);
 
-  // action button
+  // action buttons
   const actions = mkEl('div', 'model-card-actions');
-  const status  = (m.status || '').toLowerCase();
-  const done    = status === 'downloaded' || status === 'cached' || status === 'loaded';
+  const url     = m.url || '';
+  const hasLink = url && url !== 'Built-in' && url.startsWith('http');
+
+  if (hasLink) {
+    const link = document.createElement('a');
+    link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.className = 'btn btn-ghost'; link.title = 'Open source page';
+    link.style.cssText = 'width:auto;padding:0 10px;flex-shrink:0';
+    const ico = document.createElement('i'); ico.className = 'ri-external-link-line';
+    link.appendChild(ico);
+    actions.appendChild(link);
+  }
+
+  const status = (m.status || '').toLowerCase();
+  const done   = status === 'downloaded' || status === 'cached' || status === 'loaded';
   if (done) {
     const btn = mkEl('button', 'btn downloaded');
     btn.disabled = true;
     const ico = document.createElement('i'); ico.className = 'ri-check-line';
     btn.appendChild(ico); btn.appendChild(document.createTextNode(' Downloaded'));
     actions.appendChild(btn);
-  } else {
+  } else if (hasLink) {
     const btn = mkEl('button', 'btn btn-primary');
-    const modelId = String(m.id || m.model_id || m.name || '');
-    btn.addEventListener('click', () => downloadFromCatalog(modelId));
+    btn.addEventListener('click', () => downloadFromCatalog(m));
     const ico = document.createElement('i'); ico.className = 'ri-download-line';
     btn.appendChild(ico); btn.appendChild(document.createTextNode(' Download'));
     actions.appendChild(btn);
+  } else if (!hasLink && (m.size === 'Built-in' || (m.url === '' || !m.url))) {
+    const badge = mkEl('span', null, '⚙ Platform native');
+    badge.style.cssText = 'font-size:11px;padding:3px 9px;border-radius:12px;background:var(--surface2);color:var(--text-muted);border:1px solid var(--border)';
+    actions.appendChild(badge);
   }
   card.appendChild(actions);
   return card;
@@ -2124,18 +2517,54 @@ function renderCatalog(models) {
 
 function filterModelCatalog() {
   const q    = (document.getElementById('mdl-search')?.value || '').toLowerCase();
-  const task = (document.getElementById('mdl-filter-task')?.value || '').toLowerCase();
+  const task = (document.getElementById('mdl-filter-task')?.value || '');
   renderCatalog(availableCatalog.filter(m => {
-    const hay = [m.name, m.id, m.architecture, m.task, m.model_type].join(' ').toLowerCase();
-    return (!q || hay.includes(q)) && (!task || (m.task || m.model_type || '').toLowerCase().includes(task));
+    const hay = [m.name, m.id, m.architecture, m.task, m.model_type, m.note].join(' ').toLowerCase();
+    return (!q || hay.includes(q)) && (!task || (m.task || m.model_type || '') === task);
   }));
 }
 
-async function downloadFromCatalog(modelId) {
+function inferDownloadSource(url) {
+  if (!url || url === 'Built-in' || !url.startsWith('http')) return null;
+  const hfMatch = url.match(/^https:\/\/huggingface\.co\/([^/]+\/[^/]+)\/?$/);
+  if (hfMatch) return {source: 'huggingface', repo: hfMatch[1]};
+  return {source: 'url', repo: url};
+}
+
+async function downloadFromCatalog(mOrId) {
+  const m  = typeof mOrId === 'object' ? mOrId : (availableCatalog.find(x => x.id === mOrId || x.name === mOrId) || {url: String(mOrId)});
+  const dl = inferDownloadSource(m.url || String(m.id || m.name || ''));
+  if (!dl) return;
+  // Use registry id as model_name (no '/' allowed), fall back to last URL segment
+  const modelName = (m.id || m.name || dl.repo.split('/').pop() || 'model').replace(/[/\\]/g, '-');
   switchMdlTab('download');
-  const repo = document.getElementById('mdl-dl-repo');
-  if (repo) repo.value = modelId;
-  await submitMdlDownload();
+  const sourceEl = document.getElementById('mdl-dl-source');
+  const repoEl   = document.getElementById('mdl-dl-repo');
+  if (sourceEl) { sourceEl.value = dl.source; toggleMdlRevision(); }
+  if (repoEl)   repoEl.value = dl.repo;
+  const errEl = document.getElementById('mdl-dl-error');
+  const btn   = document.getElementById('mdl-dl-btn');
+  if (btn) btn.disabled = true;
+  if (errEl) errEl.style.display = 'none';
+  const body = {model_name: modelName, source_type: dl.source};
+  if (dl.source === 'huggingface') body.repo_id = dl.repo;
+  else body.url = dl.repo;
+  try {
+    const res = await fetch('/models/download', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      if (errEl) { errEl.textContent = res.status + ' — ' + await res.text(); errEl.style.display = 'block'; }
+    } else {
+      const data = await safeJson(res).catch(() => ({}));
+      if (data.task_id) pollMdlDownload(data.task_id, modelName);
+    }
+  } catch (e) {
+    if (errEl) { errEl.textContent = 'Network error: ' + e.message; errEl.style.display = 'block'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* — Downloaded list — */
@@ -2145,8 +2574,8 @@ async function loadDownloadedModels() {
   if (!list) return;
   clearEl(list); load.style.display = '';
   try {
-    const r    = await fetch('/api/models/downloaded');
-    const data = await r.json();
+    const r    = await fetch('/models/managed');
+    const data = await safeJson(r);
     const models = Array.isArray(data) ? data : (data.models || []);
     load.style.display = 'none';
     if (!models.length) { list.appendChild(mkEl('div', 'mdl-empty', 'No downloaded models found.')); return; }
@@ -2155,15 +2584,12 @@ async function loadDownloadedModels() {
       const ico = document.createElement('i'); ico.className = 'dl-model-icon ri-box-3-line'; row.appendChild(ico);
       const info = mkEl('div', 'dl-model-info');
       info.appendChild(mkEl('div', 'dl-model-name', m.name || m.id || m.model_id || '—'));
-      const sub = [m.task, m.size].filter(Boolean).join(' · ');
+      const sub = [m.size_human || m.size, m.downloaded_at ? new Date(m.downloaded_at).toLocaleDateString() : null].filter(Boolean).join(' · ');
       if (sub) info.appendChild(mkEl('div', 'dl-model-sub', sub));
       row.appendChild(info);
-      const status = (m.status || 'cached').toLowerCase();
-      const stCls  = status === 'loaded' ? 'loaded' : (status === 'cached' ? 'cached' : 'unknown');
-      row.appendChild(mkEl('span', 'dl-model-status ' + stCls, status));
+      row.appendChild(mkEl('span', 'dl-model-status cached', 'cached'));
       const delBtn = document.createElement('button');
       delBtn.className = 'btn btn-ghost';
-      // Safe: icon is hardcoded, not user data
       const delIco = document.createElement('i'); delIco.className = 'ri-delete-bin-line';
       delBtn.appendChild(delIco);
       delBtn.appendChild(document.createTextNode(' Delete'));
@@ -2181,6 +2607,11 @@ async function loadDownloadedModels() {
 }
 
 /* — Download form — */
+function toggleDlRevision() {
+  const wrap = document.getElementById('dl-revision-wrap');
+  if (wrap) wrap.style.display = document.getElementById('dl-source')?.value === 'url' ? 'none' : '';
+}
+
 function toggleMdlRevision() {
   const wrap = document.getElementById('mdl-dl-revision-wrap');
   if (wrap) wrap.style.display = document.getElementById('mdl-dl-source')?.value === 'url' ? 'none' : '';
@@ -2198,22 +2629,22 @@ async function submitMdlDownload() {
   if (source === 'huggingface') { body.repo_id = repo; if (revision) body.revision = revision; }
   else body.url = repo;
   try {
-    const res = await fetch('/api/models/download', {
+    const res = await fetch('/models/download', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       errEl.textContent = res.status + ' — ' + await res.text(); errEl.style.display = 'block';
     } else {
-      const data = await res.json().catch(() => ({}));
+      const data = await safeJson(res).catch(() => ({}));
       if (data.task_id || data.id) pollMdlDownload(data.task_id || data.id, repo.split('/').pop() || repo);
     }
   } catch (e) { errEl.textContent = 'Network error: ' + e.message; errEl.style.display = 'block'; }
   finally { btn.disabled = false; }
 }
 
-function pollMdlDownload(taskId, name) {
-  const list  = document.getElementById('mdl-dl-tasks-list');
+function pollMdlDownload(taskId, name, listId = 'mdl-dl-tasks-list') {
+  const list  = document.getElementById(listId);
   const rowId = 'mdl-task-' + taskId;
   const empty = list.querySelector('.mdl-empty');
   if (empty) list.removeChild(empty);
@@ -2235,27 +2666,27 @@ function pollMdlDownload(taskId, name) {
   let pct = 5;
   const iv = setInterval(async () => {
     try {
-      const r = await fetch('/api/models/download/' + taskId);
+      const r = await fetch('/models/download/status/' + taskId);
       if (!r.ok) { clearInterval(iv); return; }
-      const d     = await r.json();
-      const done  = d.status === 'completed' || d.status === 'failed';
+      const d     = await safeJson(r);
+      const done  = d.status === 'Completed' || d.status === 'Failed';
       const badge = document.getElementById(rowId + '-badge');
       const bar   = document.getElementById(rowId + '-bar');
       const bl    = document.getElementById(rowId + '-bytes');
       const pr    = document.getElementById(rowId + '-pct');
-      if (d.progress != null) pct = Math.min(99, d.progress * 100);
+      if (d.progress != null) pct = Math.min(99, d.progress);
       else if (!done) pct = Math.min(pct + 3, 90);
       if (bar) {
-        bar.style.width = (done && d.status !== 'failed' ? 100 : pct) + '%';
-        if (d.status === 'completed') bar.classList.add('done');
-        if (d.status === 'failed')    bar.classList.add('failed');
+        bar.style.width = (done && d.status !== 'Failed' ? 100 : pct) + '%';
+        if (d.status === 'Completed') bar.classList.add('done');
+        if (d.status === 'Failed')    bar.classList.add('failed');
       }
-      if (badge) { badge.textContent = d.status; badge.className = 'dl-status-badge ' + (d.status || 'downloading'); }
-      if (bl) bl.textContent = d.bytes_downloaded ? formatBytes(d.bytes_downloaded) + ' downloaded' : (d.message || '');
-      if (pr) pr.textContent = d.progress != null ? Math.round(d.progress * 100) + '%' : '';
+      if (badge) { badge.textContent = d.status; badge.className = 'dl-status-badge ' + (d.status || 'Downloading').toLowerCase(); }
+      if (bl) bl.textContent = d.downloaded_size ? formatBytes(d.downloaded_size) + ' downloaded' : (d.error || '');
+      if (pr) pr.textContent = d.progress != null ? Math.round(d.progress) + '%' : '';
       if (done) {
         clearInterval(iv);
-        if (d.status === 'completed') { refreshModelSelects(); loadDownloadedModels(); }
+        if (d.status === 'Completed') { refreshModelSelects(); loadDownloadedModels(); }
       }
     } catch (_) { clearInterval(iv); }
   }, 1500);
@@ -2284,7 +2715,7 @@ async function loadSotaModels() {
   try {
     const r = await fetch('/models/sota');
     if (!r.ok) throw new Error(String(r.status));
-    const data   = await r.json();
+    const data   = await safeJson(r);
     const models = Array.isArray(data) ? data : (data.models || []);
     load.style.display = 'none';
     if (!models.length) { grid.appendChild(mkEl('div', 'mdl-empty', 'No SOTA models found.')); return; }
@@ -2310,7 +2741,7 @@ async function downloadSotaModel(modelId, name) {
   try {
     const r = await fetch('/models/sota/' + encodeURIComponent(modelId), { method: 'POST' });
     if (!r.ok) { alert('Download failed: ' + r.status); return; }
-    const data = await r.json().catch(() => ({}));
+    const data = await safeJson(r).catch(() => ({}));
     switchMdlTab('download');
     if (data.task_id || data.id) pollMdlDownload(data.task_id || data.id, name || modelId);
   } catch (e) { alert('Network error: ' + e.message); }
@@ -2362,18 +2793,21 @@ async function runAudio() {
   setBox('audio-result-text', 'Transcribing…', 'stream');
   document.getElementById('audio-meta').style.display = 'none';
   document.getElementById('audio-segments').style.display = 'none';
+  const t0 = performance.now();
   try {
     const form = new FormData();
     form.append('audio', audioFile);
     form.append('model', document.getElementById('audio-model').value || 'default');
     form.append('timestamps', document.getElementById('audio-timestamps').checked ? 'true' : 'false');
     const res  = await fetch('/audio/transcribe', { method: 'POST', body: form, signal: audioAbort.signal });
-    const data = await res.json();
+    const data = await safeJson(res);
     if (!res.ok) {
       setBox('audio-result-text', String(data.error || data.message || res.status), 'error');
       return;
     }
     setBox('audio-result-text', data.text || '(empty)', 'ok');
+    const elapsed = (performance.now() - t0).toFixed(0);
+    showMetrics('audio', elapsed);
     const meta  = document.getElementById('audio-meta');
     const parts = [];
     if (data.language) parts.push('Language: ' + data.language);
@@ -2400,7 +2834,253 @@ async function runAudio() {
 
 function stopAudio() { if (audioAbort) { audioAbort.abort(); audioAbort = null; } }
 
+/* ── WebSocket Audio ────────────────────────────────────────── */
+let wsAudio = null;           // active WebSocket
+let wsAudioCtx = null;        // AudioContext for TTS playback
+let wsNextPlayAt = 0;         // scheduled end of last queued chunk
+let wsTtsSampleRate = 24000;  // updated on tts_meta message
+let wsAnalyserTts = null;     // AnalyserNode for TTS waveform
+let wsAnalyserStt = null;     // AnalyserNode for STT waveform
+let wsMicStream = null;       // MediaStream from getUserMedia
+let wsMicProc = null;         // ScriptProcessorNode
+let wsRecording = false;
+
+function wsStatus(connected) {
+  const dot   = document.getElementById('ws-status-dot');
+  const label = document.getElementById('ws-status-label');
+  const btn   = document.getElementById('ws-connect-btn');
+  if (!dot) return;
+  dot.style.background   = connected ? '#2EA043' : '#555';
+  label.textContent      = connected ? 'connected' : 'disconnected';
+  btn.textContent        = connected ? 'Disconnect' : 'Connect';
+  document.getElementById('ws-tts-btn').disabled = !connected;
+  document.getElementById('ws-stt-btn').disabled = !connected;
+}
+
+function wsTab(t) {
+  document.getElementById('ws-pane-tts').style.display = t === 'tts' ? '' : 'none';
+  document.getElementById('ws-pane-stt').style.display = t === 'stt' ? '' : 'none';
+  document.querySelectorAll('#panel-audio .ws-tab').forEach(b => b.classList.remove('active-ws-tab'));
+  document.getElementById('ws-tab-' + t).classList.add('active-ws-tab');
+}
+
+function wsAudioToggle() {
+  if (wsAudio && wsAudio.readyState < 2) {
+    wsAudio.close();
+  } else {
+    wsAudioConnect();
+  }
+}
+
+function wsAudioConnect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url   = `${proto}://${location.host}/audio/ws`;
+  wsAudio = new WebSocket(url);
+  wsAudio.binaryType = 'arraybuffer';
+
+  wsAudio.onopen = () => {
+    wsStatus(true);
+    document.getElementById('ws-tts-status').textContent = 'Connected — ready';
+  };
+  wsAudio.onclose = () => {
+    wsStatus(false);
+    wsSttStop();
+  };
+  wsAudio.onerror = () => {
+    document.getElementById('ws-tts-status').textContent = 'Connection error';
+    wsStatus(false);
+  };
+  wsAudio.onmessage = wsOnMessage;
+}
+
+function wsOnMessage(ev) {
+  if (typeof ev.data === 'string') {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    switch (msg.type) {
+      case 'ready':
+        document.getElementById('ws-tts-status').textContent = 'Ready';
+        break;
+      case 'tts_meta':
+        wsTtsSampleRate = msg.sample_rate;
+        document.getElementById('ws-tts-status').textContent = `Streaming ${msg.sample_rate} Hz ${msg.encoding}…`;
+        wsNextPlayAt = 0;
+        wsEnsureAudioCtx();
+        break;
+      case 'tts_done':
+        document.getElementById('ws-tts-status').textContent = `Done (${msg.duration_ms} ms)`;
+        document.getElementById('ws-tts-metrics').style.display = '';
+        document.getElementById('ws-tts-dur').textContent = `Duration: ${msg.duration_ms} ms`;
+        document.getElementById('ws-tts-stop-btn').disabled = true;
+        break;
+      case 'transcript':
+        const box = document.getElementById('ws-stt-result');
+        box.textContent = msg.text || '(empty)';
+        box.className = 'response-box';
+        document.getElementById('ws-stt-rec-label').textContent = 'transcript received';
+        break;
+      case 'error':
+        document.getElementById('ws-tts-status').textContent = 'Error: ' + msg.msg;
+        break;
+    }
+  } else {
+    // Binary PCM f32le chunk from TTS
+    wsScheduleChunk(ev.data);
+  }
+}
+
+function wsEnsureAudioCtx() {
+  if (wsAudioCtx && wsAudioCtx.state !== 'closed') return;
+  wsAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  wsAnalyserTts = wsAudioCtx.createAnalyser();
+  wsAnalyserTts.fftSize = 512;
+  wsAnalyserTts.connect(wsAudioCtx.destination);
+  wsNextPlayAt = 0;
+  wsDrawLoop('ws-tts-canvas', wsAnalyserTts);
+}
+
+function wsScheduleChunk(arrayBuffer) {
+  wsEnsureAudioCtx();
+  const f32 = new Float32Array(arrayBuffer);
+  if (!f32.length) return;
+  const buf = wsAudioCtx.createBuffer(1, f32.length, wsTtsSampleRate);
+  buf.copyToChannel(f32, 0);
+  const src = wsAudioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(wsAnalyserTts);
+  const now   = wsAudioCtx.currentTime;
+  const start = Math.max(now + 0.05, wsNextPlayAt);
+  src.start(start);
+  wsNextPlayAt = start + buf.duration;
+}
+
+function wsTtsSpeak() {
+  if (!wsAudio || wsAudio.readyState !== 1) return;
+  const text  = document.getElementById('ws-tts-text').value.trim();
+  const voice = document.getElementById('ws-tts-voice').value.trim() || undefined;
+  const speed = parseFloat(document.getElementById('ws-tts-speed').value) || 1.0;
+  if (!text) { document.getElementById('ws-tts-status').textContent = 'Enter text first'; return; }
+  wsAudio.send(JSON.stringify({ type: 'tts', text, voice, speed }));
+  document.getElementById('ws-tts-status').textContent = 'Synthesising…';
+  document.getElementById('ws-tts-stop-btn').disabled = false;
+  document.getElementById('ws-tts-metrics').style.display = 'none';
+  wsEnsureAudioCtx();
+  wsNextPlayAt = 0;
+}
+
+function wsTtsStop() {
+  // Abort TTS playback by closing and reconnecting the AudioContext
+  if (wsAudioCtx) {
+    wsAudioCtx.close().catch(() => {});
+    wsAudioCtx = null;
+  }
+  document.getElementById('ws-tts-status').textContent = 'Stopped';
+  document.getElementById('ws-tts-stop-btn').disabled = true;
+}
+
+async function wsSttToggle() {
+  if (wsRecording) {
+    wsSttStop();
+  } else {
+    await wsSttStart();
+  }
+}
+
+async function wsSttStart() {
+  if (!wsAudio || wsAudio.readyState !== 1) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 }, video: false });
+  } catch (err) {
+    document.getElementById('ws-stt-result').textContent = 'Microphone error: ' + err.message;
+    return;
+  }
+  wsMicStream = stream;
+
+  // Use AudioContext + ScriptProcessorNode to capture raw PCM f32le
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const src  = ctx.createMediaStreamSource(stream);
+  wsAnalyserStt = ctx.createAnalyser();
+  wsAnalyserStt.fftSize = 512;
+  src.connect(wsAnalyserStt);
+
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  proc.onaudioprocess = (e) => {
+    if (!wsRecording) return;
+    const pcm = e.inputBuffer.getChannelData(0); // Float32Array
+    wsAudio.send(pcm.buffer.slice(0));
+  };
+  src.connect(proc);
+  proc.connect(ctx.destination);
+  wsMicProc = { proc, ctx };
+
+  wsAudio.send(JSON.stringify({ type: 'stt_begin', sample_rate: 16000 }));
+  wsRecording = true;
+
+  const dot   = document.getElementById('ws-stt-rec-dot');
+  const label = document.getElementById('ws-stt-rec-label');
+  dot.style.background = '#E74C3C';
+  label.textContent    = 'recording…';
+  document.getElementById('ws-stt-btn').innerHTML = '<i class="ri-stop-circle-line"></i> Stop';
+
+  wsDrawLoop('ws-stt-canvas', wsAnalyserStt);
+}
+
+function wsSttStop() {
+  if (!wsRecording) return;
+  wsRecording = false;
+  if (wsAudio && wsAudio.readyState === 1) {
+    wsAudio.send(JSON.stringify({ type: 'stt_end' }));
+  }
+  if (wsMicStream) {
+    wsMicStream.getTracks().forEach(t => t.stop());
+    wsMicStream = null;
+  }
+  if (wsMicProc) {
+    wsMicProc.proc.disconnect();
+    wsMicProc.ctx.close().catch(() => {});
+    wsMicProc = null;
+  }
+  const dot   = document.getElementById('ws-stt-rec-dot');
+  const label = document.getElementById('ws-stt-rec-label');
+  if (dot) dot.style.background = '#2EA043';
+  if (label) label.textContent  = 'processing…';
+  const btn = document.getElementById('ws-stt-btn');
+  if (btn) btn.innerHTML = '<i class="ri-mic-line"></i> Record';
+}
+
+function wsDrawLoop(canvasId, analyser) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !analyser) return;
+  const ctx  = canvas.getContext('2d');
+  const W    = canvas.width;
+  const H    = canvas.height;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
+  function draw() {
+    if (!analyser) return;
+    try { analyser.getByteTimeDomainData(data); } catch { return; }
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, W, H);
+    ctx.lineWidth   = 1.5;
+    ctx.strokeStyle = '#58A6FF';
+    ctx.beginPath();
+    const step = W / data.length;
+    let x = 0;
+    for (let i = 0; i < data.length; i++, x += step) {
+      const y = (data[i] / 128.0) * (H / 2);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+}
+
 /* ── Logs tab ───────────────────────────────────────────── */
+let currentLogText = '';
+
 async function loadLogs() {
   const list  = document.getElementById('logs-file-list');
   const total = document.getElementById('logs-total');
@@ -2414,7 +3094,7 @@ async function loadLogs() {
       list.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status));
       return;
     }
-    const data  = await r.json();
+    const data  = await safeJson(r);
     const files = data.available_log_files || [];
     if (total) total.textContent = 'Total: ' + (data.total_log_size_mb || 0).toFixed(2) + ' MB · Level: ' + (data.log_level || '—');
     clearEl(list);
@@ -2446,16 +3126,59 @@ async function loadLogs() {
 async function viewLog(name) {
   const hdr = document.getElementById('logs-viewer-header');
   const pre = document.getElementById('logs-viewer-content');
+  const searchInput = document.getElementById('log-search');
   if (!pre) return;
   pre.textContent = 'Loading…';
   if (hdr) hdr.textContent = name;
+  currentLogText = '';
+  if (searchInput) searchInput.value = '';
+  const countEl = document.getElementById('log-search-count');
+  if (countEl) countEl.textContent = '';
   try {
     const r = await fetch('/logs/' + encodeURIComponent(name));
     if (!r.ok) { pre.textContent = 'Failed: ' + r.status; return; }
-    const text = await r.text();
-    pre.textContent = text.replace(/\x1b\[[0-9;]*m/g, '');
+    const data = await safeJson(r);
+    const rawText = data.content || '';
+    currentLogText = rawText.replace(/\x1b\[[0-9;]*m/g, '');
+    pre.textContent = currentLogText;
+    if (hdr && data.total_lines != null) hdr.textContent = name + ' (' + data.total_lines.toLocaleString() + ' lines)';
     pre.scrollTop   = pre.scrollHeight;
   } catch (e) { pre.textContent = 'Error: ' + e.message; }
+}
+
+function searchLog() {
+  const pre   = document.getElementById('logs-viewer-content');
+  const input = document.getElementById('log-search');
+  const count = document.getElementById('log-search-count');
+  if (!pre || !input) return;
+  const term = input.value.trim();
+  if (!term || !currentLogText) {
+    pre.textContent = currentLogText || '—';
+    if (count) count.textContent = '';
+    return;
+  }
+  const lines = currentLogText.split('\n');
+  let matchCount = 0;
+  const termLower = term.toLowerCase();
+  const highlighted = lines.map(line => {
+    if (!line.toLowerCase().includes(termLower)) return escHtml(line);
+    matchCount++;
+    let result = '';
+    let i = 0;
+    const lineLower = line.toLowerCase();
+    while (i < line.length) {
+      const idx = lineLower.indexOf(termLower, i);
+      if (idx === -1) { result += escHtml(line.slice(i)); break; }
+      result += escHtml(line.slice(i, idx));
+      result += '<mark style="background:var(--yellow-bg);color:var(--yellow-text);border-radius:2px">' + escHtml(line.slice(idx, idx + term.length)) + '</mark>';
+      i = idx + term.length;
+    }
+    return result;
+  }).join('\n');
+  pre.innerHTML = highlighted;
+  if (count) count.textContent = matchCount + ' match' + (matchCount !== 1 ? 'es' : '');
+  const firstMark = pre.querySelector('mark');
+  if (firstMark) firstMark.scrollIntoView({ block: 'center' });
 }
 
 async function clearLog(name) {
@@ -2503,21 +3226,29 @@ async function loadSystemInfo() {
   if (!cards) return;
   clearEl(cards);
   try {
-    const [ri, rg] = await Promise.all([fetch('/system/info'), fetch('/system/gpu/stats')]);
-    const info = ri.ok ? await ri.json() : {};
-    const gpus = rg.ok ? await rg.json() : [];
-    const ramGB   = info.total_memory_mb     ? (info.total_memory_mb / 1024).toFixed(1) + ' GB'     : null;
-    const ramFree = info.available_memory_mb ? (info.available_memory_mb / 1024).toFixed(1) + ' GB' : null;
-    cards.appendChild(makeSysCard('System',  [['OS', info.os], ['Arch', info.arch], ['Hostname', info.hostname], ['CPUs', info.cpu_count]]));
-    cards.appendChild(makeSysCard('Server',  [['Version', info.server_version], ['Workers', info.worker_count], ['Uptime', info.uptime_seconds != null ? fmtUptime(info.uptime_seconds) : null], ['Rust', info.rust_version]]));
-    cards.appendChild(makeSysCard('Memory',  [['Total', ramGB], ['Free', ramFree]]));
-    if (gpus && gpus.length) {
-      gpus.forEach((g, i) => cards.appendChild(makeSysCard('GPU' + (gpus.length > 1 ? ' ' + (i + 1) : ''), [
-        ['Device', g.name],
-        ['Util',   g.util_pct  != null ? g.util_pct + '%'  : null],
-        ['Temp',   g.temp_c    != null ? g.temp_c + '°C'   : null],
-        ['VRAM',   g.vram_total_mb != null ? ((g.vram_total_mb - (g.vram_free_mb || 0)) / 1024).toFixed(1) + ' / ' + (g.vram_total_mb / 1024).toFixed(1) + ' GB' : null],
-      ])));
+    const r = await fetch('/system/info');
+    if (!r.ok) { cards.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status)); return; }
+    const info    = await safeJson(r);
+    const sys     = info.system  || {};
+    const runtime = info.runtime || {};
+    const gpuInfo = info.gpu     || {};
+    const ramGB   = sys.total_memory_bytes ? (sys.total_memory_bytes / 1073741824).toFixed(1) + ' GB' : (sys.total_memory_human || null);
+    cards.appendChild(makeSysCard('System', [['OS', sys.os], ['Arch', sys.arch], ['Hostname', sys.hostname], ['CPUs', sys.cpu_count]]));
+    cards.appendChild(makeSysCard('Server', [['Version', runtime.version], ['Uptime', runtime.uptime_secs != null ? fmtUptime(runtime.uptime_secs) : null], ['Rust', runtime.rust_version]]));
+    cards.appendChild(makeSysCard('Memory', [['Total', ramGB]]));
+    const devices = gpuInfo.devices || [];
+    if (devices.length) {
+      devices.forEach((g, i) => {
+        const usedBytes  = g.total_memory - g.free_memory;
+        const usedGB     = (usedBytes  / 1073741824).toFixed(1);
+        const totalGB    = (g.total_memory / 1073741824).toFixed(1);
+        cards.appendChild(makeSysCard('GPU' + (devices.length > 1 ? ' ' + (i + 1) : ''), [
+          ['Device', g.name],
+          ['Util',   g.utilization != null ? g.utilization + '%' : null],
+          ['Temp',   g.temperature != null ? g.temperature + '°C' : null],
+          ['VRAM',   usedGB + ' / ' + totalGB + ' GB'],
+        ]));
+      });
     } else {
       cards.appendChild(makeSysCard('GPU', [['Status', 'No GPU detected']]));
     }
@@ -2534,15 +3265,17 @@ async function loadPerformance() {
   try {
     const r = await fetch('/performance');
     if (!r.ok) { tiles.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status)); return; }
-    const d = await r.json();
+    const d  = await safeJson(r);
+    const si = d.system_info  || {};
+    const pi = d.process_info || {};
     [
-      ['Avg Latency',  d.avg_latency_ms  != null ? d.avg_latency_ms  + ' ms' : '—'],
-      ['P50 Latency',  d.p50_latency_ms  != null ? d.p50_latency_ms  + ' ms' : '—'],
-      ['P95 Latency',  d.p95_latency_ms  != null ? d.p95_latency_ms  + ' ms' : '—'],
-      ['P99 Latency',  d.p99_latency_ms  != null ? d.p99_latency_ms  + ' ms' : '—'],
-      ['Throughput',   d.requests_per_second != null ? d.requests_per_second + ' req/s' : '—'],
-      ['Error Rate',   d.error_rate != null ? (d.error_rate * 100).toFixed(2) + '%' : '—'],
-      ['Total Reqs',   d.total_requests != null ? d.total_requests.toLocaleString() : '—'],
+      ['CPU Usage',    si.cpu_usage_percent    != null ? si.cpu_usage_percent.toFixed(1)    + '%'  : '—'],
+      ['Mem Usage',    si.memory_usage_percent != null ? si.memory_usage_percent.toFixed(1) + '%'  : '—'],
+      ['Mem Used',     si.used_memory_mb       != null ? si.used_memory_mb                  + ' MB': '—'],
+      ['Mem Free',     si.available_memory_mb  != null ? si.available_memory_mb             + ' MB': '—'],
+      ['Process Mem',  pi.memory_mb            != null ? pi.memory_mb.toFixed(1)            + ' MB': '—'],
+      ['Process CPU',  pi.cpu_usage_percent    != null ? pi.cpu_usage_percent.toFixed(1)    + '%'  : '—'],
+      ['Uptime',       pi.uptime_seconds       != null ? fmtUptime(pi.uptime_seconds)              : '—'],
     ].forEach(([label, value]) => {
       const tile = mkEl('div', 'stat-tile');
       tile.appendChild(mkEl('div', 'stat-label', label));
@@ -2557,32 +3290,29 @@ async function getOptimizationTips() {
   if (!box) return;
   box.style.display = '';
   clearEl(box);
-  box.appendChild(mkEl('div', 'mdl-empty', 'Loading suggestions…'));
+  box.appendChild(mkEl('div', 'mdl-empty', 'Running optimizations…'));
   try {
     const r = await fetch('/performance/optimize');
     if (!r.ok) {
       clearEl(box); box.appendChild(mkEl('div', 'mdl-empty', 'Failed: ' + r.status)); return;
     }
-    const data        = await r.json();
-    const suggestions = Array.isArray(data) ? data : (data.suggestions || []);
+    const data = await safeJson(r);
     clearEl(box);
-    if (!suggestions.length) { box.appendChild(mkEl('div', 'mdl-empty', 'No suggestions available.')); return; }
-    suggestions.forEach(s => {
-      const card = mkEl('div', 'card'); card.style.cssText = 'padding:10px;margin-bottom:8px';
-      const hdr  = mkEl('div', null);  hdr.style.cssText  = 'display:flex;gap:8px;align-items:center;margin-bottom:4px';
-      const impact  = (s.impact   || '').toLowerCase();
-      const impCls  = impact === 'high' ? 'task-detection' : impact === 'medium' ? 'task-tts' : 'task-other';
-      hdr.appendChild(mkEl('span', 'model-task-badge ' + impCls, s.category || 'general'));
-      hdr.appendChild(mkEl('span', 'model-task-badge task-classify', impact + ' impact'));
-      card.appendChild(hdr);
-      card.appendChild(mkEl('div', null, s.description || ''));
-      if (s.action) {
-        const a = mkEl('div', null, s.action);
-        a.style.cssText = 'font-size:12px;color:var(--text-muted);margin-top:4px;font-family:var(--mono)';
-        card.appendChild(a);
-      }
-      box.appendChild(card);
+    const card = mkEl('div', 'card'); card.style.cssText = 'padding:10px;margin-bottom:8px';
+    const hdr  = mkEl('div', null);  hdr.style.cssText  = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px';
+    hdr.appendChild(mkEl('span', 'model-task-badge task-classify', data.garbage_collected ? '✓ GC run' : '✗ GC'));
+    hdr.appendChild(mkEl('span', 'model-task-badge task-tts', data.caches_cleared ? '✓ caches cleared' : '✗ caches'));
+    if (data.memory_freed_mb != null) {
+      hdr.appendChild(mkEl('span', 'model-task-badge task-stt',
+        (data.memory_freed_mb >= 0 ? '+' : '') + data.memory_freed_mb.toFixed(1) + ' MB freed'));
+    }
+    card.appendChild(hdr);
+    (data.optimizations_applied || []).forEach(s => {
+      const row = mkEl('div', null, '• ' + s);
+      row.style.cssText = 'font-size:13px;margin-bottom:3px';
+      card.appendChild(row);
     });
+    box.appendChild(card);
   } catch (e) {
     clearEl(box); box.appendChild(mkEl('div', 'mdl-empty', 'Error: ' + e.message));
   }
@@ -2595,7 +3325,7 @@ async function loadConfig() {
   try {
     const r = await fetch('/system/config');
     if (!r.ok) { pre.textContent = 'Failed: ' + r.status; return; }
-    const data = await r.json();
+    const data = await safeJson(r);
     pre.textContent = JSON.stringify(data, null, 2);
   } catch (e) { pre.textContent = 'Error: ' + e.message; }
 }
@@ -2612,6 +3342,582 @@ function formatBytes(b) {
   if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
   return (b / 1073741824).toFixed(2) + ' GB';
 }
+
+/* ── Metrics helper ─────────────────────────────────────── */
+function showMetrics(prefix, elapsed) {
+  const bar = document.getElementById(prefix + '-metrics');
+  if (!bar) return;
+  bar.style.display = 'flex';
+  const timeEl = document.getElementById(prefix + '-metric-time');
+  if (timeEl) timeEl.textContent = '⏱ ' + elapsed + 'ms';
+}
+
+/* ── Dark mode ──────────────────────────────────────────── */
+function toggleTheme() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const next = dark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  document.getElementById('theme-icon').className = dark ? 'ri-moon-line' : 'ri-sun-line';
+  localStorage.setItem('theme', next);
+}
+(function() {
+  const saved = localStorage.getItem('theme') || 'light';
+  if (saved === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    document.addEventListener('DOMContentLoaded', () => {
+      const icon = document.getElementById('theme-icon');
+      if (icon) icon.className = 'ri-sun-line';
+    });
+  }
+})();
+
+/* ── Persistent settings ────────────────────────────────── */
+function initPersistedSettings() {
+  const ids = [
+    'tts-speed', 'pg-tts-speed',
+    'cls-topk', 'cls-w', 'cls-h', 'pg-cls-topk', 'pg-cls-w', 'pg-cls-h'
+  ];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const saved = localStorage.getItem('ki_' + id);
+    if (saved !== null) el.value = saved;
+    el.addEventListener('input',  () => localStorage.setItem('ki_' + id, el.value));
+    el.addEventListener('change', () => localStorage.setItem('ki_' + id, el.value));
+  });
+}
+initPersistedSettings();
+
+/* ── Copy cURL / Python ─────────────────────────────────── */
+function showCopyFeedback(msg) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  el.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--accent);color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;z-index:9999;pointer-events:none;opacity:1;transition:opacity .4s';
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 400); }, 1500);
+}
+
+function copyCurl(panel) {
+  const base = window.location.origin;
+  let snippet = '';
+  if (panel === 'tts') {
+    const text = document.getElementById('tts-text')?.value || 'Hello world';
+    const speed = document.getElementById('tts-speed')?.value || '1.0';
+    snippet = `curl -X POST ${base}/tts/stream \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":${JSON.stringify(text)},"speed":${speed}}' \\\n  --output audio.wav`;
+  } else if (panel === 'pg-tts') {
+    const text = document.getElementById('pg-tts-text')?.value || 'Hello world';
+    const speed = document.getElementById('pg-tts-speed')?.value || '1.0';
+    snippet = `curl -X POST ${base}/tts/stream \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":${JSON.stringify(text)},"speed":${speed}}' \\\n  --output audio.wav`;
+  } else if (panel === 'cls') {
+    snippet = `curl -X POST ${base}/classify/batch \\\n  -H "Content-Type: application/json" \\\n  -d '{"images":["<base64>"],"top_k":5,"model_width":224,"model_height":224}'`;
+  } else if (panel === 'pg-cls') {
+    snippet = `curl -X POST ${base}/classify/batch \\\n  -H "Content-Type: application/json" \\\n  -d '{"images":["<base64>"],"top_k":5,"model_width":224,"model_height":224}'`;
+  } else if (panel === 'audio') {
+    snippet = `curl -X POST ${base}/audio/transcribe \\\n  -F "audio=@audio.wav" \\\n  -F "model=default" \\\n  -F "timestamps=false"`;
+  }
+  if (!snippet) return;
+  navigator.clipboard.writeText(snippet).then(() => showCopyFeedback('Copied cURL!'));
+}
+
+function copyPython(panel) {
+  const base = window.location.origin;
+  let snippet = '';
+  if (panel === 'tts') {
+    const text = document.getElementById('tts-text')?.value || 'Hello world';
+    const speed = document.getElementById('tts-speed')?.value || '1.0';
+    snippet = `import requests\nresp = requests.post("${base}/tts/stream",\n    json={"text": ${JSON.stringify(text)}, "speed": ${speed}},\n    stream=True)\nwith open("audio.wav","wb") as f:\n    for chunk in resp.iter_content(4096): f.write(chunk)`;
+  } else if (panel === 'cls' || panel === 'pg-cls') {
+    snippet = `import requests, base64\nwith open("image.jpg","rb") as f:\n    b64 = base64.b64encode(f.read()).decode()\nresp = requests.post("${base}/classify/batch",\n    json={"images":[b64],"top_k":5,"model_width":224,"model_height":224})\nprint(resp.json())`;
+  }
+  if (!snippet) return;
+  navigator.clipboard.writeText(snippet).then(() => showCopyFeedback('Copied Python!'));
+}
+
+/* ── Object Detection ───────────────────────────────────── */
+let detectFile = null;
+let detectImgEl = null;
+
+function handleDetectFile(file) {
+  if (!file) return;
+  detectFile = file;
+  detectImgEl = new Image();
+  const url = URL.createObjectURL(file);
+  detectImgEl.onload = () => {
+    const canvas = document.getElementById('detect-canvas');
+    canvas.style.display = 'block';
+    canvas.width  = detectImgEl.naturalWidth;
+    canvas.height = detectImgEl.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(detectImgEl, 0, 0);
+  };
+  detectImgEl.src = url;
+  document.getElementById('detect-btn').disabled = false;
+  setBox('detect-out', 'Image loaded — click Detect.');
+}
+
+function handleDetectDrop(e) {
+  e.preventDefault();
+  document.getElementById('detect-dropzone').classList.remove('over');
+  const f = e.dataTransfer?.files?.[0];
+  if (f) handleDetectFile(f);
+}
+
+async function runDetect() {
+  if (!detectFile) return;
+  const version = document.getElementById('detect-version').value || 'v8';
+  const size    = document.getElementById('detect-size').value    || 'n';
+  const conf    = parseFloat(document.getElementById('detect-conf').value) || 0.5;
+  document.getElementById('detect-btn').disabled = true;
+  setBox('detect-out', 'Detecting…', 'stream');
+  try {
+    const form = new FormData();
+    form.append('image', detectFile);
+    const url = `/yolo/detect?model_version=${encodeURIComponent(version)}&model_size=${encodeURIComponent(size)}&conf_threshold=${conf}&iou_threshold=0.45`;
+    const res  = await fetch(url, { method: 'POST', body: form });
+    const data = await safeJson(res);
+    if (!res.ok || data?.data?.success === false) {
+      const msg = String(data?.data?.error || data?.error || res.status);
+      if (res.status === 404 || msg.toLowerCase().includes('not found')) {
+        const modelName = `yolo${version.replace('v','')}${size}`;
+        setBox('detect-out',
+          `Model "${modelName}" not downloaded.\n\nGo to Models → Download tab and search for "${modelName}" to download it first.`,
+          'error');
+      } else {
+        setBox('detect-out', msg, 'error');
+      }
+      return;
+    }
+    const detections = (data?.data?.detections) || (data?.detections) || [];
+    drawDetections(detections);
+    setBox('detect-out', JSON.stringify(data, null, 2), 'ok');
+  } catch (e) { setBox('detect-out', 'Error: ' + e.message, 'error'); }
+  finally { document.getElementById('detect-btn').disabled = false; }
+}
+
+function drawDetections(detections) {
+  if (!detectImgEl) return;
+  const canvas = document.getElementById('detect-canvas');
+  const ctx    = canvas.getContext('2d');
+  ctx.drawImage(detectImgEl, 0, 0);
+  const palette = ['#FF3131','#0066F5','#3ABC3F','#FFA931','#CC27CC','#27CCCC','#CC7027','#2762CC'];
+  detections.forEach(d => {
+    const hash  = [...(d.class_name || '')].reduce((a, c) => a + c.charCodeAt(0), 0);
+    const color = palette[hash % palette.length];
+    const b     = d.bbox;
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+    const label = (d.class_name || '') + ' ' + ((d.confidence || 0) * 100).toFixed(0) + '%';
+    ctx.font = 'bold 13px sans-serif';
+    const tw   = ctx.measureText(label).width;
+    ctx.fillStyle = color;
+    ctx.fillRect(b.x1, b.y1 - 18, tw + 8, 18);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, b.x1 + 4, b.y1 - 4);
+  });
+}
+
+/* ── Tab switchers for classify / detect panels ─────────────── */
+function detTab(t) {
+  document.getElementById('det-pane-file').style.display = t === 'file' ? '' : 'none';
+  document.getElementById('det-pane-live').style.display = t === 'live' ? '' : 'none';
+  document.querySelectorAll('#panel-detect .ws-tab').forEach(b => b.classList.remove('active-ws-tab'));
+  document.getElementById('det-tab-' + t).classList.add('active-ws-tab');
+}
+
+function clsTab(t) {
+  document.getElementById('cls-pane-file').style.display = t === 'file' ? '' : 'none';
+  document.getElementById('cls-pane-live').style.display = t === 'live' ? '' : 'none';
+  document.querySelectorAll('#panel-classify .ws-tab').forEach(b => b.classList.remove('active-ws-tab'));
+  document.getElementById('cls-tab-' + t).classList.add('active-ws-tab');
+}
+
+/* ── Detection WebSocket stream ─────────────────────────────────── */
+let detWs = null;
+let detFrameTimer = null;
+let detFpsTracker = { count: 0, last: 0 };
+
+function detWsStatus(connected) {
+  const dot = document.getElementById('det-ws-dot');
+  const lbl = document.getElementById('det-ws-label');
+  const btn = document.getElementById('det-ws-btn');
+  if (!dot) return;
+  dot.style.background = connected ? '#2EA043' : '#555';
+  lbl.textContent      = connected ? 'connected' : 'disconnected';
+  btn.textContent      = connected ? 'Disconnect' : 'Connect';
+  document.getElementById('det-cam-btn').disabled = !connected;
+  document.getElementById('det-vid-btn').disabled = !connected;
+}
+
+function detWsToggle() {
+  if (detWs && detWs.readyState < 2) { detWs.close(); }
+  else { detWsConnect(); }
+}
+
+function detWsConnect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  detWs = new WebSocket(`${proto}://${location.host}/ws/detect`);
+  detWs.binaryType = 'arraybuffer';
+  detWs.onopen = () => {
+    detWsStatus(true);
+    detSendConfig();
+  };
+  detWs.onclose  = () => { detWsStatus(false); detStopSource(); };
+  detWs.onerror  = () => detWsStatus(false);
+  detWs.onmessage = (ev) => {
+    if (typeof ev.data !== 'string') return;
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'detect') {
+      document.getElementById('det-stat-frame').textContent = msg.frame;
+      document.getElementById('det-stat-ms').textContent    = msg.ms?.toFixed(1);
+      document.getElementById('det-stat-count').textContent = msg.count;
+      detOverlayBoxes(msg.detections || []);
+      detFpsTracker.count++;
+      const now = performance.now();
+      if (now - detFpsTracker.last >= 1000) {
+        document.getElementById('det-stat-fps').textContent = detFpsTracker.count;
+        detFpsTracker.count = 0; detFpsTracker.last = now;
+      }
+    } else if (msg.type === 'error') {
+      document.getElementById('det-stat-ms').textContent = 'err';
+    }
+  };
+}
+
+function detSendConfig() {
+  if (!detWs || detWs.readyState !== 1) return;
+  const cfg = {
+    type: 'config',
+    version: document.getElementById('det-live-version').value,
+    size: document.getElementById('det-live-size').value,
+    conf: parseFloat(document.getElementById('det-live-conf').value) || 0.5,
+    iou: 0.45
+  };
+  detWs.send(JSON.stringify(cfg));
+}
+
+async function detStartCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const vid = document.getElementById('det-video');
+    vid.srcObject = stream;
+    vid.style.display = '';
+    document.getElementById('det-live-placeholder').style.display = 'none';
+    document.getElementById('det-stop-src-btn').style.display = '';
+    detStartFrameLoop();
+  } catch (e) {
+    alert('Camera error: ' + e.message);
+  }
+}
+
+function detOpenVideo(file) {
+  const vid = document.getElementById('det-video');
+  vid.src = URL.createObjectURL(file);
+  vid.loop = true;
+  vid.play();
+  vid.style.display = '';
+  document.getElementById('det-live-placeholder').style.display = 'none';
+  document.getElementById('det-stop-src-btn').style.display = '';
+  detStartFrameLoop();
+}
+
+function detStopSource() {
+  clearInterval(detFrameTimer); detFrameTimer = null;
+  const vid = document.getElementById('det-video');
+  if (vid.srcObject) { vid.srcObject.getTracks().forEach(t => t.stop()); vid.srcObject = null; }
+  vid.src = ''; vid.style.display = 'none';
+  document.getElementById('det-live-placeholder').style.display = '';
+  document.getElementById('det-stop-src-btn').style.display = 'none';
+}
+
+function detStartFrameLoop() {
+  clearInterval(detFrameTimer);
+  const fps = parseInt(document.getElementById('det-fps').value) || 10;
+  const cap = document.createElement('canvas');
+  const capCtx = cap.getContext('2d');
+  detFrameTimer = setInterval(() => {
+    if (!detWs || detWs.readyState !== 1) return;
+    const vid = document.getElementById('det-video');
+    if (vid.readyState < 2) return;
+    cap.width = vid.videoWidth || 640; cap.height = vid.videoHeight || 480;
+    capCtx.drawImage(vid, 0, 0, cap.width, cap.height);
+    // Resize live canvas to match video
+    const live = document.getElementById('det-live-canvas');
+    live.width = cap.width; live.height = cap.height;
+    live.getContext('2d').drawImage(cap, 0, 0);
+    cap.toBlob(blob => { blob && blob.arrayBuffer().then(buf => detWs.readyState === 1 && detWs.send(buf)); }, 'image/jpeg', 0.80);
+  }, Math.round(1000 / fps));
+}
+
+const DET_PALETTE = ['#FF3131','#0066F5','#3ABC3F','#FFA931','#CC27CC','#27CCCC'];
+
+function detOverlayBoxes(detections) {
+  const live = document.getElementById('det-live-canvas');
+  const ctx  = live.getContext('2d');
+  const vid  = document.getElementById('det-video');
+  ctx.drawImage(vid, 0, 0, live.width, live.height);
+  const sx = live.width / (vid.videoWidth || live.width);
+  const sy = live.height / (vid.videoHeight || live.height);
+  const labels = [];
+  detections.forEach(d => {
+    const hash  = [...(d.label || '')].reduce((a, c) => a + c.charCodeAt(0), 0);
+    const color = DET_PALETTE[hash % DET_PALETTE.length];
+    const [x1, y1, x2, y2] = d.bbox;
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.strokeRect(x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy);
+    const lbl = (d.label || '') + ' ' + ((d.conf || 0) * 100).toFixed(0) + '%';
+    ctx.font = 'bold 12px sans-serif';
+    const tw = ctx.measureText(lbl).width;
+    ctx.fillStyle = color; ctx.fillRect(x1 * sx, y1 * sy - 18, tw + 8, 18);
+    ctx.fillStyle = '#fff'; ctx.fillText(lbl, x1 * sx + 4, y1 * sy - 4);
+    labels.push(`<span style="color:${color}">●</span> ${lbl}`);
+  });
+  document.getElementById('det-live-labels').innerHTML = labels.join('<br>');
+}
+
+/* ── Classification WebSocket stream ────────────────────────────── */
+let clsWs = null;
+let clsFrameTimer = null;
+let clsFpsTracker = { count: 0, last: 0 };
+
+function clsWsStatus(connected) {
+  const dot = document.getElementById('cls-ws-dot');
+  const lbl = document.getElementById('cls-ws-label');
+  const btn = document.getElementById('cls-ws-btn');
+  if (!dot) return;
+  dot.style.background = connected ? '#2EA043' : '#555';
+  lbl.textContent      = connected ? 'connected' : 'disconnected';
+  btn.textContent      = connected ? 'Disconnect' : 'Connect';
+  document.getElementById('cls-cam-btn').disabled = !connected;
+  document.getElementById('cls-vid-btn').disabled = !connected;
+}
+
+function clsWsToggle() {
+  if (clsWs && clsWs.readyState < 2) { clsWs.close(); }
+  else { clsWsConnect(); }
+}
+
+function clsWsConnect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  clsWs = new WebSocket(`${proto}://${location.host}/ws/classify`);
+  clsWs.binaryType = 'arraybuffer';
+  clsWs.onopen = () => {
+    clsWsStatus(true);
+    clsSendConfig();
+  };
+  clsWs.onclose  = () => { clsWsStatus(false); clsStopSource(); };
+  clsWs.onerror  = () => clsWsStatus(false);
+  clsWs.onmessage = (ev) => {
+    if (typeof ev.data !== 'string') return;
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'classify') {
+      document.getElementById('cls-stat-frame').textContent = msg.frame;
+      document.getElementById('cls-stat-ms').textContent    = msg.ms?.toFixed(1);
+      clsRenderPreds(msg.predictions || []);
+      clsFpsTracker.count++;
+      const now = performance.now();
+      if (now - clsFpsTracker.last >= 1000) {
+        document.getElementById('cls-stat-fps').textContent = clsFpsTracker.count;
+        clsFpsTracker.count = 0; clsFpsTracker.last = now;
+      }
+    } else if (msg.type === 'error') {
+      document.getElementById('cls-live-preds').innerHTML = `<span style="color:var(--red-text)">${escHtml(msg.msg || 'unknown error')}</span>`;
+    }
+  };
+}
+
+function clsSendConfig() {
+  if (!clsWs || clsWs.readyState !== 1) return;
+  clsWs.send(JSON.stringify({
+    type: 'config',
+    top_k:  parseInt(document.getElementById('cls-live-topk').value)  || 5,
+    width:  parseInt(document.getElementById('cls-live-w').value)     || 224,
+    height: parseInt(document.getElementById('cls-live-h').value)     || 224,
+  }));
+}
+
+async function clsStartCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const vid = document.getElementById('cls-video');
+    vid.srcObject = stream;
+    vid.style.display = '';
+    document.getElementById('cls-live-placeholder').style.display = 'none';
+    document.getElementById('cls-stop-src-btn').style.display = '';
+    clsStartFrameLoop();
+  } catch (e) { alert('Camera error: ' + e.message); }
+}
+
+function clsOpenVideo(file) {
+  const vid = document.getElementById('cls-video');
+  vid.src = URL.createObjectURL(file);
+  vid.loop = true; vid.play();
+  vid.style.display = '';
+  document.getElementById('cls-live-placeholder').style.display = 'none';
+  document.getElementById('cls-stop-src-btn').style.display = '';
+  clsStartFrameLoop();
+}
+
+function clsStopSource() {
+  clearInterval(clsFrameTimer); clsFrameTimer = null;
+  const vid = document.getElementById('cls-video');
+  if (vid.srcObject) { vid.srcObject.getTracks().forEach(t => t.stop()); vid.srcObject = null; }
+  vid.src = ''; vid.style.display = 'none';
+  document.getElementById('cls-live-placeholder').style.display = '';
+  document.getElementById('cls-stop-src-btn').style.display = 'none';
+}
+
+function clsStartFrameLoop() {
+  clearInterval(clsFrameTimer);
+  const fps = parseInt(document.getElementById('cls-fps').value) || 10;
+  const cap = document.createElement('canvas');
+  const capCtx = cap.getContext('2d');
+  clsFrameTimer = setInterval(() => {
+    if (!clsWs || clsWs.readyState !== 1) return;
+    const vid = document.getElementById('cls-video');
+    if (vid.readyState < 2) return;
+    cap.width = vid.videoWidth || 224; cap.height = vid.videoHeight || 224;
+    capCtx.drawImage(vid, 0, 0, cap.width, cap.height);
+    cap.toBlob(blob => { blob && blob.arrayBuffer().then(buf => clsWs.readyState === 1 && clsWs.send(buf)); }, 'image/jpeg', 0.80);
+  }, Math.round(1000 / fps));
+}
+
+const CLS_CONF_COLORS = ['#58A6FF','#3ABC3F','#FFA931','#CC27CC','#FF3131'];
+
+function clsRenderPreds(preds) {
+  const box = document.getElementById('cls-live-preds');
+  if (!preds.length) { box.innerHTML = '<span style="color:var(--text-dim)">no predictions</span>'; return; }
+  box.innerHTML = preds.map((p, i) => {
+    const pct   = ((p.confidence || 0) * 100).toFixed(1);
+    const color = CLS_CONF_COLORS[i % CLS_CONF_COLORS.length];
+    return `<div style="margin-bottom:4px">
+      <div style="display:flex;justify-content:space-between;font-size:12px">
+        <span>${p.label}</span><span style="color:${color}">${pct}%</span>
+      </div>
+      <div style="height:4px;background:var(--surface2);border-radius:2px">
+        <div style="height:4px;width:${pct}%;background:${color};border-radius:2px"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ── Classification SSE stream ──────────────────────────────────── */
+async function runClassifyStream() {
+  const files = document.getElementById('img-file').files;
+  if (!files || files.length === 0) { alert('Select one or more images first'); return; }
+  const top_k  = parseInt(document.getElementById('cls-topk').value)  || 5;
+  const width  = parseInt(document.getElementById('cls-w').value)     || 224;
+  const height = parseInt(document.getElementById('cls-h').value)     || 224;
+
+  const btn = document.getElementById('cls-stream-btn');
+  btn.disabled = true;
+  setBox('cls-out', `Streaming ${files.length} image(s)…`, 'stream');
+  const t0 = performance.now();
+
+  // Encode all files to base64
+  const images = await Promise.all([...files].map(f => new Promise((resolve, reject) => {
+    const r = new FileReader(); r.onload = () => {
+      const b64 = r.result.split(',')[1]; resolve(b64);
+    }; r.onerror = reject; r.readAsDataURL(f);
+  })));
+
+  let results = [];
+  try {
+    const res = await fetch('/classify/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images, top_k, model_width: width, model_height: height }),
+    });
+    if (!res.ok) { throw new Error('HTTP ' + res.status + ': ' + await res.text()); }
+    if (!res.body) { throw new Error('Streaming not supported by this browser'); }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const events = buf.split('\n\n');
+      buf = events.pop();
+      for (const ev of events) {
+        const line = ev.startsWith('data: ') ? ev.slice(6) : ev;
+        if (!line) continue;
+        let msg; try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type === 'done') {
+          const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+          setBox('cls-out', `✓ ${msg.total} images in ${elapsed}s (server: ${msg.batch_ms}ms)\n\n` + JSON.stringify(results, null, 2), 'ok');
+          document.getElementById('cls-metrics').style.display = '';
+          document.getElementById('cls-metric-time').textContent = `${elapsed}s`;
+        } else if (msg.predictions) {
+          results.push({ idx: msg.idx, predictions: msg.predictions });
+          setBox('cls-out', `Image ${msg.idx + 1}/${msg.total} — ${msg.ms}ms\n${JSON.stringify(msg.predictions, null, 2)}`, 'stream');
+        } else if (msg.error) {
+          results.push({ idx: msg.idx, error: msg.error });
+          setBox('cls-out', `Image ${msg.idx + 1}/${msg.total} error: ${msg.error}`, 'stream');
+        }
+      }
+    }
+  } catch (e) { setBox('cls-out', 'Error: ' + e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+let pgAudioFile = null;
+let pgAudioAbort = null;
+
+function handlePgAudioFile(file) {
+  if (!file) return;
+  pgAudioFile = file;
+  const nameEl = document.getElementById('pg-audio-file-name');
+  if (nameEl) { nameEl.textContent = file.name + ' (' + formatBytes(file.size) + ')'; nameEl.style.display = ''; }
+  const drop = document.getElementById('pg-audio-dropzone');
+  if (drop) { drop.style.borderColor = 'var(--accent)'; drop.style.background = 'var(--accent-bg)'; }
+  document.getElementById('pg-audio-btn').disabled = false;
+}
+
+function handlePgAudioDrop(e) {
+  e.preventDefault();
+  document.getElementById('pg-audio-dropzone')?.classList.remove('over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) handlePgAudioFile(file);
+}
+
+async function runPgAudio() {
+  if (!pgAudioFile) return;
+  pgAudioAbort = new AbortController();
+  const btn = document.getElementById('pg-audio-btn');
+  btn.disabled = true;
+  setBox('pg-audio-result', 'Transcribing…', 'stream');
+  document.getElementById('pg-audio-segments').style.display = 'none';
+  const t0 = performance.now();
+  try {
+    const form = new FormData();
+    form.append('audio', pgAudioFile);
+    form.append('model', document.getElementById('pg-audio-model').value || 'default');
+    form.append('timestamps', document.getElementById('pg-audio-timestamps').checked ? 'true' : 'false');
+    const res  = await fetch('/audio/transcribe', { method: 'POST', body: form, signal: pgAudioAbort.signal });
+    const data = await safeJson(res);
+    if (!res.ok) { setBox('pg-audio-result', String(data.error || data.message || res.status), 'error'); return; }
+    setBox('pg-audio-result', data.text || '(empty)', 'ok');
+    const elapsed = (performance.now() - t0).toFixed(0);
+    showMetrics('pg-audio', elapsed);
+    if (data.segments && data.segments.length) {
+      const list = document.getElementById('pg-audio-segments-list');
+      clearEl(list);
+      data.segments.forEach(seg => {
+        const row = mkEl('div', null);
+        row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:4px;font-size:12px';
+        const ts = mkEl('span', null, seg.start.toFixed(2) + 's–' + seg.end.toFixed(2) + 's');
+        ts.style.cssText = 'flex-shrink:0;background:var(--accent-bg);color:var(--accent);padding:1px 7px;border-radius:10px';
+        row.appendChild(ts); row.appendChild(mkEl('span', null, seg.text));
+        list.appendChild(row);
+      });
+      document.getElementById('pg-audio-segments').style.display = '';
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') setBox('pg-audio-result', 'Error: ' + e.message, 'error');
+  } finally { btn.disabled = false; }
+}
+
+function stopPgAudio() { if (pgAudioAbort) { pgAudioAbort.abort(); pgAudioAbort = null; } }
 
 
 </script>
