@@ -1,10 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use image::{ImageBuffer, RgbImage};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 // ============================================================================
@@ -28,13 +27,6 @@ fn get_http_client() -> &'static reqwest::Client {
             .build()
             .expect("Failed to create HTTP client")
     })
-}
-
-/// Cached ImageNet labels (avoid re-allocation)
-static IMAGENET_LABELS: OnceLock<Vec<String>> = OnceLock::new();
-
-fn get_imagenet_labels() -> &'static Vec<String> {
-    IMAGENET_LABELS.get_or_init(|| (0..1000).map(|i| format!("class_{}", i)).collect())
 }
 
 /// Model configuration with optimized memory layout
@@ -182,70 +174,6 @@ async fn ensure_model_downloaded(config: &ModelConfig) -> Result<(), Box<dyn std
         }
     }
 
-    Ok(())
-}
-
-/// Cached test images to avoid regeneration
-static TEST_IMAGE_CACHE: Mutex<Option<PathBuf>> = Mutex::new(None);
-
-/// Optimized test image creation with caching
-fn get_or_create_test_image(
-    width: u32,
-    height: u32,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let cache_key = format!("target/bench_test_image_{}x{}.jpg", width, height);
-    let path = PathBuf::from(&cache_key);
-
-    // Check cache first
-    {
-        let mut cache = TEST_IMAGE_CACHE.lock().unwrap();
-        if cache.as_ref().map_or(false, |p| p.exists()) {
-            return Ok(cache.as_ref().unwrap().clone());
-        }
-    }
-
-    // Create if doesn't exist
-    if !path.exists() {
-        create_test_image(&path, width, height)?;
-    }
-
-    // Update cache
-    {
-        let mut cache = TEST_IMAGE_CACHE.lock().unwrap();
-        *cache = Some(path.clone());
-    }
-
-    Ok(path)
-}
-
-/// Optimized image generation with SIMD-friendly operations
-fn create_test_image(
-    path: &Path,
-    width: u32,
-    height: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    // Pre-allocate buffer
-    let mut img: RgbImage = ImageBuffer::new(width, height);
-
-    // Optimized pixel filling with better cache locality
-    let width_f = width as f32;
-    let height_f = height as f32;
-    let sum_f = (width + height) as f32;
-
-    for y in 0..height {
-        let g = ((y as f32 * 255.0) / height_f) as u8;
-        for x in 0..width {
-            let r = ((x as f32 * 255.0) / width_f) as u8;
-            let b = (((x + y) as f32 * 255.0) / sum_f) as u8;
-            img.put_pixel(x, y, image::Rgb([r, g, b]));
-        }
-    }
-
-    img.save(path)?;
     Ok(())
 }
 
@@ -1103,8 +1031,6 @@ fn benchmark_tts_onnx_throughput(c: &mut Criterion) {
 /// Defines one TTS engine entry for the stub benchmark.
 struct StubEngineEntry {
     label: &'static str,
-    /// Registry model ID (informational)
-    registry_id: &'static str,
     /// Voice to use in by-voice group
     voice: &'static str,
     engine: Box<dyn torch_inference::core::tts_engine::TTSEngine>,
@@ -1121,7 +1047,6 @@ fn make_stub_entries() -> Vec<StubEngineEntry> {
     if let Ok(e) = BarkEngine::new(&serde_json::json!({"sample_rate": 24000})) {
         entries.push(StubEngineEntry {
             label: "bark",
-            registry_id: "bark",
             voice: "en_speaker_0",
             engine: Box::new(e),
         });
@@ -1129,7 +1054,6 @@ fn make_stub_entries() -> Vec<StubEngineEntry> {
     if let Ok(e) = StyleTTS2Engine::new(&serde_json::json!({"sample_rate": 24000})) {
         entries.push(StubEngineEntry {
             label: "styletts2",
-            registry_id: "styletts2",
             voice: "en_US_default",
             engine: Box::new(e),
         });
@@ -1137,7 +1061,6 @@ fn make_stub_entries() -> Vec<StubEngineEntry> {
     if let Ok(e) = XTTSEngine::new(&serde_json::json!({"sample_rate": 24000})) {
         entries.push(StubEngineEntry {
             label: "xtts-v2",
-            registry_id: "xtts-v2",
             voice: "en",
             engine: Box::new(e),
         });
@@ -1145,7 +1068,6 @@ fn make_stub_entries() -> Vec<StubEngineEntry> {
     if let Ok(e) = VITSEngine::new(&serde_json::json!({"sample_rate": 22050})) {
         entries.push(StubEngineEntry {
             label: "vits",
-            registry_id: "vits-vctk",
             voice: "en_US_default",
             engine: Box::new(e),
         });
@@ -1156,7 +1078,7 @@ fn make_stub_entries() -> Vec<StubEngineEntry> {
 
 fn benchmark_tts_engines(c: &mut Criterion) {
     use criterion::Throughput;
-    use torch_inference::core::tts_engine::{SynthesisParams, TTSEngine};
+    use torch_inference::core::tts_engine::SynthesisParams;
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let entries = make_stub_entries();
