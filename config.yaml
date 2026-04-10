@@ -173,8 +173,8 @@ tts:
   emotion: null
   output_format: "wav"
   quality: "high"  # low, medium, high
-  
-# STT Configuration  
+
+# STT Configuration
 stt:
   language: "auto"  # auto, en, es, fr, de, etc.
   enable_timestamps: true
