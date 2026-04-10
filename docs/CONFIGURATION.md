@@ -418,7 +418,7 @@ cargo build --release --features "torch,cuda,metrics"
 
 # Production — all backends + full observability
 cargo build --release \
-  --features "all-backends,metrics,telemetry,llm"
+  --features "all-backends,metrics,telemetry"
 
 # Disable jemalloc (e.g., musl target)
 cargo build --release --no-default-features \
