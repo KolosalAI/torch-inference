@@ -16,11 +16,17 @@ module.exports = defineConfig({
     ['html', { open: 'never', outputFolder: 'results/html-report' }],
     ['json', { outputFile: 'results/run.json' }],
     ['junit', { outputFile: 'results/junit.xml' }],
+    // Custom reporter emits results/summary.{md,json} with test id,
+    // what's being tested, reproduction command, and any captured images.
+    ['./reporters/detailed-reporter.js'],
   ],
+  // Screenshot on EVERY test (not just failures) so the summary markdown
+  // has visual context for passing tests. trace still only on retry to
+  // keep artifact size reasonable.
   use: {
     baseURL: 'http://localhost:8000',
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
+    screenshot: { mode: 'on', fullPage: false },
     video: 'off',
   },
   projects: [
