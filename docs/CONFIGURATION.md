@@ -374,18 +374,9 @@ flowchart TD
     F_METRICS --> Q4{Distributed tracing?}
 
     Q4 -->|OpenTelemetry OTLP| F_OTEL["--features telemetry<br/>tracing-opentelemetry 0.22<br/>opentelemetry-otlp 0.14<br/>Set OTEL_EXPORTER_OTLP_ENDPOINT"]
-    Q4 -->|No tracing| Q5
+    Q4 -->|No tracing| Q6
 
-    F_OTEL --> Q5{LLM inference?}
-
-    Q5 -->|HuggingFace tokenizers| F_LLM["--features llm<br/>tokenizers 0.19"]
-    Q5 -->|LLM + Apple Metal| F_LLM_METAL["--features llm-metal"]
-    Q5 -->|LLM + CUDA FlashAttn| F_LLM_CUDA["--features llm-cuda"]
-    Q5 -->|No LLM| Q6
-
-    F_LLM --> Q6{Performance profiling?}
-    F_LLM_METAL --> Q6
-    F_LLM_CUDA --> Q6
+    F_OTEL --> Q6{Performance profiling?}
 
     Q6 -->|pprof flamegraph| F_PROF["--features profiling<br/>pprof 0.13 (dev only)"]
     Q6 -->|No profiling| Q7
