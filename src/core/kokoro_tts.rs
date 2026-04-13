@@ -291,8 +291,9 @@ mod tests {
         // synthesize falls back to shared ONNX backend or returns error;
         // without python bridge and without native inference, behaviour depends
         // on whether the shared Kokoro ONNX backend is initialised at test time.
-        // The call must not panic — either Ok or Err is acceptable.
-        let _ = result;
+        // The engine should fall back to shared ONNX backend and succeed, producing audio.
+        let audio = result.expect("kokoro engine should succeed via ONNX fallback");
+        assert!(!audio.samples.is_empty(), "should produce audio samples");
     }
 
     #[test]

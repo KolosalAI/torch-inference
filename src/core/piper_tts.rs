@@ -389,7 +389,8 @@ mod tests {
         };
         let result = engine.synthesize("hello", &params).await;
         // synthesize delegates to Kokoro ONNX backend or parametric fallback — always Ok.
-        assert!(result.is_ok());
+        let audio = result.expect("piper should succeed via fallback");
+        assert!(!audio.samples.is_empty(), "should produce audio");
     }
 
     #[test]
