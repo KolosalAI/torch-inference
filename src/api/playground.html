@@ -3157,12 +3157,12 @@ async function loadAudioHealth() {
   const badge = document.getElementById('audio-health-badge');
   if (!badge) return;
   try {
-    const r = await fetch('/audio/health');
-    badge.textContent       = r.ok ? '● Audio healthy'     : '● Audio unavailable';
+    const r = await fetch('/stt/health', { signal: AbortSignal.timeout(3000) });
+    badge.textContent       = r.ok ? '● STT online'        : '● STT unavailable';
     badge.style.background  = r.ok ? 'var(--green-bg)'     : 'var(--red-bg)';
     badge.style.color       = r.ok ? 'var(--green-text)'   : 'var(--red-text)';
   } catch (_) {
-    badge.textContent = '● Audio unavailable';
+    badge.textContent = '● STT offline — run: make stt-run';
     badge.style.background = 'var(--red-bg)'; badge.style.color = 'var(--red-text)';
   }
 }
@@ -3201,7 +3201,7 @@ async function runAudio() {
     form.append('audio', audioFile);
     form.append('model', document.getElementById('audio-model').value || 'default');
     form.append('timestamps', document.getElementById('audio-timestamps').checked ? 'true' : 'false');
-    const res  = await fetch('/audio/transcribe', { method: 'POST', body: form, signal: audioAbort.signal });
+    const res  = await fetch('/stt/transcribe', { method: 'POST', body: form, signal: audioAbort.signal });
     const data = await safeJson(res);
     if (!res.ok) {
       setBox('audio-result-text', String(data.error || data.message || res.status), 'error');
@@ -3287,11 +3287,11 @@ async function sttCheckModel() {
   const btn = document.getElementById('ws-stt-btn');
   if (!dot) return;
   try {
-    const r = await fetch('/audio/health');
+    const r = await fetch('/stt/health', { signal: AbortSignal.timeout(3000) });
     if (!r.ok) throw new Error('health check failed');
     const data = await r.json();
     const models = data.models_available || [];
-    const hasStt = models.some(m => m.startsWith('STT:'));
+    const hasStt = models.length > 0 || data.status === 'ok';
     if (hasStt) {
       dot.style.background = '#2EA043';
       lbl.textContent = 'STT model loaded ✓';
@@ -4087,9 +4087,8 @@ async function detCheckModel() {
   try {
     const form = new FormData();
     form.append('image', new Blob([Uint8Array.from(atob(probe), c => c.charCodeAt(0))], { type: 'image/png' }), 'probe.png');
-    // No version/size — let server use whatever model is loaded
     form.append('conf', '0.5');
-    const r = await fetch('/detect', { method: 'POST', body: form });
+    const r = await fetch('/yolo/detect?model_version=v8&model_size=n', { method: 'POST', body: form });
     if (r.ok || r.status === 422 || r.status === 400) {
       // 422/400 = model loaded but rejected input (acceptable for probe)
       dot.style.background = '#2EA043';
@@ -4516,7 +4515,7 @@ async function runPgAudio() {
     form.append('audio', pgAudioFile);
     form.append('model', document.getElementById('pg-audio-model').value || 'default');
     form.append('timestamps', document.getElementById('pg-audio-timestamps').checked ? 'true' : 'false');
-    const res  = await fetch('/audio/transcribe', { method: 'POST', body: form, signal: pgAudioAbort.signal });
+    const res  = await fetch('/stt/transcribe', { method: 'POST', body: form, signal: pgAudioAbort.signal });
     const data = await safeJson(res);
     if (!res.ok) { setBox('pg-audio-result', String(data.error || data.message || res.status), 'error'); return; }
     setBox('pg-audio-result', data.text || '(empty)', 'ok');

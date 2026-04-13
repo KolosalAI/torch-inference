@@ -183,6 +183,12 @@ flamegraph: ## Generate CPU flamegraph (requires: cargo install flamegraph)
 	cargo flamegraph --features profiling --bin torch-inference-server -- --config config.toml
 	@echo "Flamegraph written to flamegraph.svg"
 
+# ── STT Microservice ──────────────────────────────────────────────────────────
+.PHONY: stt-run
+
+stt-run: ## Run faster-whisper STT service on port 8002
+	python3 services/stt/server.py
+
 # ── LLM Microservice ──────────────────────────────────────────────────────────
 .PHONY: llm-build llm-run llm-download
 
