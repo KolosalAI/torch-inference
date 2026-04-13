@@ -2,34 +2,25 @@
 //! Returns 503 when the LLM microservice is not reachable.
 use actix_web::{web, HttpRequest, HttpResponse};
 use bytes::Bytes;
+use futures_util::StreamExt;
 
 static LLM_BASE: &str = "http://127.0.0.1:8001";
 
 /// Forward any `/llm/{tail:.*}` request to the LLM microservice.
+/// The shared `reqwest::Client` (stored in app data) provides connection pooling.
 pub async fn proxy(
     req: HttpRequest,
     body: Bytes,
     path: web::Path<String>,
+    client: web::Data<reqwest::Client>,
 ) -> HttpResponse {
     let tail = path.into_inner();
     let url = format!("{}/{}", LLM_BASE, tail);
 
-    // Preserve query string
     let url = if let Some(qs) = req.uri().query() {
         format!("{}?{}", url, qs)
     } else {
         url
-    };
-
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": e.to_string()}));
-        }
     };
 
     let method = reqwest::Method::from_bytes(req.method().as_str().as_bytes())
@@ -70,14 +61,11 @@ pub async fn proxy(
                 }
             }
 
-            let bytes = match upstream.bytes().await {
-                Ok(b) => b,
-                Err(e) => {
-                    return HttpResponse::BadGateway()
-                        .json(serde_json::json!({"error": e.to_string()}));
-                }
-            };
-            resp.body(bytes)
+            // Stream the upstream body without buffering — critical for SSE.
+            let stream = upstream
+                .bytes_stream()
+                .map(|r| r.map_err(actix_web::error::ErrorBadGateway));
+            resp.streaming(stream)
         }
     }
 }

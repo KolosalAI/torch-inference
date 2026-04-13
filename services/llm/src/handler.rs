@@ -72,7 +72,8 @@ fn decode_data_uri(url: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Extract (role, text) pairs and the first image bytes from the messages.
-fn extract_content(messages: &[ChatMessage]) -> (Vec<(String, String)>, Option<Vec<u8>>) {
+/// Returns Err if an image_url is present but cannot be decoded.
+fn extract_content(messages: &[ChatMessage]) -> Result<(Vec<(String, String)>, Option<Vec<u8>>), String> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut image: Option<Vec<u8>> = None;
 
@@ -88,10 +89,8 @@ fn extract_content(messages: &[ChatMessage]) -> (Vec<(String, String)>, Option<V
                         ContentPart::Text { text } => text_buf.push_str(text),
                         ContentPart::ImageUrl { image_url } => {
                             if image.is_none() {
-                                match decode_data_uri(&image_url.url) {
-                                    Ok(bytes) => image = Some(bytes),
-                                    Err(e) => tracing::warn!("image decode skipped: {e}"),
-                                }
+                                image = Some(decode_data_uri(&image_url.url)
+                                    .map_err(|e| format!("invalid image: {e}"))?);
                             }
                         }
                     }
@@ -101,7 +100,7 @@ fn extract_content(messages: &[ChatMessage]) -> (Vec<(String, String)>, Option<V
         }
     }
 
-    (pairs, image)
+    Ok((pairs, image))
 }
 
 fn sse_chunk(content: &str, model: &str) -> Bytes {
@@ -131,7 +130,17 @@ pub async fn chat_completions(
     let temperature = req.temperature;
     let streaming = req.stream;
 
-    let (pairs, image_bytes) = extract_content(&req.messages);
+    let (pairs, image_bytes) = match extract_content(&req.messages) {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::BadRequest().json(json!({"error": e})),
+    };
+
+    // Pre-flight: image provided but no multimodal projector loaded
+    if image_bytes.is_some() && state.engine.mmproj_path.is_none() {
+        return HttpResponse::BadRequest()
+            .json(json!({"error": "multimodal not configured: mmproj_path missing or file not found"}));
+    }
+
     let engine = Arc::clone(&state.engine);
 
     if streaming {
@@ -187,11 +196,11 @@ pub async fn chat_completions(
             Ok(Ok(())) => {}
             Ok(Err(e)) => {
                 return HttpResponse::InternalServerError()
-                    .json(json!({"error": {"message": e.to_string(), "type": "inference_error"}}));
+                    .json(json!({"error": format!("inference failed: {}", e)}));
             }
             Err(e) => {
                 return HttpResponse::InternalServerError()
-                    .json(json!({"error": {"message": e.to_string(), "type": "join_error"}}));
+                    .json(json!({"error": format!("inference failed: {}", e)}));
             }
         }
 

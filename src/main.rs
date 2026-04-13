@@ -508,6 +508,13 @@ async fn async_main() -> std::io::Result<()> {
 
     let listener = std::net::TcpListener::bind(&addr)?;
 
+    // Create shared reqwest client for the proxy (connection pooling)
+    let proxy_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .expect("build reqwest client");
+    let proxy_client = web::Data::new(proxy_client);
+
     let config_data = web::Data::new(config.clone());
     let model_mgr = web::Data::new(model_manager);
     let infer_engine = web::Data::new(inference_engine);
@@ -615,6 +622,7 @@ async fn async_main() -> std::io::Result<()> {
             .app_data(classify_state.clone())
             .app_data(yolo_state.clone())
             .app_data(nn_state.clone())
+            .app_data(proxy_client.clone())
             // CorrelationIdMiddleware runs first (innermost), RequestLogger runs last (outermost)
             // so it captures total wall time for each request
             .wrap(CorrelationIdMiddleware)
