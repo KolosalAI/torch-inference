@@ -1271,9 +1271,8 @@
                   <i class="ri-mic-line"></i> Record
                 </button>
                 <span id="ws-stt-rec-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
-                <span id="ws-stt-rec-label" style="font-size:12px;color:var(--text-muted)">idle</span>
+                <span id="ws-stt-rec-label" style="font-size:12px;color:var(--text-muted)"></span>
               </div>
-              <div style="font-size:12px;color:var(--text-muted);margin-top:10px">Sends raw PCM f32le @16kHz mono.</div>
             </div>
             <div>
               <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Mic waveform</div>
@@ -3300,7 +3299,7 @@ async function sttCheckModel() {
       if (btn) btn.disabled = false;
     } else {
       dot.style.background = '#F85149';
-      lbl.textContent = 'STT model not loaded — place stt_default.onnx in models/audio/';
+      lbl.textContent = 'STT model not loaded — download a Whisper model from the Models page';
       sttModelAvailable = false;
       if (btn) btn.disabled = true;
     }
@@ -3458,7 +3457,7 @@ async function wsSttToggle() {
     return;
   }
   if (!sttModelAvailable) {
-    document.getElementById('ws-stt-result').textContent = 'STT model not loaded. Place stt_default.onnx in models/audio/ and restart the server.';
+    document.getElementById('ws-stt-result').textContent = 'STT model not loaded. Download a Whisper model from the Models page and restart the server.';
     return;
   }
   const ok = await wsEnsureAudio();
