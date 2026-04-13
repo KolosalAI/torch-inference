@@ -1,0 +1,5 @@
+[env]
+# Tells ORT where to find libonnxruntime.dylib when running `cargo test`.
+# The server sets this at runtime; tests need it too.
+ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib"
+DYLD_LIBRARY_PATH = "/opt/homebrew/lib"
