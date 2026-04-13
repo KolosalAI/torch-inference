@@ -175,3 +175,15 @@ flamegraph: ## Generate CPU flamegraph (requires: cargo install flamegraph)
 	@echo "Generating flamegraph (requires cargo-flamegraph and sudo/root)..."
 	cargo flamegraph --features profiling --bin torch-inference-server -- --config config.toml
 	@echo "Flamegraph written to flamegraph.svg"
+
+# ── LLM Microservice ──────────────────────────────────────────────────────────
+.PHONY: llm-build llm-run llm-download
+
+llm-download: ## Download MiniCPM-V 2.6 Q2_K model and mmproj
+	bash scripts/download_llm_model.sh
+
+llm-build: ## Build LLM service
+	cd services/llm && cargo build --release
+
+llm-run: ## Run LLM service
+	cd services/llm && ./target/release/llm-service
