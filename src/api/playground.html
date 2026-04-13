@@ -693,61 +693,15 @@
     <section class="panel" id="panel-tts">
       <div class="panel-header">
         <div class="panel-title">TTS</div>
-        <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
+        <div class="panel-desc">Low-latency streaming synthesis via <span class="ep-code">GET /audio/ws</span>.</div>
       </div>
       <div id="tts-no-engine-banner" style="display:none;padding:12px 16px;background:var(--yellow-bg);border:1px solid var(--yellow);border-radius:10px;font-size:13px;color:var(--yellow-text);margin-bottom:4px">
         <i class="ri-alert-line"></i> <strong>No TTS engine loaded.</strong>
         Go to <a href="#" onclick="showModels()" style="color:inherit;font-weight:600;text-decoration:underline">Models → Download</a> and download a Kokoro TTS model first.
       </div>
-      <div class="card">
-        <div class="card-title">Input</div>
-        <div class="field">
-          <label>Text</label>
-          <textarea id="tts-text">Hello! This is a streaming TTS demo from Kolosal Inference. The first sentence should start playing almost immediately.</textarea>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>Engine</label>
-            <div class="model-select-row">
-              <!-- hidden select keeps value for runTTS() -->
-              <select id="tts-engine" style="display:none"><option value="">default</option></select>
-              <div class="ced" id="tts-engine-ced">
-                <div class="ced-trigger" id="tts-engine-trigger" onclick="cedToggle('tts-engine-ced')">
-                  <span class="ced-label" id="tts-engine-display">default</span>
-                  <i class="ri-arrow-down-s-line ced-arrow"></i>
-                </div>
-                <div class="ced-panel" id="tts-engine-panel" style="display:none"></div>
-              </div>
-              <button class="btn-refresh" title="Refresh engines" onclick="refreshTtsSelects()"><i class="ri-refresh-line"></i></button>
-            </div>
-          </div>
-          <div class="field">
-            <label>Voice (optional)</label>
-            <select id="tts-voice"><option value="">default</option></select>
-          </div>
-          <div class="field">
-            <label>Speed</label>
-            <input type="number" id="tts-speed" value="1.0" min="0.5" max="2.0" step="0.1" />
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:6px">
-          <button class="btn btn-primary" id="tts-btn" onclick="runTTS()"><i class="ri-play-line"></i> Synthesise</button>
-          <button class="btn btn-ghost" onclick="stopTTS()"><i class="ri-stop-line"></i> Stop</button>
-          <button class="btn btn-ghost" onclick="copyCurl('tts')" title="Copy as cURL"><i class="ri-terminal-line"></i> cURL</button>
-          <button class="btn btn-ghost" onclick="copyPython('tts')" title="Copy as Python"><i class="ri-code-line"></i> Python</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Output</div>
-        <div class="response-box" id="tts-status">waiting…</div>
-        <div class="metrics-bar" id="tts-metrics" style="display:none">
-          <span class="metric-item" id="tts-metric-time">—</span>
-        </div>
-        <div id="tts-audio-wrap"><audio id="tts-audio" controls></audio></div>
-      </div>
 
       <!-- Live TTS WebSocket -->
-      <div class="card" style="margin-top:16px">
+      <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
           <div>
             <div class="card-title" style="margin-bottom:2px"><i class="ri-wifi-line" style="color:var(--accent)"></i> Live TTS Stream</div>
@@ -1766,7 +1720,6 @@ async function loadTtsHealth() {
     const noEngine = !d.engines_loaded || d.engines_loaded === 0;
     const el = document.getElementById('tts-no-engine-banner');
     if (el) el.style.display = noEngine ? '' : 'none';
-    if (noEngine) setBox('tts-status', 'No TTS engine loaded — see banner above.', 'error');
   } catch (_) {}
 }
 
