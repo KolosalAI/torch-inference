@@ -693,7 +693,7 @@
     </section>
 
     <!-- Assistant -->
-    <section class="panel" id="panel-assistant" style="display:flex;flex-direction:column;height:100%">
+    <section class="panel" id="panel-assistant">
       <div class="panel-header" style="flex-shrink:0">
         <div style="display:flex;align-items:center;gap:12px">
           <div class="panel-title">Assistant</div>
@@ -728,7 +728,7 @@
       </details>
 
       <!-- Chat messages -->
-      <div id="llm-chat-box" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 0;min-height:200px"></div>
+      <div id="llm-chat-box" style="overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 0;height:420px;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--surface)"></div>
 
       <!-- Input row -->
       <div class="chat-input-row" style="flex-shrink:0;margin-top:12px">
@@ -3887,16 +3887,16 @@ async function detCheckModel() {
   try {
     const form = new FormData();
     form.append('image', new Blob([Uint8Array.from(atob(probe), c => c.charCodeAt(0))], { type: 'image/png' }), 'probe.png');
-    form.append('version', 'v8');
-    form.append('size', 'n');
+    // No version/size — let server use whatever model is loaded
     form.append('conf', '0.5');
     const r = await fetch('/detect', { method: 'POST', body: form });
-    if (r.ok || r.status === 422) {
+    if (r.ok || r.status === 422 || r.status === 400) {
+      // 422/400 = model loaded but rejected input (acceptable for probe)
       dot.style.background = '#2EA043';
-      lbl.textContent = 'Model downloaded ✓';
+      lbl.textContent = 'Model loaded ✓';
     } else if (r.status === 404 || r.status === 503) {
       dot.style.background = '#F85149';
-      lbl.textContent = 'Model not downloaded';
+      lbl.textContent = 'No model loaded';
     } else {
       dot.style.background = '#FFA931';
       lbl.textContent = 'Model status unknown';
@@ -4708,13 +4708,17 @@ async function checkLlmHealth() {
       badge.textContent = 'online';
       badge.style.background = 'rgba(46,160,67,.15)';
       badge.style.color = '#3fb950';
+    } else if (r.status === 503) {
+      badge.textContent = 'LLM service offline — run: make llm-run';
+      badge.style.background = 'rgba(248,81,73,.1)';
+      badge.style.color = '#f85149';
     } else {
       badge.textContent = 'error ' + r.status;
       badge.style.background = 'rgba(248,81,73,.1)';
       badge.style.color = '#f85149';
     }
   } catch (_) {
-    badge.textContent = 'service offline';
+    badge.textContent = 'unreachable';
     badge.style.background = 'rgba(248,81,73,.1)';
     badge.style.color = '#f85149';
   }
@@ -4807,8 +4811,19 @@ async function sendChat() {
     });
 
     if (!res.ok) {
-      const err = await res.text().catch(() => res.status);
-      asstEl.textContent = 'Error ' + res.status + ': ' + err;
+      let msg;
+      if (res.status === 503) {
+        msg = 'LLM service is not running. Start it with: make llm-run';
+      } else {
+        try {
+          const body = await res.json();
+          msg = body.error || body.message || ('Error ' + res.status);
+        } catch (_) {
+          msg = 'Error ' + res.status;
+        }
+      }
+      asstEl.textContent = msg;
+      asstEl.style.color = 'var(--red-text, #f85149)';
       llmMessages.push({ role: 'assistant', content: '' });
       return;
     }
