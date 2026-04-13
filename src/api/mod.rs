@@ -22,3 +22,5 @@ pub mod yolo; // YOLO object detection
 
 pub mod ws_audio; // WebSocket audio pipeline (TTS streaming + STT)
 pub mod ws_infer; // WebSocket streaming inference (detect + classify)
+
+pub mod llm_proxy; // Thin reverse proxy → LLM microservice on :8001
