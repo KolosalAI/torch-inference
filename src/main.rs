@@ -653,6 +653,8 @@ async fn async_main() -> std::io::Result<()> {
             .configure(crate::api::inference::configure)
             .configure(crate::api::ws_audio::configure_routes)
             .configure(crate::api::ws_infer::configure_routes)
+            .route("/audio/transcribe", web::post().to(crate::api::audio::transcribe_audio))
+            .route("/audio/synthesize", web::post().to(crate::api::audio::synthesize_speech))
     })
     .workers(worker_count)
     .keep_alive(Duration::from_secs(75))

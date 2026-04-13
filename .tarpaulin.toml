@@ -4,8 +4,9 @@ exclude-files = [
     "src/bin/provider_comparison.rs",
     "src/api/llm_proxy.rs",
 ]
-fail-under  = 95
-out         = ["Html", "Lcov"]
-output-dir  = "coverage/"
-features    = "default"
-timeout     = "300s"
+fail-under    = 95
+out           = ["Html", "Lcov"]
+output-dir    = "coverage/"
+features      = "default"
+timeout       = "300s"
+no-fail-fast  = true

@@ -144,8 +144,43 @@ impl ModelRegistry {
     pub fn get_downloaded_models(&self) -> Vec<(&String, &ModelInfo)> {
         self.models
             .iter()
-            .filter(|(_, info)| info.status == "Downloaded" || info.status == "Active")
+            .filter(|(id, info)| info.is_available(id))
             .collect()
+    }
+}
+
+/// Returns the on-disk cache directory for a model given its id and type.
+/// Mirrors the directory logic in `download_model_async`.
+fn model_cache_dir(model_id: &str, model_type: &str) -> std::path::PathBuf {
+    let base = match model_type {
+        "tts" | "" => "models/tts",
+        "image-classification" => "models/classification",
+        "object-detection" => "models/detection",
+        "segmentation" => "models/segmentation",
+        "neural-network" => "models/neural",
+        "speech-to-text" => "models/stt",
+        "text-classification" | "feature-extraction" | "nlp" => "models/nlp",
+        _ => "models/other",
+    };
+    std::path::Path::new(base).join(model_id)
+}
+
+impl ModelInfo {
+    /// Returns true when the model is available for inference — either it is
+    /// built-in (no download needed) or its cache directory exists on disk with
+    /// at least one file inside.  This is the authoritative runtime check and
+    /// replaces the static `status` field, which is never mutated after the
+    /// registry is loaded.
+    pub fn is_available(&self, model_id: &str) -> bool {
+        // Built-in and Active models are always available regardless of disk state.
+        if self.url == "Built-in" || self.status == "Active" {
+            return true;
+        }
+        let dir = model_cache_dir(model_id, &self.model_type);
+        dir.is_dir()
+            && std::fs::read_dir(&dir)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false)
     }
 }
 
@@ -196,8 +231,8 @@ pub async fn download_model(req: web::Json<DownloadRequest>) -> Result<HttpRespo
 
     match registry.get_model(&req.model_id) {
         Some(model) => {
-            // Check if already downloaded
-            if model.status == "Downloaded" || model.status == "Active" {
+            // Check if already available (built-in, active, or present on disk).
+            if model.is_available(&req.model_id) {
                 return Ok(HttpResponse::Ok().json(serde_json::json!({
                     "status": "already_downloaded",
                     "model": model
@@ -256,32 +291,14 @@ async fn download_file_streaming(
 }
 
 async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Result<()> {
-    // Determine cache directory based on model type
-    let model_type = if model.model_type.is_empty() {
-        "tts" // default to tts for backward compatibility
-    } else {
-        model.model_type.as_str()
-    };
-
-    let cache_dir = match model_type {
-        "tts" => std::path::Path::new("models/tts").join(model_id),
-        "image-classification" => std::path::Path::new("models/classification").join(model_id),
-        "object-detection" => std::path::Path::new("models/detection").join(model_id),
-        "segmentation" => std::path::Path::new("models/segmentation").join(model_id),
-        "neural-network" => std::path::Path::new("models/neural").join(model_id),
-        "speech-to-text" => std::path::Path::new("models/stt").join(model_id),
-        "text-classification" | "feature-extraction" | "nlp" => {
-            std::path::Path::new("models/nlp").join(model_id)
-        }
-        _ => std::path::Path::new("models/other").join(model_id),
-    };
+    let cache_dir = model_cache_dir(model_id, &model.model_type);
 
     tokio::fs::create_dir_all(&cache_dir).await?;
 
     log::info!(
         "Downloading {} ({}) from {}",
         model.name,
-        model_type,
+        model.model_type,
         model.url
     );
 
@@ -1874,6 +1891,15 @@ mod model_registry_unit_tests {
         )
     }
 
+    fn model_entry_builtin(id: &str, name: &str, rank: i32) -> String {
+        format!(
+            r#""{id}": {{"name":"{name}","score":70.0,"rank":{rank},"size":"0MB","url":"Built-in","architecture":"T","voices":"1","quality":"High","status":"Active","model_type":"tts","task":"tts"}}"#,
+            id = id,
+            name = name,
+            rank = rank
+        )
+    }
+
     #[test]
     fn test_registry_empty_constructor() {
         let reg = ModelRegistry::empty();
@@ -1930,10 +1956,16 @@ mod model_registry_unit_tests {
 
     #[test]
     fn test_registry_get_downloaded_models_filters_correctly() {
+        // "Available" with a real URL and no disk files → not returned.
+        // "Downloaded" with a real URL and no disk files → not returned (filesystem
+        //   is now the source of truth; status field alone is not enough).
+        // "Active" status → always returned (built-in shortcut).
+        // url == "Built-in" → always returned (built-in shortcut).
         let entries = [
             model_entry("available-1", "Avail", 1, "Available"),
             model_entry("downloaded-1", "Down", 2, "Downloaded"),
             model_entry("active-1", "Active", 3, "Active"),
+            model_entry_builtin("builtin-1", "Builtin", 4),
         ]
         .join(",");
         let json = build_registry_json(&entries);
@@ -1942,11 +1974,11 @@ mod model_registry_unit_tests {
         assert_eq!(
             downloaded.len(),
             2,
-            "only Downloaded and Active should be returned"
+            "only Active-status and Built-in-url models are available without disk files"
         );
-        let statuses: Vec<&str> = downloaded.iter().map(|(_, i)| i.status.as_str()).collect();
-        assert!(statuses.contains(&"Downloaded"));
-        assert!(statuses.contains(&"Active"));
+        let ids: Vec<&str> = downloaded.iter().map(|(id, _)| id.as_str()).collect();
+        assert!(ids.contains(&"active-1"));
+        assert!(ids.contains(&"builtin-1"));
     }
 
     #[test]
@@ -1990,11 +2022,11 @@ mod api_endpoint_tests {
                     "score": 85.0,
                     "rank": 1,
                     "size": "120 MB",
-                    "url": "https://example.com/test-tts",
+                    "url": "Built-in",
                     "architecture": "Transformer",
                     "voices": "3",
                     "quality": "High",
-                    "status": "Downloaded",
+                    "status": "Active",
                     "model_type": "tts",
                     "task": "text-to-speech"
                 },
@@ -2114,7 +2146,7 @@ mod api_endpoint_tests {
 
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["name"], "Test TTS");
-        assert_eq!(body["status"], "Downloaded");
+        assert_eq!(body["status"], "Active");
     }
 
     #[actix_web::test]
@@ -2154,7 +2186,7 @@ mod api_endpoint_tests {
         assert_eq!(resp.status(), 200);
 
         let body: serde_json::Value = test::read_body_json(resp).await;
-        assert_eq!(body["count"], 1, "only one model has status=Downloaded");
+        assert_eq!(body["count"], 1, "only the built-in model is available without disk files");
         assert!(body["models"]["test-tts"].is_object());
         assert!(body["models"].get("test-det").is_none());
     }

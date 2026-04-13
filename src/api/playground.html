@@ -602,6 +602,184 @@
 
   /* ── System prompt field ───────────────────────────────── */
   .system-prompt-field textarea { border-left: 3px solid var(--accent); border-radius: 0 12px 12px 0; }
+
+  /* ── ChatGPT-style Assistant ────────────────────────────── */
+  #panel-assistant { padding: 0; gap: 0; }
+
+  .gpt-topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+    flex-shrink: 0; gap: 12px; flex-wrap: wrap;
+  }
+  .gpt-topbar-left  { display: flex; align-items: center; gap: 10px; }
+  .gpt-topbar-right { display: flex; align-items: center; gap: 8px; }
+
+  .gpt-model-sel {
+    background: var(--input-bg); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px;
+    padding: 5px 10px; cursor: pointer; outline: none;
+  }
+  .gpt-pill-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-muted); font-size: 12px; cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .gpt-pill-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .gpt-pill-btn.active { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+
+  .gpt-settings-panel {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 14px 20px; display: flex; flex-wrap: wrap; gap: 14px;
+    flex-shrink: 0; align-items: flex-start;
+  }
+  .gpt-settings-panel .field { margin: 0; }
+  .gpt-settings-panel textarea {
+    width: 100%; padding: 7px 10px;
+    background: var(--input-bg); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px;
+    font-family: inherit; resize: vertical; min-height: 60px;
+  }
+
+  .gpt-thread {
+    flex: 1; overflow-y: auto; padding: 32px 20px 16px;
+    display: flex; flex-direction: column; gap: 0;
+    min-height: 320px; max-height: calc(100vh - 340px);
+  }
+  .gpt-welcome {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; padding: 48px 20px 24px;
+    gap: 16px; flex: 1;
+  }
+  .gpt-welcome-avatar {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 24px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .gpt-welcome h2 { font-size: 22px; font-weight: 600; color: var(--text); margin: 0; }
+  .gpt-cap-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-top: 8px; max-width: 500px; width: 100%;
+  }
+  .gpt-cap-card {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 12px; padding: 14px 16px; font-size: 13px;
+    color: var(--text); cursor: pointer; text-align: left;
+    transition: border-color .15s, background .15s; line-height: 1.4;
+  }
+  .gpt-cap-card:hover { border-color: var(--accent); background: var(--accent-bg); }
+  .gpt-cap-card strong { display: block; font-size: 13px; margin-bottom: 2px; }
+  .gpt-cap-card span { font-size: 11px; color: var(--text-muted); }
+
+  /* Message rows */
+  .chat-row {
+    display: flex; flex-direction: column;
+    padding: 8px 0; max-width: 760px; width: 100%; margin: 0 auto;
+  }
+  .chat-row.user { align-items: flex-end; }
+  .chat-row.asst { align-items: flex-start; }
+
+  .chat-row.user .chat-bubble {
+    background: var(--accent); color: #fff;
+    border-radius: 18px 18px 4px 18px;
+    padding: 10px 16px; max-width: 78%;
+    font-size: 14px; line-height: 1.6; word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .chat-row.asst .chat-bubble {
+    background: transparent; color: var(--text);
+    padding: 0; width: 100%;
+    font-size: 14px; line-height: 1.75;
+  }
+  .chat-asst-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .chat-asst-avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .chat-asst-name { font-size: 13px; font-weight: 600; color: var(--text); }
+
+  /* Markdown inside assistant bubble */
+  .chat-bubble pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12px; margin: 10px 0; white-space: pre-wrap; position: relative; }
+  .chat-bubble code { background: rgba(0,0,0,.08); padding: 2px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12px; }
+  .chat-bubble pre code { background: none; padding: 0; }
+  .chat-bubble h3, .chat-bubble h4 { margin: 10px 0 4px; font-size: 14px; }
+  .chat-bubble ul, .chat-bubble ol { padding-left: 22px; margin: 6px 0; }
+  .chat-bubble li { margin: 3px 0; }
+  .chat-bubble strong { font-weight: 700; }
+  .chat-bubble em { font-style: italic; }
+  .chat-bubble p { margin: 6px 0; }
+
+  .chat-actions {
+    display: flex; gap: 4px; margin-top: 10px;
+    opacity: 0; transition: opacity .15s;
+  }
+  .chat-row:hover .chat-actions { opacity: 1; }
+  .chat-action-btn {
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 9px; font-size: 11px; color: var(--text-muted);
+    cursor: pointer; display: flex; align-items: center; gap: 4px;
+    transition: color .15s, border-color .15s;
+  }
+  .chat-action-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .chat-action-btn.copied { color: #3fb950; border-color: #3fb950; }
+
+  .chat-img-thumb { max-height: 140px; max-width: 200px; border-radius: 10px; display: block; margin-bottom: 6px; object-fit: cover; }
+
+  /* Attach preview bar (above composer) */
+  .gpt-attach-bar {
+    padding: 8px 20px 0; flex-shrink: 0;
+    display: flex; align-items: center; gap: 10px;
+    max-width: 800px; margin: 0 auto; width: 100%;
+  }
+  .gpt-attach-thumb { max-height: 60px; max-width: 80px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
+  .gpt-attach-info { font-size: 12px; color: var(--text-muted); flex: 1; }
+  .gpt-attach-clear { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px 4px; }
+  .gpt-attach-clear:hover { color: var(--red-text, #f85149); }
+
+  /* Composer */
+  .gpt-composer-wrap {
+    flex-shrink: 0; padding: 10px 20px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .gpt-composer {
+    display: flex; align-items: flex-end; gap: 8px;
+    background: var(--input-bg); border: 1px solid var(--border);
+    border-radius: 14px; padding: 10px 12px;
+    max-width: 760px; margin: 0 auto;
+    transition: border-color .15s;
+  }
+  .gpt-composer:focus-within { border-color: var(--accent); }
+  .gpt-composer textarea {
+    flex: 1; border: none; background: transparent; color: var(--text);
+    font-size: 14px; font-family: inherit; resize: none; outline: none;
+    min-height: 24px; max-height: 180px; line-height: 1.55; padding: 2px 0;
+  }
+  .gpt-icon-btn {
+    width: 32px; height: 32px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px; flex-shrink: 0;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .gpt-icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .gpt-icon-btn.active { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  .gpt-icon-btn.recording { background: #da3633; color: #fff; border-color: #da3633; animation: pulse 1s infinite; }
+  .gpt-send-btn {
+    width: 32px; height: 32px; border-radius: 8px;
+    border: none; background: var(--accent); color: #fff;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 17px; flex-shrink: 0; transition: opacity .15s;
+  }
+  .gpt-send-btn:disabled { opacity: 0.35; cursor: default; }
+  .gpt-composer-hint {
+    text-align: center; font-size: 11px; color: var(--text-dim);
+    margin-top: 7px; max-width: 760px; margin-left: auto; margin-right: auto;
+  }
 </style>
 </head>
 <body>
@@ -694,47 +872,97 @@
 
     <!-- Assistant -->
     <section class="panel" id="panel-assistant">
-      <div class="panel-header" style="flex-shrink:0">
-        <div style="display:flex;align-items:center;gap:12px">
-          <div class="panel-title">Assistant</div>
+
+      <!-- Top bar -->
+      <div class="gpt-topbar">
+        <div class="gpt-topbar-left">
           <span id="llm-health-badge" style="font-size:12px;padding:2px 9px;border-radius:12px;background:var(--accent-bg);color:var(--accent)">checking…</span>
+          <input id="llm-model" type="text" value="BitNet-b1.58-2B-4T" class="gpt-model-sel" placeholder="model name" style="width:200px" title="Model ID" />
         </div>
-        <div class="panel-desc">1-bit LLM chat via <span class="ep-code">POST /llm/v1/chat/completions</span> (SSE streaming) — requires LLM service on port 8001.</div>
+        <div class="gpt-topbar-right">
+          <button class="gpt-pill-btn" id="chat-tts-btn" onclick="toggleChatTts()" title="Auto-speak responses">
+            <i class="ri-volume-up-line"></i> TTS
+          </button>
+          <button class="gpt-pill-btn" id="chat-settings-btn" onclick="toggleChatSettings()" title="Settings">
+            <i class="ri-settings-3-line"></i> Settings
+          </button>
+          <button class="gpt-pill-btn" onclick="clearChat()">
+            <i class="ri-add-line"></i> New chat
+          </button>
+        </div>
       </div>
 
-      <!-- Settings row -->
-      <div style="display:flex;gap:12px;flex-shrink:0;margin-bottom:12px;flex-wrap:wrap">
-        <div class="field" style="flex:1;min-width:160px">
-          <label>Model</label>
-          <input id="llm-model" type="text" value="BitNet-b1.58-2B-4T" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
-        </div>
-        <div class="field" style="width:90px">
+      <!-- Settings panel (hidden by default) -->
+      <div class="gpt-settings-panel" id="chat-settings-panel" style="display:none">
+        <div class="field" style="width:100px">
           <label>Temperature</label>
-          <input id="llm-temp" type="number" value="0.7" min="0" max="2" step="0.05" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+          <input id="llm-temp" type="number" value="0.7" min="0" max="2" step="0.05" style="width:100%;padding:5px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
         </div>
-        <div class="field" style="width:80px">
+        <div class="field" style="width:110px">
           <label>Max tokens</label>
-          <input id="llm-max-tokens" type="number" value="512" min="64" max="4096" step="64" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+          <input id="llm-max-tokens" type="number" value="1024" min="64" max="8192" step="64" style="width:100%;padding:5px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
         </div>
-        <div style="display:flex;align-items:flex-end;gap:8px">
-          <button class="btn btn-ghost" onclick="clearChat()" style="padding:6px 12px;font-size:13px"><i class="ri-delete-bin-line"></i> Clear</button>
+        <div class="field" style="flex:1;min-width:240px">
+          <label>System prompt</label>
+          <textarea id="llm-system" rows="2" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">You are a helpful multimodal assistant. You have access to text-to-speech, speech-to-text, image classification, and object detection tools on this server.</textarea>
         </div>
       </div>
 
-      <!-- System prompt (collapsible) -->
-      <details style="flex-shrink:0;margin-bottom:12px">
-        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);user-select:none;padding:4px 0">System prompt</summary>
-        <textarea id="llm-system" rows="3" style="width:100%;margin-top:6px;padding:8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">You are a helpful assistant.</textarea>
-      </details>
-
-      <!-- Chat messages -->
-      <div id="llm-chat-box" style="overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 0;height:420px;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--surface)"></div>
-
-      <!-- Input row -->
-      <div class="chat-input-row" style="flex-shrink:0;margin-top:12px">
-        <textarea id="llm-input" rows="2" placeholder="Message the assistant… (Shift+Enter for newline, Enter to send)" style="flex:1;padding:9px 12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;resize:none" onkeydown="llmInputKey(event)"></textarea>
-        <button class="btn btn-primary" id="llm-send-btn" onclick="sendChat()" style="align-self:flex-end;padding:9px 18px"><i class="ri-send-plane-fill"></i> Send</button>
+      <!-- Message thread -->
+      <div id="llm-chat-box" class="gpt-thread">
+        <!-- Welcome screen shown when no messages -->
+        <div id="chat-welcome" class="gpt-welcome">
+          <div class="gpt-welcome-avatar">K</div>
+          <h2>What can I help with?</h2>
+          <div class="gpt-cap-grid">
+            <button class="gpt-cap-card" onclick="chatCapability('tts')">
+              <strong>🔊 Speak text aloud</strong>
+              <span>Type text and hear it via TTS synthesis</span>
+            </button>
+            <button class="gpt-cap-card" onclick="chatCapability('stt')">
+              <strong>🎙 Transcribe voice</strong>
+              <span>Click mic to speak — transcript becomes your message</span>
+            </button>
+            <button class="gpt-cap-card" onclick="chatCapability('classify')">
+              <strong>🖼 Classify an image</strong>
+              <span>Attach a photo and identify what's in it</span>
+            </button>
+            <button class="gpt-cap-card" onclick="chatCapability('detect')">
+              <strong>🎯 Detect objects</strong>
+              <span>Attach a photo and find all objects with bounding boxes</span>
+            </button>
+          </div>
+        </div>
       </div>
+
+      <!-- Attach preview -->
+      <div id="gpt-attach-bar" class="gpt-attach-bar" style="display:none">
+        <img id="gpt-attach-thumb" class="gpt-attach-thumb" src="" alt="attachment" />
+        <div class="gpt-attach-info">
+          <div id="gpt-attach-name" style="font-weight:600;margin-bottom:2px"></div>
+          <div id="gpt-attach-status">Ready to analyze</div>
+        </div>
+        <button class="gpt-attach-clear" onclick="clearChatAttach()" title="Remove">✕</button>
+      </div>
+
+      <!-- Composer -->
+      <div class="gpt-composer-wrap">
+        <div class="gpt-composer">
+          <button class="gpt-icon-btn" id="chat-attach-btn" onclick="document.getElementById('chat-file-input').click()" title="Attach image for analysis">
+            <i class="ri-image-add-line"></i>
+          </button>
+          <input type="file" id="chat-file-input" accept="image/jpeg,image/png,image/webp,image/gif" style="display:none" onchange="handleChatAttach(this.files[0]);this.value=''" />
+          <textarea id="llm-input" rows="1" placeholder="Message Assistant…" onkeydown="llmInputKey(event)" oninput="autoResizeChatInput(this)"></textarea>
+          <button class="gpt-icon-btn" id="chat-mic-btn" onclick="chatMicToggle()" title="Voice input (STT)">
+            <i class="ri-mic-line"></i>
+          </button>
+          <button class="gpt-send-btn" id="llm-send-btn" onclick="sendChat()" title="Send (Enter)">
+            <i class="ri-arrow-up-line"></i>
+          </button>
+        </div>
+        <div class="gpt-composer-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for newline &nbsp;·&nbsp; 📎 attach image for vision analysis</div>
+      </div>
+
     </section>
 
     <!-- TTS -->
@@ -1876,42 +2104,6 @@ function escHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-/* ── Markdown renderer ──────────────────────────────────── */
-function renderMarkdown(text) {
-  /* 1. protect fenced code blocks first */
-  const codeBlocks = [];
-  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    const idx = codeBlocks.length;
-    codeBlocks.push('<pre><code' + (lang ? ' class="lang-' + escHtml(lang) + '"' : '') + '>' + escHtml(code) + '</code></pre>');
-    return '\x00CODE' + idx + '\x00';
-  });
-  /* 2. escape html */
-  text = escHtml(text);
-  /* 3. inline code */
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
-  /* 4. bold / italic */
-  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = text.replace(/_(.+?)_/g, '<em>$1</em>');
-  /* 5. headers */
-  text = text.replace(/^### (.+)$/gm, '<h4>$1</h4>');
-  text = text.replace(/^## (.+)$/gm, '<h3>$1</h3>');
-  /* 6. lists */
-  text = text.replace(/((?:^- .+\n?)+)/gm, (block) => {
-    const items = block.trim().split('\n').map(l => '<li>' + l.replace(/^- /, '') + '</li>').join('');
-    return '<ul>' + items + '</ul>';
-  });
-  text = text.replace(/((?:^\d+\. .+\n?)+)/gm, (block) => {
-    const items = block.trim().split('\n').map(l => '<li>' + l.replace(/^\d+\. /, '') + '</li>').join('');
-    return '<ol>' + items + '</ol>';
-  });
-  /* 7. paragraphs */
-  text = text.replace(/\n\n/g, '<br><br>');
-  text = text.replace(/\n/g, '<br>');
-  /* 8. restore code blocks */
-  text = text.replace(/\x00CODE(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i)]);
-  return text;
-}
 
 /* ── Dashboard ─────────────────────────────────────────── */
 let dashES      = null;
@@ -3170,10 +3362,19 @@ function wsOnMessage(ev) {
         document.getElementById('ws-tts-stop-btn').disabled = true;
         break;
       case 'transcript':
-        const box = document.getElementById('ws-stt-result');
-        box.textContent = msg.text || '(empty)';
-        box.className = 'response-box';
-        document.getElementById('ws-stt-rec-label').textContent = 'transcript received';
+        if (chatMicActive) {
+          // Redirect to chat input
+          chatMicActive = false;
+          const inp = document.getElementById('llm-input');
+          if (inp) { inp.value = msg.text || ''; autoResizeChatInput(inp); inp.focus(); }
+          const mb = document.getElementById('chat-mic-btn');
+          if (mb) mb.classList.remove('recording');
+        } else {
+          const box = document.getElementById('ws-stt-result');
+          if (box) { box.textContent = msg.text || '(empty)'; box.className = 'response-box'; }
+          const recLbl = document.getElementById('ws-stt-rec-label');
+          if (recLbl) recLbl.textContent = 'transcript received';
+        }
         break;
       case 'error':
         document.getElementById('ws-tts-status').textContent = 'Error: ' + msg.msg;
@@ -4692,153 +4893,448 @@ function renderApiRef() {
   document.head.appendChild(s);
 }());
 
-/* ── Assistant / LLM chat ───────────────────────────────── */
-let llmMessages = [];   // {role, content} history sent to the API
-let llmStreaming = false;
+/* ── Assistant / ChatGPT-style ──────────────────────────── */
+let llmMessages   = [];
+let llmStreaming  = false;
+let chatAutoTts   = false;
+let chatMicActive = false;
+let chatAttachB64  = null;
+let chatAttachName = null;
 
 async function checkLlmHealth() {
   const badge = document.getElementById('llm-health-badge');
   if (!badge) return;
-  badge.textContent = 'checking…';
-  badge.style.background = 'var(--accent-bg)';
-  badge.style.color = 'var(--accent)';
+  badge.textContent = 'checking\u2026';
+  badge.style.cssText = 'font-size:12px;padding:2px 9px;border-radius:12px;background:var(--accent-bg);color:var(--accent)';
   try {
     const r = await fetch('/llm/v1/models', { signal: AbortSignal.timeout(3000) });
     if (r.ok) {
       badge.textContent = 'online';
-      badge.style.background = 'rgba(46,160,67,.15)';
-      badge.style.color = '#3fb950';
+      badge.style.cssText = 'font-size:12px;padding:2px 9px;border-radius:12px;background:rgba(46,160,67,.15);color:#3fb950';
     } else if (r.status === 503) {
-      badge.textContent = 'LLM service offline — run: make llm-run';
-      badge.style.background = 'rgba(248,81,73,.1)';
-      badge.style.color = '#f85149';
+      badge.textContent = 'LLM offline \u2014 make llm-run';
+      badge.style.cssText = 'font-size:12px;padding:2px 9px;border-radius:12px;background:rgba(248,81,73,.1);color:#f85149';
     } else {
       badge.textContent = 'error ' + r.status;
-      badge.style.background = 'rgba(248,81,73,.1)';
-      badge.style.color = '#f85149';
+      badge.style.cssText = 'font-size:12px;padding:2px 9px;border-radius:12px;background:rgba(248,81,73,.1);color:#f85149';
     }
   } catch (_) {
     badge.textContent = 'unreachable';
-    badge.style.background = 'rgba(248,81,73,.1)';
-    badge.style.color = '#f85149';
+    badge.style.cssText = 'font-size:12px;padding:2px 9px;border-radius:12px;background:rgba(248,81,73,.1);color:#f85149';
   }
+}
+
+function toggleChatSettings() {
+  const p = document.getElementById('chat-settings-panel');
+  const b = document.getElementById('chat-settings-btn');
+  const open = p.style.display === 'none' || !p.style.display;
+  p.style.display = open ? '' : 'none';
+  b.classList.toggle('active', open);
+}
+
+function toggleChatTts() {
+  chatAutoTts = !chatAutoTts;
+  document.getElementById('chat-tts-btn').classList.toggle('active', chatAutoTts);
+}
+
+function autoResizeChatInput(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 180) + 'px';
 }
 
 function llmInputKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 }
 
+function buildWelcomeEl() {
+  const w = document.createElement('div');
+  w.id = 'chat-welcome';
+  w.className = 'gpt-welcome';
+
+  const av = document.createElement('div');
+  av.className = 'gpt-welcome-avatar';
+  av.textContent = 'K';
+
+  const h2 = document.createElement('h2');
+  h2.textContent = 'What can I help with?';
+
+  const grid = document.createElement('div');
+  grid.className = 'gpt-cap-grid';
+
+  const caps = [
+    ['tts',      '\uD83D\uDD0A Speak text aloud',  'Type text and hear it via TTS synthesis'],
+    ['stt',      '\uD83C\uDF99 Transcribe voice',   'Click mic to speak \u2014 transcript becomes your message'],
+    ['classify', '\uD83D\uDDBC Classify an image',  'Attach a photo and identify what\u2019s in it'],
+    ['detect',   '\uD83C\uDFAF Detect objects',     'Attach a photo and find all objects with bounding boxes'],
+  ];
+  caps.forEach(([type, title, desc]) => {
+    const btn = document.createElement('button');
+    btn.className = 'gpt-cap-card';
+    btn.onclick = () => chatCapability(type);
+    const strong = document.createElement('strong');
+    strong.textContent = title;
+    const span = document.createElement('span');
+    span.textContent = desc;
+    btn.appendChild(strong);
+    btn.appendChild(span);
+    grid.appendChild(btn);
+  });
+
+  w.appendChild(av);
+  w.appendChild(h2);
+  w.appendChild(grid);
+  return w;
+}
+
 function clearChat() {
   llmMessages = [];
+  chatAttachB64 = null; chatAttachName = null;
   const box = document.getElementById('llm-chat-box');
-  if (box) box.textContent = '';
+  if (!box) return;
+  while (box.firstChild) box.removeChild(box.firstChild);
+  box.appendChild(buildWelcomeEl());
+  clearChatAttach();
 }
 
-function appendMsg(role, content) {
+function chatCapability(type) {
+  const input = document.getElementById('llm-input');
+  if (type === 'stt')      { chatMicToggle(); return; }
+  if (type === 'classify' || type === 'detect') {
+    document.getElementById('chat-file-input').click();
+    return;
+  }
+  if (type === 'tts') {
+    input.value = 'Speak this aloud using TTS: "Hello, this is a test of the text-to-speech system."';
+    autoResizeChatInput(input);
+    input.focus();
+  }
+}
+
+/* ---- Image attachment ---- */
+function handleChatAttach(file) {
+  if (!file) return;
+  chatAttachName = file.name;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    chatAttachB64 = ev.target.result.split(',')[1];
+    const bar  = document.getElementById('gpt-attach-bar');
+    const thumb = document.getElementById('gpt-attach-thumb');
+    const name = document.getElementById('gpt-attach-name');
+    const stat = document.getElementById('gpt-attach-status');
+    thumb.src = ev.target.result;
+    name.textContent = file.name;
+    stat.textContent = 'Will run classify + detect on send';
+    bar.style.display = 'flex';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearChatAttach() {
+  chatAttachB64 = null; chatAttachName = null;
+  const bar = document.getElementById('gpt-attach-bar');
+  if (bar) bar.style.display = 'none';
+  const thumb = document.getElementById('gpt-attach-thumb');
+  if (thumb) thumb.src = '';
+}
+
+async function analyzeAttachment(b64) {
+  const parts = [];
+  try {
+    const cr = await fetch('/classify/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: [b64], top_k: 5 })
+    });
+    if (cr.ok) {
+      const cd = await cr.json();
+      const preds = cd?.data?.results?.[0] || cd?.results?.[0] || [];
+      if (preds.length) {
+        const lines = preds.map(p => '  \u2022 ' + p.label + ' (' + (p.score * 100).toFixed(1) + '%)').join('\n');
+        parts.push('Image Classification:\n' + lines);
+      }
+    }
+  } catch (_) {}
+  try {
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const form  = new FormData();
+    form.append('image', new Blob([bytes], { type: 'image/png' }), 'img.png');
+    form.append('conf', '0.3');
+    const dr = await fetch('/detect', { method: 'POST', body: form });
+    if (dr.ok) {
+      const dd  = await dr.json();
+      const boxes = dd?.detections || dd?.results || dd?.data || [];
+      if (boxes.length) {
+        const counts = {};
+        boxes.forEach(b => { const l = b.label || b.class || 'object'; counts[l] = (counts[l] || 0) + 1; });
+        const summary = Object.entries(counts).map(([l, n]) => '  \u2022 ' + l + ' \xd7' + n).join('\n');
+        parts.push('Object Detection:\n' + summary);
+      }
+    }
+  } catch (_) {}
+  return parts.length ? parts.join('\n\n') : null;
+}
+
+/* ---- STT mic ---- */
+async function chatMicToggle() {
+  const btn = document.getElementById('chat-mic-btn');
+  if (chatMicActive) {
+    chatMicActive = false;
+    btn.classList.remove('recording');
+    wsSttStop();
+    return;
+  }
+  wsSetStatus('connecting');
+  const ok = await wsEnsureAudio();
+  if (!ok) {
+    const inp = document.getElementById('llm-input');
+    if (inp) inp.placeholder = 'Could not connect to audio WebSocket.';
+    return;
+  }
+  if (!sttModelAvailable) {
+    const inp = document.getElementById('llm-input');
+    if (inp) inp.placeholder = 'STT model not loaded.';
+    return;
+  }
+  chatMicActive = true;
+  btn.classList.add('recording');
+  const inp = document.getElementById('llm-input');
+  if (inp) { inp.value = ''; inp.placeholder = 'Listening\u2026'; }
+  await wsSttStart();
+}
+
+/* ---- Markdown renderer (no innerHTML on untrusted content) ---- */
+function renderMarkdown(container, text) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  // Split on code fences first to avoid processing code content as markdown
+  const fenceParts = text.split(/(```[\s\S]*?```)/g);
+
+  fenceParts.forEach(part => {
+    if (part.startsWith('```')) {
+      const code = part.replace(/^```\w*\n?/, '').replace(/```$/, '');
+      const pre  = document.createElement('pre');
+      const c    = document.createElement('code');
+      c.textContent = code;
+      pre.appendChild(c);
+      container.appendChild(pre);
+      return;
+    }
+
+    // Process inline markdown line-by-line
+    const lines = part.split('\n');
+    const p     = document.createElement('p');
+    p.style.margin = '0 0 8px';
+
+    lines.forEach((line, idx) => {
+      // Heading
+      const h3m = line.match(/^### (.+)/);
+      const h2m = line.match(/^## (.+)/);
+      if (h3m || h2m) {
+        if (p.childNodes.length) { container.appendChild(p.cloneNode(true)); while(p.firstChild) p.removeChild(p.firstChild); }
+        const h = document.createElement(h3m ? 'h4' : 'h3');
+        h.textContent = (h3m || h2m)[1];
+        container.appendChild(h);
+        return;
+      }
+      // List item
+      const lim = line.match(/^[-*] (.+)/);
+      if (lim) {
+        if (p.childNodes.length) { container.appendChild(p.cloneNode(true)); while(p.firstChild) p.removeChild(p.firstChild); }
+        const ul = container.lastChild && container.lastChild.tagName === 'UL'
+          ? container.lastChild : (() => { const u = document.createElement('ul'); container.appendChild(u); return u; })();
+        const li = document.createElement('li');
+        li.textContent = lim[1];
+        ul.appendChild(li);
+        return;
+      }
+
+      // Inline: bold, italic, code — build text nodes and spans
+      const segments = line.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g);
+      segments.forEach(seg => {
+        if (seg.startsWith('`') && seg.endsWith('`') && seg.length > 2) {
+          const c = document.createElement('code');
+          c.textContent = seg.slice(1, -1);
+          p.appendChild(c);
+        } else if (seg.startsWith('**') && seg.endsWith('**')) {
+          const b = document.createElement('strong');
+          b.textContent = seg.slice(2, -2);
+          p.appendChild(b);
+        } else if (seg.startsWith('*') && seg.endsWith('*')) {
+          const em = document.createElement('em');
+          em.textContent = seg.slice(1, -1);
+          p.appendChild(em);
+        } else {
+          p.appendChild(document.createTextNode(seg));
+        }
+      });
+
+      if (idx < lines.length - 1) p.appendChild(document.createElement('br'));
+    });
+
+    if (p.childNodes.length) container.appendChild(p);
+  });
+}
+
+/* ---- Message row builders ---- */
+function hideWelcome() {
+  const w = document.getElementById('chat-welcome');
+  if (w) w.remove();
+}
+
+function appendUserRow(text, imgSrc) {
   const box = document.getElementById('llm-chat-box');
-  const wrap = document.createElement('div');
-  wrap.className = 'msg ' + (role === 'user' ? 'user' : 'asst');
-  const label = document.createElement('div');
-  label.className = 'msg-role';
-  label.textContent = role === 'user' ? 'You' : 'Assistant';
-  const body = document.createElement('div');
-  body.className = 'msg-body';
-  body.textContent = content;
-  wrap.appendChild(label);
-  wrap.appendChild(body);
-  box.appendChild(wrap);
+  const row = document.createElement('div');
+  row.className = 'chat-row user';
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble';
+  if (imgSrc) {
+    const img = document.createElement('img');
+    img.src = imgSrc; img.className = 'chat-img-thumb';
+    bubble.appendChild(img);
+  }
+  bubble.appendChild(document.createTextNode(text));
+  row.appendChild(bubble);
+  box.appendChild(row);
   box.scrollTop = box.scrollHeight;
-  return body;
 }
 
-function renderMarkdown(el, text) {
-  // Minimal safe markdown: code blocks, inline code, bold, italic, headers, lists
-  let html = escHtml(text)
-    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-    .replace(/\n/g, '<br>');
-  el.textContent = '';
-  el.insertAdjacentHTML('beforeend', html);
+function appendAsstRow() {
+  const box = document.getElementById('llm-chat-box');
+  const row = document.createElement('div');
+  row.className = 'chat-row asst';
+
+  const header = document.createElement('div');
+  header.className = 'chat-asst-header';
+  const av = document.createElement('div');
+  av.className = 'chat-asst-avatar'; av.textContent = 'K';
+  const nm = document.createElement('div');
+  nm.className = 'chat-asst-name'; nm.textContent = 'Assistant';
+  header.appendChild(av); header.appendChild(nm);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-bubble';
+
+  const cursor = document.createElement('span');
+  cursor.className = 'msg-cursor'; cursor.textContent = '\u25ae';
+  bubble.appendChild(cursor);
+
+  const actions = document.createElement('div');
+  actions.className = 'chat-actions';
+
+  row.appendChild(header);
+  row.appendChild(bubble);
+  row.appendChild(actions);
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+  return { bubble, cursor, actions };
 }
 
+function addMsgActions(actions, bubble, fullText) {
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'chat-action-btn';
+  const copyI = document.createElement('i'); copyI.className = 'ri-clipboard-line';
+  copyBtn.appendChild(copyI);
+  copyBtn.appendChild(document.createTextNode(' Copy'));
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(fullText).then(() => {
+      copyI.className = 'ri-check-line';
+      copyBtn.classList.add('copied');
+      setTimeout(() => { copyI.className = 'ri-clipboard-line'; copyBtn.classList.remove('copied'); }, 2000);
+    });
+  };
+
+  const speakBtn = document.createElement('button');
+  speakBtn.className = 'chat-action-btn';
+  const speakI = document.createElement('i'); speakI.className = 'ri-volume-up-line';
+  speakBtn.appendChild(speakI);
+  speakBtn.appendChild(document.createTextNode(' Speak'));
+  speakBtn.onclick = async () => {
+    const inp = document.getElementById('ws-tts-text');
+    if (inp) inp.value = fullText;
+    await wsEnsureAudio();
+    wsTtsSpeak();
+  };
+
+  actions.appendChild(copyBtn);
+  actions.appendChild(speakBtn);
+}
+
+/* ---- Main send ---- */
 async function sendChat() {
   if (llmStreaming) return;
-  const input = document.getElementById('llm-input');
-  const text = input.value.trim();
-  if (!text) return;
+  const input      = document.getElementById('llm-input');
+  const rawText    = input.value.trim();
+  const hasAttach  = !!chatAttachB64;
+  if (!rawText && !hasAttach) return;
 
   input.value = '';
   input.style.height = '';
+  input.placeholder = 'Message Assistant\u2026';
+  hideWelcome();
 
-  // Build messages array
+  let analysisText = null;
+  const attachSrc  = chatAttachB64 ? 'data:image/png;base64,' + chatAttachB64 : null;
+  if (hasAttach) {
+    const stat = document.getElementById('gpt-attach-status');
+    if (stat) stat.textContent = 'Analyzing\u2026';
+    analysisText = await analyzeAttachment(chatAttachB64);
+    clearChatAttach();
+  }
+
+  let userContent = rawText;
+  if (analysisText) {
+    userContent = (rawText ? rawText + '\n\n' : 'I attached an image. Here is the analysis:\n\n') + analysisText;
+  }
+
+  appendUserRow(rawText || '(image)', hasAttach ? attachSrc : null);
+  llmMessages.push({ role: 'user', content: userContent });
+
   const systemPrompt = document.getElementById('llm-system').value.trim();
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push(...llmMessages);
-  messages.push({ role: 'user', content: text });
 
-  // Show user bubble
-  appendMsg('user', text);
-  llmMessages.push({ role: 'user', content: text });
-
-  // Show streaming assistant bubble
-  const asstEl = appendMsg('assistant', '');
-  const cursor = document.createElement('span');
-  cursor.className = 'msg-cursor';
-  cursor.textContent = '▍';
-  asstEl.appendChild(cursor);
-
+  const { bubble, cursor, actions } = appendAsstRow();
   const sendBtn = document.getElementById('llm-send-btn');
   sendBtn.disabled = true;
   llmStreaming = true;
 
   const model  = document.getElementById('llm-model').value.trim() || 'BitNet-b1.58-2B-4T';
-  const temp   = parseFloat(document.getElementById('llm-temp').value) || 0.7;
-  const maxTok = parseInt(document.getElementById('llm-max-tokens').value) || 512;
+  const temp   = parseFloat(document.getElementById('llm-temp').value)    || 0.7;
+  const maxTok = parseInt(document.getElementById('llm-max-tokens').value) || 1024;
 
   let accumulated = '';
   try {
     const res = await fetch('/llm/v1/chat/completions', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: JSON.stringify({ model, messages, temperature: temp, max_tokens: maxTok, stream: true }),
+      body:    JSON.stringify({ model, messages, temperature: temp, max_tokens: maxTok, stream: true }),
     });
 
     if (!res.ok) {
-      let msg;
+      let errMsg;
       if (res.status === 503) {
-        msg = 'LLM service is not running. Start it with: make llm-run';
+        errMsg = 'LLM service is not running. Start it with: make llm-run';
       } else {
-        try {
-          const body = await res.json();
-          msg = body.error || body.message || ('Error ' + res.status);
-        } catch (_) {
-          msg = 'Error ' + res.status;
-        }
+        try { const b = await res.json(); errMsg = b.error || b.message || ('Error ' + res.status); }
+        catch (_) { errMsg = 'Error ' + res.status; }
       }
-      asstEl.textContent = msg;
-      asstEl.style.color = 'var(--red-text, #f85149)';
+      cursor.remove();
+      bubble.textContent = errMsg;
+      bubble.style.color = '#f85149';
       llmMessages.push({ role: 'assistant', content: '' });
       return;
     }
 
-    const reader = res.body.getReader();
+    const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
       const lines = buf.split('\n');
-      buf = lines.pop(); // keep incomplete line
-
+      buf = lines.pop();
       for (const line of lines) {
         if (!line.startsWith('data:')) continue;
         const data = line.slice(5).trim();
@@ -4849,20 +5345,30 @@ async function sendChat() {
           if (delta) {
             accumulated += delta;
             cursor.remove();
-            renderMarkdown(asstEl, accumulated);
-            asstEl.appendChild(cursor);
-            document.getElementById('llm-chat-box').scrollTop = document.getElementById('llm-chat-box').scrollHeight;
+            renderMarkdown(bubble, accumulated);
+            bubble.appendChild(cursor);
+            document.getElementById('llm-chat-box').scrollTop = 9e9;
           }
         } catch (_) {}
       }
     }
 
     cursor.remove();
-    renderMarkdown(asstEl, accumulated);
+    renderMarkdown(bubble, accumulated);
     llmMessages.push({ role: 'assistant', content: accumulated });
+    addMsgActions(actions, bubble, accumulated);
+
+    if (chatAutoTts && accumulated) {
+      const inp = document.getElementById('ws-tts-text');
+      if (inp) inp.value = accumulated;
+      await wsEnsureAudio();
+      wsTtsSpeak();
+    }
+
   } catch (e) {
     cursor.remove();
-    asstEl.textContent = 'Error: ' + e.message;
+    bubble.textContent = 'Error: ' + e.message;
+    bubble.style.color = '#f85149';
     llmMessages.push({ role: 'assistant', content: '' });
   } finally {
     llmStreaming = false;
@@ -4870,6 +5376,7 @@ async function sendChat() {
     input.focus();
   }
 }
+
 
 </script>
 </body>
