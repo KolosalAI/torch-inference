@@ -1,0 +1,11 @@
+[default]
+exclude-files = [
+    "src/core/windows_sapi_tts.rs",
+    "src/bin/provider_comparison.rs",
+    "src/api/llm_proxy.rs",
+]
+fail-under  = 95
+out         = ["Html", "Lcov"]
+output-dir  = "coverage/"
+features    = "default"
+timeout     = "300s"

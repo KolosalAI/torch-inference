@@ -104,3 +104,6 @@ tests/e2e/playwright-report/
 
 # LLM service models
 services/llm/models/*.gguf
+
+# Coverage reports
+coverage/
