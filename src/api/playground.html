@@ -630,6 +630,9 @@
       <button class="nav-item active" onclick="show('status',this)">
         <i class="nav-icon ri-pulse-line"></i> Status
       </button>
+      <button class="nav-item" onclick="show('assistant',this)">
+        <i class="nav-icon ri-robot-2-line"></i> Assistant
+      </button>
       <button class="nav-item" onclick="show('tts',this)">
         <i class="nav-icon ri-music-2-line"></i> TTS
       </button>
@@ -687,6 +690,51 @@
         <div class="response-box ok" id="health-raw">fetching…</div>
       </div>
       <button class="btn btn-ghost" style="align-self:flex-start" onclick="fetchHealth()"><i class="ri-refresh-line"></i> Refresh</button>
+    </section>
+
+    <!-- Assistant -->
+    <section class="panel" id="panel-assistant" style="display:flex;flex-direction:column;height:100%">
+      <div class="panel-header" style="flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="panel-title">Assistant</div>
+          <span id="llm-health-badge" style="font-size:12px;padding:2px 9px;border-radius:12px;background:var(--accent-bg);color:var(--accent)">checking…</span>
+        </div>
+        <div class="panel-desc">1-bit LLM chat via <span class="ep-code">POST /llm/v1/chat/completions</span> (SSE streaming) — requires LLM service on port 8001.</div>
+      </div>
+
+      <!-- Settings row -->
+      <div style="display:flex;gap:12px;flex-shrink:0;margin-bottom:12px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:160px">
+          <label>Model</label>
+          <input id="llm-model" type="text" value="BitNet-b1.58-2B-4T" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+        </div>
+        <div class="field" style="width:90px">
+          <label>Temperature</label>
+          <input id="llm-temp" type="number" value="0.7" min="0" max="2" step="0.05" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+        </div>
+        <div class="field" style="width:80px">
+          <label>Max tokens</label>
+          <input id="llm-max-tokens" type="number" value="512" min="64" max="4096" step="64" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <button class="btn btn-ghost" onclick="clearChat()" style="padding:6px 12px;font-size:13px"><i class="ri-delete-bin-line"></i> Clear</button>
+        </div>
+      </div>
+
+      <!-- System prompt (collapsible) -->
+      <details style="flex-shrink:0;margin-bottom:12px">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);user-select:none;padding:4px 0">System prompt</summary>
+        <textarea id="llm-system" rows="3" style="width:100%;margin-top:6px;padding:8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:inherit;resize:vertical">You are a helpful assistant.</textarea>
+      </details>
+
+      <!-- Chat messages -->
+      <div id="llm-chat-box" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 0;min-height:200px"></div>
+
+      <!-- Input row -->
+      <div class="chat-input-row" style="flex-shrink:0;margin-top:12px">
+        <textarea id="llm-input" rows="2" placeholder="Message the assistant… (Shift+Enter for newline, Enter to send)" style="flex:1;padding:9px 12px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;font-family:inherit;resize:none" onkeydown="llmInputKey(event)"></textarea>
+        <button class="btn btn-primary" id="llm-send-btn" onclick="sendChat()" style="align-self:flex-end;padding:9px 18px"><i class="ri-send-plane-fill"></i> Send</button>
+      </div>
     </section>
 
     <!-- TTS -->
@@ -1485,6 +1533,7 @@ function show(id, btn) {
   if (id === 'models')    switchMdlTab('available');
   if (id === 'tts')       loadTtsHealth();
   if (id === 'audio')     { loadAudioHealth(); sttCheckModel(); }
+  if (id === 'assistant') checkLlmHealth();
   if (id === 'logs')      loadLogs();
   if (id === 'system')    switchSysTab('info');
   if (id === 'endpoints') renderApiRef();
@@ -4642,6 +4691,170 @@ function renderApiRef() {
   s.textContent = '.method.ws{background:var(--accent-bg);color:var(--accent);border:1px solid rgba(0,102,245,.25)}';
   document.head.appendChild(s);
 }());
+
+/* ── Assistant / LLM chat ───────────────────────────────── */
+let llmMessages = [];   // {role, content} history sent to the API
+let llmStreaming = false;
+
+async function checkLlmHealth() {
+  const badge = document.getElementById('llm-health-badge');
+  if (!badge) return;
+  badge.textContent = 'checking…';
+  badge.style.background = 'var(--accent-bg)';
+  badge.style.color = 'var(--accent)';
+  try {
+    const r = await fetch('/llm/v1/models', { signal: AbortSignal.timeout(3000) });
+    if (r.ok) {
+      badge.textContent = 'online';
+      badge.style.background = 'rgba(46,160,67,.15)';
+      badge.style.color = '#3fb950';
+    } else {
+      badge.textContent = 'error ' + r.status;
+      badge.style.background = 'rgba(248,81,73,.1)';
+      badge.style.color = '#f85149';
+    }
+  } catch (_) {
+    badge.textContent = 'service offline';
+    badge.style.background = 'rgba(248,81,73,.1)';
+    badge.style.color = '#f85149';
+  }
+}
+
+function llmInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function clearChat() {
+  llmMessages = [];
+  const box = document.getElementById('llm-chat-box');
+  if (box) box.textContent = '';
+}
+
+function appendMsg(role, content) {
+  const box = document.getElementById('llm-chat-box');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + (role === 'user' ? 'user' : 'asst');
+  const label = document.createElement('div');
+  label.className = 'msg-role';
+  label.textContent = role === 'user' ? 'You' : 'Assistant';
+  const body = document.createElement('div');
+  body.className = 'msg-body';
+  body.textContent = content;
+  wrap.appendChild(label);
+  wrap.appendChild(body);
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+  return body;
+}
+
+function renderMarkdown(el, text) {
+  // Minimal safe markdown: code blocks, inline code, bold, italic, headers, lists
+  let html = escHtml(text)
+    .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/\n/g, '<br>');
+  el.textContent = '';
+  el.insertAdjacentHTML('beforeend', html);
+}
+
+async function sendChat() {
+  if (llmStreaming) return;
+  const input = document.getElementById('llm-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = '';
+
+  // Build messages array
+  const systemPrompt = document.getElementById('llm-system').value.trim();
+  const messages = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push(...llmMessages);
+  messages.push({ role: 'user', content: text });
+
+  // Show user bubble
+  appendMsg('user', text);
+  llmMessages.push({ role: 'user', content: text });
+
+  // Show streaming assistant bubble
+  const asstEl = appendMsg('assistant', '');
+  const cursor = document.createElement('span');
+  cursor.className = 'msg-cursor';
+  cursor.textContent = '▍';
+  asstEl.appendChild(cursor);
+
+  const sendBtn = document.getElementById('llm-send-btn');
+  sendBtn.disabled = true;
+  llmStreaming = true;
+
+  const model  = document.getElementById('llm-model').value.trim() || 'BitNet-b1.58-2B-4T';
+  const temp   = parseFloat(document.getElementById('llm-temp').value) || 0.7;
+  const maxTok = parseInt(document.getElementById('llm-max-tokens').value) || 512;
+
+  let accumulated = '';
+  try {
+    const res = await fetch('/llm/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({ model, messages, temperature: temp, max_tokens: maxTok, stream: true }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => res.status);
+      asstEl.textContent = 'Error ' + res.status + ': ' + err;
+      llmMessages.push({ role: 'assistant', content: '' });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop(); // keep incomplete line
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') break;
+        try {
+          const chunk = JSON.parse(data);
+          const delta = chunk.choices?.[0]?.delta?.content;
+          if (delta) {
+            accumulated += delta;
+            cursor.remove();
+            renderMarkdown(asstEl, accumulated);
+            asstEl.appendChild(cursor);
+            document.getElementById('llm-chat-box').scrollTop = document.getElementById('llm-chat-box').scrollHeight;
+          }
+        } catch (_) {}
+      }
+    }
+
+    cursor.remove();
+    renderMarkdown(asstEl, accumulated);
+    llmMessages.push({ role: 'assistant', content: accumulated });
+  } catch (e) {
+    cursor.remove();
+    asstEl.textContent = 'Error: ' + e.message;
+    llmMessages.push({ role: 'assistant', content: '' });
+  } finally {
+    llmStreaming = false;
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
 
 </script>
 </body>

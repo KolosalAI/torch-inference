@@ -1,7 +1,7 @@
 # Kolosal Inference — Engineering Guidelines
 
 ## Project
-High-performance multimodal inference server written in Rust (actix-web). Serves TTS synthesis, audio/STT transcription, image classification, and YOLO object detection over HTTP.
+High-performance multimodal inference server written in Rust (actix-web). Serves TTS synthesis, audio/STT transcription, image classification, YOLO object detection, and LLM chat completion over HTTP.
 
 ## Scope — What to engineer
 | Feature | Status | Notes |
@@ -11,17 +11,7 @@ High-performance multimodal inference server written in Rust (actix-web). Serves
 | Classification (`/classify/*`) | ✅ Active | ORT/ONNX image classifier |
 | Detection (`/detect/*`, `/yolo/*`) | ✅ Active | YOLO via ORT/ONNX |
 | Dashboard / Health / Metrics | ✅ Active | `/health`, `/system/info`, `/metrics`, `/performance` |
-| **LLM / Chat Completion** | ❌ **Out of scope** | Do NOT add, fix, or extend LLM features. No `/v1/*` endpoints. |
-
-## LLM — Explicitly out of scope
-Do **not** engineer anything related to:
-- Language model inference or chat completion
-- `/v1/chat/completions`, `/v1/completions`, `/v1/models`
-- OpenAI-compatible API forwarding or proxying
-- Token sampling, KV-cache, speculative decoding
-- Any LLM frontend UI in the playground
-
-If asked to do LLM work, decline and suggest using a dedicated LLM server (Ollama, vLLM, etc.) instead.
+| **LLM / Assistant** | ✅ Active | 1-bit LLM chat via `/v1/chat/completions` (OpenAI-compatible, streaming SSE) |
 
 ## Build & Run
 
