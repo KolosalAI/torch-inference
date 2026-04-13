@@ -490,6 +490,47 @@
     font-size: 15px; transition: color .15s, border-color .15s;
   }
   .model-select-row .btn-refresh:hover { color: var(--accent); border-color: var(--accent); }
+
+  /* Custom engine dropdown */
+  .ced { position: relative; flex: 1; min-width: 0; }
+  .ced-trigger {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 36px; padding: 0 12px; background: var(--input-bg); border: 1px solid var(--border);
+    border-radius: 10px; cursor: pointer; font-size: 14px; color: var(--text);
+    gap: 6px; transition: border-color .15s, box-shadow .15s; user-select: none;
+    box-shadow: 0px 3px 4px -4px rgba(0,0,0,0.15);
+  }
+  .ced-trigger:hover { box-shadow: none; }
+  .ced-trigger:hover, .ced-trigger.open { border-color: var(--accent); }
+  .ced-trigger.open { border-bottom-left-radius: 4px; border-bottom-right-radius: 4px; }
+  .ced-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ced-arrow { font-size: 16px; flex-shrink: 0; color: var(--text-muted); transition: transform .15s; }
+  .ced-trigger.open .ced-arrow { transform: rotate(180deg); }
+  .ced-panel {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 300;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-top: none; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    max-height: 260px; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  }
+  .ced-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; cursor: pointer; gap: 8px; font-size: 13px;
+    border-top: 1px solid var(--border); transition: background .1s;
+  }
+  .ced-item:first-child { border-top: none; }
+  .ced-item:hover { background: var(--hover, rgba(88,166,255,.06)); }
+  .ced-item.ced-selected { background: rgba(88,166,255,.1); color: var(--accent); }
+  .ced-item-name { flex: 1; min-width: 0; }
+  .ced-check { font-size: 13px; color: var(--accent); width: 14px; flex-shrink: 0; }
+  .ced-badge {
+    font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
+    white-space: nowrap; flex-shrink: 0; letter-spacing: .3px;
+  }
+  .ced-badge-ok   { background: rgba(46,160,67,.15);  color: #2ea043; }
+  .ced-badge-stub { background: var(--border);         color: var(--text-muted); }
+  .ced-badge-miss { background: rgba(248,81,73,.12);   color: #f85149; }
   .mdl-empty { font-size: 12px; color: var(--text-dim); text-align: center; padding: 28px 0; }
   #mdl-avail-error, #mdl-dl-error { font-size: 12px; color: var(--red); margin-top: 6px; display: none; }
   #mdl-avail-loading, #mdl-down-loading { font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px 0; }
@@ -590,16 +631,16 @@
         <i class="nav-icon ri-pulse-line"></i> Status
       </button>
       <button class="nav-item" onclick="show('tts',this)">
-        <i class="nav-icon ri-music-2-line"></i> TTS Stream
+        <i class="nav-icon ri-music-2-line"></i> TTS
       </button>
       <button class="nav-item" onclick="show('classify',this)">
         <i class="nav-icon ri-image-line"></i> Classify
       </button>
       <button class="nav-item" onclick="show('audio',this)">
-        <i class="nav-icon ri-mic-line"></i> Audio
+        <i class="nav-icon ri-mic-line"></i> STT
       </button>
       <button class="nav-item" onclick="show('detect',this)">
-        <i class="nav-icon ri-focus-3-line"></i> Detection
+        <i class="nav-icon ri-focus-3-line"></i> Detect
       </button>
       <button class="nav-item" onclick="showDashboard(this)">
         <i class="nav-icon ri-dashboard-3-line"></i> Dashboard
@@ -651,7 +692,7 @@
     <!-- TTS -->
     <section class="panel" id="panel-tts">
       <div class="panel-header">
-        <div class="panel-title">TTS Stream</div>
+        <div class="panel-title">TTS</div>
         <div class="panel-desc">Sentence-level streaming synthesis via <span class="ep-code">POST /tts/stream</span>.</div>
       </div>
       <div id="tts-no-engine-banner" style="display:none;padding:12px 16px;background:var(--yellow-bg);border:1px solid var(--yellow);border-radius:10px;font-size:13px;color:var(--yellow-text);margin-bottom:4px">
@@ -668,7 +709,15 @@
           <div class="field">
             <label>Engine</label>
             <div class="model-select-row">
-              <select id="tts-engine" onchange="loadVoicesForEngine(this.value,'tts-voice')"><option value="">default</option></select>
+              <!-- hidden select keeps value for runTTS() -->
+              <select id="tts-engine" style="display:none"><option value="">default</option></select>
+              <div class="ced" id="tts-engine-ced">
+                <div class="ced-trigger" id="tts-engine-trigger" onclick="cedToggle('tts-engine-ced')">
+                  <span class="ced-label" id="tts-engine-display">default</span>
+                  <i class="ri-arrow-down-s-line ced-arrow"></i>
+                </div>
+                <div class="ced-panel" id="tts-engine-panel" style="display:none"></div>
+              </div>
               <button class="btn-refresh" title="Refresh engines" onclick="refreshTtsSelects()"><i class="ri-refresh-line"></i></button>
             </div>
           </div>
@@ -697,43 +746,50 @@
         <div id="tts-audio-wrap"><audio id="tts-audio" controls></audio></div>
       </div>
 
-      <!-- TTS API Endpoints Reference -->
-      <div class="card">
-        <div class="card-title">API Endpoints</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Copy-paste ready commands for integrating TTS into your application.</div>
-        <!-- language tabs -->
-        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:12px;flex-wrap:wrap" id="tts-ep-tabs">
-          <button class="ws-tab active-ws-tab" onclick="ttsSwitchEp('curl')">cURL</button>
-          <button class="ws-tab" onclick="ttsSwitchEp('python')">Python</button>
-          <button class="ws-tab" onclick="ttsSwitchEp('js')">JavaScript</button>
-          <button class="ws-tab" onclick="ttsSwitchEp('go')">Go</button>
-          <button class="ws-tab" onclick="ttsSwitchEp('rust')">Rust</button>
-          <button class="ws-tab" onclick="ttsSwitchEp('node')">Node.js</button>
+      <!-- Live TTS WebSocket -->
+      <div class="card" style="margin-top:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+          <div>
+            <div class="card-title" style="margin-bottom:2px"><i class="ri-wifi-line" style="color:var(--accent)"></i> Live TTS Stream</div>
+            <div style="font-size:12px;color:var(--text-muted)">Low-latency duplex audio via <span class="ep-code">GET /audio/ws</span></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span id="ws-status-dot-tts" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
+            <span id="ws-status-label-tts" style="font-size:12px;color:var(--text-muted)">disconnected</span>
+            <button class="btn btn-ghost" id="ws-connect-btn-tts" onclick="wsAudioToggle()" style="padding:4px 12px;font-size:12px">Connect</button>
+          </div>
         </div>
-        <!-- code panes -->
-        <div id="tts-ep-curl">
-          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-curl-code"></code></pre>
-          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('curl')"><i class="ri-clipboard-line"></i> Copy</button>
-        </div>
-        <div id="tts-ep-python" style="display:none">
-          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-python-code"></code></pre>
-          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('python')"><i class="ri-clipboard-line"></i> Copy</button>
-        </div>
-        <div id="tts-ep-js" style="display:none">
-          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-js-code"></code></pre>
-          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('js')"><i class="ri-clipboard-line"></i> Copy</button>
-        </div>
-        <div id="tts-ep-go" style="display:none">
-          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-go-code"></code></pre>
-          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('go')"><i class="ri-clipboard-line"></i> Copy</button>
-        </div>
-        <div id="tts-ep-rust" style="display:none">
-          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-rust-code"></code></pre>
-          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('rust')"><i class="ri-clipboard-line"></i> Copy</button>
-        </div>
-        <div id="tts-ep-node" style="display:none">
-          <pre style="background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;overflow-x:auto;white-space:pre;color:var(--text)"><code id="tts-ep-node-code"></code></pre>
-          <button class="btn btn-ghost" style="margin-top:6px;font-size:12px" onclick="copyTtsEp('node')"><i class="ri-clipboard-line"></i> Copy</button>
+        <div id="ws-pane-tts">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div>
+              <div class="field">
+                <label>Text to speak</label>
+                <textarea id="ws-tts-text" rows="4" style="width:100%;resize:vertical;font-size:13px;padding:8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit" placeholder="Enter text…"></textarea>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <div class="field">
+                  <label>Voice / Engine</label>
+                  <input id="ws-tts-voice" type="text" placeholder="af_heart (or blank for default)" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+                </div>
+                <div class="field" style="flex:0 0 100px">
+                  <label>Speed</label>
+                  <input id="ws-tts-speed" type="number" value="1.0" min="0.25" max="4.0" step="0.05" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="btn btn-primary" id="ws-tts-btn" onclick="wsTtsSpeak()"><i class="ri-play-circle-line"></i> Speak</button>
+                <button class="btn btn-ghost" id="ws-tts-stop-btn" onclick="wsTtsStop()" disabled><i class="ri-stop-circle-line"></i> Stop</button>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Waveform</div>
+              <canvas id="ws-tts-canvas" width="320" height="80" style="width:100%;border-radius:6px;background:#0d1117"></canvas>
+              <div id="ws-tts-status" style="font-size:12px;color:var(--text-muted);margin-top:6px">—</div>
+              <div id="ws-tts-metrics" style="font-size:11px;color:var(--text-dim);margin-top:4px;display:none">
+                <span id="ws-tts-dur">—</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -770,7 +826,14 @@
           <div class="field" style="margin-top:12px">
             <label>Model</label>
             <div class="model-select-row">
-              <select id="cls-model"><option value="default">default</option></select>
+              <select id="cls-model" style="display:none"><option value="default">default</option></select>
+              <div class="ced" id="cls-model-ced">
+                <div class="ced-trigger" id="cls-model-trigger" onclick="cedToggle('cls-model-ced')">
+                  <span class="ced-label" id="cls-model-display">default</span>
+                  <i class="ri-arrow-down-s-line ced-arrow"></i>
+                </div>
+                <div class="ced-panel" id="cls-model-panel" style="display:none"></div>
+              </div>
               <button class="btn-refresh" title="Refresh models" onclick="refreshModelSelects()"><i class="ri-refresh-line"></i></button>
             </div>
           </div>
@@ -804,6 +867,12 @@
             <div>
               <div class="card-title" style="margin-bottom:2px"><i class="ri-live-line" style="color:var(--accent)"></i> Live Classification Stream</div>
               <div style="font-size:12px;color:var(--text-muted)">WebSocket <span class="ep-code">GET /ws/classify</span> — JPEG frames → top-K labels</div>
+              <div style="margin-top:4px">
+                <span id="cls-model-badge" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:12px;background:var(--border);color:var(--text-muted)">
+                  <span id="cls-model-dot" style="width:7px;height:7px;border-radius:50%;background:#555;display:inline-block"></span>
+                  <span id="cls-model-label">checking model…</span>
+                </span>
+              </div>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span id="cls-ws-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
@@ -824,10 +893,10 @@
                 </div>
               </div>
               <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
-                <button class="btn btn-primary" id="cls-cam-btn" onclick="clsStartCamera()" disabled>
+                <button class="btn btn-primary" id="cls-cam-btn" onclick="clsStartCamera()">
                   <i class="ri-camera-line"></i> Camera
                 </button>
-                <button class="btn btn-ghost" id="cls-vid-btn" onclick="document.getElementById('cls-vid-file').click()" disabled>
+                <button class="btn btn-ghost" id="cls-vid-btn" onclick="document.getElementById('cls-vid-file').click()">
                   <i class="ri-film-line"></i> Video File
                 </button>
                 <input type="file" id="cls-vid-file" accept="video/*" onchange="clsOpenVideo(this.files[0])" style="display:none" />
@@ -879,10 +948,10 @@
     <section class="panel" id="panel-audio">
       <div class="panel-header">
         <div style="display:flex;align-items:center;gap:12px">
-          <div class="panel-title">Audio Transcription</div>
+          <div class="panel-title">STT</div>
           <span id="audio-health-badge" style="font-size:12px;padding:2px 9px;border-radius:12px;background:var(--accent-bg);color:var(--accent)">checking…</span>
         </div>
-        <div class="panel-desc">Upload audio and transcribe via <span class="ep-code">POST /audio/transcribe</span>.</div>
+        <div class="panel-desc">Upload audio and transcribe via <span class="ep-code">POST /audio/transcribe</span> · live stream via <span class="ep-code">GET /audio/ws</span>.</div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div class="card">
@@ -900,7 +969,16 @@
           <div id="audio-file-name" style="font-size:12px;color:var(--text-muted);margin-top:6px;display:none"></div>
           <div class="field" style="margin-top:12px">
             <label>Model</label>
-            <select id="audio-model"><option value="default">default</option></select>
+            <div class="model-select-row">
+              <select id="audio-model" style="display:none"><option value="default">default</option></select>
+              <div class="ced" id="audio-model-ced">
+                <div class="ced-trigger" id="audio-model-trigger" onclick="cedToggle('audio-model-ced')">
+                  <span class="ced-label" id="audio-model-display">default</span>
+                  <i class="ri-arrow-down-s-line ced-arrow"></i>
+                </div>
+                <div class="ced-panel" id="audio-model-panel" style="display:none"></div>
+              </div>
+            </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
             <input type="checkbox" id="audio-timestamps" />
@@ -933,11 +1011,11 @@
         </div>
       </div>
 
-      <!-- WebSocket Audio Stream -->
+      <!-- Live STT WebSocket -->
       <div class="card" style="margin-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
           <div>
-            <div class="card-title" style="margin-bottom:2px"><i class="ri-wifi-line" style="color:var(--accent)"></i> WebSocket Audio Stream</div>
+            <div class="card-title" style="margin-bottom:2px"><i class="ri-wifi-line" style="color:var(--accent)"></i> Live STT Stream</div>
             <div style="font-size:12px;color:var(--text-muted)">Low-latency duplex audio via <span class="ep-code">GET /audio/ws</span></div>
           </div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -946,56 +1024,20 @@
             <button class="btn btn-ghost" id="ws-connect-btn" onclick="wsAudioToggle()" style="padding:4px 12px;font-size:12px">Connect</button>
           </div>
         </div>
-
-        <!-- Sub-tabs -->
-        <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px">
-          <button id="ws-tab-tts" class="ws-tab active-ws-tab" onclick="wsTab('tts')"><i class="ri-broadcast-line"></i> Live TTS</button>
-          <button id="ws-tab-stt" class="ws-tab" onclick="wsTab('stt')"><i class="ri-mic-2-line"></i> Live STT</button>
-        </div>
-
-        <!-- Live TTS pane -->
-        <div id="ws-pane-tts">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-            <div>
-              <div class="field">
-                <label>Text to speak</label>
-                <textarea id="ws-tts-text" rows="4" style="width:100%;resize:vertical;font-size:13px;padding:8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:inherit" placeholder="Enter text…"></textarea>
-              </div>
-              <div class="row" style="margin-top:10px">
-                <div class="field">
-                  <label>Voice / Engine</label>
-                  <input id="ws-tts-voice" type="text" placeholder="af_heart (or blank for default)" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
-                </div>
-                <div class="field" style="flex:0 0 100px">
-                  <label>Speed</label>
-                  <input id="ws-tts-speed" type="number" value="1.0" min="0.25" max="4.0" step="0.05" style="width:100%;padding:6px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px" />
-                </div>
-              </div>
-              <div style="display:flex;gap:8px;margin-top:12px">
-                <button class="btn btn-primary" id="ws-tts-btn" onclick="wsTtsSpeak()" disabled><i class="ri-play-circle-line"></i> Speak</button>
-                <button class="btn btn-ghost" id="ws-tts-stop-btn" onclick="wsTtsStop()" disabled><i class="ri-stop-circle-line"></i> Stop</button>
-              </div>
-            </div>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Waveform</div>
-              <canvas id="ws-tts-canvas" width="320" height="80" style="width:100%;border-radius:6px;background:#0d1117"></canvas>
-              <div id="ws-tts-status" style="font-size:12px;color:var(--text-muted);margin-top:6px">—</div>
-              <div id="ws-tts-metrics" style="font-size:11px;color:var(--text-dim);margin-top:4px;display:none">
-                <span id="ws-tts-dur">—</span>
-              </div>
-            </div>
+        <div id="ws-pane-stt">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+            <span id="stt-model-badge" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:12px;background:var(--border);color:var(--text-muted)">
+              <span id="stt-model-dot" style="width:7px;height:7px;border-radius:50%;background:#555;display:inline-block"></span>
+              <span id="stt-model-label">Checking STT model…</span>
+            </span>
           </div>
-        </div>
-
-        <!-- Live STT pane -->
-        <div id="ws-pane-stt" style="display:none">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
             <div>
               <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
                 Press <strong>Record</strong> to stream microphone audio to the server for real-time transcription.
               </div>
               <div style="display:flex;gap:8px;align-items:center">
-                <button class="btn btn-primary" id="ws-stt-btn" onclick="wsSttToggle()" disabled>
+                <button class="btn btn-primary" id="ws-stt-btn" onclick="wsSttToggle()">
                   <i class="ri-mic-line"></i> Record
                 </button>
                 <span id="ws-stt-rec-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
@@ -1066,7 +1108,7 @@
             </div>
             <div class="field" style="margin-top:8px">
               <label>Confidence Threshold</label>
-              <input type="number" id="detect-conf" value="0.5" min="0" max="1" step="0.05" />
+              <input type="number" id="detect-conf" value="0.25" min="0" max="1" step="0.05" />
             </div>
             <button class="btn btn-primary" style="margin-top:8px" id="detect-btn" onclick="runDetect()" disabled>
               <i class="ri-focus-3-line"></i> Detect
@@ -1087,6 +1129,12 @@
             <div>
               <div class="card-title" style="margin-bottom:2px"><i class="ri-live-line" style="color:var(--accent)"></i> Live Detection Stream</div>
               <div style="font-size:12px;color:var(--text-muted)">WebSocket <span class="ep-code">GET /ws/detect</span> — JPEG frames → bounding boxes</div>
+              <div style="margin-top:4px">
+                <span id="det-model-badge" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:12px;background:var(--border);color:var(--text-muted)">
+                  <span id="det-model-dot" style="width:7px;height:7px;border-radius:50%;background:#555;display:inline-block"></span>
+                  <span id="det-model-label">checking model…</span>
+                </span>
+              </div>
             </div>
             <div style="display:flex;align-items:center;gap:8px">
               <span id="det-ws-dot" style="width:9px;height:9px;border-radius:50%;background:#555;display:inline-block"></span>
@@ -1109,10 +1157,10 @@
                 </div>
               </div>
               <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
-                <button class="btn btn-primary" id="det-cam-btn" onclick="detStartCamera()" disabled>
+                <button class="btn btn-primary" id="det-cam-btn" onclick="detStartCamera()">
                   <i class="ri-camera-line"></i> Camera
                 </button>
-                <button class="btn btn-ghost" id="det-vid-btn" onclick="document.getElementById('det-vid-file').click()" disabled>
+                <button class="btn btn-ghost" id="det-vid-btn" onclick="document.getElementById('det-vid-file').click()">
                   <i class="ri-film-line"></i> Video File
                 </button>
                 <input type="file" id="det-vid-file" accept="video/*" onchange="detOpenVideo(this.files[0])" style="display:none" />
@@ -1148,7 +1196,7 @@
                   </select>
                 </div>
                 <div class="field"><label>Confidence</label>
-                  <input type="number" id="det-live-conf" value="0.5" min="0" max="1" step="0.05" style="width:100%" />
+                  <input type="number" id="det-live-conf" value="0.25" min="0" max="1" step="0.05" style="width:100%" />
                 </div>
               </div>
               <div>
@@ -1482,7 +1530,7 @@ function show(id, btn) {
   btn.classList.add('active');
   if (id === 'models')    switchMdlTab('available');
   if (id === 'tts')       loadTtsHealth();
-  if (id === 'audio')     loadAudioHealth();
+  if (id === 'audio')     { loadAudioHealth(); sttCheckModel(); }
   if (id === 'logs')      loadLogs();
   if (id === 'system')    switchSysTab('info');
   if (id === 'endpoints') renderApiRef();
@@ -1672,6 +1720,10 @@ let audioRecordSecs = 0;
 async function toggleAudioRecord() {
   if (audioRecorder && audioRecorder.state === 'recording') {
     audioRecorder.stop();
+    return;
+  }
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    alert('Microphone access requires a secure context.\nPlease open this page via https:// or http://localhost.');
     return;
   }
   try {
@@ -2228,6 +2280,103 @@ function mkEl(tag, cls, text) {
 }
 function clearEl(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
 
+/* ── Custom engine dropdown (CED) ───────────────────────────── */
+const TTS_ENGINE_DEFS = [
+  { id: 'kokoro-onnx', name: 'Kokoro ONNX TTS',        stub: false },
+  { id: 'kokoro',      name: 'Kokoro TTS v1.0',          stub: false },
+  { id: 'piper',       name: 'Piper Neural TTS',          stub: false },
+  { id: 'vits',        name: 'VITS Neural TTS',           stub: true  },
+  { id: 'styletts2',   name: 'StyleTTS2 Expressive TTS',  stub: true  },
+  { id: 'bark',        name: 'Bark Generative Audio',     stub: true  },
+  { id: 'xtts',        name: 'XTTS Multilingual TTS',    stub: true  },
+];
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.ced')) {
+    document.querySelectorAll('.ced-panel').forEach(function(p) { p.style.display = 'none'; });
+    document.querySelectorAll('.ced-trigger').forEach(function(t) { t.classList.remove('open'); });
+  }
+});
+
+function cedToggle(cedId) {
+  const panel   = document.getElementById(cedId + '-panel');
+  const trigger = document.getElementById(cedId + '-trigger');
+  const isOpen  = panel.style.display !== 'none';
+  document.querySelectorAll('.ced-panel').forEach(function(p) { p.style.display = 'none'; });
+  document.querySelectorAll('.ced-trigger').forEach(function(t) { t.classList.remove('open'); });
+  if (!isOpen) { panel.style.display = ''; trigger.classList.add('open'); }
+}
+
+function cedSelect(cedId, engineId, engineName, voiceSelectId) {
+  var sel = document.getElementById('tts-engine');
+  if (sel) sel.value = engineId;
+  var disp = document.getElementById(cedId + '-display');
+  if (disp) disp.textContent = engineName || 'default';
+  var panel = document.getElementById(cedId + '-panel');
+  if (panel) panel.style.display = 'none';
+  var trigger = document.getElementById(cedId + '-trigger');
+  if (trigger) trigger.classList.remove('open');
+  panel && panel.querySelectorAll('.ced-item').forEach(function(el) {
+    var match = el.dataset.engineId === engineId;
+    el.classList.toggle('ced-selected', match);
+    var chk = el.querySelector('.ced-check');
+    if (chk) chk.textContent = match ? '\u2713' : '';
+  });
+  if (voiceSelectId) loadVoicesForEngine(engineId, voiceSelectId);
+}
+
+function makeCedItem(cedId, engineId, engineName, badgeCls, badgeTxt, isSelected, voiceSelectId) {
+  var row = document.createElement('div');
+  row.className = 'ced-item' + (isSelected ? ' ced-selected' : '');
+  row.dataset.engineId = engineId;
+  row.addEventListener('click', function() { cedSelect(cedId, engineId, engineName, voiceSelectId); });
+
+  var check = document.createElement('span');
+  check.className = 'ced-check';
+  check.textContent = isSelected ? '\u2713' : '';
+
+  var nameEl = document.createElement('span');
+  nameEl.className = 'ced-item-name';
+  nameEl.textContent = engineName;
+
+  row.appendChild(check);
+  row.appendChild(nameEl);
+
+  if (badgeCls) {
+    var badge = document.createElement('span');
+    badge.className = 'ced-badge ' + badgeCls;
+    badge.textContent = badgeTxt;
+    row.appendChild(badge);
+  }
+  return row;
+}
+
+function buildTtsEngineDropdown(loadedEngines) {
+  var panel = document.getElementById('tts-engine-panel');
+  if (!panel) return;
+  var loadedIds = new Set(loadedEngines.map(function(e) {
+    return typeof e === 'string' ? e : (e.id || e.name || '');
+  }));
+  var currentVal = (document.getElementById('tts-engine') || {}).value || '';
+
+  while (panel.firstChild) panel.removeChild(panel.firstChild);
+
+  panel.appendChild(makeCedItem('tts-engine-ced', '', 'default', '', '', currentVal === '', 'tts-voice'));
+
+  TTS_ENGINE_DEFS.forEach(function(def) {
+    var loaded = loadedIds.has(def.id);
+    var badgeCls, badgeTxt;
+    if (def.stub) {
+      badgeCls = 'ced-badge-stub'; badgeTxt = 'Stub \u2022 via Kokoro';
+    } else if (loaded) {
+      badgeCls = 'ced-badge-ok';   badgeTxt = 'Downloaded \u2713';
+    } else {
+      badgeCls = 'ced-badge-miss'; badgeTxt = 'Not downloaded';
+    }
+    panel.appendChild(makeCedItem('tts-engine-ced', def.id, def.name, badgeCls, badgeTxt, currentVal === def.id, 'tts-voice'));
+  });
+}
+
 /* ── Model select population ────────────────────────────────── */
 const CLS_SEL  = ['cls-model', 'pg-cls-model'];
 const TTS_SEL  = ['tts-engine', 'pg-tts-engine'];
@@ -2246,6 +2395,61 @@ function fillSelect(id, items, valueFn, labelFn, defLabel) {
   if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
 
+/* Generic model CED — no badges, just name + checkmark */
+function cedSelectModel(cedId, hiddenSelectId, value, label) {
+  var sel = document.getElementById(hiddenSelectId);
+  if (sel) sel.value = value;
+  var disp = document.getElementById(cedId + '-display');
+  if (disp) disp.textContent = label || 'default';
+  var panel = document.getElementById(cedId + '-panel');
+  if (panel) {
+    panel.style.display = 'none';
+    panel.querySelectorAll('.ced-item').forEach(function(el) {
+      var match = el.dataset.modelId === value;
+      el.classList.toggle('ced-selected', match);
+      var chk = el.querySelector('.ced-check');
+      if (chk) chk.textContent = match ? '\u2713' : '';
+    });
+  }
+  var trigger = document.getElementById(cedId + '-trigger');
+  if (trigger) trigger.classList.remove('open');
+}
+
+function buildModelDropdown(cedId, hiddenSelectId, items, valueFn, labelFn, defLabel) {
+  var panel = document.getElementById(cedId + '-panel');
+  if (!panel) return;
+  var currentVal = (document.getElementById(hiddenSelectId) || {}).value || '';
+  while (panel.firstChild) panel.removeChild(panel.firstChild);
+
+  /* default item */
+  (function() {
+    var row = document.createElement('div');
+    var isSelected = currentVal === '' || currentVal === 'default';
+    row.className = 'ced-item' + (isSelected ? ' ced-selected' : '');
+    row.dataset.modelId = '';
+    row.addEventListener('click', function() { cedSelectModel(cedId, hiddenSelectId, '', defLabel || 'default'); });
+    var chk = document.createElement('span'); chk.className = 'ced-check'; chk.textContent = isSelected ? '\u2713' : ''; row.appendChild(chk);
+    var nm  = document.createElement('span'); nm.className  = 'ced-item-name'; nm.textContent = defLabel || 'default'; row.appendChild(nm);
+    panel.appendChild(row);
+  })();
+
+  items.forEach(function(item) {
+    var val  = valueFn(item);
+    var name = labelFn(item);
+    var row  = document.createElement('div');
+    var isSelected = currentVal === val;
+    row.className = 'ced-item' + (isSelected ? ' ced-selected' : '');
+    row.dataset.modelId = val;
+    row.addEventListener('click', function() { cedSelectModel(cedId, hiddenSelectId, val, name); });
+    var chk = document.createElement('span'); chk.className = 'ced-check'; chk.textContent = isSelected ? '\u2713' : ''; row.appendChild(chk);
+    var nm  = document.createElement('span'); nm.className  = 'ced-item-name'; nm.textContent = name; row.appendChild(nm);
+    panel.appendChild(row);
+  });
+}
+
+const MODEL_DROP_CLS   = { cedId: 'cls-model-ced',   hiddenId: 'cls-model'   };
+const MODEL_DROP_AUDIO = { cedId: 'audio-model-ced',  hiddenId: 'audio-model' };
+
 async function refreshModelSelects() {
   try {
     const r = await fetch('/models/managed');
@@ -2255,6 +2459,8 @@ async function refreshModelSelects() {
     const idOf   = m => m.id || m.model_id || m.name || '';
     const nameOf = m => m.name || m.id || m.model_id || '—';
     CLS_SEL.forEach(id => fillSelect(id, models, idOf, nameOf, 'default'));
+    buildModelDropdown(MODEL_DROP_CLS.cedId,   MODEL_DROP_CLS.hiddenId,   models, idOf, nameOf, 'default');
+    buildModelDropdown(MODEL_DROP_AUDIO.cedId,  MODEL_DROP_AUDIO.hiddenId,  models, idOf, nameOf, 'default');
   } catch (_) {}
 }
 
@@ -2266,7 +2472,10 @@ async function refreshTtsSelects() {
     const engines = Array.isArray(data) ? data : (data.engines || []);
     const valOf   = e => (typeof e === 'string' ? e : (e.id   || e.name || ''));
     const labelOf = e => (typeof e === 'string' ? e : (e.name || e.id   || ''));
+    // Keep hidden selects in sync for other panels
     TTS_SEL.forEach(id => fillSelect(id, engines, valOf, labelOf, 'default'));
+    // Build the custom engine dropdown with download-status badges
+    buildTtsEngineDropdown(engines);
     const firstId = engines.length ? valOf(engines[0]) : '';
     if (firstId) {
       loadVoicesForEngine(firstId, 'tts-voice');
@@ -2296,7 +2505,10 @@ async function loadVoicesForEngine(engineId, voiceSelectId) {
   } catch (_) {}
 }
 
+buildModelDropdown(MODEL_DROP_CLS.cedId,   MODEL_DROP_CLS.hiddenId,   [], m => m, m => m, 'default');
+buildModelDropdown(MODEL_DROP_AUDIO.cedId,  MODEL_DROP_AUDIO.hiddenId,  [], m => m, m => m, 'default');
 refreshModelSelects();
+buildTtsEngineDropdown([]); // render with "checking…" state immediately
 refreshTtsSelects();
 renderTtsEpSnippets();
 
@@ -2419,9 +2631,12 @@ async function loadAvailableModels() {
       });
     }
   } catch (_) { /* use local data — no error shown */ }
-  availableCatalog = catalog;
-  renderCatalog(availableCatalog);
-  load.style.display = 'none';
+  try {
+    availableCatalog = catalog;
+    renderCatalog(availableCatalog);
+  } finally {
+    load.style.display = 'none';
+  }
 }
 
 function taskBadgeCls(task) {
@@ -2840,22 +3055,67 @@ let wsMicProc = null;         // ScriptProcessorNode
 let wsRecording = false;
 
 function wsStatus(connected) {
-  const dot   = document.getElementById('ws-status-dot');
-  const label = document.getElementById('ws-status-label');
-  const btn   = document.getElementById('ws-connect-btn');
-  if (!dot) return;
-  dot.style.background   = connected ? '#2EA043' : '#555';
-  label.textContent      = connected ? 'connected' : 'disconnected';
-  btn.textContent        = connected ? 'Disconnect' : 'Connect';
-  document.getElementById('ws-tts-btn').disabled = !connected;
-  document.getElementById('ws-stt-btn').disabled = !connected;
+  wsSetStatus(connected ? 'connected' : 'disconnected');
 }
 
-function wsTab(t) {
-  document.getElementById('ws-pane-tts').style.display = t === 'tts' ? '' : 'none';
-  document.getElementById('ws-pane-stt').style.display = t === 'stt' ? '' : 'none';
-  document.querySelectorAll('#panel-audio .ws-tab').forEach(b => b.classList.remove('active-ws-tab'));
-  document.getElementById('ws-tab-' + t).classList.add('active-ws-tab');
+/* Wait for audio WS to open, auto-connecting if needed. */
+function wsEnsureAudio() {
+  return new Promise(function(resolve) {
+    if (wsAudio && wsAudio.readyState === 1) { resolve(true); return; }
+    wsAudioConnect();
+    var tries = 0;
+    var iv = setInterval(function() {
+      if (wsAudio && wsAudio.readyState === 1) { clearInterval(iv); resolve(true); }
+      else if (++tries > 25) { clearInterval(iv); resolve(false); }
+    }, 200);
+  });
+}
+
+function wsSetStatus(state) {
+  const color   = state === 'connected' ? '#2EA043' : state === 'connecting' ? '#E3A228' : '#555';
+  const text    = state === 'connected' ? 'connected' : state === 'connecting' ? 'connecting…' : 'disconnected';
+  const btnText = state === 'connected' ? 'Disconnect' : 'Connect';
+  ['ws-status-dot', 'ws-status-dot-tts'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.background = color;
+  });
+  ['ws-status-label', 'ws-status-label-tts'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = text;
+  });
+  ['ws-connect-btn', 'ws-connect-btn-tts'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = btnText;
+  });
+}
+
+let sttModelAvailable = false;
+
+async function sttCheckModel() {
+  const dot = document.getElementById('stt-model-dot');
+  const lbl = document.getElementById('stt-model-label');
+  const btn = document.getElementById('ws-stt-btn');
+  if (!dot) return;
+  try {
+    const r = await fetch('/audio/health');
+    if (!r.ok) throw new Error('health check failed');
+    const data = await r.json();
+    const models = data.models_available || [];
+    const hasStt = models.some(m => m.startsWith('STT:'));
+    if (hasStt) {
+      dot.style.background = '#2EA043';
+      lbl.textContent = 'STT model loaded ✓';
+      sttModelAvailable = true;
+      if (btn) btn.disabled = false;
+    } else {
+      dot.style.background = '#F85149';
+      lbl.textContent = 'STT model not loaded — place stt_default.onnx in models/audio/';
+      sttModelAvailable = false;
+      if (btn) btn.disabled = true;
+    }
+  } catch (_) {
+    dot.style.background = '#555';
+    lbl.textContent = 'Server unreachable';
+    sttModelAvailable = false;
+    if (btn) btn.disabled = true;
+  }
 }
 
 function wsAudioToggle() {
@@ -2915,6 +3175,16 @@ function wsOnMessage(ev) {
         break;
       case 'error':
         document.getElementById('ws-tts-status').textContent = 'Error: ' + msg.msg;
+        // Also surface the error in the STT panel when waiting for a transcript
+        {
+          const recLabel = document.getElementById('ws-stt-rec-label');
+          if (recLabel && (recLabel.textContent === 'processing…' || wsRecording)) {
+            recLabel.textContent = 'error';
+            if (wsRecording) { wsRecording = false; }
+            const sttResult = document.getElementById('ws-stt-result');
+            if (sttResult) sttResult.textContent = 'STT error: ' + (msg.msg || 'unknown');
+          }
+        }
         break;
     }
   } else {
@@ -2948,18 +3218,25 @@ function wsScheduleChunk(arrayBuffer) {
   wsNextPlayAt = start + buf.duration;
 }
 
-function wsTtsSpeak() {
-  if (!wsAudio || wsAudio.readyState !== 1) return;
+async function wsTtsSpeak() {
+  const statusEl = document.getElementById('ws-tts-status');
   const text  = document.getElementById('ws-tts-text').value.trim();
-  const voice = document.getElementById('ws-tts-voice').value.trim() || undefined;
-  const speed = parseFloat(document.getElementById('ws-tts-speed').value) || 1.0;
-  if (!text) { document.getElementById('ws-tts-status').textContent = 'Enter text first'; return; }
-  wsAudio.send(JSON.stringify({ type: 'tts', text, voice, speed }));
-  document.getElementById('ws-tts-status').textContent = 'Synthesising…';
-  document.getElementById('ws-tts-stop-btn').disabled = false;
-  document.getElementById('ws-tts-metrics').style.display = 'none';
-  wsEnsureAudioCtx();
-  wsNextPlayAt = 0;
+  if (!text) { statusEl.textContent = 'Enter text first'; return; }
+  const btn = document.getElementById('ws-tts-btn');
+  btn.disabled = true;
+  statusEl.textContent = 'Connecting…';
+  try {
+    const ok = await wsEnsureAudio();
+    if (!ok) { statusEl.textContent = 'Could not connect to audio WebSocket'; return; }
+    const voice = document.getElementById('ws-tts-voice').value.trim() || undefined;
+    const speed = parseFloat(document.getElementById('ws-tts-speed').value) || 1.0;
+    wsAudio.send(JSON.stringify({ type: 'tts', text, voice, speed }));
+    statusEl.textContent = 'Synthesising…';
+    document.getElementById('ws-tts-stop-btn').disabled = false;
+    document.getElementById('ws-tts-metrics').style.display = 'none';
+    wsEnsureAudioCtx();
+    wsNextPlayAt = 0;
+  } finally { btn.disabled = false; }
 }
 
 function wsTtsStop() {
@@ -2975,25 +3252,40 @@ function wsTtsStop() {
 async function wsSttToggle() {
   if (wsRecording) {
     wsSttStop();
-  } else {
-    await wsSttStart();
+    return;
   }
+  if (!sttModelAvailable) {
+    document.getElementById('ws-stt-result').textContent = 'STT model not loaded. Place stt_default.onnx in models/audio/ and restart the server.';
+    return;
+  }
+  const ok = await wsEnsureAudio();
+  if (!ok) {
+    document.getElementById('ws-stt-result').textContent = 'Could not connect to audio WebSocket.';
+    return;
+  }
+  await wsSttStart();
 }
 
 async function wsSttStart() {
-  if (!wsAudio || wsAudio.readyState !== 1) return;
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    document.getElementById('ws-stt-result').textContent = 'Microphone access requires a secure context (https:// or localhost).';
+    return;
+  }
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1 }, video: false });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
   } catch (err) {
     document.getElementById('ws-stt-result').textContent = 'Microphone error: ' + err.message;
     return;
   }
   wsMicStream = stream;
 
-  // Use AudioContext + ScriptProcessorNode to capture raw PCM f32le
-  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  const src  = ctx.createMediaStreamSource(stream);
+  const TARGET_RATE = 16000;
+  // sampleRate hint helps Chrome; actual rate confirmed via ctx.sampleRate after creation
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET_RATE });
+  const deviceRate = ctx.sampleRate;
+
+  const src = ctx.createMediaStreamSource(stream);
   wsAnalyserStt = ctx.createAnalyser();
   wsAnalyserStt.fftSize = 512;
   src.connect(wsAnalyserStt);
@@ -3001,21 +3293,43 @@ async function wsSttStart() {
   const proc = ctx.createScriptProcessor(4096, 1, 1);
   proc.onaudioprocess = (e) => {
     if (!wsRecording) return;
-    const pcm = e.inputBuffer.getChannelData(0); // Float32Array
-    wsAudio.send(pcm.buffer.slice(0));
+    const raw = e.inputBuffer.getChannelData(0); // Float32Array at deviceRate
+    let pcm;
+    if (deviceRate === TARGET_RATE) {
+      pcm = raw.buffer.slice(0);
+    } else {
+      // Linear interpolation resample: deviceRate -> 16000
+      const ratio  = deviceRate / TARGET_RATE;
+      const outLen = Math.round(raw.length / ratio);
+      const out    = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const pos  = i * ratio;
+        const lo   = Math.floor(pos);
+        const hi   = Math.min(lo + 1, raw.length - 1);
+        const frac = pos - lo;
+        out[i] = raw[lo] * (1 - frac) + raw[hi] * frac;
+      }
+      pcm = out.buffer;
+    }
+    wsAudio.send(pcm);
   };
   src.connect(proc);
   proc.connect(ctx.destination);
   wsMicProc = { proc, ctx };
 
-  wsAudio.send(JSON.stringify({ type: 'stt_begin', sample_rate: 16000 }));
+  wsAudio.send(JSON.stringify({ type: 'stt_begin', sample_rate: TARGET_RATE }));
   wsRecording = true;
 
   const dot   = document.getElementById('ws-stt-rec-dot');
   const label = document.getElementById('ws-stt-rec-label');
   dot.style.background = '#E74C3C';
   label.textContent    = 'recording…';
-  document.getElementById('ws-stt-btn').innerHTML = '<i class="ri-stop-circle-line"></i> Stop';
+  const sttBtn = document.getElementById('ws-stt-btn');
+  sttBtn.textContent = '';
+  const stopIcon = document.createElement('i');
+  stopIcon.className = 'ri-stop-circle-line';
+  sttBtn.appendChild(stopIcon);
+  sttBtn.appendChild(document.createTextNode(' Stop'));
 
   wsDrawLoop('ws-stt-canvas', wsAnalyserStt);
 }
@@ -3460,7 +3774,7 @@ async function runDetect() {
   if (!detectFile) return;
   const version = document.getElementById('detect-version').value || 'v8';
   const size    = document.getElementById('detect-size').value    || 'n';
-  const conf    = parseFloat(document.getElementById('detect-conf').value) || 0.5;
+  const conf    = parseFloat(document.getElementById('detect-conf').value) || 0.25;
   document.getElementById('detect-btn').disabled = true;
   setBox('detect-out', 'Detecting…', 'stream');
   try {
@@ -3481,9 +3795,16 @@ async function runDetect() {
       }
       return;
     }
-    const detections = (data?.data?.detections) || (data?.detections) || [];
+    const detections = (data?.data?.results?.detections) || (data?.data?.detections) || (data?.detections) || [];
     drawDetections(detections);
-    setBox('detect-out', JSON.stringify(data, null, 2), 'ok');
+    const summary = detections.length === 0
+      ? 'No objects detected.'
+      : detections.map((d, i) => {
+          const b = d.bbox;
+          const conf = ((d.confidence || 0) * 100).toFixed(1);
+          return `#${i + 1}  ${d.class_name || 'unknown'}  ${conf}%\n     x1=${b.x1.toFixed(0)} y1=${b.y1.toFixed(0)}  x2=${b.x2.toFixed(0)} y2=${b.y2.toFixed(0)}`;
+        }).join('\n');
+    setBox('detect-out', `${detections.length} object(s) detected\n\n${summary}`, 'ok');
   } catch (e) { setBox('detect-out', 'Error: ' + e.message, 'error'); }
   finally { document.getElementById('detect-btn').disabled = false; }
 }
@@ -3516,6 +3837,7 @@ function detTab(t) {
   document.getElementById('det-pane-live').style.display = t === 'live' ? '' : 'none';
   document.querySelectorAll('#panel-detect .ws-tab').forEach(b => b.classList.remove('active-ws-tab'));
   document.getElementById('det-tab-' + t).classList.add('active-ws-tab');
+  if (t === 'live') detCheckModel();
 }
 
 function clsTab(t) {
@@ -3523,6 +3845,7 @@ function clsTab(t) {
   document.getElementById('cls-pane-live').style.display = t === 'live' ? '' : 'none';
   document.querySelectorAll('#panel-classify .ws-tab').forEach(b => b.classList.remove('active-ws-tab'));
   document.getElementById('cls-tab-' + t).classList.add('active-ws-tab');
+  if (t === 'live') clsCheckModel();
 }
 
 /* ── Detection WebSocket stream ─────────────────────────────────── */
@@ -3538,8 +3861,48 @@ function detWsStatus(connected) {
   dot.style.background = connected ? '#2EA043' : '#555';
   lbl.textContent      = connected ? 'connected' : 'disconnected';
   btn.textContent      = connected ? 'Disconnect' : 'Connect';
-  document.getElementById('det-cam-btn').disabled = !connected;
-  document.getElementById('det-vid-btn').disabled = !connected;
+}
+
+/* Waits for the detect WS to be open, auto-connecting if needed. */
+function detEnsureWs() {
+  return new Promise(resolve => {
+    if (detWs && detWs.readyState === 1) { resolve(true); return; }
+    detWsConnect();
+    let tries = 0;
+    const iv = setInterval(() => {
+      if (detWs && detWs.readyState === 1) { clearInterval(iv); resolve(true); }
+      else if (++tries > 25) { clearInterval(iv); resolve(false); }
+    }, 200);
+  });
+}
+
+/* Probe detect model availability and update badge. */
+async function detCheckModel() {
+  const dot = document.getElementById('det-model-dot');
+  const lbl = document.getElementById('det-model-label');
+  if (!dot) return;
+  const probe = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==';
+  try {
+    const form = new FormData();
+    form.append('image', new Blob([Uint8Array.from(atob(probe), c => c.charCodeAt(0))], { type: 'image/png' }), 'probe.png');
+    form.append('version', 'v8');
+    form.append('size', 'n');
+    form.append('conf', '0.5');
+    const r = await fetch('/detect', { method: 'POST', body: form });
+    if (r.ok || r.status === 422) {
+      dot.style.background = '#2EA043';
+      lbl.textContent = 'Model downloaded ✓';
+    } else if (r.status === 404 || r.status === 503) {
+      dot.style.background = '#F85149';
+      lbl.textContent = 'Model not downloaded';
+    } else {
+      dot.style.background = '#FFA931';
+      lbl.textContent = 'Model status unknown';
+    }
+  } catch (_) {
+    dot.style.background = '#555';
+    lbl.textContent = 'Server unreachable';
+  }
 }
 
 function detWsToggle() {
@@ -3583,27 +3946,38 @@ function detSendConfig() {
     type: 'config',
     version: document.getElementById('det-live-version').value,
     size: document.getElementById('det-live-size').value,
-    conf: parseFloat(document.getElementById('det-live-conf').value) || 0.5,
+    conf: parseFloat(document.getElementById('det-live-conf').value) || 0.25,
     iou: 0.45
   };
   detWs.send(JSON.stringify(cfg));
 }
 
 async function detStartCamera() {
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    alert('Camera access requires a secure context.\nPlease open this page via https:// or http://localhost.');
+    return;
+  }
+  const btn = document.getElementById('det-cam-btn');
+  btn.disabled = true;
   try {
+    const wsOk = await detEnsureWs();
+    if (!wsOk) { alert('Could not connect to detection WebSocket. Is the server running?'); return; }
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     const vid = document.getElementById('det-video');
     vid.srcObject = stream;
+    vid.play().catch(() => {});
     vid.style.display = '';
     document.getElementById('det-live-placeholder').style.display = 'none';
     document.getElementById('det-stop-src-btn').style.display = '';
     detStartFrameLoop();
   } catch (e) {
     alert('Camera error: ' + e.message);
-  }
+  } finally { btn.disabled = false; }
 }
 
-function detOpenVideo(file) {
+async function detOpenVideo(file) {
+  const wsOk = await detEnsureWs();
+  if (!wsOk) { alert('Could not connect to detection WebSocket. Is the server running?'); return; }
   const vid = document.getElementById('det-video');
   vid.src = URL.createObjectURL(file);
   vid.loop = true;
@@ -3681,8 +4055,49 @@ function clsWsStatus(connected) {
   dot.style.background = connected ? '#2EA043' : '#555';
   lbl.textContent      = connected ? 'connected' : 'disconnected';
   btn.textContent      = connected ? 'Disconnect' : 'Connect';
-  document.getElementById('cls-cam-btn').disabled = !connected;
-  document.getElementById('cls-vid-btn').disabled = !connected;
+}
+
+/* Waits for the classify WS to be open, auto-connecting if needed.
+   Resolves true when ready, false on timeout/error. */
+function clsEnsureWs() {
+  return new Promise(resolve => {
+    if (clsWs && clsWs.readyState === 1) { resolve(true); return; }
+    clsWsConnect();
+    let tries = 0;
+    const iv = setInterval(() => {
+      if (clsWs && clsWs.readyState === 1) { clearInterval(iv); resolve(true); }
+      else if (++tries > 25) { clearInterval(iv); resolve(false); }
+    }, 200);
+  });
+}
+
+/* Probe classify model availability and update badge. */
+async function clsCheckModel() {
+  const dot = document.getElementById('cls-model-dot');
+  const lbl = document.getElementById('cls-model-label');
+  if (!dot) return;
+  // 1×1 white PNG in base64
+  const probe = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==';
+  try {
+    const r = await fetch('/classify/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: [probe], top_k: 1 })
+    });
+    if (r.ok || r.status === 422) {
+      dot.style.background = '#2EA043';
+      lbl.textContent = 'Model downloaded ✓';
+    } else if (r.status === 404 || r.status === 503) {
+      dot.style.background = '#F85149';
+      lbl.textContent = 'Model not downloaded';
+    } else {
+      dot.style.background = '#FFA931';
+      lbl.textContent = 'Model status unknown';
+    }
+  } catch (_) {
+    dot.style.background = '#555';
+    lbl.textContent = 'Server unreachable';
+  }
 }
 
 function clsWsToggle() {
@@ -3730,18 +4145,30 @@ function clsSendConfig() {
 }
 
 async function clsStartCamera() {
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    alert('Camera access requires a secure context.\nPlease open this page via https:// or http://localhost.');
+    return;
+  }
+  const btn = document.getElementById('cls-cam-btn');
+  btn.disabled = true;
   try {
+    const wsOk = await clsEnsureWs();
+    if (!wsOk) { alert('Could not connect to classification WebSocket. Is the server running?'); return; }
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     const vid = document.getElementById('cls-video');
     vid.srcObject = stream;
+    vid.play().catch(() => {});
     vid.style.display = '';
     document.getElementById('cls-live-placeholder').style.display = 'none';
     document.getElementById('cls-stop-src-btn').style.display = '';
     clsStartFrameLoop();
   } catch (e) { alert('Camera error: ' + e.message); }
+  finally { btn.disabled = false; }
 }
 
-function clsOpenVideo(file) {
+async function clsOpenVideo(file) {
+  const wsOk = await clsEnsureWs();
+  if (!wsOk) { alert('Could not connect to classification WebSocket. Is the server running?'); return; }
   const vid = document.getElementById('cls-video');
   vid.src = URL.createObjectURL(file);
   vid.loop = true; vid.play();
