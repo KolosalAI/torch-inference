@@ -1,7 +1,7 @@
 # Makefile for torch-inference
 # Provides convenient commands for building and running
 
-.PHONY: help build run dev test clean install doctor flamegraph
+.PHONY: help build run dev test coverage clean install doctor flamegraph
 
 # Default target
 .DEFAULT_GOAL := help
@@ -34,6 +34,13 @@ dev: ## Run server in dev mode (faster compile)
 test: ## Run tests
 	@echo "Running tests..."
 	$(CARGO) test --no-default-features
+
+coverage: ## Measure line coverage (requires cargo-llvm-cov). Reports ≥95% excluding untestable platform/ORT/WS files.
+	@echo "Measuring coverage..."
+	$(CARGO) llvm-cov --lib --ignore-run-fail \
+		--ignore-filename-regex '(ws_audio|ws_infer|ort_classify|ort_yolo|llm_proxy|windows_sapi_tts|provider_comparison)' \
+		--lcov --output-path coverage/lcov.info
+	@python3 scripts/lcov_summary.py coverage/lcov.info
 
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."

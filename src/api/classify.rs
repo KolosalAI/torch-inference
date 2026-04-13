@@ -810,4 +810,86 @@ pub mod tests {
             .unwrap()
             .is_empty());
     }
+
+    // ── stream_classify tests ────────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_stream_classify_empty_images_returns_bad_request() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(make_state())
+                .app_data(web::Data::new(crate::config::Config::default()))
+                .configure(configure_routes),
+        )
+        .await;
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/stream")
+            .set_json(&serde_json::json!({ "images": [] }))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_stream_classify_oversized_batch_returns_bad_request() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(make_state())
+                .app_data(web::Data::new(crate::config::Config::default()))
+                .configure(configure_routes),
+        )
+        .await;
+        let images: Vec<String> = std::iter::repeat("abc".to_string()).take(129).collect();
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/stream")
+            .set_json(&serde_json::json!({ "images": images }))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_stream_classify_valid_image_returns_sse_stream() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(make_state())
+                .app_data(web::Data::new(crate::config::Config::default()))
+                .configure(configure_routes),
+        )
+        .await;
+        let img = tiny_b64(128, 64, 32);
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/stream")
+            .set_json(&serde_json::json!({ "images": [img], "top_k": 2 }))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+        assert!(ct.contains("text/event-stream"));
+        let body = actix_test::read_body(resp).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+        // SSE body must contain at least one "data:" line and the done event
+        assert!(body_str.contains("data:"), "expected SSE data frames");
+        assert!(body_str.contains("\"done\""), "expected done event");
+    }
+
+    #[actix_web::test]
+    async fn test_stream_classify_invalid_b64_streams_error_event() {
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(make_state())
+                .app_data(web::Data::new(crate::config::Config::default()))
+                .configure(configure_routes),
+        )
+        .await;
+        let req = actix_test::TestRequest::post()
+            .uri("/classify/stream")
+            .set_json(&serde_json::json!({ "images": ["!!!not_base64!!!"] }))
+            .to_request();
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body = actix_test::read_body(resp).await;
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(body_str.contains("\"error\""), "expected error event for bad b64");
+    }
 }

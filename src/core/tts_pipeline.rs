@@ -514,4 +514,64 @@ mod tests {
             ttfa
         );
     }
+
+    #[test]
+    fn test_splitter_custom_max_chars() {
+        let splitter = SentenceSplitter::new(50);
+        // A sentence longer than 50 chars is split at word boundary
+        let text = "This is a sentence with more than fifty characters here indeed yes.";
+        let parts = splitter.split(text);
+        assert!(!parts.is_empty());
+        for part in &parts {
+            assert!(part.len() <= 50, "chunk too long: {}", part);
+        }
+    }
+
+    #[test]
+    fn test_splitter_default_max_chars_is_200() {
+        let splitter = SentenceSplitter::default();
+        let text = "Hello.";
+        let parts = splitter.split(text);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], "Hello.");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_with_channel_depth() {
+        let engine: Arc<dyn TTSEngine> = Arc::new(MockTtsEngine {
+            call_count: Arc::new(StdMutex::new(0)),
+        });
+        let pipeline = StreamingTtsPipeline::new(engine).with_channel_depth(8);
+        let mut rx = pipeline.synthesize_streaming("Hello world.", SynthesisParams::default());
+        let chunk = rx.recv().await.unwrap().unwrap();
+        assert!(chunk.is_last);
+    }
+
+    #[tokio::test]
+    async fn test_mock_engine_warmup_and_voices() {
+        let engine = MockTtsEngine {
+            call_count: Arc::new(StdMutex::new(0)),
+        };
+        engine.warmup().await.unwrap();
+        assert!(engine.list_voices().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mock_engine_validate_text_empty_errors() {
+        let engine = MockTtsEngine {
+            call_count: Arc::new(StdMutex::new(0)),
+        };
+        assert!(engine.validate_text("").is_err());
+        assert!(engine.validate_text("hello").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_engine_capabilities_stable() {
+        let engine = MockTtsEngine {
+            call_count: Arc::new(StdMutex::new(0)),
+        };
+        let caps = engine.capabilities();
+        assert_eq!(caps.sample_rate, 24000);
+        assert!(caps.supports_streaming);
+    }
 }
