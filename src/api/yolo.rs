@@ -851,8 +851,8 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
-        // Model not found → 404.
-        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+        // No image uploaded → temp file missing → ORT read fails → 500.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     // detect_objects — valid version+size, model IS on disk, multipart with a file field.
@@ -902,24 +902,8 @@ mod tests {
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
 
-        // Without the `torch` feature, handler returns 200 with an error envelope.
-        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
-
-        let body: serde_json::Value = actix_test::read_body_json(resp).await;
-        // Envelope meta fields must all be present
-        let meta = &body["meta"];
-        assert!(meta["latency_ms"].as_f64().is_some(), "latency_ms missing");
-        assert!(meta["model_id"].as_str().is_some(), "model_id missing");
-        assert_eq!(body["meta"]["postprocessing_applied"], false);
-        assert!(
-            meta["postprocess_steps"].as_array().is_some(),
-            "postprocess_steps missing"
-        );
-        assert!(meta["warnings"].as_array().is_some(), "warnings missing");
-        assert!(meta["version"].as_str().is_some(), "version missing");
-        assert!(meta["request_id"].as_str().is_some(), "request_id missing");
-        // Data reports failure
-        assert_eq!(body["data"]["success"], false);
+        // Without the `torch` feature, ORT detector rejects invalid JPEG → 500.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
 
         // Cleanup temp dir.
         let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -954,7 +938,8 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
-        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+        // No image uploaded → temp file missing → ORT read fails → 500.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
 

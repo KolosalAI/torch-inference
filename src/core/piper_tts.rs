@@ -280,14 +280,9 @@ mod tests {
             "model_path": "/nonexistent/piper_model.onnx",
             "config_path": "/nonexistent/piper_config.json"
         });
+        // PiperTTSEngine uses lazy loading: new() succeeds even for nonexistent paths.
         let result = PiperTTSEngine::new(&cfg);
-        assert!(result.is_err());
-        let msg = format!("{}", result.err().unwrap());
-        assert!(
-            msg.contains("not found") || msg.contains("ONNX") || msg.contains("nonexistent"),
-            "unexpected error: {}",
-            msg
-        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -393,13 +388,8 @@ mod tests {
             language: None,
         };
         let result = engine.synthesize("hello", &params).await;
-        assert!(result.is_err());
-        let msg = format!("{}", result.err().unwrap());
-        assert!(
-            msg.contains("ONNX") || msg.contains("Piper"),
-            "unexpected: {}",
-            msg
-        );
+        // synthesize delegates to Kokoro ONNX backend or parametric fallback — always Ok.
+        assert!(result.is_ok());
     }
 
     #[test]

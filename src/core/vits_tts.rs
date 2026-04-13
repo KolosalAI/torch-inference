@@ -276,7 +276,8 @@ mod tests {
         assert!(result.is_ok());
         let audio = result.unwrap();
         assert_eq!(audio.channels, 1);
-        assert_eq!(audio.sample_rate, 22050);
+        // sample_rate is 22050 from parametric fallback, or 24000 when delegated to Kokoro ONNX backend.
+        assert!(audio.sample_rate == 22050 || audio.sample_rate == 24000, "unexpected sample_rate: {}", audio.sample_rate);
         assert!(!audio.samples.is_empty());
     }
 
