@@ -1,0 +1,45 @@
+[package]
+name = "llm-service"
+version = "0.1.0"
+edition = "2021"
+description = "1-bit multimodal LLM microservice (MiniCPM-V via llama-cpp-2)"
+
+[[bin]]
+name = "llm-service"
+path = "src/main.rs"
+
+[dependencies]
+# Web
+actix-web   = "4.8"
+actix-rt    = "2.10"
+tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+
+# Serialization
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "0.8"
+
+# Image decoding (JPEG/PNG -> RGB pixels for MtmdBitmap)
+image      = "0.24"
+
+# Base64 decoding (image_url data URIs)
+base64     = "0.21"
+
+# Error handling
+anyhow     = "1"
+thiserror  = "1"
+
+# Logging
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Byte utilities
+bytes = "1.5"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1", features = ["mtmd", "metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-2 = { version = "0.1", features = ["mtmd"] }

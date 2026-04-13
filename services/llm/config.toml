@@ -1,0 +1,6 @@
+port         = 8001
+model_path   = "models/minicpm-v-2_6-q2_k.gguf"
+mmproj_path  = "models/minicpm-v-2_6-mmproj-f16.gguf"
+ctx_size     = 4096
+n_threads    = 4
+n_gpu_layers = 0
