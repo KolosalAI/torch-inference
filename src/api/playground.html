@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Kolosal Inference</title>
+<title>Kolosal Torch Inference</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' rx='8' fill='%230066F5'/><text x='6' y='23' font-family='sans-serif' font-size='16' font-weight='700' fill='white'>KI</text></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -570,7 +570,7 @@
     <div class="logo">
       <div class="logo-mark">KI</div>
       <span class="logo-name">Kolosal</span>
-      <span class="logo-sub">Inference</span>
+      <span class="logo-sub">Torch Inference</span>
     </div>
     <div class="topbar-right">
       <button class="btn-theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light mode">
@@ -1447,33 +1447,26 @@
     <section class="panel" id="panel-endpoints">
       <div class="panel-header">
         <div class="panel-title">API Reference</div>
-        <div class="panel-desc">All registered routes on this server.</div>
+        <div class="panel-desc">All endpoints with request/response schemas and copy-ready examples.</div>
       </div>
-      <div class="card">
-        <div class="card-title">TTS</div>
-        <div class="endpoint-list">
-          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/tts/synthesize</span><span class="ep-desc">Batch synthesis → WAV</span></div>
-          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/tts/stream</span><span class="ep-desc">Streaming synthesis → chunked audio/pcm</span></div>
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/tts/engines</span><span class="ep-desc">List loaded TTS engines</span></div>
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/tts/health</span><span class="ep-desc">TTS subsystem health</span></div>
+
+      <!-- Quick reference table -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title" style="margin-bottom:10px">Quick Reference</div>
+        <div style="overflow-x:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="border-bottom:2px solid var(--border)">
+              <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Method</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Path</th>
+              <th style="text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600">Description</th>
+            </tr></thead>
+            <tbody id="api-ref-table"></tbody>
+          </table>
         </div>
       </div>
-      <div class="card">
-        <div class="card-title">Classification</div>
-        <div class="endpoint-list">
-          <div class="endpoint-row"><span class="method post">POST</span><span class="ep-path">/classify/batch</span><span class="ep-desc">SIMD preprocess + batched ORT inference</span></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-title">System</div>
-        <div class="endpoint-list">
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/health</span><span class="ep-desc">Liveness + readiness</span></div>
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/system/info</span><span class="ep-desc">GPU / CPU / memory info</span></div>
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/performance</span><span class="ep-desc">Throughput metrics</span></div>
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/stats</span><span class="ep-desc">Request statistics</span></div>
-          <div class="endpoint-row"><span class="method get">GET</span><span class="ep-path">/metrics</span><span class="ep-desc">Prometheus scrape endpoint</span></div>
-        </div>
-      </div>
+
+      <!-- Detailed sections injected by renderApiRef() -->
+      <div id="api-ref-sections"></div>
     </section>
 
   </main>
@@ -1487,11 +1480,12 @@ function show(id, btn) {
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + id).classList.add('active');
   btn.classList.add('active');
-  if (id === 'models') switchMdlTab('available');
-  if (id === 'tts')    loadTtsHealth();
-  if (id === 'audio')  loadAudioHealth();
-  if (id === 'logs')   loadLogs();
-  if (id === 'system') switchSysTab('info');
+  if (id === 'models')    switchMdlTab('available');
+  if (id === 'tts')       loadTtsHealth();
+  if (id === 'audio')     loadAudioHealth();
+  if (id === 'logs')      loadLogs();
+  if (id === 'system')    switchSysTab('info');
+  if (id === 'endpoints') renderApiRef();
 }
 
 /* ── Helpers ───────────────────────────────────────────── */
@@ -3919,6 +3913,355 @@ async function runPgAudio() {
 
 function stopPgAudio() { if (pgAudioAbort) { pgAudioAbort.abort(); pgAudioAbort = null; } }
 
+/* ── API Reference page ─────────────────────────────────── */
+
+const API_REF = [
+  {
+    group: 'TTS — Text-to-Speech',
+    color: '#0066F5',
+    icon: 'ri-music-2-line',
+    endpoints: [
+      {
+        method: 'POST', path: '/tts/stream', proto: 'http',
+        desc: 'Sentence-level streaming synthesis. Returns raw PCM-16LE audio (24 kHz, mono) as a chunked HTTP response. First chunk arrives after ~1 sentence.',
+        request: '{\n  "text":   "Hello world",      // required\n  "engine": "kokoro",           // optional — omit for default\n  "voice":  "af_heart",         // optional — omit for default\n  "speed":  1.0,                // 0.25 – 4.0\n  "pitch":  1.0                 // 0.5  – 2.0\n}',
+        response: 'Binary PCM-16LE stream\nContent-Type: audio/pcm\n24000 Hz · 1 channel · 16-bit little-endian\nWrap in a WAV header (44-byte) to save or play locally.',
+        curl: b => `curl -sS -X POST "${b}/tts/stream" \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":"Hello world","speed":1.0}' \\\n  --output audio.raw`,
+        python: b => `import requests, wave\nresp = requests.post("${b}/tts/stream",\n    json={"text": "Hello world", "speed": 1.0},\n    stream=True)\npcm = b"".join(resp.iter_content(4096))\nwith wave.open("out.wav", "wb") as wf:\n    wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(24000)\n    wf.writeframes(pcm)`,
+        js: b => `const resp = await fetch("${b}/tts/stream", {\n  method: "POST",\n  headers: {"Content-Type":"application/json"},\n  body: JSON.stringify({text:"Hello world", speed:1.0})\n});\nconst reader = resp.body.getReader();\nconst chunks = [];\nwhile (true) {\n  const {done, value} = await reader.read();\n  if (done) break;\n  chunks.push(value);\n}\n// chunks contain raw PCM-16LE bytes — build WAV header to play`,
+      },
+      {
+        method: 'POST', path: '/tts/synthesize', proto: 'http',
+        desc: 'Full synthesis — waits for all audio, returns a single WAV file.',
+        request: '{\n  "text":   "Hello world",\n  "engine": "kokoro",\n  "voice":  "af_heart",\n  "speed":  1.0\n}',
+        response: 'Binary WAV file\nContent-Type: audio/wav',
+        curl: b => `curl -sS -X POST "${b}/tts/synthesize" \\\n  -H "Content-Type: application/json" \\\n  -d '{"text":"Hello world","speed":1.0}' \\\n  --output out.wav`,
+        python: b => `import requests\nresp = requests.post("${b}/tts/synthesize",\n    json={"text":"Hello world","speed":1.0})\nopen("out.wav","wb").write(resp.content)`,
+        js: b => `const resp = await fetch("${b}/tts/synthesize", {\n  method:"POST", headers:{"Content-Type":"application/json"},\n  body: JSON.stringify({text:"Hello world",speed:1.0})\n});\nconst blob = await resp.blob();\nnew Audio(URL.createObjectURL(blob)).play();`,
+      },
+      {
+        method: 'GET', path: '/tts/engines', proto: 'http',
+        desc: 'List all loaded TTS engines and the default engine name.',
+        request: null,
+        response: '{\n  "engines": ["kokoro", "bark", "xtts", ...],\n  "default": "kokoro"\n}',
+        curl: b => `curl "${b}/tts/engines"`,
+        python: b => `import requests\nprint(requests.get("${b}/tts/engines").json())`,
+        js: b => `const r = await fetch("${b}/tts/engines");\nconsole.log(await r.json());`,
+      },
+      {
+        method: 'GET', path: '/tts/engines/{engine}/voices', proto: 'http',
+        desc: 'List available voices for a specific engine.',
+        request: null,
+        response: '{"voices": ["af_heart", "af_bella", "af_sky", ...]}',
+        curl: b => `curl "${b}/tts/engines/kokoro/voices"`,
+        python: b => `import requests\nprint(requests.get("${b}/tts/engines/kokoro/voices").json())`,
+        js: b => `const r = await fetch("${b}/tts/engines/kokoro/voices");\nconsole.log(await r.json());`,
+      },
+      {
+        method: 'GET', path: '/tts/health', proto: 'http',
+        desc: 'TTS subsystem health — returns engine count and load status.',
+        request: null,
+        response: '{"status":"healthy","engines_loaded":7,"timestamp":"2026-..."}',
+        curl: b => `curl "${b}/tts/health"`,
+        python: b => `import requests\nprint(requests.get("${b}/tts/health").json())`,
+        js: b => `const r = await fetch("${b}/tts/health");\nconsole.log(await r.json());`,
+      },
+    ]
+  },
+  {
+    group: 'Audio — Speech-to-Text',
+    color: '#3ABC3F',
+    icon: 'ri-mic-2-line',
+    endpoints: [
+      {
+        method: 'POST', path: '/audio/transcribe', proto: 'http',
+        desc: 'Transcribe an uploaded audio file (WAV, MP3, OGG, FLAC, M4A) using Whisper.',
+        request: 'multipart/form-data fields:\n  audio      — audio file (required)\n  model      — "default" or model name\n  timestamps — "true" or "false"',
+        response: '{\n  "text": "Hello world",\n  "language": "en",\n  "duration_ms": 1240,\n  "segments": [...]   // included when timestamps=true\n}',
+        curl: b => `curl -X POST "${b}/audio/transcribe" \\\n  -F "audio=@recording.wav" \\\n  -F "model=default" \\\n  -F "timestamps=false"`,
+        python: b => `import requests\nwith open("recording.wav","rb") as f:\n    resp = requests.post("${b}/audio/transcribe",\n        files={"audio": f},\n        data={"model":"default","timestamps":"false"})\nprint(resp.json()["text"])`,
+        js: b => `const form = new FormData();\nform.append("audio", audioFile);\nform.append("model", "default");\nconst resp = await fetch("${b}/audio/transcribe", {method:"POST", body:form});\nconsole.log((await resp.json()).text);`,
+      },
+      {
+        method: 'GET', path: '/audio/ws', proto: 'ws',
+        desc: 'Bidirectional WebSocket for live TTS (binary PCM-f32le chunks) and real-time STT (stream raw PCM samples).',
+        request: '// TTS — send text JSON frame:\n{"type":"tts","text":"Hello","voice":"af_heart","speed":1.0}\n\n// STT begin:\n{"type":"stt_begin","sample_rate":16000}\n// STT audio — binary f32-LE PCM frames\n// STT end:\n{"type":"stt_end"}',
+        response: '{"type":"ready"}\n{"type":"tts_meta","sample_rate":24000,"encoding":"pcm_f32le"}\n[binary PCM-f32le chunks]\n{"type":"tts_done","duration_ms":1200}\n{"type":"transcript","text":"...","is_final":true}',
+        curl: b => `# Use wscat or websocat:\nwscat -c "${b.replace('http','ws')}/audio/ws"\n# Then send: {"type":"tts","text":"Hello","speed":1.0}`,
+        python: b => `import json, asyncio, websockets\nasync def tts_via_ws():\n    uri = "${b.replace('http','ws')}/audio/ws"\n    async with websockets.connect(uri) as ws:\n        print(await ws.recv())  # {"type":"ready"}\n        await ws.send(json.dumps({"type":"tts","text":"Hello","speed":1.0}))\n        meta = json.loads(await ws.recv())  # tts_meta\n        audio = b""\n        async for msg in ws:\n            if isinstance(msg, bytes): audio += msg\n            elif json.loads(msg)["type"] == "tts_done": break\nasyncio.run(tts_via_ws())`,
+        js: b => `const ws = new WebSocket("${b.replace('http','ws')}/audio/ws");\nws.binaryType = "arraybuffer";\nws.onopen = () => ws.send(JSON.stringify({type:"tts",text:"Hello",speed:1.0}));\nws.onmessage = (e) => {\n  if (e.data instanceof ArrayBuffer) { /* PCM-f32le audio chunk */ }\n  else console.log(JSON.parse(e.data));\n};`,
+      },
+    ]
+  },
+  {
+    group: 'Classification — Image',
+    color: '#FFA931',
+    icon: 'ri-image-line',
+    endpoints: [
+      {
+        method: 'POST', path: '/classify/batch', proto: 'http',
+        desc: 'Classify a batch of base64-encoded images using ONNX Runtime. Returns top-K predictions for each.',
+        request: '{\n  "images":       ["<base64 JPEG/PNG>", ...],\n  "top_k":        5,\n  "model_width":  224,\n  "model_height": 224\n}',
+        response: '{\n  "data": {\n    "results": [\n      {"predictions": [\n        {"label":"cat","confidence":0.95,"class_id":281}\n      ]}\n    ],\n    "batch_ms": 47.2\n  }\n}',
+        curl: b => `curl -X POST "${b}/classify/batch" \\\n  -H "Content-Type: application/json" \\\n  -d '{"images":["<base64>"],"top_k":5,"model_width":224,"model_height":224}'`,
+        python: b => `import requests, base64\nwith open("image.jpg","rb") as f:\n    b64 = base64.b64encode(f.read()).decode()\nresp = requests.post("${b}/classify/batch",\n    json={"images":[b64],"top_k":5,"model_width":224,"model_height":224})\nfor p in resp.json()["data"]["results"][0]["predictions"]:\n    print(p["label"], f'{p["confidence"]*100:.1f}%')`,
+        js: b => `// Convert file to base64\nconst reader = new FileReader();\nreader.onload = async (e) => {\n  const b64 = e.target.result.split(",")[1];\n  const r = await fetch("${b}/classify/batch", {\n    method:"POST", headers:{"Content-Type":"application/json"},\n    body: JSON.stringify({images:[b64],top_k:5,model_width:224,model_height:224})\n  });\n  console.log(await r.json());\n};\nreader.readAsDataURL(imageFile);`,
+      },
+      {
+        method: 'POST', path: '/classify/stream', proto: 'http',
+        desc: 'SSE stream — classifies images one by one, emitting a JSON event per image progressively.',
+        request: '{\n  "images":       ["<base64>", ...],\n  "top_k":        5,\n  "model_width":  224,\n  "model_height": 224\n}',
+        response: '// Server-Sent Events  text/event-stream\ndata: {"idx":0,"total":5,"ms":9.1,"predictions":[...]}\ndata: {"idx":1,"total":5,"ms":8.6,"predictions":[...]}\ndata: {"type":"done","total":5,"batch_ms":47.2}',
+        curl: b => `curl -N -X POST "${b}/classify/stream" \\\n  -H "Content-Type: application/json" \\\n  -d '{"images":["<base64>"],"top_k":5,"model_width":224,"model_height":224}'`,
+        python: b => `import requests, base64, json\nwith open("image.jpg","rb") as f:\n    b64 = base64.b64encode(f.read()).decode()\nwith requests.post("${b}/classify/stream",\n        json={"images":[b64],"top_k":5},\n        stream=True) as r:\n    for line in r.iter_lines():\n        if line.startswith(b"data: "):\n            print(json.loads(line[6:]))`,
+        js: b => `const res = await fetch("${b}/classify/stream", {\n  method:"POST", headers:{"Content-Type":"application/json"},\n  body: JSON.stringify({images:[b64],top_k:5})\n});\nconst reader = res.body.getReader();\nconst dec = new TextDecoder();\nlet buf = "";\nwhile (true) {\n  const {done,value} = await reader.read();\n  if (done) break;\n  buf += dec.decode(value, {stream:true});\n  const parts = buf.split("\\n\\n");\n  buf = parts.pop();\n  for (const ev of parts)\n    if (ev.startsWith("data: ")) console.log(JSON.parse(ev.slice(6)));\n}`,
+      },
+      {
+        method: 'GET', path: '/ws/classify', proto: 'ws',
+        desc: 'Live classification WebSocket. Send a config JSON frame once, then stream JPEG binary frames at your desired FPS.',
+        request: '// Config frame (text JSON, send once):\n{"type":"config","top_k":5,"width":224,"height":224}\n\n// Image frames (binary — raw JPEG bytes)',
+        response: '{"type":"ready","task":"classify","frame":0}\n{"type":"classify","frame":1,"ms":9.1,\n "predictions":[{"label":"cat","confidence":0.95,"class_id":281}]}\n{"type":"error","frame":2,"msg":"..."}',
+        curl: b => `# Use wscat:\nwscat -c "${b.replace('http','ws')}/ws/classify"\n# Then send config: {"type":"config","top_k":5,"width":224,"height":224}\n# Then send binary JPEG frames`,
+        python: b => `import asyncio, json, websockets\nfrom pathlib import Path\nasync def run():\n    async with websockets.connect("${b.replace('http','ws')}/ws/classify") as ws:\n        await ws.recv()  # ready\n        await ws.send(json.dumps({"type":"config","top_k":5,"width":224,"height":224}))\n        await ws.send(Path("image.jpg").read_bytes())\n        print(json.loads(await ws.recv())["predictions"])\nasyncio.run(run())`,
+        js: b => `const ws = new WebSocket("${b.replace('http','ws')}/ws/classify");\nws.binaryType = "arraybuffer";\nws.onopen = () => {\n  ws.send(JSON.stringify({type:"config",top_k:5,width:224,height:224}));\n  imageFile.arrayBuffer().then(buf => ws.send(buf));\n};\nws.onmessage = e => console.log(JSON.parse(e.data));`,
+      },
+    ]
+  },
+  {
+    group: 'Detection — YOLO',
+    color: '#CC27CC',
+    icon: 'ri-focus-3-line',
+    endpoints: [
+      {
+        method: 'POST', path: '/yolo/detect', proto: 'http',
+        desc: 'Detect objects in an uploaded image. Auto-selects the best available ONNX model (v8–v12). Returns bounding boxes, labels, and confidence scores.',
+        request: 'multipart/form-data:\n  image — JPEG or PNG file (required)\n\nQuery params:\n  model_version   v8 | v10 | v11 | v12  (default v8)\n  model_size      n | s | m | l | x     (default n)\n  conf_threshold  0.0 – 1.0             (default 0.25)\n  iou_threshold   0.0 – 1.0             (default 0.45)',
+        response: '{\n  "data": {\n    "success": true,\n    "results": {\n      "detections": [\n        {"class_name":"person","confidence":0.87,\n         "bbox":{"x1":50,"y1":30,"x2":200,"y2":400}}\n      ],\n      "count": 1,\n      "inference_ms": 14.2\n    }\n  }\n}',
+        curl: b => `curl -X POST "${b}/yolo/detect?model_version=v8&model_size=n&conf_threshold=0.25" \\\n  -F "image=@photo.jpg"`,
+        python: b => `import requests\nwith open("photo.jpg","rb") as f:\n    resp = requests.post(\n        "${b}/yolo/detect",\n        params={"model_version":"v8","model_size":"n","conf_threshold":0.25},\n        files={"image": f})\nfor d in resp.json()["data"]["results"]["detections"]:\n    print(d["class_name"], f'{d["confidence"]*100:.0f}%', d["bbox"])`,
+        js: b => `const form = new FormData();\nform.append("image", imageFile);\nconst r = await fetch(\n  "${b}/yolo/detect?model_version=v8&model_size=n&conf_threshold=0.25",\n  {method:"POST", body:form}\n);\nconsole.log((await r.json()).data.results.detections);`,
+      },
+      {
+        method: 'GET', path: '/ws/detect', proto: 'ws',
+        desc: 'Live YOLO detection WebSocket. Streams JPEG frames in, bounding-box JSON results out, per frame in real time.',
+        request: '// Config frame (text JSON):\n{"type":"config","version":"v8","size":"n","conf":0.25,"iou":0.45}\n\n// Image frames (binary — raw JPEG bytes)',
+        response: '{"type":"ready","task":"detect","frame":0}\n{"type":"detect","frame":1,"ms":14.2,"count":3,\n "detections":[{"label":"person","conf":0.87,"bbox":[x1,y1,x2,y2]}]}\n{"type":"error","frame":2,"msg":"..."}',
+        curl: b => `# Use wscat:\nwscat -c "${b.replace('http','ws')}/ws/detect"\n# Send: {"type":"config","version":"v8","size":"n","conf":0.25}\n# Then send binary JPEG frames`,
+        python: b => `import asyncio, json, websockets\nfrom pathlib import Path\nasync def run():\n    async with websockets.connect("${b.replace('http','ws')}/ws/detect") as ws:\n        await ws.recv()  # ready\n        await ws.send(json.dumps({"type":"config","version":"v8","size":"n","conf":0.25,"iou":0.45}))\n        await ws.send(Path("photo.jpg").read_bytes())\n        print(json.loads(await ws.recv())["detections"])\nasyncio.run(run())`,
+        js: b => `const ws = new WebSocket("${b.replace('http','ws')}/ws/detect");\nws.binaryType = "arraybuffer";\nws.onopen = () => {\n  ws.send(JSON.stringify({type:"config",version:"v8",size:"n",conf:0.25,iou:0.45}));\n  imageFile.arrayBuffer().then(buf => ws.send(buf));\n};\nws.onmessage = e => console.log(JSON.parse(e.data));`,
+      },
+    ]
+  },
+  {
+    group: 'Dashboard & System',
+    color: '#FF3131',
+    icon: 'ri-dashboard-line',
+    endpoints: [
+      {
+        method: 'GET', path: '/dashboard/stream', proto: 'http',
+        desc: 'Server-Sent Events pushing live metrics every 3 s: request stats, CPU/RAM, GPU utilisation, active downloads.',
+        request: null,
+        response: '// EventSource  text/event-stream\ndata: {\n  "metrics":{"uptime_s":3600,"active_req":2,"total_req":150,\n             "avg_latency_ms":12.4,"error_rate":0.0,\n             "throughput_per_s":1.2,"cpu_pct":18.5,\n             "mem_used_mb":2048,"mem_total_mb":16384},\n  "gpu":[{"util_pct":45,"temp_c":72,"vram_free_mb":12800,"vram_total_mb":16384}],\n  "downloads":[]\n}',
+        curl: b => `curl -N "${b}/dashboard/stream"`,
+        python: b => `import requests, json\nwith requests.get("${b}/dashboard/stream", stream=True) as r:\n    for line in r.iter_lines():\n        if line.startswith(b"data: "):\n            print(json.loads(line[6:])["metrics"])`,
+        js: b => `const es = new EventSource("${b}/dashboard/stream");\nes.onmessage = (e) => {\n  const {metrics, gpu} = JSON.parse(e.data);\n  console.log("CPU:", metrics.cpu_pct + "%", "RAM:", metrics.mem_used_mb + " MB");\n};`,
+      },
+      {
+        method: 'GET', path: '/health', proto: 'http',
+        desc: 'Full health check with subsystem status, uptime, and active request count.',
+        request: null,
+        response: '{\n  "status":"healthy","version":"1.0.0",\n  "uptime_seconds":289365,\n  "checks":{\n    "error_rate":{"status":"up","message":"0.00%"},\n    "performance":{"status":"up","message":"0.00ms avg latency"},\n    "monitor":{"status":"up","message":"15 total requests"},\n    "capacity":{"status":"up","message":"0 active requests"}\n  }\n}',
+        curl: b => `curl "${b}/health"`,
+        python: b => `import requests\nprint(requests.get("${b}/health").json()["status"])`,
+        js: b => `const r = await fetch("${b}/health");\nconsole.log(await r.json());`,
+      },
+      {
+        method: 'GET', path: '/system/info', proto: 'http',
+        desc: 'Hardware info: CPU model, core count, RAM, GPU devices with VRAM.',
+        request: null,
+        response: '{\n  "cpu":{"model":"Apple M4","cores":10},\n  "memory":{"total_mb":16384,"used_mb":2048},\n  "gpu":[{"name":"Apple M4","vram_total_mb":16384,"vram_free_mb":12800}]\n}',
+        curl: b => `curl "${b}/system/info"`,
+        python: b => `import requests\nprint(requests.get("${b}/system/info").json())`,
+        js: b => `const r = await fetch("${b}/system/info");\nconsole.log(await r.json());`,
+      },
+      {
+        method: 'GET', path: '/performance', proto: 'http',
+        desc: 'Throughput, latency percentiles, and request rate over sliding windows.',
+        request: null,
+        response: '{"requests_per_second":1.2,"avg_latency_ms":12.4,"p95_latency_ms":45.0,...}',
+        curl: b => `curl "${b}/performance"`,
+        python: b => `import requests\nprint(requests.get("${b}/performance").json())`,
+        js: b => `const r = await fetch("${b}/performance");\nconsole.log(await r.json());`,
+      },
+      {
+        method: 'GET', path: '/metrics', proto: 'http',
+        desc: 'Prometheus-compatible scrape endpoint.',
+        request: null,
+        response: '# HELP http_requests_total Total HTTP requests\nhttp_requests_total{method="POST",path="/tts/stream"} 42\n...',
+        curl: b => `curl "${b}/metrics"`,
+        python: b => `import requests\nprint(requests.get("${b}/metrics").text)`,
+        js: b => `const r = await fetch("${b}/metrics");\nconsole.log(await r.text());`,
+      },
+    ]
+  },
+];
+
+const API_LANGS = ['curl','python','js'];
+const API_LANG_LABELS = {curl:'cURL', python:'Python', js:'JavaScript'};
+let apiLangActive = 'curl';
+
+/* Build a DOM element without touching innerHTML */
+function mkEl(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'style') e.style.cssText = v;
+      else if (k === 'class') e.className = v;
+      else if (k === 'text')  e.textContent = v;
+      else if (typeof v === 'function') e.addEventListener(k, v);
+      else e.setAttribute(k, v);
+    }
+  }
+  for (const c of kids) {
+    if (c == null) continue;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+
+function renderApiRef() {
+  const base = window.location.origin;
+
+  /* ── Quick-ref table ─────────────────────────────────── */
+  const tbody = document.getElementById('api-ref-table');
+  if (!tbody) return;
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+  API_REF.forEach(group => {
+    group.endpoints.forEach(ep => {
+      const method = ep.proto === 'ws' ? 'WS' : ep.method;
+      const cls = method === 'POST' ? 'post' : method === 'WS' ? 'ws' : 'get';
+      const tr = mkEl('tr', {style:'border-bottom:1px solid var(--border);cursor:pointer'});
+      tr.appendChild(mkEl('td', {style:'padding:6px 10px'},
+        mkEl('span', {class:'method ' + cls, style:'font-size:10px;padding:2px 6px'}, method)));
+      tr.appendChild(mkEl('td', {style:'padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--accent)', text: ep.path}));
+      tr.appendChild(mkEl('td', {style:'padding:6px 10px;color:var(--text-muted)', text: ep.desc.split('.')[0]}));
+      tr.addEventListener('click', () => {
+        const id = 'ep-' + ep.path.replace(/\//g,'_').replace(/[{}]/g,'');
+        const t = document.getElementById(id);
+        if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
+      });
+      tbody.appendChild(tr);
+    });
+  });
+
+  /* ── Detailed sections ───────────────────────────────── */
+  const container = document.getElementById('api-ref-sections');
+  while (container.firstChild) container.removeChild(container.firstChild);
+
+  /* Language switcher */
+  const switcher = mkEl('div', {style:'display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px;position:sticky;top:0;background:var(--bg);z-index:10;padding-top:4px'});
+  API_LANGS.forEach(lang => {
+    const btn = mkEl('button', {
+      class: 'ws-tab' + (lang === apiLangActive ? ' active-ws-tab' : ''),
+      id: 'api-lang-' + lang,
+      text: API_LANG_LABELS[lang]
+    });
+    btn.addEventListener('click', () => {
+      apiLangActive = lang;
+      document.querySelectorAll('.api-code-pane').forEach(p => {
+        p.style.display = p.getAttribute('data-lang') === lang ? '' : 'none';
+      });
+      document.querySelectorAll('[id^="api-lang-"]').forEach(b => b.classList.remove('active-ws-tab'));
+      btn.classList.add('active-ws-tab');
+    });
+    switcher.appendChild(btn);
+  });
+  container.appendChild(switcher);
+
+  /* Groups */
+  API_REF.forEach(group => {
+    const section = mkEl('div', {style:'margin-bottom:32px'});
+
+    /* Group header */
+    const hdr = mkEl('div', {style:`display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:8px;border-bottom:2px solid ${group.color}33`});
+    const icon = mkEl('i', {class: group.icon, style:`color:${group.color};font-size:18px`});
+    const title = mkEl('span', {style:'font-weight:700;font-size:16px', text: group.group});
+    hdr.appendChild(icon);
+    hdr.appendChild(title);
+    section.appendChild(hdr);
+
+    group.endpoints.forEach(ep => {
+      const method = ep.proto === 'ws' ? 'WS' : ep.method;
+      const cls = method === 'POST' ? 'post' : method === 'WS' ? 'ws' : 'get';
+      const card = mkEl('div', {class:'card', id:'ep-' + ep.path.replace(/\//g,'_').replace(/[{}]/g,''), style:'margin-bottom:16px'});
+
+      /* Method + path */
+      const epRow = mkEl('div', {style:'display:flex;align-items:center;gap:10px;margin-bottom:10px'});
+      epRow.appendChild(mkEl('span', {class:'method ' + cls}, method));
+      const pathEl = mkEl('code', {style:'font-family:var(--mono);font-size:14px;font-weight:600;color:var(--accent)', text: ep.path});
+      epRow.appendChild(pathEl);
+      card.appendChild(epRow);
+
+      /* Description */
+      card.appendChild(mkEl('p', {style:'margin-bottom:12px;color:var(--text-muted);font-size:13px', text: ep.desc}));
+
+      /* Request schema */
+      if (ep.request) {
+        const det = mkEl('details', {style:'margin-bottom:10px'});
+        det.appendChild(mkEl('summary', {style:'cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);user-select:none', text:'Request body / params'}));
+        const pre = mkEl('pre', {style:'background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;overflow-x:auto;margin-top:8px;color:#e6edf3'});
+        pre.appendChild(mkEl('code', {text: ep.request}));
+        det.appendChild(pre);
+        card.appendChild(det);
+      }
+
+      /* Response schema */
+      if (ep.response) {
+        const det = mkEl('details', {style:'margin-bottom:10px'});
+        det.appendChild(mkEl('summary', {style:'cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);user-select:none', text:'Response'}));
+        const pre = mkEl('pre', {style:'background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;overflow-x:auto;margin-top:8px;color:#e6edf3'});
+        pre.appendChild(mkEl('code', {text: ep.response}));
+        det.appendChild(pre);
+        card.appendChild(det);
+      }
+
+      /* Code examples */
+      const examplesWrap = mkEl('div', {style:'margin-top:4px'});
+      API_LANGS.forEach(lang => {
+        const snippet = ep[lang] ? ep[lang](base) : null;
+        if (!snippet) return;
+        const pane = mkEl('div', {class:'api-code-pane', style: lang === apiLangActive ? '' : 'display:none'});
+        pane.setAttribute('data-lang', lang);
+        const wrap = mkEl('div', {style:'position:relative'});
+        const pre = mkEl('pre', {style:'background:var(--code-bg,#0d1117);border:1px solid var(--border);border-radius:8px;padding:12px 12px 12px 14px;font-size:11px;overflow-x:auto;color:#e6edf3'});
+        pre.appendChild(mkEl('code', {text: snippet}));
+        const copyBtn = mkEl('button', {
+          style:'position:absolute;top:8px;right:8px;background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer;color:var(--text-muted)'
+        });
+        copyBtn.appendChild(mkEl('i', {class:'ri-clipboard-line'}));
+        const capturedSnippet = snippet;
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(capturedSnippet).then(() => showCopyFeedback('Copied!'));
+        });
+        wrap.appendChild(pre);
+        wrap.appendChild(copyBtn);
+        pane.appendChild(wrap);
+        examplesWrap.appendChild(pane);
+      });
+      card.appendChild(examplesWrap);
+      section.appendChild(card);
+    });
+    container.appendChild(section);
+  });
+}
+
+/* WS method badge style */
+(function addWsStyle() {
+  const s = document.createElement('style');
+  s.textContent = '.method.ws{background:var(--accent-bg);color:var(--accent);border:1px solid rgba(0,102,245,.25)}';
+  document.head.appendChild(s);
+}());
 
 </script>
 </body>

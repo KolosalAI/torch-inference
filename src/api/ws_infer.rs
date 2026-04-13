@@ -205,7 +205,7 @@ async fn run_detect_session(
                     Some(Ok(actix_ws::Message::Binary(data))) => {
                         frame_id += 1;
                         let t = Instant::now();
-                        let result = process_detect_frame(&data, &cfg, &state);
+                        let result = process_detect_frame(&data, &cfg, &state).await;
                         let ms = t.elapsed().as_secs_f64() * 1000.0;
                         let msg = match result {
                             Ok(dets) => {
@@ -228,65 +228,83 @@ async fn run_detect_session(
     let _ = session.close(None).await;
 }
 
-fn process_detect_frame(
+/// Scan `models/yolo/` and return the path to the best available ONNX detection model.
+/// Preference order: higher YOLO version > lower; nano size > larger.
+/// Tiny/v3 models are excluded as they use an incompatible output format.
+fn find_best_yolo_onnx() -> Option<std::path::PathBuf> {
+    let yolo_dir = std::path::Path::new("models/yolo");
+    if !yolo_dir.is_dir() { return None; }
+
+    let ver_score = |name: &str| -> i32 {
+        let n = name.to_lowercase();
+        if n.contains("yolo12") || n.contains("yolov12") { 120 }
+        else if n.contains("yolo11") || n.contains("yolov11") { 110 }
+        else if n.contains("yolov10") || n.contains("yolo10") { 100 }
+        else if n.contains("yolov8") || n.contains("yolo8") { 80 }
+        else if n.contains("yolov5") || n.contains("yolo5") { 50 }
+        else { 10 }
+    };
+
+    let size_score = |name: &str| -> i32 {
+        let n = name.to_lowercase();
+        if n.ends_with("n.onnx") { 5 }
+        else if n.ends_with("s.onnx") { 4 }
+        else if n.ends_with("m.onnx") { 3 }
+        else if n.ends_with("l.onnx") { 2 }
+        else { 1 }
+    };
+
+    std::fs::read_dir(yolo_dir).ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let p = e.path();
+            p.extension().map_or(false, |x| x == "onnx") && {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                name.contains("yolo") && !name.starts_with("tiny")
+            }
+        })
+        .max_by_key(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            (ver_score(&name), size_score(&name))
+        })
+        .map(|e| e.path())
+}
+
+async fn process_detect_frame(
     image_bytes: &[u8],
     cfg: &DetectCfg,
-    state: &YoloState,
+    _state: &YoloState,
 ) -> Result<Vec<DetectionResult>, String> {
-    use crate::core::yolo::{load_coco_names, YoloSize, YoloVersion};
+    use crate::core::yolo::load_coco_names;
 
-    let version = YoloVersion::from_str(&cfg.version)
-        .ok_or_else(|| format!("invalid version: {}", cfg.version))?;
-    let size = YoloSize::from_suffix(&cfg.size)
-        .ok_or_else(|| format!("invalid size: {}", cfg.size))?;
+    let model_path = find_best_yolo_onnx()
+        .ok_or_else(|| "No YOLO ONNX model found in models/yolo/ — download one first".to_string())?;
 
-    let model_name = format!(
-        "yolo{}{}",
-        version.as_str().to_lowercase().replace("yolo", ""),
-        size.suffix()
-    );
-    let model_path = state
-        .models_dir
-        .join(&model_name)
-        .join(format!("{}.pt", model_name));
-
-    if !model_path.exists() {
-        return Err(format!("model not found: {}  — download it first", model_name));
-    }
-
-    // Write frame to a temp file that YoloDetector accepts.
-    let tmp = std::env::temp_dir().join(format!("ws_frame_{}.jpg", uuid::Uuid::new_v4()));
-    std::fs::write(&tmp, image_bytes).map_err(|e| e.to_string())?;
+    tracing::debug!(model = ?model_path, "ws/detect using ONNX model");
 
     let class_names = load_coco_names();
+    let conf = cfg.conf;
+    let iou = cfg.iou;
+    let bytes = image_bytes.to_vec();
 
-    #[cfg(not(feature = "torch"))]
-    {
-        let _ = class_names;
-        let _ = std::fs::remove_file(&tmp);
-        return Err("PyTorch feature not enabled — build with --features torch".to_string());
-    }
-
-    #[cfg(feature = "torch")]
-    {
-        use tch::Device;
-        let mut detector =
-            crate::core::yolo::YoloDetector::new(&tmp, version, size, class_names, Some(Device::Cpu))
-                .map_err(|e| e.to_string())?;
-        detector.set_conf_threshold(cfg.conf);
-        detector.set_iou_threshold(cfg.iou);
-        let raw = detector.detect(&tmp).map_err(|e| e.to_string())?;
-        let _ = std::fs::remove_file(&tmp);
+    tokio::task::spawn_blocking(move || {
+        let mut detector = crate::core::ort_yolo::OrtYoloDetector::new(&model_path, class_names)
+            .map_err(|e| e.to_string())?;
+        detector.set_conf_threshold(conf);
+        detector.set_iou_threshold(iou);
+        let raw = detector.detect_bytes(&bytes).map_err(|e| e.to_string())?;
         Ok(raw
             .detections
             .into_iter()
             .map(|d| DetectionResult {
-                label: d.class_name.clone(),
+                label: d.class_name,
                 conf: d.confidence,
                 bbox: [d.bbox.x1, d.bbox.y1, d.bbox.x2, d.bbox.y2],
             })
             .collect())
-    }
+    })
+    .await
+    .map_err(|e| format!("task join: {}", e))?
 }
 
 // ── Classification session ────────────────────────────────────────────────────
