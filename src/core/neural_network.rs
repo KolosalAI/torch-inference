@@ -231,8 +231,7 @@ impl NeuralNetwork {
     }
 
     #[cfg(not(feature = "torch"))]
-    pub fn device(&self) -> () {
-        ()
+    pub fn device(&self) {
     }
 
     /// Construct a stub network for tests (no model loaded)
@@ -317,6 +316,7 @@ pub mod architectures {
     }
 
     #[derive(Debug, Clone)]
+    #[allow(clippy::upper_case_acronyms)]
     pub enum RNNType {
         LSTM,
         GRU,

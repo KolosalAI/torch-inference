@@ -164,7 +164,7 @@ impl RequestValidator {
     /// Validate priority value
     pub fn validate_priority(&self, priority: Option<i32>) -> Result<(), ValidationErrorType> {
         if let Some(p) = priority {
-            if p < -10 || p > 10 {
+            if !(-10..=10).contains(&p) {
                 return Err(ValidationErrorType::InvalidValue(format!(
                     "Priority must be between -10 and 10, got: {}",
                     p

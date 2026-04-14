@@ -173,12 +173,17 @@ pub async fn ws_classify_handler(
 async fn run_detect_session(
     mut session: actix_ws::Session,
     mut msg_stream: actix_ws::MessageStream,
-    state: std::sync::Arc<YoloState>,
+    _state: std::sync::Arc<YoloState>,
 ) {
     let mut cfg = DetectCfg::default();
     let mut frame_id: u64 = 0;
     let mut hb = interval(Duration::from_secs(20));
     hb.tick().await;
+
+    // Cache the detector for the lifetime of this session — avoids 700ms model
+    // load on every frame. Recreated only when the ONNX model file changes.
+    let mut cached_det: Option<std::sync::Arc<std::sync::Mutex<crate::core::ort_yolo::OrtYoloDetector>>> = None;
+    let mut cached_model: Option<std::path::PathBuf> = None;
 
     let ready = ServerMsg::Ready { task: "detect".to_string(), frame: 0 };
     if session.text(ready.to_json()).await.is_err() {
@@ -205,7 +210,9 @@ async fn run_detect_session(
                     Some(Ok(actix_ws::Message::Binary(data))) => {
                         frame_id += 1;
                         let t = Instant::now();
-                        let result = process_detect_frame(&data, &cfg, &state).await;
+                        let result = process_detect_frame(
+                            &data, &cfg, &mut cached_det, &mut cached_model,
+                        ).await;
                         let ms = t.elapsed().as_secs_f64() * 1000.0;
                         let msg = match result {
                             Ok(dets) => {
@@ -258,7 +265,7 @@ fn find_best_yolo_onnx() -> Option<std::path::PathBuf> {
         .filter_map(|e| e.ok())
         .filter(|e| {
             let p = e.path();
-            p.extension().map_or(false, |x| x == "onnx") && {
+            p.extension().is_some_and(|x| x == "onnx") && {
                 let name = e.file_name().to_string_lossy().to_lowercase();
                 name.contains("yolo") && !name.starts_with("tiny")
             }
@@ -273,26 +280,39 @@ fn find_best_yolo_onnx() -> Option<std::path::PathBuf> {
 async fn process_detect_frame(
     image_bytes: &[u8],
     cfg: &DetectCfg,
-    _state: &YoloState,
+    cached_det: &mut Option<std::sync::Arc<std::sync::Mutex<crate::core::ort_yolo::OrtYoloDetector>>>,
+    cached_model: &mut Option<std::path::PathBuf>,
 ) -> Result<Vec<DetectionResult>, String> {
     use crate::core::yolo::load_coco_names;
 
     let model_path = find_best_yolo_onnx()
         .ok_or_else(|| "No YOLO ONNX model found in models/yolo/ — download one first".to_string())?;
 
-    tracing::debug!(model = ?model_path, "ws/detect using ONNX model");
+    // Recreate detector only when model path changes (first frame or model swapped).
+    if cached_model.as_ref() != Some(&model_path) {
+        tracing::info!(model = ?model_path, "ws/detect loading ONNX model (once per session)");
+        let path = model_path.clone();
+        let det = tokio::task::spawn_blocking(move || {
+            let class_names = load_coco_names();
+            crate::core::ort_yolo::OrtYoloDetector::new(&path, class_names)
+        })
+        .await
+        .map_err(|e| format!("task join: {}", e))?
+        .map_err(|e| e.to_string())?;
+        *cached_det = Some(std::sync::Arc::new(std::sync::Mutex::new(det)));
+        *cached_model = Some(model_path);
+    }
 
-    let class_names = load_coco_names();
+    let det = cached_det.clone().unwrap();
     let conf = cfg.conf;
-    let iou = cfg.iou;
+    let iou  = cfg.iou;
     let bytes = image_bytes.to_vec();
 
     tokio::task::spawn_blocking(move || {
-        let mut detector = crate::core::ort_yolo::OrtYoloDetector::new(&model_path, class_names)
-            .map_err(|e| e.to_string())?;
-        detector.set_conf_threshold(conf);
-        detector.set_iou_threshold(iou);
-        let raw = detector.detect_bytes(&bytes).map_err(|e| e.to_string())?;
+        let mut d = det.lock().unwrap();
+        d.set_conf_threshold(conf);
+        d.set_iou_threshold(iou);
+        let raw = d.detect_bytes(&bytes).map_err(|e| e.to_string())?;
         Ok(raw
             .detections
             .into_iter()
@@ -335,9 +355,9 @@ async fn run_classify_session(
                         if let Ok(ClientMsg::Config { top_k, width, height, .. }) =
                             serde_json::from_str::<ClientMsg>(&txt)
                         {
-                            cfg.top_k  = top_k.max(1).min(1000);
-                            cfg.width  = width.max(1).min(4096);
-                            cfg.height = height.max(1).min(4096);
+                            cfg.top_k  = top_k.clamp(1, 1000);
+                            cfg.width  = width.clamp(1, 4096);
+                            cfg.height = height.clamp(1, 4096);
                         }
                     }
                     Some(Ok(actix_ws::Message::Binary(data))) => {

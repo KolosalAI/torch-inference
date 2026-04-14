@@ -28,8 +28,7 @@ pub fn get_best_device() -> Device {
 }
 
 #[cfg(not(feature = "torch"))]
-pub fn get_best_device() -> () {
-    ()
+pub fn get_best_device() {
 }
 
 /// PyTorch model loader with preprocessing/postprocessing

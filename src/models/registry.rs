@@ -12,6 +12,7 @@ use crate::error::InferenceError;
 /// Model format types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
+#[allow(clippy::upper_case_acronyms)]
 pub enum ModelFormat {
     PyTorch,
     ONNX,

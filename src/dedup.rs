@@ -50,7 +50,7 @@ impl RequestDeduplicator {
     pub fn new(max_entries: usize) -> Self {
         // Distribute capacity evenly; each shard gets at least 1 slot.
         let per_shard =
-            NonZeroUsize::new(((max_entries + NUM_SHARDS - 1) / NUM_SHARDS).max(1)).unwrap();
+            NonZeroUsize::new(max_entries.div_ceil(NUM_SHARDS).max(1)).unwrap();
         Self {
             shards: Box::new(std::array::from_fn(|_| {
                 Mutex::new(LruCache::new(per_shard))
@@ -83,7 +83,7 @@ impl RequestDeduplicator {
 
         let is_valid = cache
             .peek(key)
-            .map_or(false, |e| now.saturating_sub(e.timestamp) < e.ttl);
+            .is_some_and(|e| now.saturating_sub(e.timestamp) < e.ttl);
 
         if is_valid {
             let result = cache.get(key).map(|e| Arc::clone(&e.result));

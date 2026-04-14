@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use dashmap::DashMap;
-use rand;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
@@ -368,18 +367,18 @@ impl ModelManager {
                 #[cfg(feature = "torch")]
                 return self.infer_pytorch(model_id, input).await;
                 #[cfg(not(feature = "torch"))]
-                return Err(InferenceError::ModelLoadError(
+                Err(InferenceError::ModelLoadError(
                     "PyTorch support disabled".to_string(),
-                ));
+                ))
             }
             ModelFormat::ONNX => {
-                return self.infer_onnx(model_id, input).await;
+                self.infer_onnx(model_id, input).await
             }
             _ => {
-                return Err(InferenceError::ModelLoadError(format!(
+                Err(InferenceError::ModelLoadError(format!(
                     "Unsupported format: {:?}",
                     metadata.format
-                )));
+                )))
             }
         }
     }

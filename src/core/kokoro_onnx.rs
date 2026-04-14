@@ -449,7 +449,7 @@ impl KokoroOnnxEngine {
         // Session automatically returned to pool when `session` guard drops here.
 
         let (_shape, audio_slice) = outputs["audio"].try_extract_tensor::<f32>()?;
-        let samples: Vec<f32> = audio_slice.iter().copied().collect();
+        let samples: Vec<f32> = audio_slice.to_vec();
 
         log::info!(
             "Kokoro ONNX: {} phonemes ({} tokens w/ BOS/EOS) -> {} samples ({:.2}s)",

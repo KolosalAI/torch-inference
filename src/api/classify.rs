@@ -212,9 +212,9 @@ pub async fn stream_classify(
     if req.images.len() > 128 {
         return Err(ApiError::BadRequest("batch too large (max 128)".to_string()));
     }
-    let top_k    = req.top_k.max(1).min(1000);
-    let width    = req.model_width.max(1).min(4096);
-    let height   = req.model_height.max(1).min(4096);
+    let top_k    = req.top_k.clamp(1, 1000);
+    let width    = req.model_width.clamp(1, 4096);
+    let height   = req.model_height.clamp(1, 4096);
     let images   = req.into_inner().images;
     let total    = images.len();
     let backend  = state.into_inner().backend.clone();

@@ -282,7 +282,7 @@ async fn download_file_streaming(
 
     let stream = response
         .bytes_stream()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+        .map_err(std::io::Error::other);
     let mut reader = StreamReader::new(stream);
     let mut file = tokio::fs::File::create(dest).await?;
     tokio::io::copy(&mut reader, &mut file).await?;
@@ -352,26 +352,27 @@ async fn download_model_async(model_id: &str, model: &ModelInfo) -> anyhow::Resu
             repo_id,
             cache_dir
         );
-    } else if {
+    } else {
         let u = model.url.as_str();
-        u.ends_with(".pt")
+        let is_direct_file = u.ends_with(".pt")
             || u.ends_with(".pth")
             || u.ends_with(".onnx")
             || u.ends_with(".bin")
             || u.ends_with(".safetensors")
-            || u.ends_with(".gguf")
-    } {
-        // Direct file download for GitHub releases, pytorch.org, and other CDNs.
-        let extension = model.url.rsplit('.').next().unwrap_or("bin");
-        let filepath = cache_dir.join(format!("model.{}", extension));
-        download_file_streaming(get_http_client(), &model.url, &filepath).await?;
-        log::info!("Downloaded {} to {:?}", model.name, filepath);
-    } else {
-        log::warn!(
-            "{} requires manual download from: {}",
-            model.name,
-            model.url
-        );
+            || u.ends_with(".gguf");
+        if is_direct_file {
+            // Direct file download for GitHub releases, pytorch.org, and other CDNs.
+            let extension = model.url.rsplit('.').next().unwrap_or("bin");
+            let filepath = cache_dir.join(format!("model.{}", extension));
+            download_file_streaming(get_http_client(), &model.url, &filepath).await?;
+            log::info!("Downloaded {} to {:?}", model.name, filepath);
+        } else {
+            log::warn!(
+                "{} requires manual download from: {}",
+                model.name,
+                model.url
+            );
+        }
     }
 
     Ok(())

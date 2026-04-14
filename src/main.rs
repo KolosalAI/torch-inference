@@ -474,13 +474,16 @@ async fn async_main() -> std::io::Result<()> {
             "preloading models on startup"
         );
         for model_name in &config.models.auto_load {
-            if let Ok(_) = model_manager.get_model(model_name) {
+            if model_manager.get_model(model_name).is_ok() {
                 tracing::info!(model = %model_name, status = "loaded", "model preloaded");
             } else {
                 tracing::warn!(model = %model_name, status = "not_found", "model preload skipped");
             }
         }
     }
+
+    // Spawn STT and LLM microservices as child processes.
+    let micro_children = Arc::new(parking_lot::Mutex::new(spawn_microservices()));
 
     // Warmup runs in the background so the HTTP server becomes reachable
     // (and /health returns 200) immediately rather than waiting for the first
@@ -678,9 +681,18 @@ async fn async_main() -> std::io::Result<()> {
     let server_handle = server.handle();
     #[cfg(feature = "profiling")]
     let profiler_guard_for_signal = profiler_guard.clone();
+    let children_for_shutdown = micro_children.clone();
     tokio::spawn(async move {
         shutdown_signal().await;
         tracing::info!("shutdown signal received, draining requests");
+        // Kill spawned microservices before exiting so they don't orphan.
+        {
+            let mut children = children_for_shutdown.lock();
+            for child in children.iter_mut() {
+                let _ = child.kill();
+                tracing::info!(pid = child.id(), "microservice stopped");
+            }
+        }
         // Tell Actix to close the listening socket and finish current requests.
         server_handle.stop(true).await;
         // Brief window for in-flight work to complete before we bypass C++ dtors.
@@ -833,4 +845,43 @@ mod tests {
         let dynamic = resolve_worker_count(0);
         assert!(dynamic >= 1, "num_cpus should return at least 1");
     }
+}
+
+/// Spawn the STT and LLM microservices as child processes.
+/// Both services are optional: if the binary hasn't been built yet we log a
+/// warning and continue.  The returned `Child` handles are held by the caller
+/// and killed during graceful shutdown so the processes don't orphan.
+fn spawn_microservices() -> Vec<std::process::Child> {
+    // (binary path relative to project root, working dir relative to project root, label)
+    let services: &[(&str, &str, &str)] = &[
+        ("services/stt/target/release/stt-service", ".", "stt"),
+        ("services/llm/target/release/llm-service", "services/llm", "llm"),
+    ];
+
+    let mut children = Vec::new();
+    for (bin, workdir, name) in services {
+        let path = std::path::Path::new(bin);
+        if !path.exists() {
+            tracing::warn!(
+                service = name,
+                bin = bin,
+                "{} microservice binary not found — run `make {}-build`",
+                name, name
+            );
+            continue;
+        }
+        match std::process::Command::new(std::fs::canonicalize(path).unwrap_or(path.to_path_buf()))
+            .current_dir(workdir)
+            .spawn()
+        {
+            Ok(child) => {
+                tracing::info!(service = name, pid = child.id(), "{} microservice started", name);
+                children.push(child);
+            }
+            Err(e) => {
+                tracing::warn!(service = name, error = %e, "failed to start {} microservice", name);
+            }
+        }
+    }
+    children
 }

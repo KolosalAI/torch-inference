@@ -880,7 +880,7 @@ fn fmt_f(v: f64) -> String {
 
 fn base64_encode(data: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = if chunk.len() > 1 {
@@ -1001,9 +1001,9 @@ async fn main() {
 
     let mut all: Vec<ProviderSummary> = Vec::new();
 
-    let do_tts = category.as_deref().map_or(true, |c| c == "tts");
-    let do_image = category.as_deref().map_or(true, |c| c == "image");
-    let do_text = category.as_deref().map_or(true, |c| c == "text");
+    let do_tts = category.as_deref().is_none_or(|c| c == "tts");
+    let do_image = category.as_deref().is_none_or(|c| c == "image");
+    let do_text = category.as_deref().is_none_or(|c| c == "text");
 
     if do_tts {
         all.extend(run_tts_benchmarks(&client, runs).await);

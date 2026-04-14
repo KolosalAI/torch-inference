@@ -83,10 +83,10 @@ impl InferenceEngine {
         let sanitized_inputs = self
             .sanitizer
             .sanitize_input(inputs)
-            .map_err(|e| crate::error::InferenceError::InvalidInput(e))?;
+            .map_err(crate::error::InferenceError::InvalidInput)?;
 
         // Try registered model first, fall back to legacy model
-        let result = if let Ok(_) = self.model_manager.get_model_metadata(model_name) {
+        let result = if self.model_manager.get_model_metadata(model_name).is_ok() {
             self.model_manager
                 .infer_registered(model_name, &sanitized_inputs)
                 .instrument(span.clone())
@@ -131,7 +131,7 @@ impl InferenceEngine {
         let sanitized_text = self
             .sanitizer
             .sanitize_input(&json!(text))
-            .map_err(|e| crate::error::InferenceError::InvalidInput(e))?
+            .map_err(crate::error::InferenceError::InvalidInput)?
             .as_str()
             .ok_or_else(|| {
                 crate::error::InferenceError::InvalidInput(

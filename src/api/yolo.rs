@@ -278,8 +278,8 @@ pub async fn get_model_info(
 
 /// List all available YOLO models
 pub async fn list_models(_state: web::Data<YoloState>) -> Result<HttpResponse, ApiError> {
-    let versions = vec!["v5", "v8", "v10", "v11", "v12"];
-    let sizes = vec!["n", "s", "m", "l", "x"];
+    let versions = ["v5", "v8", "v10", "v11", "v12"];
+    let sizes = ["n", "s", "m", "l", "x"];
 
     let response = YoloModelsResponse {
         versions: versions.iter().map(|s| s.to_string()).collect(),

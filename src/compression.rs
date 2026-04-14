@@ -25,7 +25,7 @@ impl CompressionService {
         encoder.write_all(data)?;
         let compressed = encoder.finish()?;
 
-        let ratio = if data.len() > 0 {
+        let ratio = if !data.is_empty() {
             (compressed.len() as f64 / data.len() as f64) * 100.0
         } else {
             100.0

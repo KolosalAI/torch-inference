@@ -105,8 +105,8 @@ pub async fn synthesize(
     }
 
     let params = SynthesisParams {
-        speed: req.speed.max(0.25).min(4.0),
-        pitch: req.pitch.max(0.5).min(2.0),
+        speed: req.speed.clamp(0.25, 4.0),
+        pitch: req.pitch.clamp(0.5, 2.0),
         voice: req.voice.clone(),
         language: req.language.clone(),
     };
@@ -201,8 +201,8 @@ pub async fn stream_synthesize(
     .ok_or_else(|| ApiError::InternalError("No TTS engine available".to_string()))?;
 
     let params = SynthesisParams {
-        speed: req.speed.max(0.25).min(4.0),
-        pitch: req.pitch.max(0.5).min(2.0),
+        speed: req.speed.clamp(0.25, 4.0),
+        pitch: req.pitch.clamp(0.5, 2.0),
         voice: req.voice.clone(),
         language: req.language.clone(),
     };

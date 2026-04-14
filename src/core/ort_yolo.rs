@@ -77,6 +77,7 @@ impl OrtYoloDetector {
         self.run(&img)
     }
 
+    #[allow(dead_code)]
     pub fn detect_file(&self, path: &Path) -> Result<YoloResults> {
         let img = image::open(path).context("open image file")?;
         self.run(&img)
@@ -112,7 +113,7 @@ impl OrtYoloDetector {
 
         // output0: [1, 84, 8400]
         let (_out_shape, out_view) = outputs[0].try_extract_tensor::<f32>()?;
-        let raw: Vec<f32> = out_view.iter().copied().collect();
+        let raw: Vec<f32> = out_view.to_vec();
         // raw is row-major [84][8400] → index: row * 8400 + anchor
 
         let scale_x = orig_w / size as f32;
@@ -138,8 +139,8 @@ impl OrtYoloDetector {
                 continue;
             }
 
-            let cx = raw[0 * NUM_ANCHORS + a];
-            let cy = raw[1 * NUM_ANCHORS + a];
+            let cx = raw[a];
+            let cy = raw[NUM_ANCHORS + a];
             let bw = raw[2 * NUM_ANCHORS + a];
             let bh = raw[3 * NUM_ANCHORS + a];
 
@@ -210,8 +211,8 @@ impl OrtYoloDetector {
         let mut data = vec![0f32; 3 * h * w];
         for (x, y, px) in img.enumerate_pixels() {
             let (x, y) = (x as usize, y as usize);
-            data[0 * h * w + y * w + x] = px[0] as f32 / 255.0;
-            data[1 * h * w + y * w + x] = px[1] as f32 / 255.0;
+            data[y * w + x] = px[0] as f32 / 255.0;
+            data[h * w + y * w + x] = px[1] as f32 / 255.0;
             data[2 * h * w + y * w + x] = px[2] as f32 / 255.0;
         }
         data

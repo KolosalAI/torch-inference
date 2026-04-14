@@ -4,7 +4,7 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -153,7 +153,7 @@ fn auto_download_libtorch(system_info: &SystemInfo) -> Result<PathBuf, String> {
     let cache_dir = get_cache_dir()?;
 
     // For local directory, we extract directly to it
-    let is_local = cache_dir == PathBuf::from(".");
+    let is_local = cache_dir == Path::new(".");
     let libtorch_dir = if is_local {
         PathBuf::from("./libtorch")
     } else {
@@ -480,7 +480,7 @@ fn find_libtorch() -> Option<PathBuf> {
 fn find_pytorch_libtorch() -> Option<PathBuf> {
     // Try to find PyTorch installation and get libtorch path
     let output = Command::new("python3")
-        .args(&["-c", "import torch; print(torch.__path__[0])"])
+        .args(["-c", "import torch; print(torch.__path__[0])"])
         .output()
         .ok()?;
 
@@ -496,7 +496,7 @@ fn find_pytorch_libtorch() -> Option<PathBuf> {
     None
 }
 
-fn validate_libtorch(path: &PathBuf) -> bool {
+fn validate_libtorch(path: &Path) -> bool {
     if !path.exists() {
         return false;
     }
@@ -521,7 +521,7 @@ fn validate_libtorch(path: &PathBuf) -> bool {
     torch_lib.exists()
 }
 
-fn setup_libtorch_paths(libtorch_path: &PathBuf, system_info: &SystemInfo) {
+fn setup_libtorch_paths(libtorch_path: &Path, system_info: &SystemInfo) {
     let lib_path = libtorch_path.join("lib");
 
     println!("cargo:warning=[INFO] Configuring LibTorch paths...");

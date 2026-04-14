@@ -86,7 +86,7 @@ impl<T> ModelPool<T> {
         let mut instances = self
             .instances
             .entry(model_name.clone())
-            .or_insert_with(Vec::new);
+            .or_default();
 
         if instances.len() < self.max_instances_per_model {
             let wrapper = InstanceWrapper {
@@ -149,7 +149,7 @@ impl<T> ModelPool<T> {
     }
 
     /// Select the least loaded instance based on active requests and latency
-    fn select_least_loaded_instance<'a>(&self, instances: &'a [InstanceWrapper<T>]) -> usize {
+    fn select_least_loaded_instance(&self, instances: &[InstanceWrapper<T>]) -> usize {
         if instances.len() == 1 {
             return 0;
         }

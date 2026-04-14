@@ -264,7 +264,7 @@ fn parse_available_model_entry(
 pub async fn list_available_models() -> Result<HttpResponse, ApiError> {
     // Load models from registry
     let registry_path = std::path::Path::new("model_registry.json");
-    let _models = if registry_path.exists() {
+    if registry_path.exists() {
         match std::fs::read_to_string(registry_path) {
             Ok(content) => {
                 match serde_json::from_str::<serde_json::Value>(&content) {
@@ -336,7 +336,7 @@ pub async fn list_available_models() -> Result<HttpResponse, ApiError> {
                 warn!("Failed to read registry: {}", e);
             }
         }
-    };
+    }
 
     // Fallback to hardcoded list if registry not available
     let available = vec![

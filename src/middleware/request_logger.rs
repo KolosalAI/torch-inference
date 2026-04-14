@@ -63,8 +63,8 @@ where
             .headers()
             .get("X-Correlation-ID")
             .and_then(|v| v.to_str().ok())
-            .map(|s| CorrelationId::from_header(s))
-            .unwrap_or_else(CorrelationId::new);
+            .map(CorrelationId::from_header)
+            .unwrap_or_default();
 
         let metrics = RequestMetrics::new(correlation_id.clone());
 

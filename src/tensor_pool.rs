@@ -89,7 +89,7 @@ impl TensorPool {
     /// copy) write every element before reading.  Removing it saves O(size)
     /// writes per release (~4 µs for a 224×224×3 tensor).
     pub fn release(&self, shape: TensorShape, tensor: Vec<f32>) {
-        let mut entry = self.pools.entry(shape.clone()).or_insert_with(Vec::new);
+        let mut entry = self.pools.entry(shape.clone()).or_default();
 
         if entry.len() < self.max_pooled_tensors {
             entry.push(tensor);

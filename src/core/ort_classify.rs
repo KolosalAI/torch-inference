@@ -171,7 +171,7 @@ impl ClassificationBackend for OrtClassificationBackend {
             let outputs = sess.run(ort::inputs![input_name => input_tensor])?;
 
             let (_shape, raw_view) = outputs[0].try_extract_tensor::<f32>()?;
-            let raw: Vec<f32> = raw_view.iter().copied().collect();
+            let raw: Vec<f32> = raw_view.to_vec();
 
             let probs = if self.output_is_prob {
                 raw

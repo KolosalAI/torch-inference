@@ -77,7 +77,7 @@ pub async fn process_image_secure(mut payload: Multipart) -> Result<HttpResponse
                 level_str.push_str(&String::from_utf8_lossy(&data));
             }
             security_level =
-                SecurityLevel::from_string(&level_str).map_err(|e| ApiError::BadRequest(e))?;
+                SecurityLevel::from_string(&level_str).map_err(ApiError::BadRequest)?;
         } else if field_name == "image" {
             while let Some(chunk) = field.next().await {
                 let data = chunk.map_err(|e| ApiError::BadRequest(e.to_string()))?;
@@ -144,7 +144,7 @@ pub async fn validate_image_security(mut payload: Multipart) -> Result<HttpRespo
                 level_str.push_str(&String::from_utf8_lossy(&data));
             }
             security_level =
-                SecurityLevel::from_string(&level_str).map_err(|e| ApiError::BadRequest(e))?;
+                SecurityLevel::from_string(&level_str).map_err(ApiError::BadRequest)?;
         } else if field_name == "image" {
             while let Some(chunk) = field.next().await {
                 let data = chunk.map_err(|e| ApiError::BadRequest(e.to_string()))?;

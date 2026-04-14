@@ -61,7 +61,7 @@ impl WindowsSAPIEngine {
         let script_path = std::env::current_dir()?.join("sapi_tts.ps1");
 
         let output = Command::new("powershell")
-            .args(&[
+            .args([
                 "-NoProfile",
                 "-ExecutionPolicy",
                 "Bypass",

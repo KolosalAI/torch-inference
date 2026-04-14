@@ -220,13 +220,12 @@ pub async fn optimize_performance(
         .map(|p| p.memory() as f64 / 1024.0 / 1024.0)
         .unwrap_or(0.0);
 
-    let mut optimizations = Vec::new();
-
     // Force garbage collection (Rust doesn't have explicit GC, but we can drop unused data)
-    optimizations.push("Memory cleanup performed".to_string());
-
     // Clear any internal caches if implemented
-    optimizations.push("Internal caches cleared".to_string());
+    let optimizations = vec![
+        "Memory cleanup performed".to_string(),
+        "Internal caches cleared".to_string(),
+    ];
 
     // Refresh system to get new memory reading
     system.refresh_all();

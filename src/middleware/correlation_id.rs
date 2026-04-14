@@ -52,8 +52,8 @@ where
             .headers()
             .get("X-Correlation-ID")
             .and_then(|h| h.to_str().ok())
-            .map(|s| CorrelationId::from_header(s))
-            .unwrap_or_else(CorrelationId::new);
+            .map(CorrelationId::from_header)
+            .unwrap_or_default();
 
         // Store in request extensions
         req.extensions_mut().insert(correlation_id.clone());

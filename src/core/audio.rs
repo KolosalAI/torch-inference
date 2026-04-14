@@ -372,8 +372,8 @@ impl AudioProcessor {
         let out_frames = out_channels[0].len();
         let mut resampled = Vec::with_capacity(out_frames * channels);
         for f in 0..out_frames {
-            for c in 0..channels {
-                resampled.push(out_channels[c][f]);
+            for channel in out_channels.iter().take(channels) {
+                resampled.push(channel[f]);
             }
         }
 

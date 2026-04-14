@@ -30,6 +30,12 @@ pub struct TorchLibAutoDetect {
     libtorch_dir: PathBuf,
 }
 
+impl Default for TorchLibAutoDetect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TorchLibAutoDetect {
     pub fn new() -> Self {
         let libtorch_dir = env::var("LIBTORCH_DIR")
@@ -190,13 +196,7 @@ impl TorchLibAutoDetect {
     fn extract_cuda_version_from_path(&self, path: &Path) -> Option<String> {
         path.file_name()
             .and_then(|name| name.to_str())
-            .and_then(|name| {
-                if name.starts_with("v") {
-                    Some(name[1..].to_string())
-                } else {
-                    None
-                }
-            })
+            .and_then(|name| name.strip_prefix('v').map(|s| s.to_string()))
     }
 
     /// Check if libtorch is already installed
@@ -370,7 +370,7 @@ impl TorchLibAutoDetect {
     /// Download and install libtorch
     pub async fn download_libtorch(&self, backend: &TorchBackend) -> Result<PathBuf> {
         let url = self.get_download_url(backend);
-        let filename = url.split('/').last().unwrap_or("libtorch.zip");
+        let filename = url.split('/').next_back().unwrap_or("libtorch.zip");
         let download_path = self
             .libtorch_dir
             .parent()
