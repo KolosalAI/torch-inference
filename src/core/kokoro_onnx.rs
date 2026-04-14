@@ -186,7 +186,7 @@ impl KokoroOnnxEngine {
             let builder = Session::builder()?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_intra_threads(physical_cpus)?
-                .with_inter_threads(1)?
+                .with_inter_threads(1)?   // no-op in Sequential mode; guards intent if parallel mode is ever enabled
                 .with_memory_pattern(true)?;
 
             // On macOS: enable CoreML to route through the Apple Neural Engine.
