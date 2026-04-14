@@ -690,6 +690,7 @@ async fn async_main() -> std::io::Result<()> {
             let mut children = children_for_shutdown.lock();
             for child in children.iter_mut() {
                 let _ = child.kill();
+                let _ = child.wait(); // reap to avoid zombie processes
                 tracing::info!(pid = child.id(), "microservice stopped");
             }
         }
