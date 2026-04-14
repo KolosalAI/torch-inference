@@ -27,11 +27,15 @@ pub async fn proxy(
     let mut rb = client.request(method, &url);
     for (name, value) in req.headers() {
         let lower = name.as_str().to_lowercase();
-        if lower == "host" || lower == "content-length" {
-            continue;
+        match lower.as_str() {
+            "host" | "content-length" | "connection" | "keep-alive"
+            | "transfer-encoding" | "te" | "trailers"
+            | "proxy-authorization" | "proxy-connection" | "upgrade" => continue,
+            _ => {}
         }
+        let Ok(hname) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) else { continue };
         if let Ok(v) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
-            rb = rb.header(name.as_str(), v);
+            rb = rb.header(hname, v);
         }
     }
     rb = rb.body(body);
