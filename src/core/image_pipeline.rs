@@ -13,6 +13,17 @@
 /// Output: `ndarray::Array4<f32>` in NCHW layout, ready for ORT.
 use anyhow::{bail, Result};
 use ndarray::Array4;
+use std::sync::OnceLock;
+
+use crate::tensor_pool::BufferPool;
+
+/// Module-level pool for the mutable source buffer required by fast_image_resize.
+/// Eliminates the per-request `src.to_vec()` allocation (~1.2 MB for 640×640 inputs).
+static RESIZE_SRC_POOL: OnceLock<BufferPool> = OnceLock::new();
+
+fn resize_src_pool() -> &'static BufferPool {
+    RESIZE_SRC_POOL.get_or_init(|| BufferPool::new(8))
+}
 
 // ── Configuration ─────────────────────────────────────────────────────────
 
@@ -185,12 +196,17 @@ fn resize_hwc(
     use fast_image_resize as fir;
     use std::num::NonZeroU32;
 
-    let mut src_buf = src.to_vec();
+    // Acquire a pooled buffer large enough for the source pixels.
+    // fast_image_resize requires &mut [u8], so we copy src into a reusable buffer
+    // instead of allocating a fresh Vec<u8> per request.
+    let src_len = src.len();
+    let mut src_buf = resize_src_pool().acquire(src_len);
+    src_buf[..src_len].copy_from_slice(src);
+
     let src_img = fir::Image::from_slice_u8(
         NonZeroU32::new(src_w).ok_or_else(|| anyhow::anyhow!("resize: zero src width"))?,
         NonZeroU32::new(src_h).ok_or_else(|| anyhow::anyhow!("resize: zero src height"))?,
-        // fast_image_resize needs a &mut [u8]; we use an owned copy.
-        &mut src_buf,
+        &mut src_buf[..src_len],
         fir::PixelType::U8x3,
     )
     .map_err(|e| anyhow::anyhow!("fast_image_resize src: {e}"))?;
@@ -201,9 +217,14 @@ fn resize_hwc(
         fir::PixelType::U8x3,
     );
 
-    fir::Resizer::new(fir::ResizeAlg::Convolution(fir::FilterType::CatmullRom))
+    let resize_result = fir::Resizer::new(fir::ResizeAlg::Convolution(fir::FilterType::CatmullRom))
         .resize(&src_img.view(), &mut dst_img.view_mut())
-        .map_err(|e| anyhow::anyhow!("fast_image_resize resize: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("fast_image_resize resize: {e}"));
+
+    // Release src_buf before propagating any error.
+    drop(src_img);
+    resize_src_pool().release(src_buf);
+    resize_result?;
 
     Ok((dst_img.into_vec(), dst_w, dst_h))
 }
