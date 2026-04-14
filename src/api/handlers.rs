@@ -200,6 +200,7 @@ pub async fn get_system_info(
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/", web::get().to(root))
+        .route("/playground", web::get().to(root))
         .route("/health", web::get().to(health_check))
         .route("/predict", web::post().to(predict))
         .route("/synthesize", web::post().to(synthesize_tts))
