@@ -22,6 +22,11 @@ use crate::tensor_pool::{TensorPool, TensorShape};
 
 /// Module-level output buffer pool. Initialized once on first classify call.
 /// Pools the per-image output Vec<f32> to avoid per-request heap allocation.
+///
+/// Note: This pool is unconditionally active; it does not consult
+/// `config.performance.enable_tensor_pooling`. The config flag controls the
+/// pool wired through ModelManager/OnnxLoader; this path is independent.
+/// Default config has tensor pooling enabled so behaviour is consistent.
 static OUTPUT_POOL: OnceLock<TensorPool> = OnceLock::new();
 
 fn output_pool() -> &'static TensorPool {
@@ -189,7 +194,7 @@ impl ClassificationBackend for OrtClassificationBackend {
 
             // softmax and top_k both take &[f32] — release buf before computing probs
             let probs: Vec<f32> = if self.output_is_prob {
-                raw_buf.iter().copied().collect()
+                raw_buf.to_vec()
             } else {
                 Self::softmax(&raw_buf)
             };
@@ -233,7 +238,7 @@ mod pool_tests {
         pool.release(shape.clone(), buf);
 
         let stats_before = pool.get_stats();
-        let _buf2 = pool.acquire(shape.clone());
+        let buf2 = pool.acquire(shape.clone());
         let stats_after = pool.get_stats();
 
         // Second acquire must come from pool (reuse, not fresh allocation)
@@ -242,5 +247,8 @@ mod pool_tests {
             "expected pool reuse, got stats: {:?}",
             stats_after
         );
+
+        // Return buf2 to avoid leaking pool state across parallel test runs
+        pool.release(shape, buf2);
     }
 }
