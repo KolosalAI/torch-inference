@@ -588,8 +588,8 @@ async fn async_main() -> std::io::Result<()> {
         "server ready"
     );
     eprintln!(
-        "\n  Server:  http://{}\n  Health:  http://{}/health\n",
-        display_addr, display_addr
+        "\n  WebApp:  http://{}/playground\n  API:     http://{}\n  Health:  http://{}/health\n",
+        display_addr, display_addr, display_addr
     );
     tracing::info!(
         tensor_pooling = config.performance.enable_tensor_pooling,
@@ -682,23 +682,32 @@ async fn async_main() -> std::io::Result<()> {
     #[cfg(feature = "profiling")]
     let profiler_guard_for_signal = profiler_guard.clone();
     let children_for_shutdown = micro_children.clone();
+    let worker_pool_for_shutdown = worker_pool.clone();
     tokio::spawn(async move {
         shutdown_signal().await;
-        tracing::info!("shutdown signal received, draining requests");
-        // Kill spawned microservices before exiting so they don't orphan.
+        tracing::info!("shutdown signal received — draining in-flight requests");
+
+        // Step 1: Stop accepting new connections and drain existing requests
+        // (Actix waits up to shutdown_timeout(30s) for handlers to complete).
+        server_handle.stop(true).await;
+        tracing::info!("http server stopped");
+
+        // Step 2: Shut down the worker pool so background tasks exit cleanly.
+        worker_pool_for_shutdown.shutdown().await;
+        tracing::info!("worker pool stopped");
+
+        // Step 3: Kill spawned microservices now that no HTTP handler can call
+        // them. Capture PID before kill/wait so the log is always meaningful.
         {
             let mut children = children_for_shutdown.lock();
             for child in children.iter_mut() {
+                let pid = child.id();
                 let _ = child.kill();
                 let _ = child.wait(); // reap to avoid zombie processes
-                tracing::info!(pid = child.id(), "microservice stopped");
+                tracing::info!(pid, "microservice stopped");
             }
         }
-        // Tell Actix to close the listening socket and finish current requests.
-        server_handle.stop(true).await;
-        // Brief window for in-flight work to complete before we bypass C++ dtors.
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        tracing::info!("drain window elapsed, exiting");
+        tracing::info!("all microservices stopped");
         #[cfg(feature = "profiling")]
         {
             if let Ok(mut guard) = profiler_guard_for_signal.lock() {
@@ -731,7 +740,15 @@ async fn shutdown_signal() {
     #[cfg(unix)]
     let terminate = async {
         signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(unix)]
+    let hangup = async {
+        signal::unix::signal(signal::unix::SignalKind::hangup())
+            .expect("failed to install SIGHUP handler")
             .recv()
             .await;
     };
@@ -739,12 +756,18 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
+    #[cfg(not(unix))]
+    let hangup = std::future::pending::<()>();
+
     tokio::select! {
         _ = ctrl_c => {
-            tracing::info!(signal = "ctrl_c", "shutdown signal received");
+            tracing::info!(signal = "SIGINT",  "shutdown signal received");
         },
         _ = terminate => {
-            tracing::info!(signal = "sigterm", "shutdown signal received");
+            tracing::info!(signal = "SIGTERM", "shutdown signal received");
+        },
+        _ = hangup => {
+            tracing::info!(signal = "SIGHUP",  "shutdown signal received");
         },
     }
 }

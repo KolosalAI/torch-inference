@@ -67,6 +67,10 @@ fn print_header() {
     println!("cargo:warning=║    PyTorch Inference Framework - Build Configuration    ║");
     println!("cargo:warning=╚══════════════════════════════════════════════════════════╝");
     println!("cargo:warning=");
+    println!("cargo:warning=  WebApp:     http://localhost:8000/playground");
+    println!("cargo:warning=  API:        http://localhost:8000");
+    println!("cargo:warning=  Health:     http://localhost:8000/health");
+    println!("cargo:warning=");
 }
 
 struct SystemInfo {
