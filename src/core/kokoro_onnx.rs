@@ -2,9 +2,10 @@
 /// Uses ONNX Runtime for cross-platform neural TTS inference
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use dashmap::DashMap;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -133,8 +134,9 @@ pub struct KokoroOnnxEngine {
     config: KokoroOnnxConfig,
     capabilities: EngineCapabilities,
     /// Per-engine G2P result cache: text → phoneme token ids.
-    /// DashMap allows concurrent lock-free reads; no blocking under concurrent synthesis.
-    g2p_cache: DashMap<String, Arc<Vec<i64>>>,
+    /// LruCache evicts the least-recently-used entry when capacity is reached,
+    /// ensuring frequently-used phrases are retained over one-off texts.
+    g2p_cache: Mutex<LruCache<String, Vec<i64>>>,
 }
 
 // Session is Send+Sync as documented by ort; SessionPool wraps it safely.
@@ -258,7 +260,9 @@ impl KokoroOnnxEngine {
             voice_styles,
             config,
             capabilities,
-            g2p_cache: DashMap::with_capacity(G2P_CACHE_CAPACITY),
+            g2p_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(G2P_CACHE_CAPACITY).expect("G2P_CACHE_CAPACITY > 0"),
+            )),
         })
     }
 
@@ -367,31 +371,27 @@ impl KokoroOnnxEngine {
 
     /// Look up or compute the phoneme tokens for `text`.
     ///
-    /// Uses a lock-free DashMap so concurrent synthesis requests never block
-    /// each other on the G2P cache — reads are entirely contention-free.
+    /// G2P with LRU caching. Lock held only for the duration of the cache
+    /// lookup or insert — G2P computation itself runs outside the lock.
     fn cached_g2p(&self, text: &str) -> Result<Vec<i64>> {
         use crate::core::g2p_misaki::MisakiG2P;
 
-        // Fast path: lock-free read from DashMap.
-        if let Some(tokens) = self.g2p_cache.get(text) {
-            return Ok(tokens.as_ref().clone());
-        }
-
-        // Slow path: compute G2P then insert.
-        let g2p = MisakiG2P::new()?;
-        let tokens = Arc::new(g2p.text_to_tokens(text)?);
-
-        // Evict one random entry if cache is full.
-        if self.g2p_cache.len() >= G2P_CACHE_CAPACITY {
-            if let Some(entry) = self.g2p_cache.iter().next() {
-                let evict_key = entry.key().clone();
-                drop(entry);
-                self.g2p_cache.remove(&evict_key);
+        // Fast path: cache hit.
+        {
+            let mut cache = self.g2p_cache.lock();
+            if let Some(tokens) = cache.get(text) {
+                return Ok(tokens.clone());
             }
         }
 
-        self.g2p_cache.insert(text.to_string(), Arc::clone(&tokens));
-        Ok(Arc::try_unwrap(tokens).unwrap_or_else(|arc| arc.as_ref().clone()))
+        // Slow path: compute G2P outside the lock so other threads can still
+        // read the cache while this synthesis thread is running G2P.
+        let g2p = MisakiG2P::new()?;
+        let tokens = g2p.text_to_tokens(text)?;
+
+        // Insert — LruCache::put automatically evicts the LRU entry when full.
+        self.g2p_cache.lock().put(text.to_string(), tokens.clone());
+        Ok(tokens)
     }
 
     async fn synthesize_with_onnx(

@@ -324,14 +324,18 @@ impl AudioProcessor {
         let total_frames = audio.samples.len() / channels;
         let channel_bufs: Vec<Vec<f32>> = (0..channels)
             .map(|c| {
-                (0..total_frames)
-                    .map(|f| audio.samples[f * channels + c])
-                    .collect()
+                let mut ch = Vec::with_capacity(total_frames);
+                ch.extend((0..total_frames).map(|f| audio.samples[f * channels + c]));
+                ch
             })
             .collect();
 
-        // Process full chunks, then flush the remainder.
-        let mut out_channels: Vec<Vec<f32>> = vec![Vec::new(); channels];
+        // Pre-allocate output: estimate output frames from rate ratio.
+        let expected_out_frames =
+            (total_frames as f64 * out_rate as f64 / in_rate as f64).ceil() as usize + chunk_size;
+        let mut out_channels: Vec<Vec<f32>> = (0..channels)
+            .map(|_| Vec::with_capacity(expected_out_frames))
+            .collect();
         let mut pos = 0usize;
 
         while pos + chunk_size <= total_frames {
@@ -350,9 +354,8 @@ impl AudioProcessor {
 
         // Flush remaining samples (zero-padded by rubato internally).
         if pos < total_frames {
-            let in_partial: Vec<Vec<f32>> =
-                channel_bufs.iter().map(|ch| ch[pos..].to_vec()).collect();
-            let in_refs: Vec<&[f32]> = in_partial.iter().map(|v| v.as_slice()).collect();
+            // Borrow the tail of each channel buffer directly — no copy needed.
+            let in_refs: Vec<&[f32]> = channel_bufs.iter().map(|ch| &ch[pos..]).collect();
             let out = resampler
                 .process_partial(Some(&in_refs), None)
                 .context("Resampler error during partial-chunk flush")?;
