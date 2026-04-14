@@ -68,9 +68,12 @@ impl OrtClassificationBackend {
             .filter(|l| !l.is_empty())
             .collect();
 
+        let physical_cpus = num_cpus::get_physical().max(1);
         let mut builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(2)?;
+            .with_intra_threads(physical_cpus)?
+            .with_inter_threads(1)?
+            .with_memory_pattern(true)?;
 
         #[cfg(target_os = "macos")]
         {

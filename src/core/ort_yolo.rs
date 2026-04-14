@@ -14,10 +14,19 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Tensor;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use crate::core::yolo::{BoundingBox, Detection, YoloResults};
+use crate::tensor_pool::{TensorPool, TensorShape};
+
+/// Module-level output buffer pool for YOLO inference.
+/// Pools the [84 × 8400] f32 output tensor to avoid ~2.8 MB allocation per request.
+static OUTPUT_POOL: OnceLock<TensorPool> = OnceLock::new();
+
+fn output_pool() -> &'static TensorPool {
+    OUTPUT_POOL.get_or_init(|| TensorPool::new(16))
+}
 
 pub const MODEL_INPUT_SIZE: u32 = 640;
 const NUM_CLASSES: usize = 80;
@@ -37,9 +46,12 @@ pub struct OrtYoloDetector {
 
 impl OrtYoloDetector {
     pub fn new(model_path: &Path, class_names: Vec<String>) -> Result<Self> {
+        let physical_cpus = num_cpus::get_physical().max(1);
         let mut builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(2)?;
+            .with_intra_threads(physical_cpus)?
+            .with_inter_threads(1)?
+            .with_memory_pattern(true)?;
 
         #[cfg(target_os = "macos")]
         {
@@ -113,14 +125,19 @@ impl OrtYoloDetector {
 
         // output0: [1, 84, 8400]
         let (_out_shape, out_view) = outputs[0].try_extract_tensor::<f32>()?;
-        let raw: Vec<f32> = out_view.to_vec();
+        let raw_len = out_view.len();
+        let raw_shape = TensorShape::new(vec![raw_len]);
+        let mut raw = output_pool().acquire(raw_shape.clone());
+        raw.clear();
+        raw.extend(out_view.iter().copied());
         // raw is row-major [84][8400] → index: row * 8400 + anchor
 
         let scale_x = orig_w / size as f32;
         let scale_y = orig_h / size as f32;
 
-        // Collect candidates that pass confidence threshold
-        let mut candidates: Vec<(f32, f32, f32, f32, f32, usize)> = Vec::new(); // cx,cy,w,h,score,class_id
+        // Collect candidates that pass confidence threshold.
+        // Pre-allocate for typical detection count; Vec grows if needed.
+        let mut candidates: Vec<(f32, f32, f32, f32, f32, usize)> = Vec::with_capacity(512); // cx,cy,w,h,score,class_id
         for a in 0..NUM_ANCHORS {
             // Find best class
             let mut best_class = 0usize;
@@ -146,6 +163,9 @@ impl OrtYoloDetector {
 
             candidates.push((cx, cy, bw, bh, confidence, best_class));
         }
+
+        // Return the pooled raw buffer now — candidates already extracted all needed values.
+        output_pool().release(raw_shape, raw);
 
         // Convert cxcywh → x1y1x2y2, then scale to original image size
         let mut boxes: Vec<BoxCandidate> = candidates.into_iter().map(|(cx, cy, bw, bh, score, class_id)| {
