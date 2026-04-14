@@ -96,7 +96,7 @@ pub fn init_with_tracing(
         return init_structured_logging_fallback(log_dir, json_output);
     };
 
-    let telemetry_layer = OpenTelemetryLayer::new(tracer.tracer("torch-inference"));
+    let telemetry_layer = OpenTelemetryLayer::new(tracer);
     let registry = Registry::default().with(env_filter).with(telemetry_layer);
 
     if json_output {

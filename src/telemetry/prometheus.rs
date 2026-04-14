@@ -168,13 +168,13 @@ pub fn update_cache_metrics(hits: u64, misses: u64, evictions: u64, size: usize)
     CACHE_HIT_RATE.set(hit_rate);
     CACHE_SIZE.set(size as f64);
 
-    CACHE_OPERATIONS.with_label_values(&["hit"]).inc_by(hits);
+    CACHE_OPERATIONS.with_label_values(&["hit"]).inc_by(hits as f64);
 
-    CACHE_OPERATIONS.with_label_values(&["miss"]).inc_by(misses);
+    CACHE_OPERATIONS.with_label_values(&["miss"]).inc_by(misses as f64);
 
     CACHE_OPERATIONS
         .with_label_values(&["eviction"])
-        .inc_by(evictions);
+        .inc_by(evictions as f64);
 }
 
 #[cfg(feature = "metrics")]
