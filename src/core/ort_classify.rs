@@ -16,7 +16,17 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use ort::value::Tensor;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+
+use crate::tensor_pool::{TensorPool, TensorShape};
+
+/// Module-level output buffer pool. Initialized once on first classify call.
+/// Pools the per-image output Vec<f32> to avoid per-request heap allocation.
+static OUTPUT_POOL: OnceLock<TensorPool> = OnceLock::new();
+
+fn output_pool() -> &'static TensorPool {
+    OUTPUT_POOL.get_or_init(|| TensorPool::new(64))
+}
 
 use crate::api::classify::{ClassificationBackend, Prediction};
 
@@ -171,13 +181,20 @@ impl ClassificationBackend for OrtClassificationBackend {
             let outputs = sess.run(ort::inputs![input_name => input_tensor])?;
 
             let (_shape, raw_view) = outputs[0].try_extract_tensor::<f32>()?;
-            let raw: Vec<f32> = raw_view.to_vec();
+            let output_len = raw_view.len();
+            let output_shape = TensorShape::new(vec![output_len]);
+            let mut raw_buf = output_pool().acquire(output_shape.clone());
+            raw_buf.clear();
+            raw_buf.extend(raw_view.iter().copied());
 
-            let probs = if self.output_is_prob {
-                raw
+            // softmax and top_k both take &[f32] — release buf before computing probs
+            let probs: Vec<f32> = if self.output_is_prob {
+                raw_buf.iter().copied().collect()
             } else {
-                Self::softmax(&raw)
+                Self::softmax(&raw_buf)
             };
+
+            output_pool().release(output_shape, raw_buf);
 
             let top = Self::top_k(&probs, top_k);
             let preds = top
@@ -197,5 +214,33 @@ impl ClassificationBackend for OrtClassificationBackend {
         }
 
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    use crate::tensor_pool::TensorShape;
+
+    #[test]
+    fn output_pool_reuses_buffer() {
+        let pool = output_pool();
+        let shape = TensorShape::new(vec![1000]);
+
+        // First acquire — will allocate
+        let buf = pool.acquire(shape.clone());
+        assert_eq!(buf.len(), 1000);
+        pool.release(shape.clone(), buf);
+
+        let stats_before = pool.get_stats();
+        let _buf2 = pool.acquire(shape.clone());
+        let stats_after = pool.get_stats();
+
+        // Second acquire must come from pool (reuse, not fresh allocation)
+        assert!(
+            stats_after.reuses > stats_before.reuses,
+            "expected pool reuse, got stats: {:?}",
+            stats_after
+        );
     }
 }
