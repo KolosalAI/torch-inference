@@ -68,7 +68,6 @@ pub fn init_with_tracing(
     json_output: bool,
     otlp_endpoint: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::trace::Config;
     use tracing_opentelemetry::OpenTelemetryLayer;

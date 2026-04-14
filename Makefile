@@ -40,7 +40,7 @@ coverage: ## Measure line coverage (requires cargo-llvm-cov). Reports ≥95% exc
 	$(CARGO) llvm-cov --lib --ignore-run-fail \
 		--ignore-filename-regex '(ws_audio|ws_infer|ort_classify|ort_yolo|llm_proxy|windows_sapi_tts|provider_comparison)' \
 		--lcov --output-path coverage/lcov.info
-	@python3 scripts/lcov_summary.py coverage/lcov.info
+	@bash scripts/lcov_summary.sh coverage/lcov.info
 
 clean: ## Clean build artifacts
 	@echo "Cleaning build artifacts..."
@@ -49,7 +49,7 @@ clean: ## Clean build artifacts
 
 install: ## Install binary to ~/.cargo/bin
 	@echo "Installing binary..."
-	$(CARGO) install --path . --no-default-features
+	$(CARGO) install --path . --no-default-features --features production
 	@echo "✅ Installed to: ~/.cargo/bin/torch-inference-server"
 
 doctor: ## Check system requirements
