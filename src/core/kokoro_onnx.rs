@@ -180,11 +180,14 @@ impl KokoroOnnxEngine {
         })?;
 
         // Build `pool_size` independent sessions with hardware-accelerated EP.
+        let physical_cpus = num_cpus::get_physical().max(1);
         let mut sessions = Vec::with_capacity(pool_size);
         for i in 0..pool_size {
             let builder = Session::builder()?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .with_intra_threads(2)?;
+                .with_intra_threads(physical_cpus)?
+                .with_inter_threads(1)?
+                .with_memory_pattern(true)?;
 
             // On macOS: enable CoreML to route through the Apple Neural Engine.
             // Measured gain: ~30ms CPU → ~8-12ms ANE per sentence on M-series.
