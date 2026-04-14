@@ -136,6 +136,7 @@ wiremock = "0.6"
 
 [features]
 default = ["jemalloc"]  # Use jemalloc by default for better performance
+production = ["jemalloc", "metrics", "telemetry", "simd-image"]
 cuda = ["nvml-wrapper"]
 onnx = ["onnxruntime"]
 torch = ["tch"]

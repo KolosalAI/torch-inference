@@ -19,13 +19,13 @@ help: ## Show this help message
 
 build: ## Build release binary (recommended)
 	@echo "Building release binary..."
-	$(CARGO) build --release --no-default-features
+	$(CARGO) build --release --no-default-features --features production
 	@echo ""
 	@echo "✅ Build complete: ./target/release/torch-inference-server"
 
 run: ## Run server in release mode
 	@echo "Starting server (release mode)..."
-	$(CARGO) run --release --no-default-features
+	$(CARGO) run --release --no-default-features --features production
 
 dev: ## Run server in dev mode (faster compile)
 	@echo "Starting server (dev mode)..."
