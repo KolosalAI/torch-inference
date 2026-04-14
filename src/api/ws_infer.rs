@@ -292,9 +292,11 @@ async fn process_detect_frame(
     if cached_model.as_ref() != Some(&model_path) {
         tracing::info!(model = ?model_path, "ws/detect loading ONNX model (once per session)");
         let path = model_path.clone();
+        let conf = cfg.conf;
+        let iou  = cfg.iou;
         let det = tokio::task::spawn_blocking(move || {
             let class_names = load_coco_names();
-            crate::core::ort_yolo::OrtYoloDetector::new(&path, class_names)
+            crate::core::ort_yolo::OrtYoloDetector::new(&path, class_names, conf, iou)
         })
         .await
         .map_err(|e| format!("task join: {}", e))?

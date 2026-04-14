@@ -17,24 +17,20 @@ use crate::middleware::correlation_id::get_correlation_id;
 use crate::postprocess::yolo::EnrichedYoloResults;
 use crate::postprocess::{self, envelope::ResponseMeta, Envelope};
 
-/// YOLO detection request
+/// YOLO detection request.
+/// `conf_threshold` and `iou_threshold` default to `None`, meaning "use server config defaults"
+/// (`config.models.yolo_conf_threshold` / `config.models.yolo_iou_threshold`).
+/// Callers can override these per-request by supplying explicit values.
 #[derive(Debug, Deserialize)]
 pub struct YoloDetectRequest {
     pub model_version: String, // v5, v8, v10, v11, v12
     pub model_size: String,    // n, s, m, l, x
-    #[serde(default = "default_conf_threshold")]
-    pub conf_threshold: f32,
-    #[serde(default = "default_iou_threshold")]
-    pub iou_threshold: f32,
+    #[serde(default)]
+    pub conf_threshold: Option<f32>,
+    #[serde(default)]
+    pub iou_threshold: Option<f32>,
     #[serde(default)]
     pub skip_postprocess: bool,
-}
-
-fn default_conf_threshold() -> f32 {
-    0.25
-}
-fn default_iou_threshold() -> f32 {
-    0.45
 }
 
 /// YOLO detection response
@@ -94,6 +90,10 @@ pub async fn detect_objects(
 ) -> Result<HttpResponse, ApiError> {
     let start = Instant::now();
 
+    // Resolve detection thresholds: per-request value takes priority over config default.
+    let conf_threshold = query.conf_threshold.unwrap_or(config.models.yolo_conf_threshold);
+    let iou_threshold  = query.iou_threshold.unwrap_or(config.models.yolo_iou_threshold);
+
     // Parse model version and size
     let version = YoloVersion::from_str(&query.model_version).ok_or_else(|| {
         ApiError::BadRequest(format!("Invalid YOLO version: {}", query.model_version))
@@ -150,8 +150,8 @@ pub async fn detect_objects(
         let mut detector =
             YoloDetector::new(&model_path, version, size, class_names, Some(Device::Cpu))
                 .map_err(|e| ApiError::InternalError(e.to_string()))?;
-        detector.set_conf_threshold(query.conf_threshold);
-        detector.set_iou_threshold(query.iou_threshold);
+        detector.set_conf_threshold(conf_threshold);
+        detector.set_iou_threshold(iou_threshold);
 
         let raw_results = detector
             .detect(&temp_file)
@@ -187,20 +187,18 @@ pub async fn detect_objects(
     }
 
     // ── ORT path (no --features torch) ────────────────────────────────────────
-    // Uses YOLOv8n ONNX model from models/yolo/
-    let ort_model_path = std::path::Path::new("models/yolo/yolov8n.onnx");
+    // Uses YOLOv8n ONNX model from config.models.cache_dir/yolo/yolov8n.onnx
+    let ort_model_path = config.models.cache_dir.join("yolo/yolov8n.onnx");
     if !ort_model_path.exists() {
         let _ = fs::remove_file(&temp_file).await;
-        return Err(ApiError::NotFound(
-            "YOLO ORT model not found at models/yolo/yolov8n.onnx".to_string(),
-        ));
+        return Err(ApiError::NotFound(format!(
+            "YOLO ORT model not found at {:?}", ort_model_path
+        )));
     }
 
-    let mut detector =
-        crate::core::ort_yolo::OrtYoloDetector::new(ort_model_path, class_names)
+    let detector =
+        crate::core::ort_yolo::OrtYoloDetector::new(&ort_model_path, class_names, conf_threshold, iou_threshold)
             .map_err(|e| ApiError::InternalError(format!("YOLO init: {}", e)))?;
-    detector.set_conf_threshold(query.conf_threshold);
-    detector.set_iou_threshold(query.iou_threshold);
 
     let image_bytes = tokio::fs::read(&temp_file)
         .await
@@ -367,8 +365,9 @@ mod tests {
         let req: YoloDetectRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.model_version, "v8");
         assert_eq!(req.model_size, "n");
-        assert!((req.conf_threshold - 0.25).abs() < f32::EPSILON);
-        assert!((req.iou_threshold - 0.45).abs() < f32::EPSILON);
+        // Absent thresholds → None; handler falls back to config values.
+        assert!(req.conf_threshold.is_none());
+        assert!(req.iou_threshold.is_none());
     }
 
     #[test]
@@ -376,18 +375,8 @@ mod tests {
         let json =
             r#"{"model_version":"v5","model_size":"m","conf_threshold":0.5,"iou_threshold":0.6}"#;
         let req: YoloDetectRequest = serde_json::from_str(json).unwrap();
-        assert!((req.conf_threshold - 0.5).abs() < f32::EPSILON);
-        assert!((req.iou_threshold - 0.6).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_default_conf_threshold() {
-        assert!((default_conf_threshold() - 0.25).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_default_iou_threshold() {
-        assert!((default_iou_threshold() - 0.45).abs() < f32::EPSILON);
+        assert!((req.conf_threshold.unwrap() - 0.5).abs() < f32::EPSILON);
+        assert!((req.iou_threshold.unwrap() - 0.6).abs() < f32::EPSILON);
     }
 
     #[test]

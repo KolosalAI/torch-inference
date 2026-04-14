@@ -411,7 +411,7 @@ async fn async_main() -> std::io::Result<()> {
 
     // Initialize model download manager
     let download_manager = {
-        let cache_dir = std::env::var("MODEL_CACHE_DIR").unwrap_or_else(|_| "./models".to_string());
+        let cache_dir = config.models.cache_dir.to_string_lossy().into_owned();
         let dm = Arc::new(
             ModelDownloadManager::new(&cache_dir).expect("Failed to create model download manager"),
         );
@@ -429,8 +429,7 @@ async fn async_main() -> std::io::Result<()> {
 
     // Initialize audio model manager (legacy)
     let audio_model_manager = {
-        let audio_model_dir =
-            std::env::var("AUDIO_MODEL_DIR").unwrap_or_else(|_| "./models/audio".to_string());
+        let audio_model_dir = config.models.audio_model_dir.to_string_lossy().into_owned();
         let am = Arc::new(crate::core::audio_models::AudioModelManager::new(
             &audio_model_dir,
         ));
@@ -513,7 +512,7 @@ async fn async_main() -> std::io::Result<()> {
 
     // Create shared reqwest client for the proxy (connection pooling)
     let proxy_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(config.server.proxy_timeout_secs))
         .build()
         .expect("build reqwest client");
     let proxy_client = web::Data::new(proxy_client);
@@ -549,8 +548,8 @@ async fn async_main() -> std::io::Result<()> {
     });
     let classify_state = web::Data::new(crate::api::classify::ClassifyState {
         backend: {
-            let model_path = std::path::Path::new("models/classify/efficientnet-lite4-11.onnx");
-            let labels_path = std::path::Path::new("models/classify/imagenet1000.txt");
+            let model_path = &config.models.classify_model;
+            let labels_path = &config.models.classify_labels;
             if model_path.exists() && labels_path.exists() {
                 match crate::core::ort_classify::OrtClassificationBackend::new(model_path, labels_path) {
                     Ok(backend) => {
@@ -605,9 +604,15 @@ async fn async_main() -> std::io::Result<()> {
         "prometheus metrics available"
     );
     tracing::info!(workers = worker_count, "server started successfully");
+    let json_limit = config.server.json_body_limit_mb * 1024 * 1024;
+    let keep_alive = config.server.keep_alive_secs;
+    let req_timeout = config.server.request_timeout_secs;
+    let disconnect_timeout = config.server.disconnect_timeout_secs;
+    let shutdown_timeout = config.server.shutdown_timeout_secs;
+
     let server = HttpServer::new(move || {
         App::new()
-            .app_data(web::JsonConfig::default().limit(50 * 1024 * 1024))
+            .app_data(web::JsonConfig::default().limit(json_limit))
             .app_data(config_data.clone())
             .app_data(model_mgr.clone())
             .app_data(infer_engine.clone())
@@ -660,10 +665,10 @@ async fn async_main() -> std::io::Result<()> {
             .route("/audio/synthesize", web::post().to(crate::api::audio::synthesize_speech))
     })
     .workers(worker_count)
-    .keep_alive(Duration::from_secs(75))
-    .client_request_timeout(Duration::from_secs(5))
-    .client_disconnect_timeout(Duration::from_secs(1))
-    .shutdown_timeout(30) // 30s graceful shutdown
+    .keep_alive(Duration::from_secs(keep_alive))
+    .client_request_timeout(Duration::from_secs(req_timeout))
+    .client_disconnect_timeout(Duration::from_secs(disconnect_timeout))
+    .shutdown_timeout(shutdown_timeout)
     .listen(listener)?
     .run();
 

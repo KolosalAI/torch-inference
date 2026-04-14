@@ -16,6 +16,8 @@ pub struct Config {
     #[serde(default)]
     pub models: ModelsConfig,
     #[serde(default)]
+    pub microservices: MicroservicesConfig,
+    #[serde(default)]
     pub guard: GuardConfig,
     #[serde(default)]
     pub sanitizer: SanitizerConfig,
@@ -60,6 +62,54 @@ pub struct ServerConfig {
     pub log_level: String,
     #[serde(default)]
     pub workers: usize,
+    /// TCP keep-alive for idle connections (seconds). Default: 75.
+    #[serde(default)]
+    pub keep_alive_secs: u64,
+    /// Max time to wait for client to send request headers (seconds). Default: 5.
+    #[serde(default)]
+    pub request_timeout_secs: u64,
+    /// Time to wait after the last byte before closing a keep-alive connection (seconds). Default: 1.
+    #[serde(default)]
+    pub disconnect_timeout_secs: u64,
+    /// Graceful shutdown drain window (seconds). Default: 30.
+    #[serde(default)]
+    pub shutdown_timeout_secs: u64,
+    /// Maximum JSON request body size (MiB). Default: 50.
+    #[serde(default)]
+    pub json_body_limit_mb: usize,
+    /// Timeout for outbound proxy requests to microservices (seconds). Default: 300.
+    #[serde(default)]
+    pub proxy_timeout_secs: u64,
+}
+
+/// Microservice host/port configuration. The main server spawns these as child
+/// processes and proxies requests to them.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MicroservicesConfig {
+    /// Host for the STT microservice. Default: "127.0.0.1".
+    #[serde(default)]
+    pub stt_host: String,
+    /// Port for the STT microservice. Default: 8002.
+    #[serde(default)]
+    pub stt_port: u16,
+    /// Host for the LLM microservice. Default: "127.0.0.1".
+    #[serde(default)]
+    pub llm_host: String,
+    /// Port for the LLM microservice. Default: 8001.
+    #[serde(default)]
+    pub llm_port: u16,
+}
+
+impl MicroservicesConfig {
+    /// Base URL for the STT microservice proxy.
+    pub fn stt_base_url(&self) -> String {
+        format!("http://{}:{}", self.stt_host, self.stt_port)
+    }
+
+    /// Base URL for the LLM microservice proxy.
+    pub fn llm_base_url(&self) -> String {
+        format!("http://{}:{}", self.llm_host, self.llm_port)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -185,10 +235,26 @@ pub struct AuthConfig {
 pub struct ModelsConfig {
     #[serde(default)]
     pub auto_load: Vec<String>,
+    /// Root directory for all model files. Default: "models".
     #[serde(default)]
     pub cache_dir: PathBuf,
     #[serde(default)]
     pub max_loaded_models: usize,
+    /// Path to the EfficientNet-Lite4 ONNX classification model.
+    #[serde(default)]
+    pub classify_model: PathBuf,
+    /// Path to the ImageNet-1000 labels file for the classifier.
+    #[serde(default)]
+    pub classify_labels: PathBuf,
+    /// Directory containing audio models (Whisper, etc.). Default: "models/audio".
+    #[serde(default)]
+    pub audio_model_dir: PathBuf,
+    /// Default YOLO confidence threshold (0–1). Can be overridden per-request. Default: 0.25.
+    #[serde(default)]
+    pub yolo_conf_threshold: f32,
+    /// Default YOLO IoU threshold for NMS (0–1). Can be overridden per-request. Default: 0.45.
+    #[serde(default)]
+    pub yolo_iou_threshold: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -345,6 +411,12 @@ impl Default for Config {
                 port: 8000,
                 log_level: "info".to_string(),
                 workers: num_cpus::get(),
+                keep_alive_secs: 75,
+                request_timeout_secs: 5,
+                disconnect_timeout_secs: 1,
+                shutdown_timeout_secs: 30,
+                json_body_limit_mb: 50,
+                proxy_timeout_secs: 300,
             },
             device: DeviceConfig {
                 device_type: "auto".to_string(),
@@ -407,6 +479,17 @@ impl Default for Config {
                 auto_load: vec!["example".to_string()],
                 cache_dir: PathBuf::from("models"),
                 max_loaded_models: 5,
+                classify_model: PathBuf::from("models/classify/efficientnet-lite4-11.onnx"),
+                classify_labels: PathBuf::from("models/classify/imagenet1000.txt"),
+                audio_model_dir: PathBuf::from("models/audio"),
+                yolo_conf_threshold: 0.25,
+                yolo_iou_threshold: 0.45,
+            },
+            microservices: MicroservicesConfig {
+                stt_host: "127.0.0.1".to_string(),
+                stt_port: 8002,
+                llm_host: "127.0.0.1".to_string(),
+                llm_port: 8001,
             },
             guard: GuardConfig {
                 enable_guards: true,

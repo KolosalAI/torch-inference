@@ -1,21 +1,21 @@
-//! Thin reverse proxy: forwards `/llm/{tail:.*}` → `http://127.0.0.1:8001/{tail}`.
+//! Thin reverse proxy: forwards `/llm/{tail:.*}` → `http://<llm_host>:<llm_port>/{tail}`.
 //! Returns 503 when the LLM microservice is not reachable.
 use actix_web::{web, HttpRequest, HttpResponse};
 use bytes::Bytes;
 use futures_util::StreamExt;
 
-static LLM_BASE: &str = "http://127.0.0.1:8001";
-
 /// Forward any `/llm/{tail:.*}` request to the LLM microservice.
-/// The shared `reqwest::Client` (stored in app data) provides connection pooling.
+/// Host and port are read from `[microservices]` in config — no hardcoded values.
 pub async fn proxy(
     req: HttpRequest,
     body: Bytes,
     path: web::Path<String>,
     client: web::Data<reqwest::Client>,
+    config: web::Data<crate::config::Config>,
 ) -> HttpResponse {
     let tail = path.into_inner();
-    let url = format!("{}/{}", LLM_BASE, tail);
+    let base = config.microservices.llm_base_url();
+    let url = format!("{}/{}", base, tail);
 
     let url = if let Some(qs) = req.uri().query() {
         format!("{}?{}", url, qs)

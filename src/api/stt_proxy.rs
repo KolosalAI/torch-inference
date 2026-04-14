@@ -1,19 +1,19 @@
-//! Thin reverse proxy: forwards `/stt/{tail:.*}` → `http://127.0.0.1:8002/{tail}`.
+//! Thin reverse proxy: forwards `/stt/{tail:.*}` → `http://<stt_host>:<stt_port>/{tail}`.
 //! Returns 503 when the STT microservice is not reachable.
 use actix_web::{web, HttpRequest, HttpResponse};
 use bytes::Bytes;
 use futures_util::StreamExt;
-
-static STT_BASE: &str = "http://127.0.0.1:8002";
 
 pub async fn proxy(
     req: HttpRequest,
     body: Bytes,
     path: web::Path<String>,
     client: web::Data<reqwest::Client>,
+    config: web::Data<crate::config::Config>,
 ) -> HttpResponse {
     let tail = path.into_inner();
-    let url = format!("{}/{}", STT_BASE, tail);
+    let base = config.microservices.stt_base_url();
+    let url = format!("{}/{}", base, tail);
 
     let url = if let Some(qs) = req.uri().query() {
         format!("{}?{}", url, qs)

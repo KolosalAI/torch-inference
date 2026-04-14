@@ -45,7 +45,14 @@ pub struct OrtYoloDetector {
 }
 
 impl OrtYoloDetector {
-    pub fn new(model_path: &Path, class_names: Vec<String>) -> Result<Self> {
+    /// `conf_threshold` and `iou_threshold` come from `config.models.yolo_conf_threshold`
+    /// and `config.models.yolo_iou_threshold`; pass them in rather than hardcoding here.
+    pub fn new(
+        model_path: &Path,
+        class_names: Vec<String>,
+        conf_threshold: f32,
+        iou_threshold: f32,
+    ) -> Result<Self> {
         let physical_cpus = num_cpus::get_physical().max(1);
         let mut builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
@@ -76,8 +83,8 @@ impl OrtYoloDetector {
         Ok(Self {
             session: Mutex::new(session),
             class_names,
-            conf_threshold: 0.25,
-            iou_threshold: 0.45,
+            conf_threshold: conf_threshold.clamp(0.0, 1.0),
+            iou_threshold: iou_threshold.clamp(0.0, 1.0),
         })
     }
 
