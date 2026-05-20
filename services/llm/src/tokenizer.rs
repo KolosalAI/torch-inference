@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tokenizers::Tokenizer;
 
+#[derive(Debug)]
 pub struct HrmTokenizer {
     inner: Tokenizer,
 }
