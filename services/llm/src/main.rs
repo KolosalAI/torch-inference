@@ -39,8 +39,15 @@ async fn main() -> std::io::Result<()> {
         std::process::exit(1);
     });
 
+    let vision = llm_config.vision_bridge.clone().and_then(|vbcfg| {
+        if vbcfg.enabled {
+            Some(Arc::new(vision_bridge::VisionBridge::new(vbcfg)))
+        } else { None }
+    });
+
     let state = web::Data::new(AppState {
         engine: Arc::new(engine),
+        vision,
     });
 
     tracing::info!("LLM microservice listening on 0.0.0.0:{}", port);

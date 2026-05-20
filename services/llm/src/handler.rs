@@ -14,6 +14,7 @@ use crate::hrm_engine::HrmEngine;
 
 pub struct AppState {
     pub engine: Arc<crate::hrm_engine::HrmEngine>,
+    pub vision: Option<Arc<crate::vision_bridge::VisionBridge>>,
 }
 
 // ── Request types ─────────────────────────────────────────────────────────────
@@ -130,16 +131,22 @@ pub async fn chat_completions(
     let temperature = req.temperature;
     let streaming = req.stream;
 
-    let (pairs, image_bytes) = match extract_content(&req.messages) {
+    let (mut pairs, image_bytes) = match extract_content(&req.messages) {
         Ok(v) => v,
         Err(e) => return HttpResponse::BadRequest().json(json!({"error": e})),
     };
 
-    // Vision bridge wiring lands in Task 12. Until then, reject images.
-    if image_bytes.is_some() {
-        return HttpResponse::BadRequest().json(json!({
-            "error": "image inputs are temporarily disabled — vision bridge is being wired in"
-        }));
+    if let Some(img) = image_bytes {
+        let prefix = match state.vision.as_ref() {
+            Some(vb) => vb.describe(&img).await,
+            None => "[Image attached but vision bridge disabled.]".to_string(),
+        };
+        // Prepend description to the last user message.
+        if let Some((_role, content)) = pairs.iter_mut().rev().find(|(r, _)| r == "user") {
+            *content = format!("{prefix}\n{content}");
+        } else {
+            pairs.push(("user".into(), prefix));
+        }
     }
 
     let prompt = build_prompt(&pairs);
