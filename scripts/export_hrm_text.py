@@ -31,6 +31,47 @@ class LogitsOnly(nn.Module):
         return out.logits
 
 
+class PrefillWrapper(nn.Module):
+    """First-pass wrapper. Takes input_ids; returns logits and a flat tuple of
+    (k0, v0, k1, v1, ..., kN-1, vN-1) cache tensors so torch.export can pytree
+    them."""
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+
+    def forward(self, input_ids):
+        out = self.m(input_ids=input_ids, use_cache=True, return_dict=True)
+        kvs = []
+        for layer_kv in out.past_key_values:  # DynamicCache iterable of (k, v)
+            kvs.extend([layer_kv[0], layer_kv[1]])
+        return (out.logits, *kvs)
+
+
+class DecodeStepWrapper(nn.Module):
+    """Cached-pass wrapper. Takes one new token + the flat cache tuple from the
+    previous step; returns updated logits and a fresh flat cache tuple."""
+    def __init__(self, m, num_layers):
+        super().__init__()
+        self.m = m
+        self.L = num_layers
+
+    def forward(self, input_ids, *past_flat):
+        # transformers v5 cache_utils
+        from transformers.cache_utils import DynamicCache
+        past = [(past_flat[2 * i], past_flat[2 * i + 1]) for i in range(self.L)]
+        cache = DynamicCache.from_legacy_cache(past)
+        out = self.m(
+            input_ids=input_ids,
+            past_key_values=cache,
+            use_cache=True,
+            return_dict=True,
+        )
+        new = []
+        for layer_kv in out.past_key_values:
+            new.extend([layer_kv[0], layer_kv[1]])
+        return (out.logits, *new)
+
+
 def export(quantize: bool, slow_loops_override, fast_loops_override):
     os.makedirs(OUT_DIR, exist_ok=True)
 
