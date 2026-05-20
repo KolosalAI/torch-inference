@@ -189,11 +189,20 @@ flamegraph: ## Generate CPU flamegraph (requires: cargo install flamegraph)
 stt-run: ## Run faster-whisper STT service on port 8002
 	python3 services/stt/server.py
 
-# ── LLM Microservice ──────────────────────────────────────────────────────────
-.PHONY: llm-build llm-run llm-download
+# -- LLM Microservice --------------------------------------------------------
+.PHONY: llm-build llm-run llm-download hrm-export hrm-download
 
-llm-download: ## Download MiniCPM-V 2.6 Q2_K model and mmproj
-	bash scripts/download_llm_model.sh
+hrm-download: ## Download pre-exported HRM-Text-1B ONNX artifacts
+	bash scripts/download_hrm_text_artifacts.sh
+
+hrm-export: ## Re-export HRM-Text-1B -> ONNX from upstream (slow, offline). Requires Python 3.10+.
+	uv venv --python 3.12 .hrm-export-venv
+	uv pip install --python .hrm-export-venv \
+	    'transformers @ git+https://github.com/huggingface/transformers' \
+	    'torch>=2.3' 'onnx>=1.16' 'onnxruntime>=1.18' onnxscript optimum
+	.hrm-export-venv/bin/python scripts/export_hrm_text.py
+
+llm-download: hrm-download ## Alias kept for compatibility; defers to hrm-download
 
 llm-build: ## Build LLM service
 	cd services/llm && cargo build --release
