@@ -108,7 +108,7 @@ pub struct AgentToolsConfig {
 impl Default for HttpFetchConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: default_agent_enabled(),
             allowlist: Vec::new(),
             max_bytes: default_http_fetch_max_bytes(),
             follow_redirects: false,
