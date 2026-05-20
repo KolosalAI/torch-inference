@@ -116,6 +116,18 @@ impl Default for HttpFetchConfig {
     }
 }
 
+impl Default for AgentToolsConfig {
+    fn default() -> Self {
+        Self {
+            main_server_base: default_main_server_base(),
+            classify_endpoint: default_classify_endpoint(),
+            detect_endpoint: default_detect_endpoint(),
+            tts_endpoint: default_tts_endpoint(),
+            stt_endpoint: default_stt_endpoint(),
+        }
+    }
+}
+
 fn default_agent_enabled() -> bool { true }
 fn default_max_steps() -> usize { 8 }
 fn default_max_run_ms() -> u64 { 60_000 }

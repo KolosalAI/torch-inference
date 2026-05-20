@@ -10,3 +10,4 @@ pub mod tools;
 pub mod planner;
 pub mod prompt;
 pub mod executor;
+pub mod http;

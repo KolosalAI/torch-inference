@@ -50,10 +50,73 @@ async fn main() -> std::io::Result<()> {
         vision,
     });
 
+    // Build the agent layer (if [agent] config present).
+    let agent_layer: Option<web::Data<crate::agent::http::AgentLayer>> =
+        if let Some(agent_cfg) = llm_config.agent.clone() {
+            let planner: Arc<dyn crate::agent::planner::Planner> =
+                Arc::new(crate::agent::planner::HrmPlanner::new(state.engine.clone()));
+
+            let per_tool_timeout = std::time::Duration::from_millis(
+                agent_cfg.per_tool_ms.max(1000),
+            );
+            let client = reqwest::Client::builder()
+                .timeout(per_tool_timeout)
+                .build()
+                .expect("build agent http client");
+
+            let mut reg = crate::agent::tool::ToolRegistry::new();
+            reg.insert(Arc::new(crate::agent::tools::final_tool::FinalTool));
+
+            let tools_cfg = agent_cfg.tools.clone().unwrap_or_default();
+            reg.insert(crate::agent::tools::classify::ClassifyTool::new(
+                client.clone(),
+                &tools_cfg.main_server_base,
+                &tools_cfg.classify_endpoint,
+            ));
+            reg.insert(crate::agent::tools::detect::DetectTool::new(
+                client.clone(),
+                &tools_cfg.main_server_base,
+                &tools_cfg.detect_endpoint,
+            ));
+            reg.insert(crate::agent::tools::tts::TtsTool::new(
+                client.clone(),
+                &tools_cfg.main_server_base,
+                &tools_cfg.tts_endpoint,
+            ));
+            reg.insert(crate::agent::tools::stt::SttTool::new(
+                client.clone(),
+                &tools_cfg.main_server_base,
+                &tools_cfg.stt_endpoint,
+            ));
+            if let Some(vb) = state.vision.clone() {
+                reg.insert(crate::agent::tools::vision::VisionTool::new(vb));
+            }
+            reg.insert(crate::agent::tools::reflect::ReflectTool::new(
+                planner.clone(),
+                agent_cfg.reflect_max_tokens,
+            ));
+            let hf = agent_cfg.http_fetch.clone().unwrap_or_default();
+            reg.insert(crate::agent::tools::http_fetch::HttpFetchTool::new(
+                hf.allowlist,
+                hf.max_bytes,
+                hf.follow_redirects,
+                hf.enabled,
+            ));
+
+            let layer = crate::agent::http::AgentLayer::new(
+                planner,
+                Arc::new(reg),
+                agent_cfg,
+            );
+            Some(web::Data::new(layer))
+        } else {
+            None
+        };
+
     tracing::info!("LLM microservice listening on 0.0.0.0:{}", port);
 
     HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             .app_data(state.clone())
             .app_data(
                 web::JsonConfig::default()
@@ -73,7 +136,15 @@ async fn main() -> std::io::Result<()> {
                 "/v1/chat/completions",
                 web::post().to(handler::chat_completions),
             )
-            .route("/v1/models", web::get().to(handler::list_models))
+            .route("/v1/models", web::get().to(handler::list_models));
+
+        if let Some(layer) = agent_layer.clone() {
+            app = app
+                .app_data(layer)
+                .route("/v1/agent/run", web::post().to(crate::agent::http::run));
+        }
+
+        app
     })
     .workers(1)
     .bind(format!("0.0.0.0:{port}"))?
