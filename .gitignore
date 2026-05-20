@@ -102,6 +102,13 @@ tests/e2e/results/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
 
+# Hidden tool/scratch directories and screenshot artifacts
+.*
+!.gitignore
+!.github
+!.cargo
+*.png
+
 # LLM service models
 services/llm/models/*.gguf
 

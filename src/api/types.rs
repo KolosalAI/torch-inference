@@ -31,14 +31,27 @@ pub struct HealthCheckResponse {
 pub struct TTSRequest {
     pub model_name: String,
     pub text: String,
+    #[serde(default)]
     pub voice: Option<String>,
+    #[serde(default = "default_speed")]
     pub speed: f32,
+    #[serde(default = "default_pitch")]
     pub pitch: f32,
+    #[serde(default = "default_volume")]
     pub volume: f32,
+    #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
     pub emotion: Option<String>,
+    #[serde(default = "default_output_format")]
     pub output_format: String,
 }
+
+fn default_speed() -> f32 { 1.0 }
+fn default_pitch() -> f32 { 1.0 }
+fn default_volume() -> f32 { 1.0 }
+fn default_language() -> String { "en".to_string() }
+fn default_output_format() -> String { "wav".to_string() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TTSResponse {

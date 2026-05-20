@@ -840,15 +840,17 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
-        // No image uploaded → temp file missing → ORT read fails → 500.
-        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+        // No model on disk → 404 Not Found.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
     }
 
     // detect_objects — valid version+size, model IS on disk, multipart with a file field.
+    // detect_objects — valid version+size, .pt model IS on disk but ONNX model missing from
+    // cache dir → NotFound (ORT path check fails before any inference).
     // Covers: lines 79-80, 83-84, 87, 88-94 (multipart field loop body),
-    //         99-103, 105, 115 (load_coco_names), 136-138 (no-torch InternalError).
+    //         99-103, 105, 115 (load_coco_names), 190-195 (ORT model path check).
     #[actix_web::test]
-    async fn test_detect_objects_model_exists_no_torch_returns_internal_error() {
+    async fn test_detect_objects_pt_exists_onnx_missing_returns_not_found() {
         use actix_web::{test as actix_test, App};
 
         // Create a real temp directory with the expected model file so model_path.exists() == true.
@@ -891,8 +893,8 @@ mod tests {
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
 
-        // Without the `torch` feature, ORT detector rejects invalid JPEG → 500.
-        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+        // .pt exists but ONNX model not at cache_dir/yolo/yolov8n.onnx → 404.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         // Cleanup temp dir.
         let _ = tokio::fs::remove_dir_all(&tmp).await;
@@ -927,8 +929,8 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
-        // No image uploaded → temp file missing → ORT read fails → 500.
-        assert_eq!(resp.status(), actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);
+        // Model dir does not exist → 404 Not Found.
+        assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
     }
 }
 

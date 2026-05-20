@@ -877,40 +877,60 @@ mod tests {
 }
 
 /// Spawn the STT and LLM microservices as child processes.
-/// Both services are optional: if the binary hasn't been built yet we log a
+/// Both services are optional: if the binary/script isn't available we log a
 /// warning and continue.  The returned `Child` handles are held by the caller
 /// and killed during graceful shutdown so the processes don't orphan.
 fn spawn_microservices() -> Vec<std::process::Child> {
-    // (binary path relative to project root, working dir relative to project root, label)
-    let services: &[(&str, &str, &str)] = &[
-        ("services/stt/target/release/stt-service", ".", "stt"),
-        ("services/llm/target/release/llm-service", "services/llm", "llm"),
-    ];
-
     let mut children = Vec::new();
-    for (bin, workdir, name) in services {
-        let path = std::path::Path::new(bin);
-        if !path.exists() {
-            tracing::warn!(
-                service = name,
-                bin = bin,
-                "{} microservice binary not found — run `make {}-build`",
-                name, name
-            );
-            continue;
-        }
-        match std::process::Command::new(std::fs::canonicalize(path).unwrap_or(path.to_path_buf()))
-            .current_dir(workdir)
-            .spawn()
-        {
-            Ok(child) => {
-                tracing::info!(service = name, pid = child.id(), "{} microservice started", name);
-                children.push(child);
+
+    // --- STT: Python script ---
+    {
+        let script = "services/stt/server.py";
+        if std::path::Path::new(script).exists() {
+            match std::process::Command::new("python3")
+                .arg(script)
+                .spawn()
+            {
+                Ok(child) => {
+                    tracing::info!(service = "stt", pid = child.id(), "stt microservice started");
+                    children.push(child);
+                }
+                Err(e) => {
+                    tracing::warn!(service = "stt", error = %e, "failed to start stt microservice — is python3 installed?");
+                }
             }
-            Err(e) => {
-                tracing::warn!(service = name, error = %e, "failed to start {} microservice", name);
-            }
+        } else {
+            tracing::warn!(service = "stt", script, "stt script not found");
         }
     }
+
+    // --- LLM: Rust binary ---
+    {
+        let bin = "services/llm/target/release/llm-service";
+        let path = std::path::Path::new(bin);
+        if path.exists() {
+            match std::process::Command::new(
+                std::fs::canonicalize(path).unwrap_or(path.to_path_buf()),
+            )
+            .current_dir("services/llm")
+            .spawn()
+            {
+                Ok(child) => {
+                    tracing::info!(service = "llm", pid = child.id(), "llm microservice started");
+                    children.push(child);
+                }
+                Err(e) => {
+                    tracing::warn!(service = "llm", error = %e, "failed to start llm microservice");
+                }
+            }
+        } else {
+            tracing::warn!(
+                service = "llm",
+                bin,
+                "llm microservice binary not found — run `make llm-build`"
+            );
+        }
+    }
+
     children
 }

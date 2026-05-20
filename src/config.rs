@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+fn default_json_body_limit_mb() -> usize { 50 }
+fn default_server_host() -> String { "0.0.0.0".to_string() }
+fn default_server_port() -> u16 { 8000 }
+fn default_server_workers() -> usize { num_cpus::get() }
+fn default_log_level() -> String { "info".to_string() }
+fn default_keep_alive_secs() -> u64 { 75 }
+fn default_request_timeout_secs() -> u64 { 5 }
+fn default_disconnect_timeout_secs() -> u64 { 1 }
+fn default_shutdown_timeout_secs() -> u64 { 30 }
+fn default_proxy_timeout_secs() -> u64 { 300 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -52,52 +63,90 @@ impl Default for SanitizerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    #[serde(default)]
+    #[serde(default = "default_server_host")]
     pub host: String,
-    #[serde(default)]
+    #[serde(default = "default_server_port")]
     pub port: u16,
-    #[serde(default)]
+    #[serde(default = "default_log_level")]
     pub log_level: String,
-    #[serde(default)]
+    #[serde(default = "default_server_workers")]
     pub workers: usize,
     /// TCP keep-alive for idle connections (seconds). Default: 75.
-    #[serde(default)]
+    #[serde(default = "default_keep_alive_secs")]
     pub keep_alive_secs: u64,
     /// Max time to wait for client to send request headers (seconds). Default: 5.
-    #[serde(default)]
+    #[serde(default = "default_request_timeout_secs")]
     pub request_timeout_secs: u64,
     /// Time to wait after the last byte before closing a keep-alive connection (seconds). Default: 1.
-    #[serde(default)]
+    #[serde(default = "default_disconnect_timeout_secs")]
     pub disconnect_timeout_secs: u64,
     /// Graceful shutdown drain window (seconds). Default: 30.
-    #[serde(default)]
+    #[serde(default = "default_shutdown_timeout_secs")]
     pub shutdown_timeout_secs: u64,
     /// Maximum JSON request body size (MiB). Default: 50.
-    #[serde(default)]
+    #[serde(default = "default_json_body_limit_mb")]
     pub json_body_limit_mb: usize,
     /// Timeout for outbound proxy requests to microservices (seconds). Default: 300.
-    #[serde(default)]
+    #[serde(default = "default_proxy_timeout_secs")]
     pub proxy_timeout_secs: u64,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: default_server_host(),
+            port: default_server_port(),
+            log_level: default_log_level(),
+            workers: default_server_workers(),
+            keep_alive_secs: default_keep_alive_secs(),
+            request_timeout_secs: default_request_timeout_secs(),
+            disconnect_timeout_secs: default_disconnect_timeout_secs(),
+            shutdown_timeout_secs: default_shutdown_timeout_secs(),
+            json_body_limit_mb: default_json_body_limit_mb(),
+            proxy_timeout_secs: default_proxy_timeout_secs(),
+        }
+    }
+}
+
+fn default_microservice_host() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_stt_port() -> u16 {
+    8002
+}
+fn default_llm_port() -> u16 {
+    8001
 }
 
 /// Microservice host/port configuration. The main server spawns these as child
 /// processes and proxies requests to them.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MicroservicesConfig {
     /// Host for the STT microservice. Default: "127.0.0.1".
-    #[serde(default)]
+    #[serde(default = "default_microservice_host")]
     pub stt_host: String,
     /// Port for the STT microservice. Default: 8002.
-    #[serde(default)]
+    #[serde(default = "default_stt_port")]
     pub stt_port: u16,
     /// Host for the LLM microservice. Default: "127.0.0.1".
-    #[serde(default)]
+    #[serde(default = "default_microservice_host")]
     pub llm_host: String,
     /// Port for the LLM microservice. Default: 8001.
-    #[serde(default)]
+    #[serde(default = "default_llm_port")]
     pub llm_port: u16,
+}
+
+impl Default for MicroservicesConfig {
+    fn default() -> Self {
+        Self {
+            stt_host: default_microservice_host(),
+            stt_port: default_stt_port(),
+            llm_host: default_microservice_host(),
+            llm_port: default_llm_port(),
+        }
+    }
 }
 
 impl MicroservicesConfig {
@@ -391,10 +440,12 @@ pub struct PostprocessConfig {
 
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
-        let config_file = "config.toml";
+        Self::load_from_path(std::path::Path::new("config.toml"))
+    }
 
-        if std::path::Path::new(config_file).exists() {
-            let content = std::fs::read_to_string(config_file)?;
+    pub fn load_from_path(path: &std::path::Path) -> anyhow::Result<Self> {
+        if path.exists() {
+            let content = std::fs::read_to_string(path)?;
             let config: Config = toml::from_str(&content)?;
             Ok(config)
         } else {
@@ -693,10 +744,16 @@ mod tests {
     #[test]
     fn test_server_config_standalone_default() {
         let srv = ServerConfig::default();
-        assert_eq!(srv.host, "");
-        assert_eq!(srv.port, 0);
-        assert_eq!(srv.log_level, "");
-        assert_eq!(srv.workers, 0);
+        assert_eq!(srv.host, "0.0.0.0");
+        assert_eq!(srv.port, 8000);
+        assert_eq!(srv.log_level, "info");
+        assert!(srv.workers > 0);
+        assert_eq!(srv.keep_alive_secs, 75);
+        assert_eq!(srv.request_timeout_secs, 5);
+        assert_eq!(srv.disconnect_timeout_secs, 1);
+        assert_eq!(srv.shutdown_timeout_secs, 30);
+        assert_eq!(srv.json_body_limit_mb, 50);
+        assert_eq!(srv.proxy_timeout_secs, 300);
     }
 
     #[test]
@@ -843,23 +900,11 @@ mod tests {
 
     /// Covers line 158: Config::load() returns Config::default() when
     /// config.toml does not exist in the working directory.
-    /// Temporarily switches to a temp directory that has no config.toml.
+    /// Loads config from a path where no config.toml exists — exercises the else branch.
     #[test]
     fn test_config_load_without_config_file() {
-        static DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = DIR_LOCK.lock().unwrap();
-
-        let temp_dir = std::env::temp_dir().join("torch_inference_test_no_config");
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        // Remove any stale config.toml so the else branch is taken.
-        let _ = std::fs::remove_file(temp_dir.join("config.toml"));
-        let original = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_dir).unwrap();
-
-        let result = Config::load();
-
-        std::env::set_current_dir(&original).unwrap();
-
+        let non_existent = std::path::Path::new("/tmp/torch_inference_test_definitely_absent.toml");
+        let result = Config::load_from_path(non_existent);
         assert!(result.is_ok());
         let config = result.unwrap();
         assert_eq!(config.server.port, 8000);

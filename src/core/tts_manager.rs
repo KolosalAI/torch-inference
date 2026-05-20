@@ -61,6 +61,7 @@ impl TTSManager {
 
     /// FNV-1a 64-bit hash. Unlike `DefaultHasher`, this is stable across Rust
     /// versions and process restarts — safe for use as a persistent cache key.
+    #[allow(dead_code)]
     pub(crate) fn fnv1a_u64(data: &[u8]) -> u64 {
         const OFFSET_BASIS: u64 = 14695981039346656037;
         const PRIME: u64 = 1099511628211;
@@ -226,7 +227,7 @@ impl TTSManager {
         // Load Kokoro ONNX TTS as PRIMARY engine (high-quality neural TTS with parametric fallback)
         log::info!("Loading Kokoro ONNX TTS engine...");
         let kokoro_onnx_config = serde_json::json!({
-            "model_dir": "models/kokoro-82m",
+            "model_dir": "models/tts/kokoro-onnx-int8",
             "sample_rate": 24000
         });
         match self

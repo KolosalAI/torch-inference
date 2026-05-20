@@ -166,7 +166,14 @@ pub async fn delete_model(
         .manager
         .delete_model(&name)
         .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("not found") || msg.contains("Not found") {
+                ApiError::NotFound(msg)
+            } else {
+                ApiError::InternalError(msg)
+            }
+        })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "message": format!("Model {} deleted successfully", name),
@@ -879,7 +886,7 @@ mod tests {
         ));
     }
 
-    // delete_model — model not found → InternalError (delete_model bails)
+    // delete_model — model not found → NotFound (handler maps "not found" messages correctly)
     #[actix_web::test]
     async fn test_delete_model_not_found() {
         let state = make_download_state();
@@ -888,7 +895,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            crate::error::ApiError::InternalError(_)
+            crate::error::ApiError::NotFound(_)
         ));
     }
 

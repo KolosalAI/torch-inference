@@ -2552,6 +2552,7 @@ mod download_coverage_tests {
     // error, exercising line 338 (log::warn) and line 339 (return Err).
 
     #[tokio::test]
+    #[serial]
     async fn test_download_files_concurrent_mkdir_fails_returns_ok_overall() {
         let dir = tempfile::tempdir().unwrap();
 
@@ -2588,6 +2589,7 @@ mod download_coverage_tests {
     // and line 360 (`log::warn!("All {} file downloads failed", ...)`) fires.
 
     #[tokio::test]
+    #[serial]
     async fn test_download_files_concurrent_all_fail_line_360() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -2615,6 +2617,7 @@ mod download_coverage_tests {
     // ── download_model_async: direct call – image-classification dir (line 264) ─
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_image_classification_builtin() {
         let model = ModelInfo {
             name: "IC Model".to_string(),
@@ -2638,6 +2641,7 @@ mod download_coverage_tests {
     // ── download_model_async: direct call – object-detection dir (line 265) ────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_object_detection_builtin() {
         let model = ModelInfo {
             name: "OD Model".to_string(),
@@ -2661,6 +2665,7 @@ mod download_coverage_tests {
     // ── download_model_async: direct call – segmentation dir (line 266) ────────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_segmentation_builtin() {
         let model = ModelInfo {
             name: "Seg Model".to_string(),
@@ -2733,6 +2738,7 @@ mod download_coverage_tests {
     // ── download_model_async: empty model_type defaults to "tts" (line 257) ────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_empty_model_type_tts_default() {
         let model = ModelInfo {
             name: "DefaultTTS2".to_string(),
@@ -2763,6 +2769,7 @@ mod download_coverage_tests {
     // Uses a local mock server so the global HTTP client can reach it.
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_resolve_url_no_note() {
         let server = MockServer::start().await;
         let content = b"model weights";
@@ -2803,6 +2810,7 @@ mod download_coverage_tests {
     // Covers lines 290-299 (config download branch).
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_resolve_url_with_http_note_downloads_config() {
         let server = MockServer::start().await;
         let model_content = b"model weights data";
@@ -2842,6 +2850,7 @@ mod download_coverage_tests {
     // When note doesn't contain "http", config download is skipped.
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_resolve_url_note_plain_text_skips_config() {
         let server = MockServer::start().await;
         let content = b"model data";
@@ -2879,6 +2888,7 @@ mod download_coverage_tests {
     // ── download_model_async: HF URL exercises lines 301-309 ─────────────────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_hf_url_enters_hf_branch() {
         let model = ModelInfo {
             name: "HF Branch Test".to_string(),
@@ -2904,6 +2914,7 @@ mod download_coverage_tests {
     // ── download_model_async: manual download URL (line 313) ─────────────────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_model_async_other_url_logs_manual_warning() {
         let model = ModelInfo {
             name: "Manual Download".to_string(),
@@ -2952,6 +2963,7 @@ mod download_coverage_tests {
     // and verifying the handler returns "download_initiated" (the spawn fires).
 
     #[actix_web::test]
+    #[serial]
     async fn test_download_model_handler_spawns_task_for_available_model() {
         use actix_web::{test, web, App};
 
@@ -2985,6 +2997,7 @@ mod download_coverage_tests {
     // returns Err from the HTTP layer, which is acceptable.
 
     #[tokio::test]
+    #[serial]
     async fn test_download_huggingface_repo_body_executes() {
         let dir = tempfile::tempdir().unwrap();
         // This will hit real HF or fail offline; either way lines 366-378 run.
@@ -2997,6 +3010,7 @@ mod download_coverage_tests {
     // ── download_file_streaming: success path (lines 236-251) ────────────────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_file_streaming_success_coverage() {
         let server = MockServer::start().await;
         let content = b"streaming file content for coverage";
@@ -3021,6 +3035,7 @@ mod download_coverage_tests {
     // ── download_file_streaming: HTTP error (lines 237-242) ──────────────────
 
     #[tokio::test]
+    #[serial]
     async fn test_download_file_streaming_http_error_coverage() {
         let server = MockServer::start().await;
 
@@ -3072,6 +3087,7 @@ mod uncovered_lines_tests {
     // fail (non-existent host), confirming the error branch is reachable.
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_download_model_async_error_returned_covers_spawn_error_path() {
         // A URL that contains "resolve" so the streaming branch (lines 281-300)
         // is taken, but points to a host that will refuse connections.
@@ -3412,6 +3428,7 @@ mod uncovered_lines_tests {
     // && !results.is_empty(). Use multiple files all returning HTTP 500.
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_line_360_all_downloads_fail_warning() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -3444,6 +3461,7 @@ mod uncovered_lines_tests {
     // all of these lines up to the point where the network call completes.
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_lines_368_371_373_375_377_378_hf_repo_preamble() {
         let dir = tempfile::tempdir().unwrap();
         // The global HTTP client will attempt to reach huggingface.co.
@@ -3467,6 +3485,7 @@ mod uncovered_lines_tests {
     // still calls the function so lines 368-378 are covered.
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_lines_381_383_hf_repo_json_parse_and_log() {
         let dir = tempfile::tempdir().unwrap();
         // If network is available and HF returns 200 JSON, lines 381 and 383 run.
@@ -3486,6 +3505,7 @@ mod uncovered_lines_tests {
     // direct-call approach is used; in offline CI the test tolerates Err.
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_lines_386_387_388_hf_repo_file_filter_chain() {
         let dir = tempfile::tempdir().unwrap();
         let result =

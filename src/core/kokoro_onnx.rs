@@ -156,7 +156,7 @@ impl KokoroOnnxEngine {
         let model_dir = PathBuf::from(
             cfg.get("model_dir")
                 .and_then(|v| v.as_str())
-                .unwrap_or("models/kokoro-82m"),
+                .unwrap_or("models/tts/kokoro-onnx-int8"),
         );
         let pool_size = cfg
             .get("pool_size")
@@ -169,6 +169,7 @@ impl KokoroOnnxEngine {
             "kokoro-v1.0.int8.onnx",
             "kokoro-v1.0.onnx",
             "kokoro-v1_0.onnx",
+            "model.onnx",
         ]
         .iter()
         .map(|name| model_dir.join(name))
@@ -1026,7 +1027,7 @@ mod tests {
     #[test]
     #[ignore = "requires libonnxruntime.dylib"]
     fn test_onnx_engine_new_default_model_dir_fails_without_model() {
-        // When model_dir key is absent, default "models/kokoro-82m" is used
+        // When model_dir key is absent, default "models/tts/kokoro-onnx-int8" is used
         let config = serde_json::json!({"sample_rate": 24000});
         let result = KokoroOnnxEngine::new(&config);
         // May succeed if real models exist, or fail gracefully — either is acceptable

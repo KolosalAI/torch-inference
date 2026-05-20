@@ -53,7 +53,8 @@
     display: grid;
     grid-template-columns: 220px 1fr;
     grid-template-rows: 52px 1fr;
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
   }
 
   /* Top bar */
@@ -93,6 +94,10 @@
     border-right: 1px solid var(--border);
     padding: 16px 0;
     overflow-y: auto;
+    height: 100%;
+    box-shadow: 2px 0 20px rgba(0,0,0,.07);
+    position: relative;
+    z-index: 10;
   }
   .sidebar-section { padding: 0 12px; margin-bottom: 20px; }
   .sidebar-label {
@@ -114,7 +119,7 @@
   .nav-icon { font-size: 16px; width: 18px; text-align: center; flex-shrink: 0; font-style: normal; }
 
   /* Main */
-  .main { overflow-y: auto; padding: 28px 32px; display: flex; flex-direction: column; }
+  .main { overflow-y: auto; padding: 28px 32px; display: flex; flex-direction: column; height: 100%; }
   .panel { display: none; flex-direction: column; gap: 20px; }
   .panel.active { display: flex; }
   .panel-header { margin-bottom: 4px; }
@@ -1729,12 +1734,14 @@
 
       <!-- Config sub-tab -->
       <div id="sys-config-pane" style="display:none">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
           <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px" onclick="copyConfig()">
-            <i class="ri-file-copy-line"></i> Copy Config
+            <i class="ri-file-copy-line"></i> Copy JSON
           </button>
         </div>
-        <pre id="sys-config-content" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;font-family:var(--mono);max-height:500px;overflow:auto;white-space:pre-wrap;word-break:break-all">Loading…</pre>
+        <div id="sys-config-content" style="min-height:60px">
+          <span style="color:var(--text-muted);font-size:13px">Loading…</span>
+        </div>
       </div>
     </section>
 
@@ -3103,7 +3110,7 @@ function pollMdlDownload(taskId, name, listId = 'mdl-dl-tasks-list') {
       }
       if (badge) { badge.textContent = d.status; badge.className = 'dl-status-badge ' + (d.status || 'Downloading').toLowerCase(); }
       if (bl) bl.textContent = d.downloaded_size ? formatBytes(d.downloaded_size) + ' downloaded' : (d.error || '');
-      if (pr) pr.textContent = d.progress != null ? Math.round(d.progress) + '%' : '';
+      if (pr) pr.textContent = (d.status === 'Failed' || d.error) ? '' : (d.progress != null ? Math.round(d.progress) + '%' : '');
       if (done) {
         clearInterval(iv);
         if (d.status === 'Completed') { refreshModelSelects(); loadDownloadedModels(); }
@@ -3140,6 +3147,8 @@ async function loadSotaModels() {
     load.style.display = 'none';
     if (!models.length) { grid.appendChild(mkEl('div', 'mdl-empty', 'No SOTA models found.')); return; }
     models.forEach(m => {
+      // SOTA endpoint returns image-classification models without a task field
+      if (!m.task && !m.model_type) m.model_type = 'image-classification';
       const card = buildModelCard(m);
       // Override the download button to use the SOTA endpoint
       const btn = card.querySelector('button.btn-primary');
@@ -3846,22 +3855,55 @@ async function getOptimizationTips() {
   }
 }
 
+const CFG_META = {
+  server:    { icon:'ri-server-line',      label:'Server',      fields:{ host:{label:'Bind Host',label2:'Network interface'},port:{label:'Port',label2:'HTTP listening port'},workers:{label:'Workers',label2:'Async thread count'},max_connections:{label:'Max Connections',label2:'Concurrent connection cap'} } },
+  inference: { icon:'ri-cpu-line',         label:'Inference',   fields:{ default_batch_size:{label:'Default Batch',label2:'Batch size when unspecified'},max_batch_size:{label:'Max Batch',label2:'Hard limit per request'},timeout_secs:{label:'Timeout',label2:'Seconds before cancellation',fmt:v=>v+'s'},device:{label:'Device',label2:'Compute device — cpu / cuda / mps'} } },
+  cache:     { icon:'ri-database-2-line',  label:'Model Cache', fields:{ enabled:{label:'Enabled',label2:'Cache identical inference outputs',fmt:v=>v?'Yes':'No'},ttl_secs:{label:'TTL',label2:'Entry expiry time',fmt:v=>v+'s ('+Math.round(v/60)+'m)'},max_size_mb:{label:'Max Size',label2:'Memory budget for cache',fmt:v=>v+' MB'} } },
+};
+
 async function loadConfig() {
-  const pre = document.getElementById('sys-config-content');
-  if (!pre) return;
-  pre.textContent = 'Loading…';
+  const container = document.getElementById('sys-config-content');
+  if (!container) return;
+  clearEl(container);
+  const loading = mkEl('span', null, 'Loading…'); loading.style.cssText = 'font-size:13px;color:var(--text-muted)';
+  container.appendChild(loading);
+  let data;
   try {
     const r = await fetch('/system/config');
-    if (!r.ok) { pre.textContent = 'Failed: ' + r.status; return; }
-    const data = await safeJson(r);
-    pre.textContent = JSON.stringify(data, null, 2);
-  } catch (e) { pre.textContent = 'Error: ' + e.message; }
+    if (!r.ok) { clearEl(container); const e = mkEl('span', null, 'Failed: ' + r.status); e.style.color = 'var(--red)'; container.appendChild(e); return; }
+    data = await safeJson(r);
+  } catch (e) { clearEl(container); const el = mkEl('span', null, 'Error: ' + e.message); el.style.color = 'var(--red)'; container.appendChild(el); return; }
+  clearEl(container);
+  const grid = mkEl('div', null); grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px';
+  Object.entries(data).forEach(([sKey, sVal]) => {
+    const meta = CFG_META[sKey] || { icon:'ri-settings-3-line', label:sKey, fields:{} };
+    const card = mkEl('div', 'card'); card.style.padding = '14px';
+    const hdr = mkEl('div', null); hdr.style.cssText = 'display:flex;align-items:center;gap:7px;margin-bottom:12px';
+    const ico = document.createElement('i'); ico.className = meta.icon; ico.style.cssText = 'font-size:16px;color:var(--accent)'; hdr.appendChild(ico);
+    const lbl = mkEl('span', null, meta.label); lbl.style.cssText = 'font-size:13px;font-weight:600;color:var(--text)'; hdr.appendChild(lbl);
+    card.appendChild(hdr);
+    const entries = Object.entries(sVal || {});
+    entries.forEach(([key, val], i) => {
+      const fm = meta.fields[key] || { label:key, label2:'' };
+      const row = mkEl('div', null); row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;gap:8px' + (i < entries.length-1 ? ';border-bottom:1px solid var(--border)' : '');
+      const left = mkEl('div', null); left.style.cssText = 'display:flex;flex-direction:column;gap:2px;min-width:0';
+      const nameEl = mkEl('span', null, fm.label); nameEl.style.cssText = 'font-size:12px;font-weight:600;color:var(--text)'; left.appendChild(nameEl);
+      if (fm.label2) { const descEl = mkEl('span', null, fm.label2); descEl.style.cssText = 'font-size:11px;color:var(--text-muted);line-height:1.3'; left.appendChild(descEl); }
+      row.appendChild(left);
+      const display = fm.fmt ? fm.fmt(val) : String(val);
+      const valEl = mkEl('span', null, display); valEl.style.cssText = 'font-size:12px;font-family:var(--mono);font-weight:600;color:var(--accent);white-space:nowrap;flex-shrink:0;background:var(--accent-bg);padding:2px 8px;border-radius:5px';
+      row.appendChild(valEl); card.appendChild(row);
+    });
+    grid.appendChild(card);
+  });
+  container.appendChild(grid);
 }
 
 function copyConfig() {
-  const pre = document.getElementById('sys-config-content');
-  if (!pre || !navigator.clipboard) return;
-  navigator.clipboard.writeText(pre.textContent).then(() => alert('Config copied to clipboard.'));
+  if (!navigator.clipboard) return;
+  fetch('/system/config').then(r => r.json()).then(d => {
+    navigator.clipboard.writeText(JSON.stringify(d, null, 2)).then(() => alert('Config copied to clipboard.'));
+  }).catch(() => alert('Copy failed.'));
 }
 
 function formatBytes(b) {

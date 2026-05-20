@@ -13,6 +13,14 @@ pub struct HealthCheck {
     pub timestamp: String,
     pub uptime_seconds: u64,
     pub checks: HashMap<String, ComponentHealth>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_requests: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_latency_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_rate: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -38,6 +46,10 @@ pub async fn liveness(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Res
         timestamp: chrono::Utc::now().to_rfc3339(),
         uptime_seconds: health.uptime_seconds,
         checks: HashMap::new(),
+        active_requests: None,
+        total_requests: None,
+        avg_latency_ms: None,
+        error_rate: None,
     };
 
     Ok(HttpResponse::Ok()
@@ -115,6 +127,10 @@ pub async fn readiness(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Re
         timestamp: chrono::Utc::now().to_rfc3339(),
         uptime_seconds: health.uptime_seconds,
         checks,
+        active_requests: None,
+        total_requests: None,
+        avg_latency_ms: None,
+        error_rate: None,
     };
 
     if overall_status == "ready" {
@@ -216,12 +232,22 @@ pub async fn health(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Resul
         "degraded"
     };
 
+    let error_rate_fraction = if metrics.total_requests > 0 {
+        metrics.total_errors as f64 / metrics.total_requests as f64
+    } else {
+        0.0
+    };
+
     let response = HealthCheck {
         status: overall_status.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
         uptime_seconds: health.uptime_seconds,
         checks,
+        active_requests: Some(health.active_requests),
+        total_requests: Some(metrics.total_requests),
+        avg_latency_ms: Some(health.response_time_ms),
+        error_rate: Some(error_rate_fraction),
     };
 
     Ok(HttpResponse::Ok()
@@ -608,6 +634,10 @@ mod tests {
             timestamp: "2026-01-01T00:00:00Z".to_string(),
             uptime_seconds: 3600,
             checks: HashMap::new(),
+            active_requests: None,
+            total_requests: None,
+            avg_latency_ms: None,
+            error_rate: None,
         };
         assert_eq!(hc.status, "healthy");
         assert_eq!(hc.version, "1.0.0");
@@ -655,6 +685,10 @@ mod tests {
             timestamp: "2026-03-27T00:00:00Z".to_string(),
             uptime_seconds: 100,
             checks,
+            active_requests: None,
+            total_requests: None,
+            avg_latency_ms: None,
+            error_rate: None,
         };
         let json = serde_json::to_string(&hc).expect("serialization failed");
         let deserialized: HealthCheck =
@@ -690,6 +724,10 @@ mod tests {
                 timestamp: "2026-01-01T00:00:00Z".to_string(),
                 uptime_seconds: 0,
                 checks: HashMap::new(),
+                active_requests: None,
+                total_requests: None,
+                avg_latency_ms: None,
+                error_rate: None,
             };
             let json = serde_json::to_string(&hc).unwrap();
             let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
