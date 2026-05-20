@@ -3,6 +3,7 @@ mod engine;
 mod handler;
 mod hrm_engine;
 mod tokenizer;
+mod vision_bridge;
 
 use actix_web::{middleware, web, App, HttpServer};
 use std::sync::Arc;

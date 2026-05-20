@@ -15,3 +15,11 @@ model_dir      = "models/hrm-text-1b"
 ep_preference  = "auto"
 use_quantized  = false
 n_threads      = 4
+
+[vision_bridge]
+enabled              = true
+main_server_base     = "http://127.0.0.1:8000"
+classify_endpoint    = "/classify/batch"
+detect_endpoint      = "/yolo/detect"
+classify_timeout_ms  = 1500
+detect_timeout_ms    = 2500

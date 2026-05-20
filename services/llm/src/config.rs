@@ -32,6 +32,10 @@ pub struct LlmConfig {
     /// Both engines share `port`; the HRM section provides the rest.
     #[serde(default)]
     pub hrm: Option<HrmConfig>,
+
+    /// Vision bridge configuration for image description via classify+detect.
+    #[serde(default)]
+    pub vision_bridge: Option<VisionBridgeConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,10 +60,33 @@ pub struct HrmConfig {
     pub n_threads: Option<i32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct VisionBridgeConfig {
+    #[serde(default = "default_vb_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_vb_base")]
+    pub main_server_base: String,
+    #[serde(default = "default_vb_classify")]
+    pub classify_endpoint: String,
+    #[serde(default = "default_vb_detect")]
+    pub detect_endpoint: String,
+    #[serde(default = "default_vb_classify_timeout")]
+    pub classify_timeout_ms: u64,
+    #[serde(default = "default_vb_detect_timeout")]
+    pub detect_timeout_ms: u64,
+}
+
 fn default_port() -> u16 { 8001 }
 fn default_ctx_size() -> u32 { 4096 }
 fn default_n_threads() -> i32 { 4 }
 fn default_ep_preference() -> String { "auto".to_string() }
+
+fn default_vb_enabled() -> bool { true }
+fn default_vb_base() -> String { "http://127.0.0.1:8000".to_string() }
+fn default_vb_classify() -> String { "/classify/batch".to_string() }
+fn default_vb_detect() -> String { "/yolo/detect".to_string() }
+fn default_vb_classify_timeout() -> u64 { 1500 }
+fn default_vb_detect_timeout() -> u64 { 2500 }
 
 impl LlmConfig {
     /// Load from `config.toml` in the current working directory, or use defaults.
@@ -79,6 +106,7 @@ impl LlmConfig {
                 n_threads: 4,
                 n_gpu_layers: 0,
                 hrm: None,
+                vision_bridge: None,
             })
         }
     }
