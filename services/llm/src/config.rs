@@ -7,29 +7,7 @@ pub struct LlmConfig {
     #[serde(default = "default_port")]
     pub port: u16,
 
-    /// Path to the GGUF model file
-    pub model_path: String,
-
-    /// Optional path to the multimodal projection file (.mmproj.gguf).
-    /// Omit to disable image input.
-    #[serde(default)]
-    pub mmproj_path: Option<String>,
-
-    /// KV-cache context window size in tokens
-    #[serde(default = "default_ctx_size")]
-    pub ctx_size: u32,
-
-    /// CPU thread count for generation
-    #[serde(default = "default_n_threads")]
-    pub n_threads: i32,
-
-    /// Number of model layers to offload to GPU (0 = CPU-only)
-    #[serde(default)]
-    pub n_gpu_layers: i32,
-
-    /// HRM-Text engine configuration. When present, the service runs the
-    /// new HrmEngine; otherwise it falls back to the legacy LlamaEngine.
-    /// Both engines share `port`; the HRM section provides the rest.
+    /// HRM-Text engine configuration (required at startup).
     #[serde(default)]
     pub hrm: Option<HrmConfig>,
 
@@ -77,8 +55,6 @@ pub struct VisionBridgeConfig {
 }
 
 fn default_port() -> u16 { 8001 }
-fn default_ctx_size() -> u32 { 4096 }
-fn default_n_threads() -> i32 { 4 }
 fn default_ep_preference() -> String { "auto".to_string() }
 
 fn default_vb_enabled() -> bool { true }
@@ -100,23 +76,10 @@ impl LlmConfig {
             tracing::warn!("config.toml not found, using defaults");
             Ok(Self {
                 port: 8001,
-                model_path: "models/llava-v1.6-mistral-7b.IQ1_S.gguf".into(),
-                mmproj_path: Some("models/llava-v1.6-mistral-7b-mmproj-f16.gguf".into()),
-                ctx_size: 4096,
-                n_threads: 4,
-                n_gpu_layers: 0,
                 hrm: None,
                 vision_bridge: None,
             })
         }
-    }
-
-    /// Returns mmproj_path only if it's non-empty and the file exists on disk.
-    pub fn effective_mmproj(&self) -> Option<&str> {
-        self.mmproj_path
-            .as_deref()
-            .filter(|p| !p.is_empty())
-            .filter(|p| std::path::Path::new(p).exists())
     }
 }
 
@@ -128,7 +91,6 @@ mod tests {
     fn parses_hrm_section_with_defaults() {
         let toml_text = r#"
 port = 8001
-model_path = "models/llava-v1.6-mistral-7b.IQ1_S.gguf"
 
 [hrm]
 model_dir = "models/hrm-text-1b"

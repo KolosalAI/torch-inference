@@ -1,15 +1,5 @@
-# Shared
 port = 8001
 
-# Legacy LlamaEngine (kept until handler swap, then removed)
-model_path   = "models/llava-v1.6-mistral-7b.IQ1_S.gguf"
-mmproj_path  = "models/llava-v1.6-mistral-7b-mmproj-f16.gguf"
-ctx_size     = 4096
-n_threads    = 4
-n_gpu_layers = 0
-
-# HRM-Text engine — required at startup. Run `make hrm-download` or `make hrm-export`
-# to produce the model artifacts before starting the service.
 [hrm]
 model_dir      = "models/hrm-text-1b"
 ep_preference  = "auto"
