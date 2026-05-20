@@ -75,6 +75,34 @@ impl HrmEngine {
         })
     }
 
+    /// Greedy autoregressive decode. Returns the list of generated token IDs
+    /// (not including the prompt, not including EOS).
+    pub fn decode_greedy(&self, prompt_ids: &[i64], max_tokens: u32) -> Result<Vec<i64>> {
+        let mut ids: Vec<i64> = prompt_ids.to_vec();
+        let mut out: Vec<i64> = Vec::with_capacity(max_tokens as usize);
+
+        for _ in 0..max_tokens {
+            let logits = self.prefill(&ids)?;
+            // argmax
+            let (next_id, _) = logits.iter().enumerate()
+                .fold((0usize, f32::NEG_INFINITY), |acc, (i, &v)| {
+                    if v > acc.1 { (i, v) } else { acc }
+                });
+            let next_id = next_id as i64;
+
+            if next_id as u32 == self.runtime.eos_token_id {
+                break;
+            }
+            if ids.len() as u32 >= self.runtime.ctx_size {
+                tracing::warn!("decode hit ctx_size cap");
+                break;
+            }
+            ids.push(next_id);
+            out.push(next_id);
+        }
+        Ok(out)
+    }
+
     /// Run a prefill pass on `input_ids` and return the next-token logits
     /// (over the full vocab) corresponding to the last position.
     ///
@@ -191,5 +219,21 @@ mod tests {
         let max = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let min = logits.iter().cloned().fold(f32::INFINITY, f32::min);
         assert!(max - min > 0.1, "logits look uniform: max-min={}", max-min);
+    }
+
+    #[test]
+    fn decode_greedy_produces_tokens_under_max() {
+        if skip_if_no_model() {
+            eprintln!("skipping");
+            return;
+        }
+        let eng = HrmEngine::load(&fixture_cfg()).unwrap();
+        let ids = eng.tokenizer.encode("Hello,", true).unwrap();
+        let generated = eng.decode_greedy(&ids, 8).unwrap();
+        assert!(!generated.is_empty(), "no tokens generated");
+        assert!(generated.len() <= 8, "exceeded max_tokens");
+        // None of the generated tokens should equal eos (decode stops on eos)
+        let eos = eng.runtime.eos_token_id;
+        assert!(!generated.iter().any(|&t| t == eos as i64));
     }
 }
