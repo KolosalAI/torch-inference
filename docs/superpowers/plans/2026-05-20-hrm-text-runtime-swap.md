@@ -9,6 +9,21 @@
 **Tech Stack:** Rust (actix-web 4.8, tokio, tracing) · `ort` 2.0.0-rc.10 · `tokenizers` 0.20 · `ndarray` 0.16 · `reqwest` 0.12 · `serde`/`serde_json` · Python (offline build only) with `transformers`, `torch`, `onnx`, `onnxruntime`, `optimum`.
 
 **Spec reference:** `docs/superpowers/specs/2026-05-20-hrm-text-runtime-swap-design.md` (commit `1a5fa4f`).
+**Spike addendum:** `docs/superpowers/specs/2026-05-20-hrm-text-export-spike.md` (commit `7a4f6dd`).
+
+---
+
+## Amendments after the spike (READ FIRST)
+
+The spike landed as a CLEAN PASS but surfaced findings that the plan below has been updated to reflect. Headline deltas — each is also reflected inline in the affected task:
+
+- **Recurrence is structurally unrolled in the exported graph.** HRM-Text's `__post_init__` inflates `num_hidden_layers` to `num_layers_per_stack × H_cycles × (L_cycles + 1)`, so the ONNX export is a **single static forward pass**. There is no `step_kind` input, no slow/fast graph split, no Rust-side recurrent loop. The runtime decode is plain iterative prefill. `slow_loops`/`fast_loops` (H_cycles=2, L_cycles=3 from `config.json`) are stored for documentation only.
+- **External-data ONNX.** Export emits `model.onnx` (32 MB graph) + `model.onnx.data` (2.2 GB weights). Both must be co-located. `ort::Session::commit_from_file` discovers the sidecar automatically.
+- **fp16 logits.** Model is exported at `torch_dtype=torch.float16`; logits come back as fp16. Use the `half` crate and ort's `"half"` feature flag.
+- **opset 18, not 17.** Torch's exporter auto-upgrades; ort loads it fine.
+- **Export environment:** transformers v5 (git main) + Python 3.10+. Export-only deps; runtime stays pure Rust.
+- **Prefill-only.** KV cache export is deferred (requires `DynamicCache` pytree work). Decode is O(n²) per token, acceptable for v0 short outputs.
+- **ort 2.0.0-rc.10 API:** input tensors built with `Tensor::<T>::from_array((shape, vec))`; outputs extracted with `try_extract_tensor::<T>()` returning `(&Shape, &[T])`. No `arr.view()`, no `logits.slice(...)`.
 
 ---
 
@@ -220,9 +235,11 @@ Edit `services/llm/Cargo.toml`. Add to `[dependencies]` (do **not** remove `llam
 
 ```toml
 # ONNX runtime — same version as the workspace root uses
-ort         = "=2.0.0-rc.10"
+# "half" feature gates Tensor<half::f16> extract, required for HRM-Text fp16 logits.
+ort         = { version = "=2.0.0-rc.10", features = ["half"] }
 tokenizers  = "0.20"
 ndarray     = "0.16"
+half        = "2"      # f16 ↔ f32 conversion of HRM-Text logits
 reqwest     = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 ```
 
@@ -252,64 +269,89 @@ git commit -m "deps(llm): add ort/tokenizers/ndarray/reqwest for HRM-Text engine
 
 - [ ] **Step 1: Write the production export script**
 
-Create `scripts/export_hrm_text.py`. Use the spike addendum's loop counts and any rewrites it identified:
+Create `scripts/export_hrm_text.py`. This is the spike's working script, generalised. **Loop counts come from the checkpoint's `config.json` automatically; the CLI overrides are escape hatches only.** Loop counts are runtime-informational since the recurrence is already unrolled in the static graph.
 
 ```python
 """
 HRM-Text -> ONNX exporter (one-time, offline, build-time only).
-Output: services/llm/models/hrm-text-1b/{model.onnx, tokenizer.json, config.json}
+Output: services/llm/models/hrm-text-1b/{model.onnx, model.onnx.data, tokenizer.json, config.json}
 
 Run via:  make hrm-export
+
+Requires: Python 3.10+, transformers v5 (from git), onnxscript.
+The hrm-export Makefile target provisions these.
 """
 import argparse
 import json
 import os
 import torch
+import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "sapientinc/HRM-Text-1B"
 OUT_DIR = "services/llm/models/hrm-text-1b"
 
-# Defaults come from the spike addendum. Override on CLI if needed.
-DEFAULT_SLOW_LOOPS = 2
-DEFAULT_FAST_LOOPS = 4
 
-def export(quantize: bool, slow_loops: int, fast_loops: int):
+class LogitsOnly(nn.Module):
+    """Wraps the HF model so torch.export sees a single Tensor output instead of
+    a CausalLMOutputWithPast that contains a DynamicCache (torch can't pytree-
+    flatten DynamicCache). Required for export to succeed."""
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+
+    def forward(self, input_ids):
+        out = self.m(input_ids=input_ids, use_cache=False, return_dict=True)
+        return out.logits
+
+
+def export(quantize: bool, slow_loops_override, fast_loops_override):
     os.makedirs(OUT_DIR, exist_ok=True)
 
     print(f"Loading {MODEL_ID}...")
-    tok = AutoTokenizer.from_pretrained(MODEL_ID)
+    tok = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, torch_dtype=torch.float16, attn_implementation="sdpa"
+        MODEL_ID,
+        torch_dtype=torch.float16,
+        attn_implementation="sdpa",
+        trust_remote_code=True,
     )
-    model.train(False)  # inference mode
+    model.train(False)
+    model.config.use_cache = False  # belt-and-braces; matches LogitsOnly wrapper
 
+    wrapped = LogitsOnly(model)
     ids = tok("hello", return_tensors="pt").input_ids
     onnx_path = f"{OUT_DIR}/model.onnx"
 
+    print("Exporting ONNX (opset 18 — torch auto-upgrades from 17)...")
     with torch.no_grad():
         torch.onnx.export(
-            model, (ids,), onnx_path,
-            opset_version=17,
+            wrapped, (ids,), onnx_path,
+            opset_version=18,
             input_names=["input_ids"],
             output_names=["logits"],
             dynamic_axes={"input_ids": {1: "seq"}, "logits": {1: "seq"}},
             do_constant_folding=True,
         )
-    print(f"  -> {onnx_path}")
+    # Export emits model.onnx (~32 MB graph) + model.onnx.data (~2.2 GB external weights).
+    # Both files MUST be deployed together in the same directory.
+    print(f"  -> {onnx_path} (+ model.onnx.data sidecar)")
 
+    # tokenizer.json is what the Rust runtime reads
     tok.save_pretrained(OUT_DIR)
-    # save_pretrained leaves extras we do not need; HrmEngine reads only tokenizer.json.
 
     hf_cfg = model.config.to_dict()
     runtime_cfg = {
         "eos_token_id": hf_cfg.get("eos_token_id"),
         "ctx_size": hf_cfg.get("max_position_embeddings", 2048),
-        "slow_loops": slow_loops,
-        "fast_loops": fast_loops,
+        # Loop counts: documentation only. The recurrence is unrolled in the
+        # static graph; the Rust runtime does not loop on these.
+        "slow_loops": slow_loops_override or hf_cfg.get("H_cycles", 2),
+        "fast_loops": fast_loops_override or hf_cfg.get("L_cycles", 3),
         "vocab_size": hf_cfg.get("vocab_size"),
         "hidden_size": hf_cfg.get("hidden_size"),
         "num_layers": hf_cfg.get("num_hidden_layers"),
+        "logits_dtype": "float16",  # matches torch_dtype above
     }
     with open(f"{OUT_DIR}/config.json", "w") as f:
         json.dump(runtime_cfg, f, indent=2)
@@ -323,11 +365,14 @@ def export(quantize: bool, slow_loops: int, fast_loops: int):
 
     print("Done.")
 
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--quantize", action="store_true", help="also emit an int8 variant")
-    ap.add_argument("--slow-loops", type=int, default=DEFAULT_SLOW_LOOPS)
-    ap.add_argument("--fast-loops", type=int, default=DEFAULT_FAST_LOOPS)
+    ap.add_argument("--slow-loops", type=int, default=None,
+                    help="override H_cycles in runtime config (default: from checkpoint)")
+    ap.add_argument("--fast-loops", type=int, default=None,
+                    help="override L_cycles in runtime config (default: from checkpoint)")
     args = ap.parse_args()
     export(args.quantize, args.slow_loops, args.fast_loops)
 ```
@@ -376,9 +421,11 @@ Edit `Makefile`. Replace the existing `# -- LLM Microservice --` block (lines 19
 hrm-download: ## Download pre-exported HRM-Text-1B ONNX artifacts
 	bash scripts/download_hrm_text_artifacts.sh
 
-hrm-export: ## Re-export HRM-Text-1B -> ONNX from upstream (slow, offline)
-	uv venv .hrm-export-venv
-	uv pip install --python .hrm-export-venv 'transformers>=4.45' 'torch>=2.3' 'onnx>=1.16' 'onnxruntime>=1.18' optimum
+hrm-export: ## Re-export HRM-Text-1B -> ONNX from upstream (slow, offline). Requires Python 3.10+.
+	uv venv --python 3.12 .hrm-export-venv
+	uv pip install --python .hrm-export-venv \
+	    'transformers @ git+https://github.com/huggingface/transformers' \
+	    'torch>=2.3' 'onnx>=1.16' 'onnxruntime>=1.18' onnxscript optimum
 	.hrm-export-venv/bin/python scripts/export_hrm_text.py
 
 llm-download: hrm-download ## Alias kept for compatibility; defers to hrm-download
@@ -847,34 +894,44 @@ Add to the `impl HrmEngine` block:
     /// Run a prefill pass on `input_ids` and return the next-token logits
     /// (over the full vocab) corresponding to the last position.
     ///
+    /// HRM-Text exports logits in fp16. This method converts to fp32 once,
+    /// so callers (sampler, etc.) can stay in standard f32.
+    ///
     /// Returned shape: `Vec<f32>` of length `runtime.vocab_size`.
     pub fn prefill(&self, input_ids: &[i64]) -> Result<Vec<f32>> {
-        use ndarray::Array2;
+        use ort::value::Tensor;
 
         if input_ids.is_empty() {
             anyhow::bail!("prefill requires at least one input token");
         }
 
-        let arr = Array2::from_shape_vec((1, input_ids.len()), input_ids.to_vec())
-            .context("shape input_ids")?;
+        let seq_len = input_ids.len();
+        let input_tensor = Tensor::<i64>::from_array(
+            ([1_usize, seq_len], input_ids.to_vec())
+        ).context("build input_ids tensor")?;
 
         let outputs = self.session
-            .run(ort::inputs![ "input_ids" => arr.view() ]
-                .context("build inputs")?)
+            .run(ort::inputs!["input_ids" => input_tensor])
             .context("ort run prefill")?;
 
-        let logits = outputs["logits"]
-            .try_extract_tensor::<f32>()
-            .context("extract logits")?;
+        // ort 2.0.0-rc.10: try_extract_tensor returns (&Shape, &[T]) tuple,
+        // not an ndarray view. HRM-Text logits are fp16.
+        let (shape, data) = outputs["logits"]
+            .try_extract_tensor::<half::f16>()
+            .context("extract fp16 logits")?;
 
-        let shape = logits.shape();
-        // Expected: [batch=1, seq, vocab]
-        if shape.len() != 3 {
-            anyhow::bail!("unexpected logits shape: {:?}", shape);
+        let dims = shape.as_ref();
+        // Expected layout: [batch=1, seq, vocab]
+        if dims.len() != 3 {
+            anyhow::bail!("unexpected logits shape: {:?}", dims);
         }
-        let last_pos = shape[1] - 1;
-        let last_row = logits.slice(ndarray::s![0, last_pos, ..]);
-        Ok(last_row.iter().copied().collect())
+        let vocab = dims[2] as usize;
+        let last_pos = (dims[1] as usize) - 1;
+        let row_start = last_pos * vocab;
+        Ok(data[row_start..row_start + vocab]
+            .iter()
+            .map(|h| h.to_f32())
+            .collect())
     }
 ```
 
