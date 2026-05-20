@@ -38,22 +38,56 @@ impl HttpFetchTool {
 
 fn host_matches_glob(host: &str, pat: &str) -> bool {
     if let Some(suffix) = pat.strip_prefix("*.") {
-        host.ends_with(suffix) && host.len() > suffix.len()
+        // Require a `.` boundary before the suffix so that `evilinternal`
+        // does NOT match `*.internal` while `box.internal` does.
+        let needle = format!(".{}", suffix);
+        host.ends_with(&needle) && host.len() > needle.len()
     } else {
         host == pat
     }
 }
 
+// TODO(security/v2): DNS rebinding. We only check the hostname string,
+// not the resolved IP. An allowlisted `evil.example` whose A-record
+// resolves to 127.0.0.1 reaches the loopback. Defenses: resolve once
+// up-front and pin the IP, or use a custom resolver that rejects
+// private addresses.
 fn is_private_host(host: &str) -> bool {
-    use std::net::IpAddr;
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    use std::net::{IpAddr, Ipv4Addr};
+    // `reqwest::Url::host_str` strips the brackets from IPv6 literals, but a
+    // raw `host` string passed in via tests may still contain them; tolerate
+    // both forms by trimming a leading `[` / trailing `]`.
+    let trimmed = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
         match ip {
             IpAddr::V4(v4) => {
                 let o = v4.octets();
                 v4.is_loopback() || v4.is_private()
                     || (o[0] == 169 && o[1] == 254)   // link-local
             }
-            IpAddr::V6(v6) => v6.is_loopback(),
+            IpAddr::V6(v6) => {
+                if v6.is_loopback() { return true; }
+                let segs = v6.segments();
+                // IPv4-mapped IPv6 `::ffff:0:0/96` — extract the embedded
+                // IPv4 and recurse. This closes the `::ffff:127.0.0.1`
+                // SSRF bypass.
+                if segs[0] == 0 && segs[1] == 0 && segs[2] == 0
+                    && segs[3] == 0 && segs[4] == 0 && segs[5] == 0xffff
+                {
+                    let v4 = Ipv4Addr::new(
+                        (segs[6] >> 8) as u8, (segs[6] & 0xff) as u8,
+                        (segs[7] >> 8) as u8, (segs[7] & 0xff) as u8,
+                    );
+                    let o = v4.octets();
+                    return v4.is_loopback() || v4.is_private()
+                        || (o[0] == 169 && o[1] == 254);
+                }
+                // Unique-local addresses (ULA): fc00::/7
+                if segs[0] & 0xfe00 == 0xfc00 { return true; }
+                // Link-local: fe80::/10
+                if segs[0] & 0xffc0 == 0xfe80 { return true; }
+                false
+            }
         }
     } else {
         matches!(host, "localhost" | "ip6-localhost" | "ip6-loopback")
@@ -166,6 +200,42 @@ mod tests {
         let err = t.invoke(json!({"url": "http://x/y"}),
                             Instant::now() + Duration::from_secs(1)).await.unwrap_err();
         assert!(matches!(err, ToolError::Denied(_)));
+    }
+
+    #[tokio::test]
+    async fn mapped_ipv6_loopback_blocked() {
+        // `::ffff:127.0.0.1` is IPv4-mapped IPv6 that resolves to the loopback.
+        // We allowlist the host literal so the only remaining sandbox check
+        // is the private-CIDR block, which must trip.
+        // `reqwest::Url::host_str()` strips brackets and normalizes the IPv6
+        // form, so we probe what it returns and seed the allowlist with that
+        // exact string.
+        let parsed = reqwest::Url::parse("http://[::ffff:127.0.0.1]/x").unwrap();
+        let host = parsed.host_str().unwrap().to_string();
+        let t = HttpFetchTool::new(vec![host, "*.internal".into()],
+                                    1024, false, true);
+        let err = t.invoke(json!({"url": "http://[::ffff:127.0.0.1]/x"}),
+                            Instant::now() + Duration::from_secs(1)).await.unwrap_err();
+        match err {
+            ToolError::Denied(s) => assert!(s.contains("private host"),
+                "expected private-host denial, got: {}", s),
+            other => panic!("expected Denied(private host), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn glob_requires_dot_boundary() {
+        // `evilinternal` must NOT match `*.internal`.
+        assert!(!host_matches_glob("evilinternal", "*.internal"),
+                "evilinternal should not match *.internal");
+        // `box.internal` must match `*.internal`.
+        assert!(host_matches_glob("box.internal", "*.internal"),
+                "box.internal should match *.internal");
+        // Sanity: exact-match patterns still work.
+        assert!(host_matches_glob("foo.example", "foo.example"));
+        assert!(!host_matches_glob("bar.example", "foo.example"));
+        // Sanity: bare suffix (no dot prefix in host) must not match.
+        assert!(!host_matches_glob("internal", "*.internal"));
     }
 
     #[tokio::test]
