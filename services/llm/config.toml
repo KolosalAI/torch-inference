@@ -13,3 +13,25 @@ classify_endpoint    = "/classify/batch"
 detect_endpoint      = "/yolo/detect"
 classify_timeout_ms  = 1500
 detect_timeout_ms    = 2500
+
+[agent]
+enabled                = true
+max_steps              = 8
+max_run_ms             = 60000
+per_tool_ms            = 5000
+max_concurrent_runs    = 4
+reflect_max_tokens     = 128
+planner_temperature    = 0.0
+
+[agent.http_fetch]
+enabled                = true
+allowlist              = []
+max_bytes              = 65536
+follow_redirects       = false
+
+[agent.tools]
+main_server_base       = "http://127.0.0.1:8000"
+classify_endpoint      = "/classify/batch"
+detect_endpoint        = "/yolo/detect"
+tts_endpoint           = "/tts/stream"
+stt_endpoint           = "/stt/transcribe"
