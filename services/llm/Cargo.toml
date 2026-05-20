@@ -43,3 +43,12 @@ ndarray     = "0.16"
 half        = "2"      # f16 <-> f32 conversion of HRM-Text logits
 rand        = "0.8"
 reqwest     = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Agent layer
+regex            = "1"
+async-trait      = "0.1"
+ulid             = "1"
+
+[dev-dependencies]
+mockito          = "1"
+tokio            = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
