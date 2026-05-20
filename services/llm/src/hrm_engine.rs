@@ -103,6 +103,75 @@ impl HrmEngine {
         Ok(out)
     }
 
+    /// Sample one token from `logits` using top-k, top-p, temperature.
+    /// temperature <= 0 -> greedy argmax.
+    fn sample(&self, logits: &[f32], temperature: f32, top_k: usize, top_p: f32) -> usize {
+        if temperature <= 0.0 {
+            return logits.iter().enumerate()
+                .fold((0usize, f32::NEG_INFINITY), |acc, (i, &v)|
+                    if v > acc.1 { (i, v) } else { acc }).0;
+        }
+        let t = temperature.clamp(0.01, 2.0);
+
+        // top-k
+        let mut indexed: Vec<(usize, f32)> = logits.iter().enumerate().map(|(i,&v)| (i, v/t)).collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        indexed.truncate(top_k.max(1));
+
+        // softmax
+        let max = indexed[0].1;
+        let mut probs: Vec<f32> = indexed.iter().map(|(_, l)| (l - max).exp()).collect();
+        let sum: f32 = probs.iter().sum();
+        for p in &mut probs { *p /= sum; }
+
+        // top-p (nucleus): keep smallest prefix with cumulative prob >= top_p
+        let mut cum = 0.0_f32;
+        let mut keep = probs.len();
+        for (i, &p) in probs.iter().enumerate() {
+            cum += p;
+            if cum >= top_p { keep = i + 1; break; }
+        }
+        probs.truncate(keep);
+        let renorm: f32 = probs.iter().sum();
+        for p in &mut probs { *p /= renorm; }
+
+        // weighted choice
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let r: f32 = rng.gen();
+        let mut acc = 0.0_f32;
+        for (i, &p) in probs.iter().enumerate() {
+            acc += p;
+            if r <= acc { return indexed[i].0; }
+        }
+        indexed.last().unwrap().0
+    }
+
+    /// Drop-in replacement for the old LlamaEngine::infer_text. Streams
+    /// decoded token strings into `tx`. Blocking — wrap in spawn_blocking.
+    pub fn infer_text(
+        self: std::sync::Arc<Self>,
+        prompt: String,
+        max_tokens: u32,
+        temperature: f32,
+        tx: tokio::sync::mpsc::Sender<String>,
+    ) -> Result<()> {
+        let mut ids = self.tokenizer.encode(&prompt, true)?;
+        for _ in 0..max_tokens {
+            let logits = self.prefill(&ids)?;
+            let next = self.sample(&logits, temperature, 40, 0.95);
+            let next_i64 = next as i64;
+
+            if next as u32 == self.runtime.eos_token_id { break; }
+            if ids.len() as u32 >= self.runtime.ctx_size { break; }
+
+            let piece = self.tokenizer.decode_single(next as u32).unwrap_or_default();
+            if tx.blocking_send(piece).is_err() { break; }
+            ids.push(next_i64);
+        }
+        Ok(())
+    }
+
     /// Run a prefill pass on `input_ids` and return the next-token logits
     /// (over the full vocab) corresponding to the last position.
     ///
@@ -235,5 +304,25 @@ mod tests {
         // None of the generated tokens should equal eos (decode stops on eos)
         let eos = eng.runtime.eos_token_id;
         assert!(!generated.iter().any(|&t| t == eos as i64));
+    }
+
+    #[tokio::test]
+    async fn infer_text_streams_tokens_via_channel() {
+        if skip_if_no_model() {
+            eprintln!("skipping");
+            return;
+        }
+        let eng = std::sync::Arc::new(HrmEngine::load(&fixture_cfg()).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(32);
+
+        let eng2 = eng.clone();
+        let h = tokio::task::spawn_blocking(move || {
+            eng2.infer_text("Hello,".to_string(), 8, 0.0, tx)
+        });
+
+        let mut received = Vec::new();
+        while let Some(s) = rx.recv().await { received.push(s); }
+        h.await.unwrap().unwrap();
+        assert!(!received.is_empty(), "no streamed tokens");
     }
 }
