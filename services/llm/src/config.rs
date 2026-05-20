@@ -26,11 +26,40 @@ pub struct LlmConfig {
     /// Number of model layers to offload to GPU (0 = CPU-only)
     #[serde(default)]
     pub n_gpu_layers: i32,
+
+    /// HRM-Text engine configuration. When present, the service runs the
+    /// new HrmEngine; otherwise it falls back to the legacy LlamaEngine.
+    /// Both engines share `port`; the HRM section provides the rest.
+    #[serde(default)]
+    pub hrm: Option<HrmConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HrmConfig {
+    /// Directory containing model.onnx, tokenizer.json, config.json.
+    pub model_dir: String,
+
+    /// Execution provider preference. "auto" picks CoreML on macOS, CUDA on
+    /// Linux when n_gpu_layers > 0, else CPU. Other values: "cpu", "coreml",
+    /// "cuda".
+    #[serde(default = "default_ep_preference")]
+    pub ep_preference: String,
+
+    /// Use the int8 quantized variant (model.int8.onnx) if true. Defaults to
+    /// false (fp16 model.onnx).
+    #[serde(default)]
+    pub use_quantized: Option<bool>,
+
+    /// Number of CPU threads for ort sessions. Falls back to LlmConfig.n_threads
+    /// if None.
+    #[serde(default)]
+    pub n_threads: Option<i32>,
 }
 
 fn default_port() -> u16 { 8001 }
 fn default_ctx_size() -> u32 { 4096 }
 fn default_n_threads() -> i32 { 4 }
+fn default_ep_preference() -> String { "auto".to_string() }
 
 impl LlmConfig {
     /// Load from `config.toml` in the current working directory, or use defaults.
@@ -49,6 +78,7 @@ impl LlmConfig {
                 ctx_size: 4096,
                 n_threads: 4,
                 n_gpu_layers: 0,
+                hrm: None,
             })
         }
     }
@@ -59,5 +89,26 @@ impl LlmConfig {
             .as_deref()
             .filter(|p| !p.is_empty())
             .filter(|p| std::path::Path::new(p).exists())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_hrm_section_with_defaults() {
+        let toml_text = r#"
+port = 8001
+model_path = "models/llava-v1.6-mistral-7b.IQ1_S.gguf"
+
+[hrm]
+model_dir = "models/hrm-text-1b"
+"#;
+        let cfg: LlmConfig = toml::from_str(toml_text).unwrap();
+        let hrm = cfg.hrm.expect("hrm section present");
+        assert_eq!(hrm.model_dir, "models/hrm-text-1b");
+        assert_eq!(hrm.ep_preference, "auto");
+        assert!(hrm.use_quantized.is_none() || hrm.use_quantized == Some(false));
     }
 }
