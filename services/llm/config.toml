@@ -8,9 +8,10 @@ ctx_size     = 4096
 n_threads    = 4
 n_gpu_layers = 0
 
-# HRM-Text engine -- uncomment after running `make hrm-download` or `make hrm-export`
-# [hrm]
-# model_dir      = "models/hrm-text-1b"
-# ep_preference  = "auto"
-# use_quantized  = false
-# n_threads      = 4
+# HRM-Text engine — required at startup. Run `make hrm-download` or `make hrm-export`
+# to produce the model artifacts before starting the service.
+[hrm]
+model_dir      = "models/hrm-text-1b"
+ep_preference  = "auto"
+use_quantized  = false
+n_threads      = 4
