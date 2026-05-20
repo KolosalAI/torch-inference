@@ -4,3 +4,4 @@
 //! structure. See docs/superpowers/specs/2026-05-20-hrm-agentic-orchestration-design.md.
 
 pub mod sse;
+pub mod dsl;
