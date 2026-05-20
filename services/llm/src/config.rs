@@ -44,8 +44,8 @@ impl LlmConfig {
             tracing::warn!("config.toml not found, using defaults");
             Ok(Self {
                 port: 8001,
-                model_path: "models/minicpm-v-2_6-q2_k.gguf".into(),
-                mmproj_path: Some("models/minicpm-v-2_6-mmproj-f16.gguf".into()),
+                model_path: "models/llava-v1.6-mistral-7b.IQ1_S.gguf".into(),
+                mmproj_path: Some("models/llava-v1.6-mistral-7b-mmproj-f16.gguf".into()),
                 ctx_size: 4096,
                 n_threads: 4,
                 n_gpu_layers: 0,
