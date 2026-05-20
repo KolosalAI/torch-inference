@@ -133,6 +133,116 @@ def export(quantize: bool, slow_loops_override, fast_loops_override):
     print("Done.")
 
 
+def export_two_graph(slow_loops_override, fast_loops_override):
+    """Emit prefill.onnx + decode_step.onnx with explicit past/present KV I/O.
+
+    Required artifacts:
+      OUT_DIR/prefill.onnx          (graph)
+      OUT_DIR/prefill.onnx.data     (external weights, ~2.3 GB)
+      OUT_DIR/decode_step.onnx
+      OUT_DIR/decode_step.onnx.data
+      OUT_DIR/config.json (extended with num_heads/head_dim)
+    """
+    os.makedirs(OUT_DIR, exist_ok=True)
+    print(f"Loading {MODEL_ID} (two-graph KV export)...")
+    tok = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID,
+        torch_dtype=torch.float16,
+        attn_implementation="sdpa",
+        trust_remote_code=True,
+    )
+    model.train(False)
+    # KV path requires use_cache=True for both graphs
+    model.config.use_cache = True
+
+    hf_cfg = model.config.to_dict()
+    num_layers = hf_cfg["num_hidden_layers"]   # 16
+    num_heads = hf_cfg["num_attention_heads"]
+    head_dim = hf_cfg["hidden_size"] // num_heads
+
+    # --- Prefill graph ---
+    prefill = PrefillWrapper(model)
+    sample_ids = tok("hello world", return_tensors="pt").input_ids  # [1, n]
+    prefill_path = f"{OUT_DIR}/prefill.onnx"
+    print(f"Exporting prefill -> {prefill_path}...")
+    pkv_output_names = []
+    for i in range(num_layers):
+        pkv_output_names.extend(
+            [f"past_key_values.{i}.key", f"past_key_values.{i}.value"]
+        )
+    dyn_axes = {"input_ids": {1: "seq"}, "logits": {1: "seq"}}
+    for name in pkv_output_names:
+        dyn_axes[name] = {2: "seq"}
+    with torch.no_grad():
+        torch.onnx.export(
+            prefill, (sample_ids,), prefill_path,
+            opset_version=18,
+            input_names=["input_ids"],
+            output_names=["logits", *pkv_output_names],
+            dynamic_axes=dyn_axes,
+            do_constant_folding=True,
+        )
+
+    # --- Decode-step graph ---
+    # Build a one-token sample input and matching synthetic cache from a real
+    # prefill run so shapes line up.
+    with torch.no_grad():
+        out0 = model(input_ids=sample_ids, use_cache=True, return_dict=True)
+    sample_step_ids = sample_ids[:, -1:].clone()  # [1, 1]
+    past_flat = []
+    for layer_kv in out0.past_key_values:
+        past_flat.extend([layer_kv[0], layer_kv[1]])
+
+    decode = DecodeStepWrapper(model, num_layers)
+    decode_path = f"{OUT_DIR}/decode_step.onnx"
+    print(f"Exporting decode_step -> {decode_path}...")
+    pkv_input_names = []
+    present_output_names = []
+    for i in range(num_layers):
+        pkv_input_names.extend(
+            [f"past_key_values.{i}.key", f"past_key_values.{i}.value"]
+        )
+        present_output_names.extend(
+            [f"present_key_values.{i}.key", f"present_key_values.{i}.value"]
+        )
+    dyn_axes = {
+        "input_ids": {1: "one"},
+        "logits": {1: "one"},
+    }
+    for name in pkv_input_names:
+        dyn_axes[name] = {2: "past_len"}
+    for name in present_output_names:
+        dyn_axes[name] = {2: "past_len_plus_one"}
+    with torch.no_grad():
+        torch.onnx.export(
+            decode, (sample_step_ids, *past_flat), decode_path,
+            opset_version=18,
+            input_names=["input_ids", *pkv_input_names],
+            output_names=["logits", *present_output_names],
+            dynamic_axes=dyn_axes,
+            do_constant_folding=True,
+        )
+
+    # tokenizer.json + extended config.json
+    tok.save_pretrained(OUT_DIR)
+    runtime_cfg = {
+        "eos_token_id": hf_cfg.get("eos_token_id"),
+        "ctx_size": hf_cfg.get("max_position_embeddings", 2048),
+        "slow_loops": slow_loops_override or hf_cfg.get("H_cycles", 2),
+        "fast_loops": fast_loops_override or hf_cfg.get("L_cycles", 3),
+        "vocab_size": hf_cfg.get("vocab_size"),
+        "hidden_size": hf_cfg.get("hidden_size"),
+        "num_layers": num_layers,
+        "num_heads": num_heads,
+        "head_dim": head_dim,
+        "logits_dtype": "float16",
+    }
+    with open(f"{OUT_DIR}/config.json", "w") as f:
+        json.dump(runtime_cfg, f, indent=2)
+    print("Two-graph export done.")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--quantize", action="store_true", help="also emit an int8 variant")
@@ -140,5 +250,10 @@ if __name__ == "__main__":
                     help="override H_cycles in runtime config (default: from checkpoint)")
     ap.add_argument("--fast-loops", type=int, default=None,
                     help="override L_cycles in runtime config (default: from checkpoint)")
+    ap.add_argument("--two-graph", action="store_true",
+                    help="emit prefill.onnx + decode_step.onnx with KV-cache I/O")
     args = ap.parse_args()
-    export(args.quantize, args.slow_loops, args.fast_loops)
+    if args.two_graph:
+        export_two_graph(args.slow_loops, args.fast_loops)
+    else:
+        export(args.quantize, args.slow_loops, args.fast_loops)
