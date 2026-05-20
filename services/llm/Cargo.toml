@@ -12,7 +12,7 @@ path = "src/main.rs"
 # Web
 actix-web   = "4.8"
 actix-rt    = "2.10"
-tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio       = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs"] }
 tokio-stream = "0.1"
 futures-util = "0.3"
 
@@ -51,4 +51,4 @@ ulid             = "1"
 
 [dev-dependencies]
 mockito          = "1"
-tokio            = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util"] }
+tokio            = { version = "1", features = ["rt-multi-thread", "macros", "sync", "test-util", "fs"] }

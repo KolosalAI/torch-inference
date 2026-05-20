@@ -61,7 +61,7 @@ impl Tool for TtsTool {
             .map_err(|e| ToolError::Upstream(format!("tts body: {}", e)))?;
 
         let tmp = std::env::temp_dir().join(format!("agent_tts_{}.wav", ulid::Ulid::new()));
-        std::fs::write(&tmp, &bytes)
+        tokio::fs::write(&tmp, &bytes).await
             .map_err(|e| ToolError::Upstream(format!("tts write: {}", e)))?;
 
         Ok(json!({
