@@ -4,3 +4,6 @@ pub mod final_tool;
 pub mod http_json;
 pub mod classify;
 pub mod detect;
+pub mod vision;
+pub mod tts;
+pub mod stt;
