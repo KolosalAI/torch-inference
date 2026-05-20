@@ -11,7 +11,7 @@ High-performance multimodal inference server written in Rust (actix-web). Serves
 | Classification (`/classify/*`) | ✅ Active | ORT/ONNX image classifier |
 | Detection (`/detect/*`, `/yolo/*`) | ✅ Active | YOLO via ORT/ONNX |
 | Dashboard / Health / Metrics | ✅ Active | `/health`, `/system/info`, `/metrics`, `/performance` |
-| **LLM / Assistant** | ✅ Active | 1-bit LLM chat via `/v1/chat/completions` (OpenAI-compatible, streaming SSE) |
+| **LLM / Assistant** | ✅ Active | HRM-Text-1B via ONNX/`ort`; OpenAI-compatible `/v1/chat/completions` with streaming SSE. Image inputs are bridged through `/classify/batch` + `/yolo/detect` (caption-then-text). |
 
 ## Build & Run
 
