@@ -38,6 +38,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Byte utilities
 bytes = "1.5"
 
+# ONNX runtime — same version as the workspace root uses.
+# "half" feature gates Tensor<half::f16> extract, required for HRM-Text fp16 logits.
+ort         = { version = "=2.0.0-rc.10", features = ["half"] }
+tokenizers  = "0.20"
+ndarray     = "0.16"
+half        = "2"      # f16 <-> f32 conversion of HRM-Text logits
+reqwest     = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 llama-cpp-2 = { version = "0.1", features = ["mtmd", "metal"] }
 
