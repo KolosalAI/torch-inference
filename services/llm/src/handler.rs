@@ -8,12 +8,12 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use futures_util::StreamExt;
 
-use crate::engine::LlamaEngine;
+use crate::hrm_engine::HrmEngine;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 pub struct AppState {
-    pub engine: Arc<LlamaEngine>,
+    pub engine: Arc<crate::hrm_engine::HrmEngine>,
 }
 
 // ── Request types ─────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ pub async fn chat_completions(
     req: web::Json<ChatRequest>,
 ) -> HttpResponse {
     let req = req.into_inner();
-    let model_name = req.model.clone().unwrap_or_else(|| "minicpm-v".to_string());
+    let model_name = req.model.clone().unwrap_or_else(|| "hrm-text-1b".to_string());
     let max_tokens = req.max_tokens;
     let temperature = req.temperature;
     let streaming = req.stream;
@@ -135,29 +135,23 @@ pub async fn chat_completions(
         Err(e) => return HttpResponse::BadRequest().json(json!({"error": e})),
     };
 
-    // Pre-flight: image provided but no multimodal projector loaded
-    if image_bytes.is_some() && state.engine.mmproj_path.is_none() {
-        return HttpResponse::BadRequest()
-            .json(json!({"error": "multimodal not configured: mmproj_path missing or file not found"}));
+    // Vision bridge wiring lands in Task 12. Until then, reject images.
+    if image_bytes.is_some() {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "image inputs are temporarily disabled — vision bridge is being wired in"
+        }));
     }
 
+    let prompt = build_prompt(&pairs);
     let engine = Arc::clone(&state.engine);
 
     if streaming {
-        // Channel for token strings from the blocking inference thread
         let (tx, rx) = mpsc::channel::<String>(128);
 
         let engine2 = Arc::clone(&engine);
-        let pairs2 = pairs.clone();
+        let prompt2 = prompt.clone();
         tokio::task::spawn_blocking(move || {
-            let result = match image_bytes {
-                Some(img) => engine2.infer_multimodal(&pairs2, img, max_tokens, temperature, tx),
-                None => {
-                    let prompt = LlamaEngine::build_prompt(&pairs2, None);
-                    engine2.infer_text(prompt, max_tokens, temperature, tx)
-                }
-            };
-            if let Err(e) = result {
+            if let Err(e) = engine2.infer_text(prompt2, max_tokens, temperature, tx) {
                 tracing::error!("inference error: {e:#}");
             }
         });
@@ -168,40 +162,24 @@ pub async fn chat_completions(
         let done_stream = futures_util::stream::once(async {
             Ok::<Bytes, std::io::Error>(sse_done())
         });
-        let full_stream = token_stream.chain(done_stream);
-
         HttpResponse::Ok()
             .content_type("text/event-stream; charset=utf-8")
             .insert_header(("Cache-Control", "no-cache"))
             .insert_header(("X-Accel-Buffering", "no"))
-            .streaming(full_stream)
+            .streaming(token_stream.chain(done_stream))
     } else {
-        // Non-streaming: collect all tokens, return single JSON
         let (tx, mut rx) = mpsc::channel::<String>(512);
-
-        let handle = tokio::task::spawn_blocking(move || match image_bytes {
-            Some(img) => engine.infer_multimodal(&pairs, img, max_tokens, temperature, tx),
-            None => {
-                let prompt = LlamaEngine::build_prompt(&pairs, None);
-                engine.infer_text(prompt, max_tokens, temperature, tx)
-            }
+        let handle = tokio::task::spawn_blocking(move || {
+            engine.infer_text(prompt, max_tokens, temperature, tx)
         });
 
         let mut content = String::new();
         while let Some(tok) = rx.recv().await {
             content.push_str(&tok);
         }
-
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                return HttpResponse::InternalServerError()
-                    .json(json!({"error": format!("inference failed: {}", e)}));
-            }
-            Err(e) => {
-                return HttpResponse::InternalServerError()
-                    .json(json!({"error": format!("inference failed: {}", e)}));
-            }
+        if let Err(e) = handle.await.unwrap_or(Ok(())) {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error": format!("inference failed: {e}")}));
         }
 
         HttpResponse::Ok().json(json!({
@@ -218,21 +196,27 @@ pub async fn chat_completions(
     }
 }
 
+/// Build a ChatML-formatted prompt. Same shape as the legacy LlamaEngine::build_prompt
+/// minus the multimodal marker.
+fn build_prompt(messages: &[(String, String)]) -> String {
+    let mut buf = String::new();
+    for (role, content) in messages {
+        buf.push_str(&format!("<|im_start|>{role}\n{content}<|im_end|>\n"));
+    }
+    buf.push_str("<|im_start|>assistant\n");
+    buf
+}
+
 /// `GET /v1/models`
 pub async fn list_models(state: web::Data<AppState>) -> HttpResponse {
-    let model_id = std::path::Path::new(&state.engine.config.model_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("minicpm-v")
-        .to_string();
-
+    let _ = state;
     HttpResponse::Ok().json(json!({
         "object": "list",
         "data": [{
-            "id": model_id,
+            "id": "hrm-text-1b",
             "object": "model",
             "owned_by": "local",
-            "multimodal": state.engine.mmproj_path.is_some()
+            "multimodal": true  // vision_bridge handles images
         }]
     }))
 }

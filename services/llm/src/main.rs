@@ -8,8 +8,8 @@ use actix_web::{middleware, web, App, HttpServer};
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
-use config::LlmConfig;
-use engine::LlamaEngine;
+use config::{HrmConfig, LlmConfig};
+use hrm_engine::HrmEngine;
 use handler::AppState;
 
 #[actix_web::main]
@@ -21,17 +21,23 @@ async fn main() -> std::io::Result<()> {
         )
         .init();
 
-    let config = LlmConfig::load().unwrap_or_else(|e| {
+    let llm_config = LlmConfig::load().unwrap_or_else(|e| {
         eprintln!("Config error: {e}");
         std::process::exit(1);
     });
 
-    let engine = LlamaEngine::load(config).unwrap_or_else(|e| {
-        eprintln!("Model load failed: {e}");
+    let port = llm_config.port;
+
+    let hrm_config = llm_config.hrm.as_ref().unwrap_or_else(|| {
+        eprintln!("HRM config section missing — add [hrm] to config.toml");
         std::process::exit(1);
     });
 
-    let port = engine.config.port;
+    let engine = HrmEngine::load(hrm_config).unwrap_or_else(|e| {
+        eprintln!("HRM engine load failed: {e}");
+        std::process::exit(1);
+    });
+
     let state = web::Data::new(AppState {
         engine: Arc::new(engine),
     });
