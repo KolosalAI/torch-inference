@@ -17,11 +17,12 @@ pub trait Planner: Send + Sync {
 
 pub struct HrmPlanner {
     engine: Arc<HrmEngine>,
+    lease:  crate::engine_lease::EngineLease,
 }
 
 impl HrmPlanner {
-    pub fn new(engine: Arc<HrmEngine>) -> Self {
-        Self { engine }
+    pub fn new(engine: Arc<HrmEngine>, lease: crate::engine_lease::EngineLease) -> Self {
+        Self { engine, lease }
     }
 }
 
@@ -30,6 +31,9 @@ impl Planner for HrmPlanner {
     async fn propose(&self, prompt: String, max_tokens: u32, temperature: f32) -> Result<String> {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
         let engine = self.engine.clone();
+        // Serialize with chat/reflect: hold the engine lease across the whole
+        // generation so concurrent ONNX runs can't multiply peak memory.
+        let _permit = self.lease.acquire().await;
         let handle = tokio::task::spawn_blocking(move || {
             engine.infer_text(prompt, max_tokens, temperature, tx)
         });

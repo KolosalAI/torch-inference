@@ -47,12 +47,20 @@ pub struct AgentLayer {
     pub registry: Arc<ToolRegistry>,
     pub config:   AgentConfig,
     pub sem:      Arc<Semaphore>,
+    pub gate:     Arc<crate::memory_gate::MemoryGate>,
+    pub limits:   crate::config::LimitsConfig,
 }
 
 impl AgentLayer {
-    pub fn new(planner: Arc<dyn Planner>, registry: Arc<ToolRegistry>, config: AgentConfig) -> Self {
+    pub fn new(
+        planner: Arc<dyn Planner>,
+        registry: Arc<ToolRegistry>,
+        config: AgentConfig,
+        gate: Arc<crate::memory_gate::MemoryGate>,
+        limits: crate::config::LimitsConfig,
+    ) -> Self {
         let sem = Arc::new(Semaphore::new(config.max_concurrent_runs.max(1)));
-        Self { planner, registry, config, sem }
+        Self { planner, registry, config, sem, gate, limits }
     }
 }
 
@@ -64,6 +72,12 @@ pub async fn run(
         return HttpResponse::NotFound().json(serde_json::json!({"error":"agent disabled"}));
     }
 
+    if let Err(e) = layer.gate.admit() {
+        return HttpResponse::ServiceUnavailable()
+            .insert_header(("Retry-After", "1"))
+            .json(serde_json::json!({"error": e.to_string()}));
+    }
+
     let permit = match layer.sem.clone().try_acquire_owned() {
         Ok(p)  => p,
         Err(_) => return HttpResponse::TooManyRequests()
@@ -71,6 +85,14 @@ pub async fn run(
     };
 
     let req = req.into_inner();
+
+    if req.messages.len() > layer.limits.max_messages {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": format!("messages exceeds max ({} > {})",
+                             req.messages.len(), layer.limits.max_messages)
+        }));
+    }
+
     let user_msg = req.messages.iter().rev()
         .find(|m| m.role == "user")
         .map(|m| m.content.clone())
@@ -80,7 +102,10 @@ pub async fn run(
             .json(serde_json::json!({"error":"messages must contain a user message"}));
     }
 
-    let inputs = stage_inputs(&req.input);
+    let inputs = match stage_inputs(&req.input, layer.limits.max_image_bytes) {
+        Ok(m) => m,
+        Err(e) => return HttpResponse::PayloadTooLarge().json(serde_json::json!({"error": e})),
+    };
 
     let opts = ExecOptions {
         max_steps:           req.config.as_ref().and_then(|c| c.max_steps).unwrap_or(layer.config.max_steps),
@@ -107,17 +132,31 @@ pub async fn run(
         .streaming(stream)
 }
 
-fn stage_inputs(input: &Option<AgentInput>) -> HashMap<String, Input> {
+fn stage_inputs(
+    input: &Option<AgentInput>,
+    max_image_bytes: usize,
+) -> Result<HashMap<String, Input>, String> {
     let mut m = HashMap::new();
-    let Some(i) = input else { return m; };
+    let Some(i) = input else { return Ok(m); };
     if let Some(img) = &i.image {
         let (mime, b64) = split_data_uri_or_bare(img, "image/jpeg");
+        // Cap the decoded byte count; b64 is ~4/3 the binary size.
+        let approx_bytes = b64.len() * 3 / 4;
+        if approx_bytes > max_image_bytes {
+            return Err(format!("image exceeds {} bytes (~{} actual)",
+                               max_image_bytes, approx_bytes));
+        }
         m.insert("input".to_string(), Input::Image { b64, mime });
     } else if let Some(aud) = &i.audio {
         let (mime, b64) = split_data_uri_or_bare(aud, "audio/wav");
+        let approx_bytes = b64.len() * 3 / 4;
+        if approx_bytes > max_image_bytes {
+            return Err(format!("audio exceeds {} bytes (~{} actual)",
+                               max_image_bytes, approx_bytes));
+        }
         m.insert("input".to_string(), Input::Audio { b64, mime });
     }
-    m
+    Ok(m)
 }
 
 fn split_data_uri_or_bare(s: &str, default_mime: &str) -> (String, String) {

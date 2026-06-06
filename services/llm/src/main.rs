@@ -1,7 +1,9 @@
 mod agent;
 mod config;
+mod engine_lease;
 mod handler;
 mod hrm_engine;
+mod memory_gate;
 mod tokenizer;
 mod vision_bridge;
 
@@ -12,6 +14,26 @@ use tracing_subscriber::EnvFilter;
 use config::{HrmConfig, LlmConfig};
 use hrm_engine::HrmEngine;
 use handler::AppState;
+
+/// Terminate the process via POSIX `_exit`, skipping `atexit`/C++ static
+/// destructors.
+///
+/// ONNX Runtime (>= 1.21, bundled by `ort 2.0.0-rc.10` as 1.22) has a macOS bug
+/// where `OrtEnv`'s static destructor locks an already-destroyed mutex at
+/// process exit, throwing an uncaught C++ exception → `SIGABRT`, *after* all our
+/// work is done. We can't patch onnxruntime's statics, and the process is
+/// terminating anyway, so we bypass the broken teardown: `_exit` reclaims
+/// everything via the kernel without running `OrtEnv`'s destructor.
+/// Refs: pykeio/ort#409, microsoft/onnxruntime#24579, #25038.
+fn exit_skipping_ort_teardown(code: i32) -> ! {
+    use std::io::Write as _;
+    // _exit() does not flush stdio buffers; do it ourselves first.
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: immediately terminates the process; no Rust state is left dangling
+    // because nothing runs after this call.
+    unsafe { libc::_exit(code) }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -36,7 +58,9 @@ async fn main() -> std::io::Result<()> {
 
     let engine = HrmEngine::load(hrm_config).unwrap_or_else(|e| {
         eprintln!("HRM engine load failed: {e}");
-        std::process::exit(1);
+        // build_session may already have spun up the ORT environment, so exit
+        // the teardown-safe way even on this failure path.
+        exit_skipping_ort_teardown(1);
     });
 
     let vision = llm_config.vision_bridge.clone().and_then(|vbcfg| {
@@ -45,16 +69,34 @@ async fn main() -> std::io::Result<()> {
         } else { None }
     });
 
+    let limits = llm_config.limits.clone().unwrap_or_default();
+    let mg_cfg = llm_config.memory_gate.clone().unwrap_or(crate::config::MemoryGateConfig {
+        high_water_mb: 4096,
+        low_water_mb: 3072,
+        poll_on_admit_only: true,
+    });
+    let lease = crate::engine_lease::EngineLease::new(limits.engine.max_concurrent);
+    let gate = Arc::new(crate::memory_gate::MemoryGate::new(
+        mg_cfg.high_water_mb,
+        mg_cfg.low_water_mb,
+    ));
+
     let state = web::Data::new(AppState {
         engine: Arc::new(engine),
         vision,
+        lease: lease.clone(),
+        gate: gate.clone(),
+        limits: limits.clone(),
     });
 
     // Build the agent layer (if [agent] config present).
     let agent_layer: Option<web::Data<crate::agent::http::AgentLayer>> =
         if let Some(agent_cfg) = llm_config.agent.clone() {
             let planner: Arc<dyn crate::agent::planner::Planner> =
-                Arc::new(crate::agent::planner::HrmPlanner::new(state.engine.clone()));
+                Arc::new(crate::agent::planner::HrmPlanner::new(
+                    state.engine.clone(),
+                    lease.clone(),
+                ));
 
             let per_tool_timeout = std::time::Duration::from_millis(
                 agent_cfg.per_tool_ms.max(1000),
@@ -107,6 +149,8 @@ async fn main() -> std::io::Result<()> {
                 planner,
                 Arc::new(reg),
                 agent_cfg,
+                gate.clone(),
+                limits.clone(),
             );
             Some(web::Data::new(layer))
         } else {
@@ -115,12 +159,12 @@ async fn main() -> std::io::Result<()> {
 
     tracing::info!("LLM microservice listening on 0.0.0.0:{}", port);
 
-    HttpServer::new(move || {
+    let server = HttpServer::new(move || {
         let mut app = App::new()
             .app_data(state.clone())
             .app_data(
                 web::JsonConfig::default()
-                    .limit(32 * 1024 * 1024)
+                    .limit(limits.json.body_limit)
                     .error_handler(|err, _req| {
                         let msg = err.to_string();
                         actix_web::error::InternalError::from_response(
@@ -147,7 +191,21 @@ async fn main() -> std::io::Result<()> {
         app
     })
     .workers(1)
-    .bind(format!("0.0.0.0:{port}"))?
-    .run()
-    .await
+    .bind(format!("0.0.0.0:{port}"));
+
+    let run_result = match server {
+        Ok(srv) => srv.run().await,
+        Err(e) => {
+            tracing::error!("bind 0.0.0.0:{port} failed: {e}");
+            Err(e)
+        }
+    };
+
+    if let Err(e) = &run_result {
+        tracing::error!("server stopped with error: {e}");
+    }
+
+    // The ORT environment is live here; returning normally would run its broken
+    // macOS static destructor. Exit the teardown-safe way instead.
+    exit_skipping_ort_teardown(if run_result.is_ok() { 0 } else { 1 });
 }

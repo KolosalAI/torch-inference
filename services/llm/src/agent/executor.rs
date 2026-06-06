@@ -50,7 +50,7 @@ pub async fn run_agent(
     inputs: HashMap<String, Input>,
     opts: ExecOptions,
 ) -> mpsc::Receiver<AgentEvent> {
-    let (tx, rx) = mpsc::channel::<AgentEvent>(64);
+    let (tx, rx) = mpsc::channel::<AgentEvent>(8);
     tokio::spawn(run_inner(planner, registry, user_msg, inputs, opts, tx));
     rx
 }

@@ -35,3 +35,33 @@ classify_endpoint      = "/classify/batch"
 detect_endpoint        = "/yolo/detect"
 tts_endpoint           = "/tts/stream"
 stt_endpoint           = "/stt/transcribe"
+
+[limits]
+max_image_bytes        = 2097152
+max_prompt_chars       = 16384
+max_messages           = 32
+max_generated_tokens   = 512
+max_ctx_size           = 1024
+
+[limits.json]
+body_limit             = 4194304
+
+[limits.channels]
+sse_event_buffer       = 8
+chat_stream_buffer     = 16
+chat_nonstream_buffer  = 64
+
+[limits.engine]
+max_concurrent         = 1
+
+[limits.results]
+per_run_bytes          = 65536
+field_trim_above       = 8192
+
+[memory_gate]
+high_water_mb          = 4096
+low_water_mb           = 3072
+poll_on_admit_only     = true
+
+[kv_cache]
+enabled                = false

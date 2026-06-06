@@ -35,6 +35,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 # Byte utilities
 bytes = "1.5"
 
+# Memory gate: process RSS via mach (macOS) / procfs (Linux)
+libc = "0.2"
+
 # ONNX runtime — same version as the workspace root uses.
 # "half" feature gates Tensor<half::f16> extract, required for HRM-Text fp16 logits.
 ort         = { version = "=2.0.0-rc.10", features = ["half"] }

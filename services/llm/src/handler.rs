@@ -15,6 +15,9 @@ use crate::hrm_engine::HrmEngine;
 pub struct AppState {
     pub engine: Arc<crate::hrm_engine::HrmEngine>,
     pub vision: Option<Arc<crate::vision_bridge::VisionBridge>>,
+    pub lease: crate::engine_lease::EngineLease,
+    pub gate: Arc<crate::memory_gate::MemoryGate>,
+    pub limits: crate::config::LimitsConfig,
 }
 
 // ── Request types ─────────────────────────────────────────────────────────────
@@ -74,7 +77,10 @@ fn decode_data_uri(url: &str) -> Result<Vec<u8>, String> {
 
 /// Extract (role, text) pairs and the first image bytes from the messages.
 /// Returns Err if an image_url is present but cannot be decoded.
-fn extract_content(messages: &[ChatMessage]) -> Result<(Vec<(String, String)>, Option<Vec<u8>>), String> {
+fn extract_content(
+    messages: &[ChatMessage],
+    max_image_bytes: usize,
+) -> Result<(Vec<(String, String)>, Option<Vec<u8>>), String> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut image: Option<Vec<u8>> = None;
 
@@ -90,8 +96,14 @@ fn extract_content(messages: &[ChatMessage]) -> Result<(Vec<(String, String)>, O
                         ContentPart::Text { text } => text_buf.push_str(text),
                         ContentPart::ImageUrl { image_url } => {
                             if image.is_none() {
-                                image = Some(decode_data_uri(&image_url.url)
-                                    .map_err(|e| format!("invalid image: {e}"))?);
+                                let bytes = decode_data_uri(&image_url.url)
+                                    .map_err(|e| format!("invalid image: {e}"))?;
+                                if bytes.len() > max_image_bytes {
+                                    return Err(format!(
+                                        "image exceeds {} bytes ({} actual)",
+                                        max_image_bytes, bytes.len()));
+                                }
+                                image = Some(bytes);
                             }
                         }
                     }
@@ -126,13 +138,28 @@ pub async fn chat_completions(
     req: web::Json<ChatRequest>,
 ) -> HttpResponse {
     let req = req.into_inner();
+
+    // ── Admission + bounds ──────────────────────────────────────────────
+    if req.messages.len() > state.limits.max_messages {
+        return HttpResponse::BadRequest().json(json!({
+            "error": format!("messages exceeds max ({} > {})",
+                             req.messages.len(), state.limits.max_messages)
+        }));
+    }
+    if let Err(e) = state.gate.admit() {
+        return HttpResponse::ServiceUnavailable()
+            .insert_header(("Retry-After", "1"))
+            .json(json!({"error": e.to_string()}));
+    }
+
     let model_name = req.model.clone().unwrap_or_else(|| "hrm-text-1b".to_string());
-    let max_tokens = req.max_tokens;
     let temperature = req.temperature;
     let streaming = req.stream;
 
-    let (mut pairs, image_bytes) = match extract_content(&req.messages) {
+    let (mut pairs, image_bytes) = match extract_content(&req.messages, state.limits.max_image_bytes) {
         Ok(v) => v,
+        Err(e) if e.starts_with("image exceeds") =>
+            return HttpResponse::PayloadTooLarge().json(json!({"error": e})),
         Err(e) => return HttpResponse::BadRequest().json(json!({"error": e})),
     };
 
@@ -150,16 +177,34 @@ pub async fn chat_completions(
     }
 
     let prompt = build_prompt(&pairs);
+    if prompt.len() > state.limits.max_prompt_chars {
+        return HttpResponse::BadRequest().json(json!({
+            "error": format!("prompt exceeds {} chars ({} actual)",
+                             state.limits.max_prompt_chars, prompt.len())
+        }));
+    }
+    // Clamp generated tokens to the configured ceiling regardless of what the
+    // client requested — the unbounded value is an OOM lever.
+    let max_tokens = req.max_tokens.min(state.limits.max_generated_tokens);
     let engine = Arc::clone(&state.engine);
 
     if streaming {
-        let (tx, rx) = mpsc::channel::<String>(128);
+        let (tx, rx) = mpsc::channel::<String>(state.limits.channels.chat_stream_buffer);
 
         let engine2 = Arc::clone(&engine);
         let prompt2 = prompt.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = engine2.infer_text(prompt2, max_tokens, temperature, tx) {
-                tracing::error!("inference error: {e:#}");
+        let lease = state.lease.clone();
+        tokio::spawn(async move {
+            // Serialize every ONNX run behind the engine lease so concurrent
+            // requests can't multiply peak inference memory.
+            let _permit = lease.acquire().await;
+            let res = tokio::task::spawn_blocking(move || {
+                engine2.infer_text(prompt2, max_tokens, temperature, tx)
+            }).await;
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::error!("inference error: {e:#}"),
+                Err(e) => tracing::error!("inference task join error: {e}"),
             }
         });
 
@@ -175,16 +220,24 @@ pub async fn chat_completions(
             .insert_header(("X-Accel-Buffering", "no"))
             .streaming(token_stream.chain(done_stream))
     } else {
-        let (tx, mut rx) = mpsc::channel::<String>(512);
-        let handle = tokio::task::spawn_blocking(move || {
-            engine.infer_text(prompt, max_tokens, temperature, tx)
+        let (tx, mut rx) = mpsc::channel::<String>(state.limits.channels.chat_nonstream_buffer);
+        let lease = state.lease.clone();
+        let handle = tokio::spawn(async move {
+            let _permit = lease.acquire().await;
+            tokio::task::spawn_blocking(move || {
+                engine.infer_text(prompt, max_tokens, temperature, tx)
+            }).await
         });
 
         let mut content = String::new();
         while let Some(tok) = rx.recv().await {
             content.push_str(&tok);
         }
-        if let Err(e) = handle.await.unwrap_or(Ok(())) {
+        let inference = match handle.await {
+            Ok(inner) => inner.unwrap_or_else(|e| Err(anyhow::anyhow!("join inner: {e}"))),
+            Err(e)    => Err(anyhow::anyhow!("join outer: {e}")),
+        };
+        if let Err(e) = inference {
             return HttpResponse::InternalServerError()
                 .json(json!({"error": format!("inference failed: {e}")}));
         }
