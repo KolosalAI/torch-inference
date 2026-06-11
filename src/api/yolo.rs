@@ -583,6 +583,12 @@ mod tests {
         })
     }
 
+    fn make_yolo_test_config_no_model() -> web::Data<crate::config::Config> {
+        let mut cfg = crate::config::Config::default();
+        cfg.models.cache_dir = std::path::PathBuf::from("/nonexistent_cache_for_yolo_test_xyz");
+        web::Data::new(cfg)
+    }
+
     // list_models — always succeeds and returns all versions/sizes
     #[actix_web::test]
     async fn test_list_models_handler_returns_all_versions() {
@@ -881,7 +887,6 @@ mod tests {
     async fn test_detect_objects_no_model_on_disk_returns_not_found() {
         use actix_web::{test as actix_test, App};
 
-        // Use a nonexistent models_dir so model_path.exists() == false.
         let state = make_yolo_state(std::path::PathBuf::from(
             "/nonexistent_models_dir_for_yolo_test_xyz",
         ));
@@ -889,7 +894,8 @@ mod tests {
         let app = actix_test::init_service(
             App::new()
                 .app_data(state)
-                .app_data(web::Data::new(crate::config::Config::default()))
+                // Use a config with nonexistent cache_dir so the ORT model check returns 404.
+                .app_data(make_yolo_test_config_no_model())
                 .configure(configure),
         )
         .await;
@@ -932,7 +938,8 @@ mod tests {
         let app = actix_test::init_service(
             App::new()
                 .app_data(state)
-                .app_data(web::Data::new(crate::config::Config::default()))
+                // Use a config with nonexistent cache_dir so the ORT model check returns 404.
+                .app_data(make_yolo_test_config_no_model())
                 .configure(configure),
         )
         .await;
@@ -977,7 +984,8 @@ mod tests {
         let app = actix_test::init_service(
             App::new()
                 .app_data(state)
-                .app_data(web::Data::new(crate::config::Config::default()))
+                // Use a config with nonexistent cache_dir so the ORT model check returns 404.
+                .app_data(make_yolo_test_config_no_model())
                 .configure(configure),
         )
         .await;

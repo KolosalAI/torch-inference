@@ -17,6 +17,10 @@
 /libtorch/
 libtorch*.zip
 
+# ORT GPU runtime (extracted from ort-gpu-1.22.0.zip)
+/ort-gpu-1.22.0/
+ort-gpu-*.zip
+
 # IDE
 .vscode/
 .idea/

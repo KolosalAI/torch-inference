@@ -239,7 +239,7 @@ pub async fn transcribe_audio(
     })
     .await
     .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
-    .map_err(|e| ApiError::InternalError(format!("Transcription failed: {}", e)))?;
+    .map_err(|e| ApiError::InternalError(format!("Transcription failed: {:#}", e)))?;
 
     // Convert to response format
     let segments = result.segments.map(|segs| {

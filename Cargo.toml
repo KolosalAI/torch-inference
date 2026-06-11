@@ -47,7 +47,7 @@ symphonia = { version = "0.5", features = ["wav", "mp3", "flac", "pcm", "vorbis"
 
 # ML and inference
 onnxruntime = { version = "0.0.14", optional = true }
-ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs", "coreml"] }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "half", "copy-dylibs", "coreml", "cuda", "directml", "ndarray"] }
 ndarray = "0.15"
 tch = { version = "0.16", optional = true, features = [] }  # Requires PyTorch 2.3.0+
 pyo3 = { version = "0.24", features = ["auto-initialize"], optional = true }
@@ -185,6 +185,10 @@ harness = false
 
 [[bench]]
 name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "gpu_stress"
 harness = false
 
 [profile.release]

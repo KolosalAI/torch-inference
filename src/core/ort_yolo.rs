@@ -53,25 +53,12 @@ impl OrtYoloDetector {
         class_names: Vec<String>,
     ) -> Result<Self> {
         let physical_cpus = num_cpus::get_physical().max(1);
-        let mut builder = Session::builder()?
+        let builder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(physical_cpus)?
             .with_inter_threads(1)?
-            .with_memory_pattern(true)?;
-
-        #[cfg(target_os = "macos")]
-        {
-            builder = builder.with_execution_providers([
-                ort::execution_providers::CoreMLExecutionProvider::default().build(),
-                ort::execution_providers::CPUExecutionProvider::default().build(),
-            ])?;
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            builder = builder.with_execution_providers([
-                ort::execution_providers::CPUExecutionProvider::default().build(),
-            ])?;
-        }
+            .with_memory_pattern(true)?
+            .with_execution_providers(crate::core::ort_eps::build_eps(0))?;
 
         let session = builder
             .commit_from_file(model_path)

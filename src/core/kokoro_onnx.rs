@@ -191,18 +191,9 @@ impl KokoroOnnxEngine {
             let builder = Session::builder()?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .with_intra_threads(physical_cpus)?
-                .with_inter_threads(1)?   // no-op in Sequential mode; guards intent if parallel mode is ever enabled
-                .with_memory_pattern(true)?;
-
-            // On macOS: enable CoreML to route through the Apple Neural Engine.
-            // Measured gain: ~30ms CPU → ~8-12ms ANE per sentence on M-series.
-            #[cfg(target_os = "macos")]
-            let builder = builder.with_execution_providers([
-                ort::execution_providers::CoreMLExecutionProvider::default()
-                    .with_subgraphs(true)
-                    .build(),
-                ort::execution_providers::CPUExecutionProvider::default().build(),
-            ])?;
+                .with_inter_threads(1)?
+                .with_memory_pattern(true)?
+                .with_execution_providers(crate::core::ort_eps::build_eps(0))?;
 
             let session = builder.commit_from_file(&model_path)?;
             if i == 0 {
@@ -213,7 +204,9 @@ impl KokoroOnnxEngine {
                     log::info!("ONNX output: {:?}", out);
                 }
                 #[cfg(target_os = "macos")]
-                log::info!("KokoroOnnx: CoreML execution provider active (ANE path)");
+                log::info!("KokoroOnnx: CoreML EP active (ANE path)");
+                #[cfg(target_os = "windows")]
+                log::info!("KokoroOnnx: CUDA → DirectML → CPU EP chain active");
             }
             sessions.push(session);
         }
@@ -223,7 +216,6 @@ impl KokoroOnnxEngine {
         let voices_dir = model_dir.join("voices");
         let mut voice_styles = HashMap::new();
         let default_voices = [
-            "af_heart",
             "af_bella",
             "af_sarah",
             "af_nicole",
@@ -232,7 +224,6 @@ impl KokoroOnnxEngine {
             "bf_emma",
             "bf_isabella",
             "bm_george",
-            "bm_lewis",
         ];
         for voice_id in default_voices {
             let bin_path = voices_dir.join(format!("{}.bin", voice_id));
@@ -243,8 +234,8 @@ impl KokoroOnnxEngine {
                 Err(e) => log::warn!("Voice {:?} not loaded: {}", voice_id, e),
             }
         }
-        if !voice_styles.contains_key("af_heart") {
-            log::warn!("Default voice af_heart not found in {:?}", voices_dir);
+        if !voice_styles.contains_key("af_bella") {
+            log::warn!("Default voice af_bella not found in {:?}", voices_dir);
         }
 
         let sample_rate = cfg
@@ -294,13 +285,6 @@ impl KokoroOnnxEngine {
             version: "1.0.0".to_string(),
             supported_languages: vec!["en-US".to_string(), "en-GB".to_string()],
             supported_voices: vec![
-                VoiceInfo {
-                    id: "af_heart".to_string(),
-                    name: "Heart (American Female)".to_string(),
-                    language: "en-US".to_string(),
-                    gender: VoiceGender::Female,
-                    quality: VoiceQuality::Neural,
-                },
                 VoiceInfo {
                     id: "af_bella".to_string(),
                     name: "Bella (American Female)".to_string(),
@@ -357,13 +341,6 @@ impl KokoroOnnxEngine {
                     gender: VoiceGender::Male,
                     quality: VoiceQuality::Neural,
                 },
-                VoiceInfo {
-                    id: "bm_lewis".to_string(),
-                    name: "Lewis (British Male)".to_string(),
-                    language: "en-GB".to_string(),
-                    gender: VoiceGender::Male,
-                    quality: VoiceQuality::Neural,
-                },
             ],
             max_text_length: 1000,
             sample_rate,
@@ -414,11 +391,11 @@ impl KokoroOnnxEngine {
         // style: f32 [1, VOICE_STYLE_DIM]
         // Select row by phoneme_count-1, capped at VOICE_PACK_SIZE-1.
         // Borrow the pack directly — copy only the 256-float row (1 KB), not 522 KB.
-        let voice_id = params.voice.as_deref().unwrap_or("af_heart");
+        let voice_id = params.voice.as_deref().unwrap_or("af_bella");
         let pack: &[f32] = self
             .voice_styles
             .get(voice_id)
-            .or_else(|| self.voice_styles.get("af_heart"))
+            .or_else(|| self.voice_styles.get("af_bella"))
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
@@ -445,14 +422,14 @@ impl KokoroOnnxEngine {
         // Check out a session from the pool — async wait, no blocking.
         let mut session = self.pool.acquire().await?;
         let outputs = session.run(ort::inputs![
-            "tokens" => tokens_tensor,
-            "style"  => style_tensor,
-            "speed"  => speed_tensor
+            "input_ids" => tokens_tensor,
+            "style"     => style_tensor,
+            "speed"     => speed_tensor
         ])?;
         // Session automatically returned to pool when `session` guard drops here.
 
-        let (_shape, audio_slice) = outputs["audio"].try_extract_tensor::<f32>()?;
-        let samples: Vec<f32> = audio_slice.to_vec();
+        let (_shape, audio_slice) = outputs["waveform"].try_extract_tensor::<f32>()?;
+        let samples: Vec<f32> = audio_slice.iter().map(|s| s.clamp(-1.0, 1.0)).collect();
 
         log::info!(
             "Kokoro ONNX: {} phonemes ({} tokens w/ BOS/EOS) -> {} samples ({:.2}s)",
@@ -616,8 +593,8 @@ mod tests {
     #[test]
     fn test_build_capabilities_voices_count() {
         let caps = KokoroOnnxEngine::build_capabilities(24000);
-        // There are 10 default voices defined
-        assert_eq!(caps.supported_voices.len(), 10);
+        // 8 voices available in onnx-community/Kokoro-82M-ONNX (af_heart and bm_lewis removed)
+        assert_eq!(caps.supported_voices.len(), 8);
     }
 
     #[test]
@@ -629,7 +606,6 @@ mod tests {
             .map(|v| v.id.as_str())
             .collect();
         for expected in &[
-            "af_heart",
             "af_bella",
             "af_sarah",
             "af_nicole",
@@ -638,7 +614,6 @@ mod tests {
             "bf_emma",
             "bf_isabella",
             "bm_george",
-            "bm_lewis",
         ] {
             assert!(ids.contains(expected), "missing voice: {}", expected);
         }
@@ -922,15 +897,15 @@ mod tests {
     // ── build_capabilities per-voice detail ──────────────────────────────────
 
     #[test]
-    fn test_build_capabilities_af_heart_voice_details() {
+    fn test_build_capabilities_af_bella_voice_details() {
         use crate::core::tts_engine::{VoiceGender, VoiceQuality};
         let caps = KokoroOnnxEngine::build_capabilities(24000);
         let voice = caps
             .supported_voices
             .iter()
-            .find(|v| v.id == "af_heart")
-            .expect("af_heart voice should exist");
-        assert_eq!(voice.name, "Heart (American Female)");
+            .find(|v| v.id == "af_bella")
+            .expect("af_bella voice should exist");
+        assert_eq!(voice.name, "Bella (American Female)");
         assert_eq!(voice.language, "en-US");
         assert!(matches!(voice.gender, VoiceGender::Female));
         assert!(matches!(voice.quality, VoiceQuality::Neural));

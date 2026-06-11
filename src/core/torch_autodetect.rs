@@ -873,6 +873,7 @@ mod tests {
     // ===== check_existing_installation() tests =====
 
     #[test]
+    #[serial_test::serial]
     fn test_check_existing_installation_nonexistent_returns_none() {
         let old_libtorch = env::var("LIBTORCH").ok();
         env::remove_var("LIBTORCH");
@@ -892,6 +893,7 @@ mod tests {
     // ===== get_config() tests =====
 
     #[test]
+    #[serial_test::serial]
     fn test_get_config_returns_error_when_not_installed() {
         let old_libtorch = env::var("LIBTORCH").ok();
         env::remove_var("LIBTORCH");
@@ -912,6 +914,7 @@ mod tests {
     // ===== is_torch_available() tests =====
 
     #[test]
+    #[serial_test::serial]
     fn test_is_torch_available_returns_bool() {
         let old_libtorch = env::var("LIBTORCH").ok();
         env::remove_var("LIBTORCH");
@@ -949,18 +952,14 @@ mod tests {
     #[serial_test::serial]
     fn test_detect_cuda_via_cuda_path_nonexistent() {
         let old = env::var("CUDA_PATH").ok();
-        // Set CUDA_PATH to a nonexistent directory so exists() is false
+        // Set CUDA_PATH to a nonexistent directory so exists() is false (Method 1 bypassed).
+        // We only verify no error — CUDA may still be found via Method 2/3 on machines with
+        // CUDA installed (e.g., via CUDA_PATH_V* env vars or the system toolkit path).
         env::set_var("CUDA_PATH", "/tmp/nonexistent_cuda_path_xyz_abc");
         let mut detector = TorchLibAutoDetect::new();
         let result = detector.detect_cuda();
         assert!(result.is_ok());
-        // CUDA should not be detected since path doesn't exist
-        assert!(!detector.cuda_available);
-        if let Some(v) = old {
-            env::set_var("CUDA_PATH", v);
-        } else {
-            env::remove_var("CUDA_PATH");
-        }
+        if let Some(v) = old { env::set_var("CUDA_PATH", v); } else { env::remove_var("CUDA_PATH"); }
     }
 
     #[test]
@@ -1331,32 +1330,29 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_detect_cuda_via_versioned_cuda_path_var_existing() {
-        // Create a real temp dir named "v11.8" and set CUDA_PATH_V11_8 to it
+        // Use 13.9 — the highest version the scan loop checks — so no real CUDA install can
+        // shadow it regardless of what other CUDA_PATH_V* vars are set on the machine.
+        // We ADD this var only (never remove others), so concurrent non-serial tests
+        // that depend on e.g. CUDA_PATH_V12_9 are not disrupted.
         let tmpdir = tempfile::TempDir::new().unwrap();
-        let versioned = tmpdir.path().join("v11.8");
+        let versioned = tmpdir.path().join("v13.9");
         std::fs::create_dir_all(&versioned).unwrap();
 
         let old_base = env::var("CUDA_PATH").ok();
-        let old_versioned = env::var("CUDA_PATH_V11_8").ok();
+        let old_v13_9 = env::var("CUDA_PATH_V13_9").ok();
         env::remove_var("CUDA_PATH");
-        env::set_var("CUDA_PATH_V11_8", &versioned);
+        env::set_var("CUDA_PATH_V13_9", &versioned);
 
         let mut detector = TorchLibAutoDetect::new();
         let result = detector.detect_cuda();
         assert!(result.is_ok());
-        // Path exists AND has "v" prefix → cuda_available should be true (lines 112-117)
+        // Path exists → cuda_available should be true and version should be "13.9"
         assert!(detector.cuda_available);
-        assert_eq!(detector.cuda_version, Some("11.8".to_string()));
+        assert_eq!(detector.cuda_version, Some("13.9".to_string()));
 
-        env::remove_var("CUDA_PATH_V11_8");
-        if let Some(v) = old_versioned {
-            env::set_var("CUDA_PATH_V11_8", v);
-        }
-        if let Some(v) = old_base {
-            env::set_var("CUDA_PATH", v);
-        } else {
-            env::remove_var("CUDA_PATH");
-        }
+        env::remove_var("CUDA_PATH_V13_9");
+        if let Some(v) = old_v13_9 { env::set_var("CUDA_PATH_V13_9", v); }
+        if let Some(v) = old_base { env::set_var("CUDA_PATH", v); } else { env::remove_var("CUDA_PATH"); }
     }
 
     // ===== detect_metal on macOS — Metal.framework and "not available" branches =====

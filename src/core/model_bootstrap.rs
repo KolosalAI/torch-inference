@@ -3,10 +3,9 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
 
-const HF_KOKORO: &str = "https://huggingface.co/hexgrad/Kokoro-82M/resolve/main";
+const HF_KOKORO: &str = "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main";
 
 const KOKORO_VOICES: &[&str] = &[
-    "af_heart",
     "af_bella",
     "af_sarah",
     "af_nicole",
@@ -15,7 +14,6 @@ const KOKORO_VOICES: &[&str] = &[
     "bf_emma",
     "bf_isabella",
     "bm_george",
-    "bm_lewis",
 ];
 
 /// Download Kokoro-82M ONNX model + default voice packs if not already present.
@@ -30,8 +28,7 @@ pub async fn ensure_kokoro_models(model_dir: &Path) -> Result<()> {
 
     // ONNX model — try int8 first, fall back to full-precision
     let onnx_candidates = [
-        ("kokoro-v1.0.int8.onnx", format!("{}/kokoro-v1.0.int8.onnx", HF_KOKORO)),
-        ("kokoro-v1_0.onnx",       format!("{}/kokoro-v1_0.onnx", HF_KOKORO)),
+        ("kokoro-v1.0.int8.onnx", format!("{}/onnx/model_quantized.onnx", HF_KOKORO)),
     ];
     let mut model_ok = false;
     for (filename, url) in &onnx_candidates {
@@ -58,6 +55,7 @@ pub async fn ensure_kokoro_models(model_dir: &Path) -> Result<()> {
             continue;
         }
         let url = format!("{}/voices/{}.bin", HF_KOKORO, voice);
+        // Note: onnx-community repo has a subset of voices; missing ones are skipped.
         tracing::info!(voice = %voice, "downloading kokoro voice …");
         if let Err(e) = download_file(&client, &url, &dest).await {
             tracing::warn!(voice = %voice, error = %e, "voice download failed — voice will be skipped");
@@ -78,7 +76,7 @@ pub async fn ensure_yolo_models(model_dir: &Path) -> Result<()> {
     }
 
     // Ultralytics assets (stable release URL for v8.3.0)
-    let url = "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.onnx";
+    let url = "https://github.com/ultralytics/assets/releases/latest/download/yolov8n.onnx";
     tracing::info!("downloading yolov8n ONNX model …");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))

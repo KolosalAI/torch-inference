@@ -1,6 +1,5 @@
 port         = 8001
-model_path   = "models/minicpm-v-2_6-q2_k.gguf"
-mmproj_path  = "models/minicpm-v-2_6-mmproj-f16.gguf"
+model_path   = "C:\\Users\\Evint\\Downloads\\llama-3.2-1B\\int8\\Llama-3.2-1B-Instruct-Q8_0.gguf"
 ctx_size     = 4096
 n_threads    = 4
 n_gpu_layers = -1

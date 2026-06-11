@@ -230,15 +230,20 @@ impl WhisperOnnxPipeline {
             }
         }
 
+        let physical_cpus = num_cpus::get_physical().max(1);
         let encoder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(num_cpus::get_physical().max(1))?
+            .with_intra_threads(physical_cpus)?
+            .with_memory_pattern(true)?
+            .with_execution_providers(crate::core::ort_eps::build_eps(0))?
             .commit_from_file(&encoder_path)
             .with_context(|| format!("loading encoder {:?}", encoder_path))?;
 
         let decoder = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(num_cpus::get_physical().max(1))?
+            .with_intra_threads(physical_cpus)?
+            .with_memory_pattern(true)?
+            .with_execution_providers(crate::core::ort_eps::build_eps(0))?
             .commit_from_file(&decoder_path)
             .with_context(|| format!("loading decoder {:?}", decoder_path))?;
 

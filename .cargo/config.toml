@@ -1,5 +1,5 @@
 [env]
-# Tells ORT where to find libonnxruntime.dylib when running `cargo test`.
+# Tells ORT where to find the ONNX Runtime DLL when running `cargo test`.
 # The server sets this at runtime; tests need it too.
-ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib"
-DYLD_LIBRARY_PATH = "/opt/homebrew/lib"
+# Uses ort-gpu-1.22.0 extracted from ort-gpu-1.22.0.zip (must exist locally).
+ORT_DYLIB_PATH = { value = "ort-gpu-1.22.0/onnxruntime-win-x64-gpu-1.22.0/lib/onnxruntime.dll", relative = true }

@@ -388,15 +388,21 @@ impl AudioProcessor {
         let in_rate = audio.sample_rate as usize;
         let out_rate = target_sample_rate as usize;
 
-        // Process in chunks of 1024 input frames.
-        const CHUNK_SIZE: usize = 1024;
+        // rubato 0.14: FftFixedInOut::new() treats `chunk_size` as the desired
+        // *output* chunk size. The required *input* frames per process() call is
+        // resampler.input_frames_next(), which may differ from the constructor arg.
+        // Use 1024 as a reasonable target output size; read back the actual input
+        // requirement after construction.
         let mut resampler = resampler_pool()
             .acquire(audio.sample_rate, target_sample_rate, channels)
             .map(Ok)
             .unwrap_or_else(|| {
-                FftFixedInOut::<f32>::new(in_rate, out_rate, CHUNK_SIZE, channels)
+                FftFixedInOut::<f32>::new(in_rate, out_rate, 1024, channels)
                     .context("Failed to create FFT resampler")
             })?;
+
+        // Read the actual input chunk size rubato expects per process() call.
+        let chunk_size_in = resampler.input_frames_next();
 
         // De-interleave: rubato expects [channel][frame] layout.
         let total_frames = audio.samples.len() / channels;
@@ -410,16 +416,16 @@ impl AudioProcessor {
 
         // Pre-allocate output: estimate output frames from rate ratio.
         let expected_out_frames =
-            (total_frames as f64 * out_rate as f64 / in_rate as f64).ceil() as usize + CHUNK_SIZE;
+            (total_frames as f64 * out_rate as f64 / in_rate as f64).ceil() as usize + chunk_size_in;
         let mut out_channels: Vec<Vec<f32>> = (0..channels)
             .map(|_| Vec::with_capacity(expected_out_frames))
             .collect();
         let mut pos = 0usize;
 
-        while pos + CHUNK_SIZE <= total_frames {
+        while pos + chunk_size_in <= total_frames {
             let in_chunk: Vec<&[f32]> = channel_bufs
                 .iter()
-                .map(|ch| &ch[pos..pos + CHUNK_SIZE])
+                .map(|ch| &ch[pos..pos + chunk_size_in])
                 .collect();
             let out = resampler
                 .process(&in_chunk, None)
@@ -427,7 +433,7 @@ impl AudioProcessor {
             for (c, ch_out) in out.iter().enumerate() {
                 out_channels[c].extend_from_slice(ch_out);
             }
-            pos += CHUNK_SIZE;
+            pos += chunk_size_in;
         }
 
         // Flush remaining samples (zero-padded by rubato internally).

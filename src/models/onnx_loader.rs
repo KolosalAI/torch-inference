@@ -220,7 +220,18 @@ impl OnnxModelLoader {
             debug!("  ✓ CUDA execution provider configured as fallback");
         }
 
-        // 3. CoreML (Apple Silicon / macOS)
+        // 3. DirectML (Windows — vendor-neutral DX12 fallback after CUDA)
+        #[cfg(target_os = "windows")]
+        {
+            execution_providers.push(
+                ort::execution_providers::DirectMLExecutionProvider::default()
+                    .with_device_id(target_device as i32)
+                    .build(),
+            );
+            debug!("  ✓ DirectML execution provider configured as Windows fallback");
+        }
+
+        // 4. CoreML (Apple Silicon / macOS)
         //    Use ALL compute units so the Neural Engine (ANE) and GPU are engaged
         //    alongside the CPU.  with_subgraphs(true) partitions more ops into
         //    the CoreML graph; with_compute_units(All) routes them to the fastest
@@ -238,7 +249,7 @@ impl OnnxModelLoader {
             );
         }
 
-        // 4. CPU (Always fallback)
+        // 5. CPU (Always fallback)
         execution_providers.push(ort::execution_providers::CPUExecutionProvider::default().build());
 
         // Register providers

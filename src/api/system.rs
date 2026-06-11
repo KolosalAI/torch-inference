@@ -348,10 +348,18 @@ mod tests {
 
     // ── get_config ────────────────────────────────────────────────────────────
 
+    fn make_config_app_data() -> web::Data<Config> {
+        web::Data::new(Config::default())
+    }
+
     #[tokio::test]
     async fn test_get_config_returns_200() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -359,8 +367,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_response_shape() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         assert!(body["server"].is_object());
@@ -370,23 +382,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_server_defaults() {
-        std::env::remove_var("HOST");
-        std::env::remove_var("PORT");
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         let server = &body["server"];
+        // Config::default() gives host="0.0.0.0" and port=8000
         assert_eq!(server["host"].as_str().unwrap(), "0.0.0.0");
-        assert_eq!(server["port"].as_u64().unwrap(), 8080);
+        assert_eq!(server["port"].as_u64().unwrap(), 8000);
         assert!(server["workers"].as_u64().unwrap() > 0);
         assert_eq!(server["max_connections"].as_u64().unwrap(), 1000);
     }
 
     #[tokio::test]
     async fn test_get_config_inference_defaults() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         let inf = &body["inference"];
@@ -398,8 +417,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_cache_defaults() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         let cache = &body["cache"];
@@ -410,13 +433,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_port_from_env() {
-        std::env::set_var("PORT", "9999");
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        // Inject a Config with port=9999 to verify the handler passes the port through.
+        let mut cfg = Config::default();
+        cfg.server.port = 9999;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(cfg))
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         assert_eq!(body["server"]["port"].as_u64().unwrap(), 9999);
-        std::env::remove_var("PORT");
     }
 
     // ── get_gpu_stats ─────────────────────────────────────────────────────────

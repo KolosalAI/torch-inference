@@ -39,6 +39,9 @@ pub mod whisper_stt;
 // SIMD-fused image preprocessing pipeline (decode → resize → normalize)
 pub mod image_pipeline;
 
+// Shared ORT execution-provider builder (CUDA → DirectML → CPU / CoreML → CPU)
+pub mod ort_eps;
+
 // CPU core-affinity utilities for P-core worker pinning
 pub mod affinity;
 

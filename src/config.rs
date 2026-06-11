@@ -1048,6 +1048,7 @@ mod tests {
     /// config.toml does not exist in the working directory.
     /// Temporarily switches to a temp directory that has no config.toml.
     #[test]
+    #[serial_test::serial]
     fn test_config_load_without_config_file() {
         static DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = DIR_LOCK.lock().unwrap();
