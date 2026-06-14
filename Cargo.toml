@@ -94,6 +94,8 @@ zip = "2.2"
 # System info
 num_cpus = "1.16"
 sysinfo = "0.31"
+# POSIX _exit to bypass onnxruntime's macOS static-destructor SIGABRT at exit.
+libc = "0.2"
 nvml-wrapper = { version = "0.9", optional = true }
 tikv-jemallocator = { version = "0.5", optional = true }
 pprof = { version = "0.14", features = ["flamegraph"], optional = true }

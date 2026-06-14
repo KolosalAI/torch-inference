@@ -116,8 +116,10 @@ tests/e2e/playwright-report/
 !.cargo
 *.png
 
-# LLM service models
-services/llm/models/*.gguf
+# LLM service models — all downloaded/exported weights (ONNX, safetensors,
+# GGUF, tokenizer, external-data shards). Multi-GB; never commit.
+services/llm/models/*
+!services/llm/models/.gitkeep
 
 # Coverage reports
 coverage/

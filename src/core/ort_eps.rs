@@ -10,6 +10,9 @@
 /// falls through to DirectML, then CPU — no crash.
 use ort::execution_providers::ExecutionProviderDispatch;
 
+// `device_id` selects the CUDA/DirectML device on Windows/Linux; macOS (CoreML)
+// ignores it, so the parameter is unused on that target.
+#[cfg_attr(target_os = "macos", allow(unused_variables))]
 pub fn build_eps(device_id: i32) -> Vec<ExecutionProviderDispatch> {
     let mut eps: Vec<ExecutionProviderDispatch> = Vec::new();
 

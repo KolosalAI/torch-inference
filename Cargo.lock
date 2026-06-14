@@ -6150,6 +6150,7 @@ dependencies = [
  "indicatif",
  "jsonwebtoken",
  "lazy_static",
+ "libc",
  "libloading 0.8.9",
  "log",
  "lru",

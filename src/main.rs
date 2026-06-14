@@ -175,8 +175,31 @@ fn build_runtime() -> tokio::runtime::Runtime {
         .expect("failed to build tokio runtime")
 }
 
+/// Terminate the process via POSIX `_exit`, skipping `atexit`/C++ static
+/// destructors.
+///
+/// ONNX Runtime (>= 1.21, bundled by `ort 2.0.0-rc.10` as 1.22) has a macOS bug
+/// where `OrtEnv`'s static destructor locks an already-destroyed mutex at process
+/// exit, throwing an uncaught C++ exception → `SIGABRT`, *after* all our work is
+/// done. We can't patch onnxruntime's statics, and the process is terminating
+/// anyway, so we bypass the broken teardown: `_exit` reclaims everything via the
+/// kernel without running `OrtEnv`'s destructor.
+/// Mirrors `exit_skipping_ort_teardown` in `services/llm/src/main.rs`.
+/// Refs: pykeio/ort#409, microsoft/onnxruntime#24579, #25038.
+fn exit_skipping_ort_teardown(code: i32) -> ! {
+    use std::io::Write as _;
+    // _exit() does not flush stdio buffers; do it ourselves first.
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: immediately terminates the process; no Rust state is left dangling
+    // because nothing runs after this call.
+    unsafe { libc::_exit(code) }
+}
+
 fn main() -> std::io::Result<()> {
-    build_runtime().block_on(async_main())
+    let result = build_runtime().block_on(async_main());
+    // Bypass onnxruntime's macOS exit crash on the normal-shutdown path too.
+    exit_skipping_ort_teardown(if result.is_ok() { 0 } else { 1 });
 }
 
 async fn async_main() -> std::io::Result<()> {
@@ -866,7 +889,7 @@ async fn async_main() -> std::io::Result<()> {
                 tracing::info!(pid, "microservice stopped");
             }
         }
-        tracing::info!("all microservices stopped");
+        tracing::info!("all microservices stopped, exiting");
         #[cfg(feature = "profiling")]
         {
             if let Ok(mut guard) = profiler_guard_for_signal.lock() {
@@ -880,7 +903,7 @@ async fn async_main() -> std::io::Result<()> {
                 }
             }
         }
-        std::process::exit(0);
+        exit_skipping_ort_teardown(0);
     });
 
     server.await?;
