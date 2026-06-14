@@ -61,24 +61,7 @@ fn main() {
     check_onnx_support();
 }
 
-fn print_header() {
-    // Respect PORT / SERVER_PORT env vars so the banner reflects non-default configs.
-    println!("cargo:rerun-if-env-changed=PORT");
-    println!("cargo:rerun-if-env-changed=SERVER_PORT");
-    let port = env::var("PORT")
-        .or_else(|_| env::var("SERVER_PORT"))
-        .unwrap_or_else(|_| "8000".to_string());
-
-    println!("cargo:warning=");
-    println!("cargo:warning=╔══════════════════════════════════════════════════════════╗");
-    println!("cargo:warning=║    PyTorch Inference Framework - Build Configuration    ║");
-    println!("cargo:warning=╚══════════════════════════════════════════════════════════╝");
-    println!("cargo:warning=");
-    println!("cargo:warning=  WebApp:     http://localhost:{}/playground", port);
-    println!("cargo:warning=  API:        http://localhost:{}", port);
-    println!("cargo:warning=  Health:     http://localhost:{}/health", port);
-    println!("cargo:warning=");
-}
+fn print_header() {}
 
 struct SystemInfo {
     os: String,

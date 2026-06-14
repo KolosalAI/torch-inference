@@ -7,5 +7,6 @@ mod tts;
 mod classify;
 mod detect;
 mod audio;
+mod llm_proxy;
 mod middleware;
 mod errors;

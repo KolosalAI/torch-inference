@@ -116,31 +116,38 @@ pub async fn synthesize_speech(
         energy: 1.0,
     };
 
-    // Synthesize audio
-    let mut audio = model
-        .synthesize(&sanitized_text, &params)
-        .map_err(|e| ApiError::InternalError(format!("TTS synthesis failed: {}", e)))?;
+    // Synthesize + post-process + WAV-encode on the blocking pool. ORT
+    // session.run is synchronous and CPU-bound; running it on the actix
+    // current_thread executor blocks every other request on this worker.
+    // STT already does this — keep TTS in line.
+    let model_for_blocking = model.clone();
+    let text_for_blocking = sanitized_text.clone();
+    let params_for_blocking = params.clone();
+    let pp_cfg = config.postprocess.audio.clone();
+    let skip_pp = req.skip_postprocess;
+    let (audio, pp_steps, pp_warnings, wav_data) = tokio::task::spawn_blocking(move || -> Result<_, anyhow::Error> {
+        let mut audio = model_for_blocking
+            .synthesize(&text_for_blocking, &params_for_blocking)?;
+        let (pp_steps, pp_warnings) = if !skip_pp {
+            let result = postprocess::audio::process(
+                std::mem::take(&mut audio.samples),
+                audio.sample_rate,
+                &pp_cfg,
+            );
+            audio.samples = result.samples;
+            (result.steps, result.warnings)
+        } else {
+            (vec![], vec![])
+        };
+        let processor = AudioProcessor::new();
+        let wav = processor.save_wav(&audio)?;
+        Ok((audio, pp_steps, pp_warnings, wav))
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(format!("TTS task join: {}", e)))?
+    .map_err(|e| ApiError::InternalError(format!("TTS synthesis failed: {}", e)))?;
 
-    // Post-process audio samples
-    let (pp_steps, pp_warnings) = if !req.skip_postprocess {
-        let result = postprocess::audio::process(
-            std::mem::take(&mut audio.samples),
-            audio.sample_rate,
-            &config.postprocess.audio,
-        );
-        audio.samples = result.samples;
-        (result.steps, result.warnings)
-    } else {
-        (vec![], vec![])
-    };
-
-    // Convert to WAV
-    let processor = AudioProcessor::new();
-    let wav_data = processor
-        .save_wav(&audio)
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
-    let duration_secs = audio.samples.len() as f32 / audio.sample_rate as f32;
+    let duration_secs = audio.duration_secs();
     let audio_base64 = base64_encode(&wav_data);
 
     let model_name = req.model.as_deref().unwrap_or("default").to_string();
@@ -170,29 +177,37 @@ pub async fn synthesize_speech(
 pub async fn transcribe_audio(
     mut payload: Multipart,
     state: web::Data<AudioState>,
+    config: web::Data<Config>,
 ) -> Result<HttpResponse, ApiError> {
-    let mut audio_data = Vec::new();
-    let mut model_name = "default".to_string();
+    let max_bytes = config.server.multipart_audio_limit_mb.saturating_mul(1024 * 1024);
+    let max_duration_secs = config.server.audio_max_duration_secs;
+
+    let mut audio_data: Vec<u8> = Vec::new();
     let mut return_timestamps = false;
 
-    // Extract audio file and parameters from multipart
+    // Extract audio file and parameters from multipart, bailing as soon as the
+    // accumulated audio bytes would exceed the per-request cap. Returning 413
+    // before allocating gigabytes is the whole point of this check.
     while let Some(item) = payload.next().await {
         let mut field = item.map_err(|e| ApiError::BadRequest(e.to_string()))?;
-        let content_disposition = field.content_disposition();
-        let field_name = content_disposition.get_name().unwrap_or("");
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name())
+            .unwrap_or("")
+            .to_string();
+        let field_name = field_name.as_str();
 
         if field_name == "audio" || field_name == "file" {
             while let Some(chunk) = field.next().await {
                 let data = chunk.map_err(|e| ApiError::BadRequest(e.to_string()))?;
+                if audio_data.len().saturating_add(data.len()) > max_bytes {
+                    return Err(ApiError::PayloadTooLarge(format!(
+                        "audio upload exceeds {} MiB limit",
+                        config.server.multipart_audio_limit_mb
+                    )));
+                }
                 audio_data.extend_from_slice(&data);
             }
-        } else if field_name == "model" {
-            let mut model_str = String::new();
-            while let Some(chunk) = field.next().await {
-                let data = chunk.map_err(|e| ApiError::BadRequest(e.to_string()))?;
-                model_str.push_str(&String::from_utf8_lossy(&data));
-            }
-            model_name = model_str;
         } else if field_name == "timestamps" {
             let mut ts_str = String::new();
             while let Some(chunk) = field.next().await {
@@ -207,22 +222,24 @@ pub async fn transcribe_audio(
         return Err(ApiError::BadRequest("No audio data provided".to_string()));
     }
 
-    // Load and validate audio
-    let processor = AudioProcessor::new();
+    // Load and validate audio. The duration cap is enforced inside the
+    // processor against both the WAV header (pre-allocation) and the
+    // Symphonia decode loop.
+    let processor = AudioProcessor::new().with_max_duration_secs(max_duration_secs);
     let audio = processor
         .load_audio(&audio_data)
         .map_err(|e| ApiError::BadRequest(format!("Invalid audio: {}", e)))?;
 
-    // Get STT model
-    let model = state
-        .model_manager
-        .get_stt_model(&model_name)
-        .ok_or_else(|| ApiError::NotFound(format!("STT model '{}' not found", model_name)))?;
-
-    // Transcribe
-    let result = model
-        .transcribe(&audio, return_timestamps)
-        .map_err(|e| ApiError::InternalError(format!("Transcription failed: {}", e)))?;
+    // Whisper inference (FFT, mel-spectrogram, ONNX session run) is CPU-bound
+    // and synchronous. Offload to a blocking task so the actix reactor stays
+    // free to serve other requests.
+    let model_manager = state.model_manager.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        model_manager.transcribe_audio(&audio, return_timestamps)
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
+    .map_err(|e| ApiError::InternalError(format!("Transcription failed: {:#}", e)))?;
 
     // Convert to response format
     let segments = result.segments.map(|segs| {
@@ -876,6 +893,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -895,13 +913,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_transcribe_audio_stt_model_not_found_returns_404() {
-        let state = make_audio_state(); // no STT model loaded
+    async fn test_transcribe_audio_stt_model_not_found_returns_error() {
+        // No Whisper pipeline and no legacy STT model — transcribe_audio returns an error.
+        let state = make_audio_state();
         let wav_bytes = make_wav_bytes_for_test(16000, 1, 16000);
 
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -917,7 +937,7 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]
@@ -928,6 +948,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -957,6 +978,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -996,6 +1018,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -1027,6 +1050,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -1062,16 +1086,19 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    /// Exercises transcribe_audio when model field names a non-existent STT model,
-    /// confirming the 404 path (line 169) is reached.
+    /// The model field is now ignored by transcribe_audio — routing always goes to
+    /// the Whisper pipeline if loaded, or falls back to the "default" legacy model.
+    /// This test verifies that even when a non-existent model name is sent, the
+    /// request succeeds because the "default" legacy STT model is available.
     #[tokio::test]
-    async fn test_transcribe_audio_explicit_model_not_found() {
+    async fn test_transcribe_audio_explicit_model_ignored_uses_default() {
         let state = make_audio_state_with_stt().await;
         let wav_bytes = make_wav_bytes_for_test(16000, 1, 16000);
 
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;
@@ -1102,7 +1129,9 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        // With the Whisper routing layer, named model lookups are ignored;
+        // the "default" legacy model is used and returns 200.
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     /// Exercises the validate_audio handler with a "file" field name (line 136:
@@ -1202,6 +1231,7 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(state.clone())
+                .app_data(web::Data::new(crate::config::Config::default()))
                 .route("/audio/transcribe", web::post().to(transcribe_audio)),
         )
         .await;

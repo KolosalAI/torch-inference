@@ -5,14 +5,21 @@
 /target/
 **/*.rs.bk
 *.pdb
+/doc/
+/rust_out
+/stdin
 
 # Cargo
-Cargo.lock
+# NOTE: Cargo.lock IS committed for this binary crate (reproducible builds).
 .cargo/
 
 # LibTorch
 /libtorch/
 libtorch*.zip
+
+# ORT GPU runtime (extracted from ort-gpu-1.22.0.zip)
+/ort-gpu-1.22.0/
+ort-gpu-*.zip
 
 # IDE
 .vscode/
@@ -114,3 +121,16 @@ services/llm/models/*.gguf
 
 # Coverage reports
 coverage/
+lcov.info
+tarpaulin-report.json
+target/tarpaulin/
+
+# Runtime logs directory
+logs/
+
+# Playwright MCP session data
+.playwright-mcp/
+
+# Service build artifacts
+services/llm/target/
+services/stt/__pycache__/

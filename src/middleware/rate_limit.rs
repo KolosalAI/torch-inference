@@ -81,8 +81,7 @@ impl RateLimiter {
     }
 
     /// Evict entries whose window has fully expired.  Intended for periodic
-    /// background maintenance; no production caller yet.
-    #[allow(dead_code)]
+    /// background maintenance; called from background sweep task in main.rs.
     pub fn cleanup_old_entries(&self) {
         let now = coarse_unix_secs();
         self.request_counts
@@ -93,6 +92,93 @@ impl RateLimiter {
 impl Default for RateLimiter {
     fn default() -> Self {
         Self::new(100, 60)
+    }
+}
+
+// ── actix middleware: per-IP rate limit ──────────────────────────────────────
+
+use actix_web::body::EitherBody;
+use actix_web::dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform};
+use actix_web::Error as ActixError;
+use futures_util::future::LocalBoxFuture;
+use std::future::{ready, Ready};
+use std::rc::Rc;
+use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct RateLimitMiddleware {
+    limiter: Arc<RateLimiter>,
+}
+
+impl RateLimitMiddleware {
+    pub fn new(limiter: Arc<RateLimiter>) -> Self {
+        Self { limiter }
+    }
+}
+
+impl<S, B> Transform<S, ServiceRequest> for RateLimitMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = ActixError> + 'static,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = ActixError;
+    type InitError = ();
+    type Transform = RateLimitMiddlewareService<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(RateLimitMiddlewareService {
+            service: Rc::new(service),
+            limiter: self.limiter.clone(),
+        }))
+    }
+}
+
+pub struct RateLimitMiddlewareService<S> {
+    service: Rc<S>,
+    limiter: Arc<RateLimiter>,
+}
+
+impl<S, B> Service<ServiceRequest> for RateLimitMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = ActixError> + 'static,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = ActixError;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        // /health and /metrics are excluded so probes never get throttled.
+        let p = req.path();
+        if p.starts_with("/health") || p == "/metrics" {
+            let svc = self.service.clone();
+            return Box::pin(async move {
+                svc.call(req).await.map(ServiceResponse::map_into_left_body)
+            });
+        }
+        let key = req
+            .connection_info()
+            .realip_remote_addr()
+            .unwrap_or("unknown")
+            .to_string();
+        match self.limiter.is_allowed(&key) {
+            Ok(()) => {
+                let svc = self.service.clone();
+                Box::pin(async move {
+                    svc.call(req).await.map(ServiceResponse::map_into_left_body)
+                })
+            }
+            Err(e) => {
+                let resp = e.error_response();
+                Box::pin(async move { Ok(req.into_response(resp).map_into_right_body()) })
+            }
+        }
     }
 }
 
@@ -173,6 +259,24 @@ mod tests {
         let limiter = RateLimiter::new(10, 1);
         let _ = limiter.is_allowed("cleanup_client");
         limiter.cleanup_old_entries(); // must not panic
+    }
+
+    #[test]
+    fn cleanup_does_not_affect_active_entries() {
+        // window_seconds=60: entries are active, cleanup should NOT remove them
+        let limiter = RateLimiter::new(10, 60);
+        let _ = limiter.is_allowed("active_ip");
+        limiter.cleanup_old_entries();
+        // After cleanup, active_ip should still be rate-limited (hit count preserved)
+        // We verify by checking the is_allowed still tracks state (9 more allowed)
+        for _ in 0..9 {
+            assert!(limiter.is_allowed("active_ip").is_ok());
+        }
+        // 10th attempt (total 11, max 10) should be denied
+        assert!(
+            limiter.is_allowed("active_ip").is_err(),
+            "active entry should still be tracked after cleanup"
+        );
     }
 
     // ── RateLimitError ───────────────────────────────────────────────────────

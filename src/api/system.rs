@@ -1,8 +1,42 @@
+use crate::config::Config;
 use crate::core::gpu::GpuManager;
 use crate::error::ApiError;
 use actix_web::{web, HttpResponse, Result};
 use serde::Serialize;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+/// Shared `sysinfo::System` snapshot, refreshed on read no more often than
+/// every `SYSINFO_TTL`. Without this, every `/system/info` and every
+/// `/performance` scrape did a full `System::new_all()` (10–30 ms of
+/// syscalls), which meaningfully hurts latency under Prometheus-style
+/// scrape rates. Lock is held only for the refresh + caller closure;
+/// callers must do as little inside the closure as possible.
+const SYSINFO_TTL: Duration = Duration::from_secs(5);
+static SYSINFO_CACHE: OnceLock<parking_lot::Mutex<(Instant, sysinfo::System)>> = OnceLock::new();
+
+/// Run `f` against a fresh-enough `sysinfo::System`.
+///
+/// The first call initialises the cache; subsequent calls refresh only
+/// when the previous snapshot is older than `SYSINFO_TTL`. The closure is
+/// invoked under the cache's mutex — keep it short.
+pub fn with_cached_system<F, R>(f: F) -> R
+where
+    F: FnOnce(&sysinfo::System) -> R,
+{
+    let cell = SYSINFO_CACHE.get_or_init(|| {
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_all();
+        parking_lot::Mutex::new((Instant::now(), sys))
+    });
+    let mut guard = cell.lock();
+    if guard.0.elapsed() >= SYSINFO_TTL {
+        guard.1.refresh_all();
+        guard.0 = Instant::now();
+    }
+    f(&guard.1)
+}
 
 #[derive(Debug, Serialize)]
 pub struct SystemInfoResponse {
@@ -99,16 +133,14 @@ pub async fn get_system_info(state: web::Data<SystemInfoState>) -> Result<HttpRe
         .get_info()
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
-    let sys = sysinfo::System::new_all();
-
-    let system = SystemDetails {
+    let system = with_cached_system(|sys| SystemDetails {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         cpu_count: num_cpus::get(),
         total_memory_bytes: sys.total_memory(),
         total_memory_human: format_bytes(sys.total_memory()),
         hostname: sysinfo::System::host_name(),
-    };
+    });
 
     let gpu_devices: Vec<GpuDeviceInfo> = gpu_info
         .devices
@@ -156,15 +188,11 @@ pub async fn get_system_info(state: web::Data<SystemInfoState>) -> Result<HttpRe
     }))
 }
 
-pub async fn get_config() -> Result<HttpResponse, ApiError> {
-    // Load from environment or config file
+pub async fn get_config(cfg: web::Data<Config>) -> Result<HttpResponse, ApiError> {
     let config = ConfigResponse {
         server: ServerConfig {
-            host: std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            port: std::env::var("PORT")
-                .ok()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(8080),
+            host: cfg.server.host.clone(),
+            port: cfg.server.port,
             workers: num_cpus::get(),
             max_connections: 1000,
         },
@@ -172,8 +200,14 @@ pub async fn get_config() -> Result<HttpResponse, ApiError> {
             default_batch_size: 1,
             max_batch_size: 32,
             timeout_secs: 30,
+            // CoreML on macOS routes ORT through Metal/ANE — no `metal`
+            // feature flag is required (and the previous `cfg!(feature =
+            // "metal")` branch was permanently dead, since the feature is
+            // not declared in Cargo.toml).
             device: if cfg!(feature = "cuda") {
                 "cuda"
+            } else if cfg!(target_os = "macos") {
+                "metal"
             } else {
                 "cpu"
             }
@@ -314,10 +348,18 @@ mod tests {
 
     // ── get_config ────────────────────────────────────────────────────────────
 
+    fn make_config_app_data() -> web::Data<Config> {
+        web::Data::new(Config::default())
+    }
+
     #[tokio::test]
     async fn test_get_config_returns_200() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -325,8 +367,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_response_shape() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         assert!(body["server"].is_object());
@@ -336,23 +382,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_server_defaults() {
-        std::env::remove_var("HOST");
-        std::env::remove_var("PORT");
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         let server = &body["server"];
+        // Config::default() gives host="0.0.0.0" and port=8000
         assert_eq!(server["host"].as_str().unwrap(), "0.0.0.0");
-        assert_eq!(server["port"].as_u64().unwrap(), 8080);
+        assert_eq!(server["port"].as_u64().unwrap(), 8000);
         assert!(server["workers"].as_u64().unwrap() > 0);
         assert_eq!(server["max_connections"].as_u64().unwrap(), 1000);
     }
 
     #[tokio::test]
     async fn test_get_config_inference_defaults() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         let inf = &body["inference"];
@@ -364,8 +417,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_cache_defaults() {
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        let app = test::init_service(
+            App::new()
+                .app_data(make_config_app_data())
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         let cache = &body["cache"];
@@ -376,13 +433,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_port_from_env() {
-        std::env::set_var("PORT", "9999");
-        let app =
-            test::init_service(App::new().route("/system/config", web::get().to(get_config))).await;
+        // Inject a Config with port=9999 to verify the handler passes the port through.
+        let mut cfg = Config::default();
+        cfg.server.port = 9999;
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(cfg))
+                .route("/system/config", web::get().to(get_config)),
+        )
+        .await;
         let req = test::TestRequest::get().uri("/system/config").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         assert_eq!(body["server"]["port"].as_u64().unwrap(), 9999);
-        std::env::remove_var("PORT");
     }
 
     // ── get_gpu_stats ─────────────────────────────────────────────────────────

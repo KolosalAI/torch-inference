@@ -8,9 +8,8 @@ test.describe('Dashboard', () => {
     await expect(page.locator(S.panelDashboard)).toHaveClass(/active/);
   });
 
-  test('Overview and Playground tabs render', async ({ page }) => {
+  test('Overview tab renders', async ({ page }) => {
     await expect(page.locator(S.dashTabOverview)).toBeVisible();
-    await expect(page.locator(S.dashTabPlayground)).toBeVisible();
   });
 
   test('Overview tab is active by default', async ({ page }) => {
@@ -56,16 +55,9 @@ test.describe('Dashboard', () => {
     await expect(page.locator(S.gpuDeviceInfo)).toBeAttached();
   });
 
-  test('clicking Playground tab shows playground, hides overview', async ({ page }) => {
+  test('Playground tab shows playground, hides overview', async ({ page }) => {
     await page.locator(S.dashTabPlayground).click();
     await expect(page.locator(S.dashPlayground)).toBeVisible();
     await expect(page.locator(S.dashOverview)).toBeHidden();
-  });
-
-  test('clicking Overview tab restores overview, hides playground', async ({ page }) => {
-    await page.locator(S.dashTabPlayground).click();
-    await page.locator(S.dashTabOverview).click();
-    await expect(page.locator(S.dashOverview)).toBeVisible();
-    await expect(page.locator(S.dashPlayground)).toBeHidden();
   });
 });

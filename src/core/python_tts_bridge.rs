@@ -8,9 +8,18 @@ mod inner {
     use anyhow::{Context, Result};
     use pyo3::prelude::*;
     use pyo3::types::{PyDict, PyList};
+    use std::ffi::CString;
     use std::sync::Mutex;
 
     use super::super::audio::AudioData;
+
+    /// Convert a Rust `&str` to an owned `CString` for pyo3 APIs that
+    /// took `&str` in 0.20 but now require `&CStr` in 0.24+. Panics on
+    /// embedded NULs — none of our inline Python snippets have any.
+    #[inline]
+    fn cstr(s: &str) -> CString {
+        CString::new(s).expect("inline Python source must be NUL-free")
+    }
 
     /// Global Python interpreter guard
     static PYTHON_INIT: Mutex<bool> = Mutex::new(false);
@@ -37,7 +46,8 @@ mod inner {
 
             Python::with_gil(|py| {
                 py.run(
-                    r#"
+                    &cstr(
+                        r#"
 import sys
 try:
     import kokoro
@@ -46,6 +56,7 @@ except ImportError as e:
     print(f"Error: kokoro not installed. Install with: pip install kokoro")
     raise
 "#,
+                    ),
                     None,
                     None,
                 )
@@ -84,7 +95,7 @@ except ImportError as e:
                     .set_item("lang_code", "a")
                     .map_err(|e| anyhow::anyhow!("Failed to set lang_code: {}", e))?;
                 let pipeline = pipeline_class
-                    .call((), Some(kwargs))
+                    .call((), Some(&kwargs))
                     .map_err(|e| anyhow::anyhow!("Failed to create pipeline: {}", e))?;
 
                 let gen_kwargs = PyDict::new(py);
@@ -92,7 +103,7 @@ except ImportError as e:
                     .set_item("voice", voice)
                     .map_err(|e| anyhow::anyhow!("Failed to set voice: {}", e))?;
                 let generator = pipeline
-                    .call((text,), Some(gen_kwargs))
+                    .call((text,), Some(&gen_kwargs))
                     .map_err(|e| anyhow::anyhow!("Failed to call pipeline: {}", e))?;
 
                 let iterator = generator
@@ -102,8 +113,11 @@ except ImportError as e:
                     .call_method0("__next__")
                     .map_err(|e| anyhow::anyhow!("Failed to get next result: {}", e))?;
 
-                // result is tuple: (graphemes, phonemes, audio)
-                let audio_array: &PyAny = result
+                // result is tuple: (graphemes, phonemes, audio).
+                // pyo3 0.24 returns `Bound<'_, PyAny>` from get_item;
+                // dropping the explicit `&PyAny` annotation lets the
+                // compiler infer the new type.
+                let audio_array = result
                     .get_item(2)
                     .map_err(|e| anyhow::anyhow!("Failed to get audio data at index 2: {}", e))?;
 
@@ -145,7 +159,7 @@ voices = [
 voices
 "#;
                 let locals = PyDict::new(py);
-                py.run(code, None, Some(locals))?;
+                py.run(&cstr(code), None, Some(&locals))?;
                 let voices: Vec<String> = locals
                     .get_item("voices")
                     .context("Failed to get voices")?
@@ -172,7 +186,7 @@ for pkg in ['kokoro', 'soundfile', 'numpy']:
 result = (available, missing)
 "#;
             let locals = PyDict::new(py);
-            py.run(code, None, Some(locals))?;
+            py.run(&cstr(code), None, Some(&locals))?;
             let (available, missing): (Vec<String>, Vec<String>) = locals
                 .get_item("result")
                 .context("no result")?

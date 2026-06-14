@@ -261,6 +261,55 @@ fn bench_full_preprocess_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+fn preprocess_comparison(c: &mut Criterion) {
+    // Build a synthetic 1280×720 PNG image for the bench input.
+    let raw_rgb: Vec<u8> = synthetic_rgb(1280, 720);
+    let img = image::RgbImage::from_raw(1280, 720, raw_rgb).unwrap();
+    let mut png_buf = std::io::Cursor::new(Vec::new());
+    use image::ImageEncoder;
+    image::codecs::png::PngEncoder::new(&mut png_buf)
+        .write_image(&img, 1280, 720, image::ColorType::Rgb8.into())
+        .unwrap();
+    let png_bytes = png_buf.into_inner();
+
+    let mut group = c.benchmark_group("yolo_preprocess_comparison");
+    group.measurement_time(Duration::from_secs(10));
+    group.sample_size(50);
+
+    group.bench_function("scalar_lanczos3", |b| {
+        b.iter(|| {
+            let decoded = image::load_from_memory(black_box(&png_bytes)).unwrap();
+            let resized = decoded.resize_exact(640, 640, image::imageops::FilterType::Lanczos3);
+            let rgb = resized.to_rgb8();
+            let (w, h) = rgb.dimensions();
+            let (w, h) = (w as usize, h as usize);
+            let mut data = vec![0f32; 3 * h * w];
+            for (x, y, px) in rgb.enumerate_pixels() {
+                let (x, y) = (x as usize, y as usize);
+                data[y * w + x]              = px[0] as f32 / 255.0;
+                data[h * w + y * w + x]      = px[1] as f32 / 255.0;
+                data[2 * h * w + y * w + x]  = px[2] as f32 / 255.0;
+            }
+            black_box(data)
+        })
+    });
+
+    #[cfg(feature = "simd-image")]
+    group.bench_function("simd_catmullrom", |b| {
+        b.iter(|| {
+            let decoded = image::load_from_memory(black_box(&png_bytes)).unwrap();
+            black_box(
+                torch_inference::core::ort_yolo::OrtYoloDetector::preprocess_simd_chw(
+                    &decoded, 640,
+                )
+                .unwrap(),
+            )
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_letterbox,
@@ -269,5 +318,6 @@ criterion_group!(
     bench_nms,
     bench_rescale_boxes,
     bench_full_preprocess_pipeline,
+    preprocess_comparison,
 );
 criterion_main!(benches);

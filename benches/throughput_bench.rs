@@ -27,7 +27,7 @@ fn make_rt() -> Runtime {
 // How many chars/sec can the batch-queue intake at different payload sizes.
 // This is the gating overhead before the model does any work.
 fn bench_text_request_throughput(c: &mut Criterion) {
-    let rt = make_rt();
+    let _rt = make_rt();
     let mut group = c.benchmark_group("text_request_throughput");
     group.measurement_time(std::time::Duration::from_secs(5));
 
@@ -68,7 +68,7 @@ fn bench_text_request_throughput(c: &mut Criterion) {
 // measures only the queue-entry step so you can isolate serving overhead from
 // model cost.
 fn bench_tts_throughput(c: &mut Criterion) {
-    let rt = make_rt();
+    let _rt = make_rt();
     let mut group = c.benchmark_group("tts_throughput");
     group.measurement_time(std::time::Duration::from_secs(5));
 
@@ -266,7 +266,7 @@ fn bench_concurrent_cache_reads(c: &mut Criterion) {
 // Shows how average per-request overhead changes as batch size grows.
 // Larger batches amortise fixed costs; this bench helps tune max_batch_size.
 fn bench_batch_latency_vs_size(c: &mut Criterion) {
-    let rt = make_rt();
+    let _rt = make_rt();
     let mut group = c.benchmark_group("batch_latency_vs_size");
     group.measurement_time(std::time::Duration::from_secs(5));
 
@@ -307,7 +307,7 @@ fn bench_inflight_priority(c: &mut Criterion) {
     use tokio::sync::oneshot;
     use torch_inference::inflight_batch::{InflightBatchProcessor, InflightRequest};
 
-    let rt = make_rt();
+    let _rt = make_rt();
     let mut group = c.benchmark_group("inflight_priority");
     group.measurement_time(std::time::Duration::from_secs(5));
 

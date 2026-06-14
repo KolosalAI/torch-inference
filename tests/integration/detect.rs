@@ -5,6 +5,7 @@ use torch_inference::api::yolo::{configure, YoloState};
 fn make_yolo_state() -> web::Data<YoloState> {
     web::Data::new(YoloState {
         models_dir: PathBuf::from("./models"),
+        ort_detector: parking_lot::Mutex::new(None),
     })
 }
 

@@ -267,11 +267,25 @@ async fn handle_incoming(
             }
         }
         actix_ws::Message::Binary(bin) => {
+            // Cap STT buffers at ~30 minutes of 16 kHz mono samples (28.8 M f32 = 115 MiB).
+            // A malicious or buggy client could otherwise stream binary frames forever.
+            const MAX_STT_SAMPLES: usize = 30 * 60 * 16_000;
             if let SessionState::AccumulatingStt { buf, .. } = state {
                 let samples: Vec<f32> = bin
                     .chunks_exact(4)
                     .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                     .collect();
+                if buf.len().saturating_add(samples.len()) > MAX_STT_SAMPLES {
+                    let _ = session
+                        .text(
+                            ServerMsg::Error {
+                                msg: "stt buffer cap exceeded (30 min limit) — call stt_end".into(),
+                            }
+                            .to_json(),
+                        )
+                        .await;
+                    return false;
+                }
                 buf.extend_from_slice(&samples);
             }
             // Binary frames while in TTS state are silently ignored.

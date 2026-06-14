@@ -1,9 +1,10 @@
 use actix_web::{web, HttpResponse};
 use base64::Engine as _;
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use futures_util::StreamExt;
@@ -65,6 +66,19 @@ pub struct ImageUrl {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Per-request response id (`chatcmpl-<uuid>`) for OpenAI-API parity.
+fn new_completion_id() -> String {
+    format!("chatcmpl-{}", uuid::Uuid::new_v4())
+}
+
+/// Unix epoch seconds for the OpenAI `created` field.
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 fn decode_data_uri(url: &str) -> Result<Vec<u8>, String> {
     let base64_part = url
         .splitn(2, ',')
@@ -116,10 +130,11 @@ fn extract_content(
     Ok((pairs, image))
 }
 
-fn sse_chunk(content: &str, model: &str) -> Bytes {
+fn sse_chunk(id: &str, created: u64, content: &str, model: &str) -> Bytes {
     let data = json!({
-        "id": "chatcmpl-1",
+        "id": id,
         "object": "chat.completion.chunk",
+        "created": created,
         "model": model,
         "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": null}]
     });
@@ -155,6 +170,8 @@ pub async fn chat_completions(
     let model_name = req.model.clone().unwrap_or_else(|| "hrm-text-1b".to_string());
     let temperature = req.temperature;
     let streaming = req.stream;
+    let id = new_completion_id();
+    let created = now_unix_secs();
 
     let (mut pairs, image_bytes) = match extract_content(&req.messages, state.limits.max_image_bytes) {
         Ok(v) => v,
@@ -209,8 +226,10 @@ pub async fn chat_completions(
         });
 
         let model_for_stream = model_name.clone();
+        let id_for_stream = id.clone();
         let token_stream = ReceiverStream::new(rx)
-            .map(move |tok| Ok::<Bytes, std::io::Error>(sse_chunk(&tok, &model_for_stream)));
+            .map(move |tok| Ok::<Bytes, std::io::Error>(
+                sse_chunk(&id_for_stream, created, &tok, &model_for_stream)));
         let done_stream = futures_util::stream::once(async {
             Ok::<Bytes, std::io::Error>(sse_done())
         });
@@ -243,8 +262,9 @@ pub async fn chat_completions(
         }
 
         HttpResponse::Ok().json(json!({
-            "id": "chatcmpl-1",
+            "id": id,
             "object": "chat.completion",
+            "created": created,
             "model": model_name,
             "choices": [{
                 "index": 0,

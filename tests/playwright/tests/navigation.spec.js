@@ -6,8 +6,8 @@ test.describe('Navigation', () => {
     await page.goto('/');
   });
 
-  test('page title contains Kolosal', async ({ page }) => {
-    await expect(page).toHaveTitle(/Kolosal/);
+  test('page title contains Netra RT', async ({ page }) => {
+    await expect(page).toHaveTitle(/Netra RT/);
   });
 
   test('sidebar renders 11 nav items', async ({ page }) => {
@@ -19,7 +19,7 @@ test.describe('Navigation', () => {
     await expect(page.locator(S.panelStatus)).toHaveClass(/active/);
   });
 
-  test('clicking TTS Stream shows TTS panel', async ({ page }) => {
+  test('clicking TTS shows TTS panel', async ({ page }) => {
     await page.locator(S.navTTS).click();
     await expect(page.locator(S.panelTTS)).toHaveClass(/active/);
     await expect(page.locator(S.navTTS)).toHaveClass(/active/);
@@ -30,14 +30,9 @@ test.describe('Navigation', () => {
     await expect(page.locator(S.panelClassify)).toHaveClass(/active/);
   });
 
-  test('clicking LLM Chat shows LLM panel', async ({ page }) => {
+  test('clicking Assistant shows LLM panel', async ({ page }) => {
     await page.locator(S.navLLM).click();
     await expect(page.locator(S.panelLLM)).toHaveClass(/active/);
-  });
-
-  test('clicking Completion shows Completion panel', async ({ page }) => {
-    await page.locator(S.navCompletion).click();
-    await expect(page.locator(S.panelCompletion)).toHaveClass(/active/);
   });
 
   test('clicking Dashboard shows Dashboard panel', async ({ page }) => {

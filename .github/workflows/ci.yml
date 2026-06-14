@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: install onnxruntime
+        run: |
+          ORT_VERSION=1.18.0
+          curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" -o ort.tgz
+          sudo tar -xzf ort.tgz -C /usr/local/lib --strip-components=1
+          sudo ldconfig
+          echo "ORT_DYLIB_PATH=/usr/local/lib/lib/libonnxruntime.so" >> "$GITHUB_ENV"
+      - run: cargo clippy --all-targets --no-default-features --features production -- -D warnings
+
+  test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install onnxruntime
+        run: |
+          ORT_VERSION=1.18.0
+          curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz" -o ort.tgz
+          sudo tar -xzf ort.tgz -C /usr/local/lib --strip-components=1
+          sudo ldconfig
+          echo "ORT_DYLIB_PATH=/usr/local/lib/lib/libonnxruntime.so" >> "$GITHUB_ENV"
+      - run: cargo test --no-default-features --features production --lib --bins
+      - run: cargo test --no-default-features --features production --tests
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit --deny warnings

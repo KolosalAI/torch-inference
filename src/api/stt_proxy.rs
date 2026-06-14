@@ -3,14 +3,28 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use bytes::Bytes;
 use futures_util::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
 pub async fn proxy(
     req: HttpRequest,
-    body: Bytes,
+    payload: web::Payload,
     path: web::Path<String>,
-    client: web::Data<reqwest::Client>,
     config: web::Data<crate::config::Config>,
 ) -> HttpResponse {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(config.server.proxy_timeout_secs))
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .no_proxy()
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to build reqwest client for STT proxy");
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "proxy client build failure"}));
+        }
+    };
+
     let tail = path.into_inner();
     let base = config.microservices.stt_base_url();
     let url = format!("{}/{}", base, tail);
@@ -38,16 +52,29 @@ pub async fn proxy(
             rb = rb.header(hname, v);
         }
     }
-    rb = rb.body(body);
+    // web::Payload is !Send (Rc internally) — bridge through an mpsc so
+    // reqwest's wrap_stream gets a Send receiver.
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(8);
+    let mut payload = payload;
+    actix_web::rt::spawn(async move {
+        while let Some(chunk) = payload.next().await {
+            let mapped = chunk.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+            if tx.send(mapped).await.is_err() {
+                break;
+            }
+        }
+    });
+    let upstream_body = reqwest::Body::wrap_stream(ReceiverStream::new(rx));
+    rb = rb.body(upstream_body);
 
     match rb.send().await {
-        Err(e) if e.is_connect() || e.is_timeout() => {
+        Err(e) if e.is_connect() || e.is_timeout() || e.is_builder() || e.is_request() => {
             HttpResponse::ServiceUnavailable().json(
-                serde_json::json!({"error": "STT service unavailable — start it with `make stt-run`"})
+                serde_json::json!({"error": "STT service unavailable — run `make stt-build && make stt-run` to start it"})
             )
         }
         Err(e) => HttpResponse::BadGateway()
-            .json(serde_json::json!({"error": e.to_string()})),
+            .json(serde_json::json!({"error": format!("STT proxy error: {}", e)})),
         Ok(upstream) => {
             let status = actix_web::http::StatusCode::from_u16(upstream.status().as_u16())
                 .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR);

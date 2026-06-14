@@ -58,7 +58,7 @@ pub async fn dashboard_stream(
 ) -> HttpResponse {
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(4);
 
-    tokio::spawn(async move {
+    crate::spawn_safe::spawn_logged("dashboard_sse_writer", async move {
         let mut ticker = interval(Duration::from_secs(3));
         // Construct System once; only refresh on each tick.
         let mut sys = sysinfo::System::new_all();

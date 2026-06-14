@@ -205,7 +205,11 @@ fn parse_available_model_entry(
 
     let task = if let Some(task_str) = model_obj.get("task").and_then(|t| t.as_str()) {
         task_str.to_string()
-    } else if model_obj.get("voices").is_some() {
+    } else if model_obj
+        .get("voices")
+        .and_then(|v| v.as_str())
+        .map_or(false, |s| s != "N/A" && !s.is_empty())
+    {
         "text-to-speech".to_string()
     } else if model_obj.get("accuracy").is_some() {
         "image-classification".to_string()
@@ -1332,6 +1336,7 @@ mod tests {
     // ── Lines 288-289: list_available_models Err branch (registry unreadable) ──
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_available_models_registry_read_error_falls_back_to_hardcoded() {
         let dir = tempfile::tempdir().unwrap();
         // Create a *directory* named "model_registry.json" so that
@@ -1354,6 +1359,7 @@ mod tests {
     // ── Lines 490-492: list_sota_models sort_by closure (needs 2+ IC models) ─
 
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_sota_models_sort_by_rank_with_multiple_models() {
         let dir = tempfile::tempdir().unwrap();
         let registry_json = r#"{

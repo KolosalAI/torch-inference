@@ -3,12 +3,43 @@ use dashmap::DashMap;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use simd_json;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
+
+/// True when `p` is a relative path containing only Normal components — no
+/// `..`, no absolute prefix, no Windows drive prefix. The HuggingFace tree API
+/// returns paths like `tokenizer.json` or `subdir/file.bin`; anything else is
+/// either malformed or hostile.
+fn is_safe_relative_path(p: &str) -> bool {
+    if p.is_empty() || p.contains('\0') {
+        return false;
+    }
+    let path = Path::new(p);
+    path.components().all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// True when `child`, after lexical resolution, stays inside `base`.
+/// We use lexical normalisation rather than `canonicalize` because the file
+/// does not exist yet at the time of the check.
+fn path_is_within(child: &Path, base: &Path) -> bool {
+    let mut normalized = PathBuf::new();
+    for c in child.components() {
+        match c {
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return false;
+                }
+            }
+            Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized.starts_with(base)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadTask {
@@ -197,9 +228,10 @@ impl ModelDownloadManager {
 
         self.tasks.insert(task_id.clone(), task.clone());
 
-        // Spawn download task
+        // Spawn download task. spawn_logged ensures any panic in the
+        // worker is surfaced via tracing instead of being silently dropped.
         let manager = self.clone();
-        tokio::spawn(async move {
+        crate::spawn_safe::spawn_logged("model_download_worker", async move {
             if let Err(e) = manager.execute_download(task_id_clone.clone()).await {
                 manager.update_task_error(&task_id_clone, &e.to_string());
             }
@@ -306,10 +338,14 @@ impl ModelDownloadManager {
         log::info!("Found {} files in repository", files.len());
 
         // Collect paths to download (skip directory entries).
+        // Reject any path that could escape `target_dir` — the HF tree API is
+        // public and untrusted; without this, a malicious repo could write to
+        // arbitrary host filesystem locations as the server user.
         let files_to_download: Vec<String> = files
             .iter()
             .filter_map(|f| f["path"].as_str())
             .filter(|p| !p.ends_with('/'))
+            .filter(|p| is_safe_relative_path(p))
             .map(|p| p.to_string())
             .collect();
 
@@ -336,6 +372,10 @@ impl ModelDownloadManager {
                     let file_url =
                         format!("https://huggingface.co/{}/resolve/{}/{}", repo, rev, path);
                     let file_path = target.join(&path);
+                    // Defence-in-depth: ensure the resolved path stays inside `target`.
+                    if !path_is_within(&file_path, &target) {
+                        anyhow::bail!("rejected path escaping target dir: {}", path);
+                    }
                     if let Some(parent) = file_path.parent() {
                         fs::create_dir_all(parent).await?;
                     }
@@ -389,6 +429,36 @@ impl ModelDownloadManager {
     }
 
     async fn download_from_url(&self, task_id: &str, url: &str, target_dir: &Path) -> Result<()> {
+        // Restrict scheme + host to known model registries. Without this, a
+        // caller could trigger requests to internal services or cloud
+        // metadata endpoints (SSRF). `file://` would allow local-file read.
+        let parsed = reqwest::Url::parse(url).context("invalid model URL")?;
+        let host = parsed.host_str().unwrap_or("");
+        let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1");
+        match parsed.scheme() {
+            "https" => {}
+            // http is only acceptable when targeting loopback. Lets local
+            // wiremock-style integration tests run; production traffic
+            // must always be https.
+            "http" if is_loopback => {}
+            other => bail!("scheme '{other}' is not allowed for model downloads"),
+        }
+        const ALLOWED_HOSTS: &[&str] = &[
+            "huggingface.co",
+            "cdn-lfs.huggingface.co",
+            "github.com",
+            "objects.githubusercontent.com",
+            "download.pytorch.org",
+            "storage.googleapis.com",
+        ];
+        if !is_loopback
+            && !ALLOWED_HOSTS
+                .iter()
+                .any(|h| host == *h || host.ends_with(&format!(".{}", h)))
+        {
+            bail!("model download host '{}' is not in the allowlist", host);
+        }
+
         let response = self.client.get(url).send().await?;
 
         if !response.status().is_success() {
@@ -398,9 +468,19 @@ impl ModelDownloadManager {
         let total_size = response.content_length();
         let mut downloaded = 0u64;
 
-        // Extract filename from URL
-        let filename = url.rsplit('/').next().unwrap_or("model.bin");
-        let file_path = target_dir.join(filename);
+        // Extract filename from URL — refuse anything that isn't a single
+        // safe path component (no `..`, no `/`, no `\`, no NUL).
+        let raw_filename = parsed
+            .path_segments()
+            .and_then(|s| s.last().filter(|f| !f.is_empty()))
+            .unwrap_or("model.bin");
+        if !is_safe_relative_path(raw_filename) || raw_filename.contains('/') || raw_filename.contains('\\') {
+            bail!("rejected unsafe filename in URL: {}", raw_filename);
+        }
+        let file_path = target_dir.join(raw_filename);
+        if !path_is_within(&file_path, target_dir) {
+            bail!("resolved filename escapes target dir: {}", raw_filename);
+        }
 
         let mut file = fs::File::create(&file_path).await?;
         let mut stream = response.bytes_stream();

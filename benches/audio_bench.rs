@@ -221,6 +221,45 @@ fn bench_wav_header(c: &mut Criterion) {
     });
 }
 
+fn bench_resampler_pool(c: &mut Criterion) {
+    use torch_inference::core::audio::{AudioData, AudioProcessor};
+
+    // 1-second mono 16 kHz → 24 kHz (3:2 ratio, compatible with chunk_size=1024).
+    let audio = AudioData {
+        samples: vec![0.0f32; 16000],
+        sample_rate: 16000,
+        channels: 1,
+    };
+    let processor = AudioProcessor::new();
+
+    let mut group = c.benchmark_group("resampler_pool");
+    group.measurement_time(std::time::Duration::from_secs(10));
+    group.sample_size(50);
+
+    // Warm the pool with one call before measuring.
+    let _ = processor.resample(&audio, 24000);
+
+    group.bench_function("pooled", |b| {
+        b.iter(|| {
+            let result = processor.resample(black_box(&audio), 24000).unwrap();
+            black_box(result)
+        })
+    });
+
+    group.bench_function("cold_construct", |b| {
+        // Measures FftFixedInOut construction cost in isolation — the overhead
+        // that pooling eliminates. Not a full-throughput comparison to `pooled`.
+        b.iter(|| {
+            use rubato::{FftFixedInOut, Resampler};
+            let mut r = FftFixedInOut::<f32>::new(16000, 24000, 1024, 1).unwrap();
+            let dummy = vec![vec![0.0f32; 1024]; 1];
+            black_box(r.process(&dummy, None).unwrap())
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_resample,
@@ -229,5 +268,6 @@ criterion_group!(
     bench_pcm_convert,
     bench_energy_spectrogram,
     bench_wav_header,
+    bench_resampler_pool,
 );
 criterion_main!(benches);

@@ -1,11 +1,9 @@
 use actix_web::web::Bytes;
 /// Production TTS API - Clean, modular design
 use actix_web::{web, HttpRequest, HttpResponse};
-use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio_stream::wrappers::ReceiverStream;
 
 use crate::config::Config;
 use crate::core::audio::AudioProcessor;
@@ -129,12 +127,13 @@ pub async fn synthesize(
 
     // Post-process samples (silence detection → DC offset → normalize → trim)
     let (pp_steps, pp_warnings) = if !req.skip_postprocess {
+        let audio_mut = Arc::make_mut(&mut audio);
         let result = postprocess::audio::process(
-            std::mem::take(&mut audio.samples),
-            audio.sample_rate,
+            std::mem::take(&mut audio_mut.samples),
+            audio_mut.sample_rate,
             &config.postprocess.audio,
         );
-        audio.samples = result.samples;
+        audio_mut.samples = result.samples;
         (result.steps, result.warnings)
     } else {
         (vec![], vec![])
@@ -183,6 +182,7 @@ pub async fn synthesize(
 pub async fn stream_synthesize(
     req: web::Json<SynthesisRequest>,
     state: web::Data<TTSState>,
+    config: web::Data<Config>,
 ) -> Result<HttpResponse, ApiError> {
     if req.text.is_empty() {
         return Err(ApiError::BadRequest("Text cannot be empty".to_string()));
@@ -210,12 +210,52 @@ pub async fn stream_synthesize(
     let pipeline = StreamingTtsPipeline::new(engine);
     let chunk_rx = pipeline.synthesize_streaming(&req.text, params);
 
-    // Convert the mpsc receiver into an async Stream of Bytes.
-    let byte_stream = ReceiverStream::new(chunk_rx).map(|result| {
-        result
-            .map(|chunk| Bytes::from(chunk.to_pcm16_le()))
-            .map_err(|e| actix_web::error::ErrorInternalServerError(e.to_string()))
-    });
+    // Per-chunk timeout: a stuck engine no longer holds the connection open
+    // indefinitely. We bound the gap *between* successful chunks, not the
+    // total stream length — long-text synthesis can legitimately take a
+    // while, but each sentence should arrive within the cap or we close.
+    // Two distinct timeouts:
+    //   - first-chunk: cold-start can be slow (model warmup, first phoneme
+    //     pass). Give it more headroom than steady-state.
+    //   - per-chunk: once chunks are flowing, each subsequent sentence
+    //     should arrive within the configured cap.
+    let per_chunk_timeout =
+        std::time::Duration::from_secs(config.server.tts_chunk_timeout_secs);
+    let first_chunk_timeout = per_chunk_timeout.saturating_mul(4);
+
+    // State is `(Option<rx>, is_first)` — once we encounter an error or
+    // timeout we drop the receiver and return `None` on the next poll,
+    // closing the stream cleanly. The previous loop kept polling after
+    // a timeout, so the same error fired in a tight loop until actix
+    // tore the connection down.
+    let byte_stream = futures_util::stream::unfold(
+        (Some(chunk_rx), true),
+        move |(rx_opt, is_first)| async move {
+            let mut rx = rx_opt?;
+            let timeout = if is_first { first_chunk_timeout } else { per_chunk_timeout };
+            match tokio::time::timeout(timeout, rx.recv()).await {
+                Ok(Some(Ok(chunk))) => {
+                    let bytes = Bytes::from(chunk.to_pcm16_le());
+                    Some((Ok::<Bytes, actix_web::Error>(bytes), (Some(rx), false)))
+                }
+                Ok(Some(Err(e))) => Some((
+                    Err(actix_web::error::ErrorInternalServerError(e.to_string())),
+                    (None, false),
+                )),
+                Ok(None) => None, // upstream closed cleanly
+                Err(_) => {
+                    let label = if is_first { "first " } else { "" };
+                    Some((
+                        Err(actix_web::error::ErrorGatewayTimeout(format!(
+                            "TTS {label}chunk timeout after {}s",
+                            timeout.as_secs()
+                        ))),
+                        (None, false),
+                    ))
+                }
+            }
+        },
+    );
 
     Ok(HttpResponse::Ok()
         .content_type("audio/pcm")
@@ -904,7 +944,8 @@ mod tests {
             language: None,
             skip_postprocess: false,
         });
-        let result = stream_synthesize(req, state).await;
+        let cfg = web::Data::new(Config::default());
+        let result = stream_synthesize(req, state, cfg).await;
         assert!(matches!(
             result.unwrap_err(),
             crate::error::ApiError::BadRequest(_)
@@ -924,7 +965,8 @@ mod tests {
             language: None,
             skip_postprocess: false,
         });
-        let result = stream_synthesize(req, state).await;
+        let cfg = web::Data::new(Config::default());
+        let result = stream_synthesize(req, state, cfg).await;
         assert!(matches!(
             result.unwrap_err(),
             crate::error::ApiError::BadRequest(_)

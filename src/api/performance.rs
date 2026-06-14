@@ -81,45 +81,47 @@ pub async fn get_performance_metrics(
 ) -> Result<HttpResponse, ApiError> {
     log::info!("[ENDPOINT] Performance metrics requested");
 
-    let mut system = System::new_all();
-    system.refresh_all();
-
-    // System info
-    let total_memory = system.total_memory();
-    let available_memory = system.available_memory();
-    let used_memory = system.used_memory();
-
-    // Calculate CPU usage (average of all CPUs)
-    let cpu_usage =
-        system.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / system.cpus().len() as f32;
-
-    let system_info = SystemInfo {
-        cpu_count: system.cpus().len(),
-        total_memory_mb: total_memory / 1024 / 1024,
-        available_memory_mb: available_memory / 1024 / 1024,
-        used_memory_mb: used_memory / 1024 / 1024,
-        memory_usage_percent: (used_memory as f32 / total_memory as f32) * 100.0,
-        cpu_usage_percent: cpu_usage,
-    };
-
-    // Process info
     let pid = sysinfo::get_current_pid()
         .map_err(|e| ApiError::InternalError(format!("Failed to get PID: {}", e)))?;
 
-    let process_info = if let Some(process) = system.process(pid) {
-        ProcessInfo {
-            pid: pid.as_u32(),
-            memory_mb: process.memory() as f64 / 1024.0 / 1024.0,
-            cpu_usage_percent: process.cpu_usage(),
-            uptime_seconds: state.start_time.elapsed().as_secs(),
-        }
-    } else {
-        ProcessInfo {
-            pid: pid.as_u32(),
-            memory_mb: 0.0,
-            cpu_usage_percent: 0.0,
-            uptime_seconds: state.start_time.elapsed().as_secs(),
-        }
+    // Pull every needed field from a single TTL-cached snapshot to avoid
+    // doing a `System::new_all()` per scrape. Uptime is recomputed
+    // outside the closure since it must reflect the current Instant.
+    let (system_info, process_info_partial) =
+        crate::api::system::with_cached_system(|system| {
+            let total_memory = system.total_memory();
+            let available_memory = system.available_memory();
+            let used_memory = system.used_memory();
+            let cpu_count = system.cpus().len().max(1);
+            let cpu_usage =
+                system.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / cpu_count as f32;
+
+            let info = SystemInfo {
+                cpu_count,
+                total_memory_mb: total_memory / 1024 / 1024,
+                available_memory_mb: available_memory / 1024 / 1024,
+                used_memory_mb: used_memory / 1024 / 1024,
+                memory_usage_percent: if total_memory == 0 {
+                    0.0
+                } else {
+                    (used_memory as f32 / total_memory as f32) * 100.0
+                },
+                cpu_usage_percent: cpu_usage,
+            };
+
+            let proc_partial = system
+                .process(pid)
+                .map(|p| (p.memory() as f64 / 1024.0 / 1024.0, p.cpu_usage()))
+                .unwrap_or((0.0, 0.0));
+
+            (info, proc_partial)
+        });
+
+    let process_info = ProcessInfo {
+        pid: pid.as_u32(),
+        memory_mb: process_info_partial.0,
+        cpu_usage_percent: process_info_partial.1,
+        uptime_seconds: state.start_time.elapsed().as_secs(),
     };
 
     // Runtime info

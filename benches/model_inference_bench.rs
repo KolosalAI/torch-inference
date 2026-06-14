@@ -2,6 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use image::{ImageBuffer, RgbImage};
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest;
+#[cfg(feature = "torch")]
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ struct ModelConfig {
     config_url: Option<String>,
     local_path: String,
     file_extension: String,
+    #[allow(dead_code)]
     task: Option<String>,
 }
 
@@ -166,12 +168,14 @@ async fn ensure_model_downloaded(config: &ModelConfig) -> Result<(), Box<dyn std
     Ok(())
 }
 
+#[allow(dead_code)]
 fn load_imagenet_labels() -> Vec<String> {
     // Return a subset of ImageNet labels for testing
     // In production, load from synset_labels.txt
     (0..1000).map(|i| format!("class_{}", i)).collect()
 }
 
+#[allow(dead_code)]
 fn create_test_image(
     path: &Path,
     width: u32,

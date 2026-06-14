@@ -500,7 +500,7 @@ impl YoloDetector {
         }
 
         // Sort by confidence (descending)
-        detections.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        detections.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
 
         let mut keep = Vec::new();
 

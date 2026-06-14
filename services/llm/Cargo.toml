@@ -2,7 +2,7 @@
 name = "llm-service"
 version = "0.1.0"
 edition = "2021"
-description = "1-bit multimodal LLM microservice (MiniCPM-V via llama-cpp-2)"
+description = "HRM-Text LLM microservice (ONNX via ort) with agent orchestration layer"
 
 [[bin]]
 name = "llm-service"
@@ -46,6 +46,9 @@ ndarray     = "0.16"
 half        = "2"      # f16 <-> f32 conversion of HRM-Text logits
 rand        = "0.8"
 reqwest     = { version = "0.12", features = ["json", "rustls-tls", "multipart"], default-features = false }
+
+# Per-request response IDs (`chatcmpl-<uuid>`) for OpenAI-API parity.
+uuid = { version = "1", features = ["v4"] }
 
 # Agent layer
 regex            = "1"

@@ -19,6 +19,7 @@ pub fn monitor() -> web::Data<Arc<Monitor>> {
     web::Data::new(Arc::new(Monitor::new()))
 }
 
+#[allow(dead_code)]
 pub fn rate_limiter(max: u64) -> web::Data<Arc<RateLimiter>> {
     web::Data::new(Arc::new(RateLimiter::new(max, 60)))
 }
@@ -38,9 +39,8 @@ pub fn system_state() -> web::Data<SystemInfoState> {
 
 pub struct NoOpBackend;
 
-#[async_trait::async_trait]
 impl ClassificationBackend for NoOpBackend {
-    async fn classify_nchw(
+    fn classify_nchw(
         &self,
         _batch: ndarray::Array4<f32>,
         _top_k: usize,

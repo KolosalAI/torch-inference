@@ -130,6 +130,7 @@ impl Default for DetectCfg {
     }
 }
 
+#[derive(Clone)]
 struct ClassifyCfg {
     top_k: usize,
     width: u32,
@@ -180,9 +181,11 @@ async fn run_detect_session(
     let mut hb = interval(Duration::from_secs(20));
     hb.tick().await;
 
-    // Cache the detector for the lifetime of this session — avoids 700ms model
-    // load on every frame. Recreated only when the ONNX model file changes.
-    let mut cached_det: Option<std::sync::Arc<std::sync::Mutex<crate::core::ort_yolo::OrtYoloDetector>>> = None;
+    // Cache the detector for the lifetime of this session — avoids the
+    // ~140 ms ONNX session load on every frame. Recreated only when the
+    // model file changes. Detector is `&self`-only after the post-bench
+    // refactor — no inner Mutex is required.
+    let mut cached_det: Option<std::sync::Arc<crate::core::ort_yolo::OrtYoloDetector>> = None;
     let mut cached_model: Option<std::path::PathBuf> = None;
 
     let ready = ServerMsg::Ready { task: "detect".to_string(), frame: 0 };
@@ -280,7 +283,7 @@ fn find_best_yolo_onnx() -> Option<std::path::PathBuf> {
 async fn process_detect_frame(
     image_bytes: &[u8],
     cfg: &DetectCfg,
-    cached_det: &mut Option<std::sync::Arc<std::sync::Mutex<crate::core::ort_yolo::OrtYoloDetector>>>,
+    cached_det: &mut Option<std::sync::Arc<crate::core::ort_yolo::OrtYoloDetector>>,
     cached_model: &mut Option<std::path::PathBuf>,
 ) -> Result<Vec<DetectionResult>, String> {
     use crate::core::yolo::load_coco_names;
@@ -292,16 +295,14 @@ async fn process_detect_frame(
     if cached_model.as_ref() != Some(&model_path) {
         tracing::info!(model = ?model_path, "ws/detect loading ONNX model (once per session)");
         let path = model_path.clone();
-        let conf = cfg.conf;
-        let iou  = cfg.iou;
         let det = tokio::task::spawn_blocking(move || {
             let class_names = load_coco_names();
-            crate::core::ort_yolo::OrtYoloDetector::new(&path, class_names, conf, iou)
+            crate::core::ort_yolo::OrtYoloDetector::new(&path, class_names)
         })
         .await
         .map_err(|e| format!("task join: {}", e))?
         .map_err(|e| e.to_string())?;
-        *cached_det = Some(std::sync::Arc::new(std::sync::Mutex::new(det)));
+        *cached_det = Some(std::sync::Arc::new(det));
         *cached_model = Some(model_path);
     }
 
@@ -311,10 +312,8 @@ async fn process_detect_frame(
     let bytes = image_bytes.to_vec();
 
     tokio::task::spawn_blocking(move || {
-        let mut d = det.lock().unwrap();
-        d.set_conf_threshold(conf);
-        d.set_iou_threshold(iou);
-        let raw = d.detect_bytes(&bytes).map_err(|e| e.to_string())?;
+        // Thresholds at call time — &self only, no inner lock needed.
+        let raw = det.detect_bytes(&bytes, conf, iou).map_err(|e| e.to_string())?;
         Ok(raw
             .detections
             .into_iter()
@@ -390,17 +389,20 @@ async fn process_classify_frame(
     cfg: &ClassifyCfg,
     state: &ClassifyState,
 ) -> Result<Vec<Prediction>, String> {
-    let pipeline = ImagePipeline::new(PreprocessConfig::imagenet(cfg.width, cfg.height));
-    let batch = pipeline
-        .preprocess_batch(&[image_bytes.to_vec()])
-        .map_err(|e| e.to_string())?;
-
-    state
-        .backend
-        .classify_nchw(batch, cfg.top_k)
-        .await
-        .map_err(|e| e.to_string())
-        .map(|mut v| v.pop().unwrap_or_default())
+    // Preprocess + ORT inference are CPU-bound; offload to spawn_blocking
+    // so the websocket reactor can keep flushing frames.
+    let backend = state.backend.clone();
+    let owned = image_bytes.to_vec();
+    let cfg = cfg.clone();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Prediction>> {
+        let pipeline = ImagePipeline::new(PreprocessConfig::imagenet(cfg.width, cfg.height));
+        let batch = pipeline.preprocess_batch(&[owned])?;
+        let mut v = backend.classify_nchw(batch, cfg.top_k)?;
+        Ok(v.pop().unwrap_or_default())
+    })
+    .await
+    .map_err(|e| format!("task join: {e}"))?
+    .map_err(|e| e.to_string())
 }
 
 // ── Route config ──────────────────────────────────────────────────────────────

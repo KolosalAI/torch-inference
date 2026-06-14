@@ -59,6 +59,47 @@ pub enum ApiError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
+
+    #[error("Service unavailable: {0}")]
+    ServiceUnavailable(String),
+
+    #[error("Gateway timeout: {0}")]
+    GatewayTimeout(String),
+}
+
+/// Map internal inference errors to client-facing HTTP errors with the
+/// correct status code. Avoids the previous pattern where every internal
+/// error became 500, even timeouts (408/504), missing models (404), and
+/// GPU/backend failures (503).
+impl From<InferenceError> for ApiError {
+    fn from(err: InferenceError) -> Self {
+        match err {
+            InferenceError::ModelNotFound(s) => ApiError::NotFound(s),
+            InferenceError::InvalidInput(s) => ApiError::BadRequest(s),
+            InferenceError::AuthenticationFailed(s) => ApiError::Unauthorized(s),
+            InferenceError::Timeout => {
+                ApiError::GatewayTimeout("inference timed out".to_string())
+            }
+            InferenceError::GpuError(s) => ApiError::ServiceUnavailable(format!("GPU: {s}")),
+            InferenceError::ModelLoadError(s) => {
+                ApiError::ServiceUnavailable(format!("model load: {s}"))
+            }
+            InferenceError::ConfigError(s) => {
+                ApiError::InternalError(format!("config error: {s}"))
+            }
+            InferenceError::InferenceFailed(s) => {
+                ApiError::InternalError(format!("inference failed: {s}"))
+            }
+            InferenceError::IoError(e) => ApiError::InternalError(format!("io: {e}")),
+            InferenceError::SerializationError(e) => {
+                ApiError::InternalError(format!("serde: {e}"))
+            }
+            InferenceError::InternalError(s) => ApiError::InternalError(s),
+        }
+    }
 }
 
 impl ResponseError for ApiError {
@@ -78,6 +119,9 @@ impl ResponseError for ApiError {
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            ApiError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            ApiError::GatewayTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
         }
     }
 }

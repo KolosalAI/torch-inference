@@ -139,7 +139,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = HTTPServer((HOST, PORT), Handler)
+    # SO_REUSEADDR so the port is immediately reusable after server restart
+    HTTPServer.allow_reuse_address = True
+    try:
+        server = HTTPServer((HOST, PORT), Handler)
+    except OSError as e:
+        log.error(f"Cannot bind {HOST}:{PORT} — {e}. Is another instance already running?")
+        raise SystemExit(1)
     log.info(f"STT service listening on {HOST}:{PORT} (model={MODEL_SIZE})")
     try:
         server.serve_forever()

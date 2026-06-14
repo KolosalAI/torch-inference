@@ -1082,7 +1082,6 @@ mod tests {
 
     #[test]
     fn test_bytes_entry_is_expired_true() {
-        use std::time::{SystemTime, UNIX_EPOCH};
         let now = coarse_unix_secs();
         let entry = BytesCacheEntry {
             data: Arc::new(Bytes::from("x")),
@@ -1094,7 +1093,6 @@ mod tests {
 
     #[test]
     fn test_bytes_entry_is_expired_false() {
-        use std::time::{SystemTime, UNIX_EPOCH};
         let now = coarse_unix_secs();
         let entry = BytesCacheEntry {
             data: Arc::new(Bytes::from("x")),

@@ -67,8 +67,12 @@ pub async fn process_image_secure(mut payload: Multipart) -> Result<HttpResponse
     // Parse multipart data
     while let Some(item) = payload.next().await {
         let mut field = item.map_err(|e| ApiError::BadRequest(e.to_string()))?;
-        let content_disposition = field.content_disposition();
-        let field_name = content_disposition.get_name().unwrap_or("");
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name())
+            .unwrap_or("")
+            .to_string();
+        let field_name = field_name.as_str();
 
         if field_name == "security_level" {
             let mut level_str = String::new();
@@ -110,7 +114,7 @@ pub async fn process_image_secure(mut payload: Multipart) -> Result<HttpResponse
         let mut png_data = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut png_data);
         sanitized
-            .write_to(&mut cursor, image::ImageOutputFormat::Png)
+            .write_to(&mut cursor, image::ImageFormat::Png)
             .map_err(|e| ApiError::InternalError(e.to_string()))?;
 
         Some(base64_encode(&png_data))
@@ -134,8 +138,12 @@ pub async fn validate_image_security(mut payload: Multipart) -> Result<HttpRespo
 
     while let Some(item) = payload.next().await {
         let mut field = item.map_err(|e| ApiError::BadRequest(e.to_string()))?;
-        let content_disposition = field.content_disposition();
-        let field_name = content_disposition.get_name().unwrap_or("");
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name())
+            .unwrap_or("")
+            .to_string();
+        let field_name = field_name.as_str();
 
         if field_name == "security_level" {
             let mut level_str = String::new();
@@ -459,7 +467,7 @@ mod tests {
         let mut out = Vec::new();
         img.write_to(
             &mut std::io::Cursor::new(&mut out),
-            image::ImageOutputFormat::Png,
+            image::ImageFormat::Png,
         )
         .unwrap();
         out

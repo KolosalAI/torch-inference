@@ -343,6 +343,11 @@ impl STTModel {
     }
 
     fn to_mono(&self, samples: &[f32], channels: u16) -> Vec<f32> {
+        // `channels == 0` would divide by zero. `channels == 1` is already
+        // mono — cloning is cheaper than the chunk + sum dance.
+        if channels <= 1 {
+            return samples.to_vec();
+        }
         samples
             .chunks(channels as usize)
             .map(|chunk| chunk.iter().sum::<f32>() / channels as f32)
@@ -410,6 +415,7 @@ pub struct AudioModelManager {
     tts_models: dashmap::DashMap<String, Arc<TTSModel>>,
     stt_models: dashmap::DashMap<String, Arc<STTModel>>,
     model_dir: PathBuf,
+    whisper: parking_lot::RwLock<Option<Arc<super::whisper_onnx::WhisperOnnxPipeline>>>,
 }
 
 impl AudioModelManager {
@@ -418,6 +424,31 @@ impl AudioModelManager {
             tts_models: dashmap::DashMap::new(),
             stt_models: dashmap::DashMap::new(),
             model_dir: model_dir.as_ref().to_path_buf(),
+            whisper: parking_lot::RwLock::new(None),
+        }
+    }
+
+    /// Register the Whisper ONNX pipeline as the active STT engine.
+    pub fn set_whisper_pipeline(&self, pipeline: super::whisper_onnx::WhisperOnnxPipeline) {
+        *self.whisper.write() = Some(Arc::new(pipeline));
+        log::info!("WhisperOnnxPipeline registered as default STT engine");
+    }
+
+    /// Transcribe `audio`.  Prefers the Whisper ONNX pipeline if loaded; falls
+    /// back to the legacy "default" STTModel, then errors with a clear message.
+    pub fn transcribe_audio(
+        &self,
+        audio: &super::audio::AudioData,
+        return_timestamps: bool,
+    ) -> anyhow::Result<TranscriptionResult> {
+        if let Some(w) = self.whisper.read().clone() {
+            return w.transcribe(audio, return_timestamps);
+        }
+        match self.stt_models.get("default") {
+            Some(m) => m.transcribe(audio, return_timestamps),
+            None => anyhow::bail!(
+                "STT model not loaded — Whisper models are downloading on first run, please retry"
+            ),
         }
     }
 

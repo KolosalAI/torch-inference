@@ -41,7 +41,8 @@ services:
     environment:
       - POSTGRES_DB=torch_inference_dev
       - POSTGRES_USER=dev_user
-      - POSTGRES_PASSWORD=dev_password
+      # Override via `.env` for the dev stack; never commit a real password.
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-dev_password}
     ports:
       - "5432:5432"
     volumes:

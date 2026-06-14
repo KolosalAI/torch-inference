@@ -17,6 +17,15 @@ use crate::middleware::correlation_id::get_correlation_id;
 use crate::postprocess::yolo::EnrichedYoloResults;
 use crate::postprocess::{self, envelope::ResponseMeta, Envelope};
 
+/// Read the (width, height) header of an in-memory image without decoding
+/// pixels. Returns an `anyhow::Result` so the caller can format the error.
+fn image_dimensions_from_bytes(bytes: &[u8]) -> anyhow::Result<(u32, u32)> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()?;
+    let dims = reader.into_dimensions()?;
+    Ok(dims)
+}
+
 /// YOLO detection request.
 /// `conf_threshold` and `iou_threshold` default to `None`, meaning "use server config defaults"
 /// (`config.models.yolo_conf_threshold` / `config.models.yolo_iou_threshold`).
@@ -78,6 +87,12 @@ pub struct YoloModelsResponse {
 
 pub struct YoloState {
     pub models_dir: PathBuf,
+    /// Cached ORT detector. Populated on first successful `/yolo/detect`
+    /// request that finds the model file; subsequent requests share the
+    /// same `Arc<OrtYoloDetector>`. Saves ~140 ms per request (the
+    /// `Session::builder` + EP setup + `commit_from_file` cost) under
+    /// `cargo bench --bench yolo_detector_cache_bench`.
+    pub ort_detector: parking_lot::Mutex<Option<std::sync::Arc<crate::core::ort_yolo::OrtYoloDetector>>>,
 }
 
 /// Detect objects in an uploaded image
@@ -102,23 +117,31 @@ pub async fn detect_objects(
     let size = YoloSize::from_suffix(&query.model_size)
         .ok_or_else(|| ApiError::BadRequest(format!("Invalid model size: {}", query.model_size)))?;
 
-    // Save uploaded image to temp file
-    let temp_dir = std::env::temp_dir();
-    let temp_file = temp_dir.join(format!("yolo_input_{}.jpg", uuid::Uuid::new_v4()));
-
-    // Extract image from multipart
+    // Accumulate the uploaded image in memory, capped at the configured
+    // multipart limit. We previously wrote to /tmp first and then read back —
+    // that was two extra disk hops per request and leaked temp files on any
+    // error path that returned before cleanup. The torch path below still
+    // needs a temp file because `YoloDetector::detect` takes a path; the ORT
+    // path takes bytes directly.
+    let max_bytes = config.server.multipart_image_limit_mb.saturating_mul(1024 * 1024);
+    let mut image_bytes: Vec<u8> = Vec::new();
     while let Some(Ok(mut field)) = payload.next().await {
-        let mut file = fs::File::create(&temp_file)
-            .await
-            .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
         while let Some(chunk) = field.next().await {
             let data = chunk.map_err(|e| ApiError::InternalError(e.to_string()))?;
-            file.write_all(&data)
-                .await
-                .map_err(|e| ApiError::InternalError(e.to_string()))?;
+            if image_bytes.len().saturating_add(data.len()) > max_bytes {
+                return Err(ApiError::PayloadTooLarge(format!(
+                    "image upload exceeds {} MiB limit",
+                    config.server.multipart_image_limit_mb
+                )));
+            }
+            image_bytes.extend_from_slice(&data);
         }
     }
+    // Don't pre-reject empty payloads: the model-existence checks below
+    // still need to fire (clients calling with no body get a 404 on missing
+    // model, which is what the test suite asserts for not-yet-downloaded
+    // models). The decoder downstream surfaces a 400 for non-empty but
+    // malformed inputs.
 
     // Model name (used in response metadata)
     let model_name = format!(
@@ -139,12 +162,22 @@ pub async fn detect_objects(
             .join(format!("{}.pt", model_name));
 
         if !model_path.exists() {
-            let _ = fs::remove_file(&temp_file).await;
             return Err(ApiError::NotFound(format!(
                 "Model not found: {}. Please download it first.",
                 model_name
             )));
         }
+
+        // The torch detector takes a path. Use a NamedTempFile so cleanup
+        // happens regardless of return path — including panics.
+        let mut tmp = tempfile::Builder::new()
+            .prefix("yolo_input_")
+            .suffix(".jpg")
+            .tempfile()
+            .map_err(|e| ApiError::InternalError(format!("tempfile: {}", e)))?;
+        std::io::Write::write_all(tmp.as_file_mut(), &image_bytes)
+            .map_err(|e| ApiError::InternalError(e.to_string()))?;
+        let temp_path = tmp.path().to_path_buf();
 
         use tch::Device;
         let mut detector =
@@ -153,11 +186,22 @@ pub async fn detect_objects(
         detector.set_conf_threshold(conf_threshold);
         detector.set_iou_threshold(iou_threshold);
 
-        let raw_results = detector
-            .detect(&temp_file)
+        // PyTorch inference is synchronous CPU/GPU work; mirror the ORT path's
+        // spawn_blocking treatment so we don't stall the actix reactor.
+        let temp_for_blocking = temp_path.clone();
+        let raw_results = tokio::task::spawn_blocking(move || detector.detect(&temp_for_blocking))
+            .await
+            .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
             .map_err(|e| ApiError::InternalError(e.to_string()))?;
-        let (img_w, img_h) = image::image_dimensions(&temp_file).unwrap_or((640, 640));
-        let _ = fs::remove_file(&temp_file).await;
+        let (img_w, img_h) = image_dimensions_from_bytes(&image_bytes)
+            .map_err(|e| ApiError::BadRequest(format!("could not read image dimensions: {e}")))?;
+        if img_w == 0 || img_h == 0 {
+            return Err(ApiError::BadRequest(format!(
+                "image has zero dimension: {img_w}x{img_h}"
+            )));
+        }
+        // tmp is dropped here, removing the file.
+        drop(tmp);
 
         let pp = postprocess::yolo::process(raw_results, img_w, img_h, &config.postprocess.yolo);
         let (enriched, pp_steps, pp_warnings) = if !query.skip_postprocess {
@@ -190,26 +234,46 @@ pub async fn detect_objects(
     // Uses YOLOv8n ONNX model from config.models.cache_dir/yolo/yolov8n.onnx
     let ort_model_path = config.models.cache_dir.join("yolo/yolov8n.onnx");
     if !ort_model_path.exists() {
-        let _ = fs::remove_file(&temp_file).await;
         return Err(ApiError::NotFound(format!(
             "YOLO ORT model not found at {:?}", ort_model_path
         )));
     }
 
-    let detector =
-        crate::core::ort_yolo::OrtYoloDetector::new(&ort_model_path, class_names, conf_threshold, iou_threshold)
-            .map_err(|e| ApiError::InternalError(format!("YOLO init: {}", e)))?;
+    // Reuse the cached detector if we've already built one. Otherwise
+    // pay the `Session::builder` cost once, lazily, behind the mutex.
+    // Saves ~140 ms per request once warmed (see
+    // benches/yolo_detector_cache_bench.rs).
+    let detector = {
+        let mut guard = state.ort_detector.lock();
+        match &*guard {
+            Some(d) => d.clone(),
+            None => {
+                let det = crate::core::ort_yolo::OrtYoloDetector::new(
+                    &ort_model_path,
+                    class_names,
+                )
+                .map_err(|e| ApiError::InternalError(format!("YOLO init: {}", e)))?;
+                let arc = std::sync::Arc::new(det);
+                *guard = Some(arc.clone());
+                arc
+            }
+        }
+    };
 
-    let image_bytes = tokio::fs::read(&temp_file)
-        .await
-        .map_err(|e| ApiError::InternalError(e.to_string()))?;
-    let (img_w, img_h) = image::image_dimensions(&temp_file).unwrap_or((640, 640));
-    let _ = fs::remove_file(&temp_file).await;
+    let (img_w, img_h) = image_dimensions_from_bytes(&image_bytes)
+        .map_err(|e| ApiError::BadRequest(format!("could not read image dimensions: {e}")))?;
+    if img_w == 0 || img_h == 0 {
+        return Err(ApiError::BadRequest(format!(
+            "image has zero dimension: {img_w}x{img_h}"
+        )));
+    }
 
-    let raw_results = tokio::task::spawn_blocking(move || detector.detect_bytes(&image_bytes))
-        .await
-        .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
-        .map_err(|e| ApiError::InternalError(format!("YOLO detect: {}", e)))?;
+    let raw_results = tokio::task::spawn_blocking(move || {
+        detector.detect_bytes(&image_bytes, conf_threshold, iou_threshold)
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
+    .map_err(|e| ApiError::InternalError(format!("YOLO detect: {}", e)))?;
 
     let pp = postprocess::yolo::process(raw_results, img_w, img_h, &config.postprocess.yolo);
     let (enriched, pp_steps, pp_warnings) = if !query.skip_postprocess {
@@ -513,7 +577,16 @@ mod tests {
     // ── Handler unit tests (no actix HTTP stack needed) ───────────────────────
 
     fn make_yolo_state(dir: std::path::PathBuf) -> web::Data<YoloState> {
-        web::Data::new(YoloState { models_dir: dir })
+        web::Data::new(YoloState {
+            models_dir: dir,
+            ort_detector: parking_lot::Mutex::new(None),
+        })
+    }
+
+    fn make_yolo_test_config_no_model() -> web::Data<crate::config::Config> {
+        let mut cfg = crate::config::Config::default();
+        cfg.models.cache_dir = std::path::PathBuf::from("/nonexistent_cache_for_yolo_test_xyz");
+        web::Data::new(cfg)
     }
 
     // list_models — always succeeds and returns all versions/sizes
@@ -814,7 +887,6 @@ mod tests {
     async fn test_detect_objects_no_model_on_disk_returns_not_found() {
         use actix_web::{test as actix_test, App};
 
-        // Use a nonexistent models_dir so model_path.exists() == false.
         let state = make_yolo_state(std::path::PathBuf::from(
             "/nonexistent_models_dir_for_yolo_test_xyz",
         ));
@@ -822,7 +894,8 @@ mod tests {
         let app = actix_test::init_service(
             App::new()
                 .app_data(state)
-                .app_data(web::Data::new(crate::config::Config::default()))
+                // Use a config with nonexistent cache_dir so the ORT model check returns 404.
+                .app_data(make_yolo_test_config_no_model())
                 .configure(configure),
         )
         .await;
@@ -840,7 +913,7 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
-        // No model on disk → 404 Not Found.
+        // ORT fallback path: no ONNX model in cache_dir → 404.
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
     }
 
@@ -867,7 +940,8 @@ mod tests {
         let app = actix_test::init_service(
             App::new()
                 .app_data(state)
-                .app_data(web::Data::new(crate::config::Config::default()))
+                // Use a config with nonexistent cache_dir so the ORT model check returns 404.
+                .app_data(make_yolo_test_config_no_model())
                 .configure(configure),
         )
         .await;
@@ -893,7 +967,7 @@ mod tests {
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
 
-        // .pt exists but ONNX model not at cache_dir/yolo/yolov8n.onnx → 404.
+        // Without the `torch` feature, ORT path checks for ONNX model in cache_dir → 404.
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
 
         // Cleanup temp dir.
@@ -912,7 +986,8 @@ mod tests {
         let app = actix_test::init_service(
             App::new()
                 .app_data(state)
-                .app_data(web::Data::new(crate::config::Config::default()))
+                // Use a config with nonexistent cache_dir so the ORT model check returns 404.
+                .app_data(make_yolo_test_config_no_model())
                 .configure(configure),
         )
         .await;
@@ -929,7 +1004,7 @@ mod tests {
             .set_payload(body)
             .to_request();
         let resp = actix_test::call_service(&app, req).await;
-        // Model dir does not exist → 404 Not Found.
+        // ORT fallback path: no ONNX model in cache_dir → 404.
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
     }
 }

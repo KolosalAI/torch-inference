@@ -1,5 +1,6 @@
 use actix_web::{test, web, App};
 use torch_inference::api::system::{get_config, get_gpu_stats, get_system_info};
+use torch_inference::config::Config;
 
 use super::helpers::system_state;
 
@@ -48,6 +49,7 @@ async fn get_system_config_returns_200() {
     let app = test::init_service(
         App::new()
             .app_data(system_state())
+            .app_data(web::Data::new(Config::default()))
             .route("/system/config", web::get().to(get_config)),
     )
     .await;
@@ -61,6 +63,7 @@ async fn get_system_config_body_has_server_field() {
     let app = test::init_service(
         App::new()
             .app_data(system_state())
+            .app_data(web::Data::new(Config::default()))
             .route("/system/config", web::get().to(get_config)),
     )
     .await;

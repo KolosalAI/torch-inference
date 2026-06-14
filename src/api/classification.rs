@@ -72,8 +72,12 @@ pub async fn classify_image_upload(
     while let Some(item) = payload.next().await {
         let mut field = item.map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
-        let content_disposition = field.content_disposition();
-        let field_name = content_disposition.get_name().unwrap_or("");
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name())
+            .unwrap_or("")
+            .to_string();
+        let field_name = field_name.as_str();
 
         match field_name {
             "image" => {

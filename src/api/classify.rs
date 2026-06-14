@@ -7,7 +7,6 @@
 /// The handler is decoupled from ORT via the [`ClassificationBackend`] trait so
 /// the endpoint can be unit-tested with a mock without a real `.onnx` file.
 use actix_web::{web, HttpRequest, HttpResponse};
-use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -66,13 +65,16 @@ pub struct BatchClassifyResponse {
 ///
 /// Implement this trait on a struct that holds an ORT `Session` to wire
 /// real ONNX inference. Use [`MockClassificationBackend`] in tests.
-#[async_trait]
-pub trait ClassificationBackend: Send + Sync {
+///
+/// The method is intentionally synchronous: every impl does pure CPU work
+/// (ORT inference, softmax, top-k). Callers must run it on a blocking pool
+/// via `tokio::task::spawn_blocking` to avoid stalling the actix reactor.
+pub trait ClassificationBackend: Send + Sync + 'static {
     /// Run classification on a pre-normalised NCHW f32 batch.
     ///
     /// `batch` is shaped `[N, 3, H, W]`.  Return one `Vec<Prediction>` per
     /// image, sorted by confidence descending, truncated to `top_k`.
-    async fn classify_nchw(
+    fn classify_nchw(
         &self,
         batch: ndarray::Array4<f32>,
         top_k: usize,
@@ -123,6 +125,22 @@ pub async fn batch_classify(
         ));
     }
 
+    // Per-image base64 cap: the JSON-level cap (config.server.json_body_limit_mb)
+    // gates total payload, but a single oversize item could still cause an OOM
+    // at decode. Reject before we touch base64.
+    let max_b64 = config
+        .server
+        .classify_image_limit_mb
+        .saturating_mul(1024 * 1024);
+    for (i, b64) in req.images.iter().enumerate() {
+        if b64.len() > max_b64 {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "image[{}] base64 exceeds {} MiB limit",
+                i, config.server.classify_image_limit_mb
+            )));
+        }
+    }
+
     // Decode base64 → raw bytes.
     use base64::Engine as _;
     let raw_images: Vec<Vec<u8>> = req
@@ -136,19 +154,20 @@ pub async fn batch_classify(
         })
         .collect::<Result<_, _>>()?;
 
-    // Preprocess: decode → resize → normalise → NCHW f32.
+    // Preprocess and inference are CPU-bound; offload to a blocking task so
+    // the actix reactor stays free to serve other requests. We move owned
+    // data + a backend Arc into the closure.
     let cfg = PreprocessConfig::imagenet(req.model_width, req.model_height);
-    let pipeline = ImagePipeline::new(cfg);
-    let batch = pipeline
-        .preprocess_batch(&raw_images)
-        .map_err(|e| ApiError::BadRequest(format!("preprocess failed: {}", e)))?;
-
-    // Run inference via the backend.
-    let results = state
-        .backend
-        .classify_nchw(batch, req.top_k)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("inference failed: {}", e)))?;
+    let backend = state.backend.clone();
+    let top_k = req.top_k;
+    let results = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let pipeline = ImagePipeline::new(cfg);
+        let batch = pipeline.preprocess_batch(&raw_images)?;
+        backend.classify_nchw(batch, top_k)
+    })
+    .await
+    .map_err(|e| ApiError::InternalError(format!("task join: {}", e)))?
+    .map_err(|e| ApiError::BadRequest(format!("classify failed: {}", e)))?;
 
     // Post-process
     let (results, pp_steps, pp_warnings) = if !req.skip_postprocess {
@@ -205,12 +224,28 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 pub async fn stream_classify(
     req: web::Json<BatchClassifyRequest>,
     state: web::Data<ClassifyState>,
+    config: web::Data<Config>,
 ) -> Result<HttpResponse, ApiError> {
+    let item_timeout =
+        std::time::Duration::from_secs(config.server.classify_item_timeout_secs);
     if req.images.is_empty() {
         return Err(ApiError::BadRequest("images must not be empty".to_string()));
     }
     if req.images.len() > 128 {
         return Err(ApiError::BadRequest("batch too large (max 128)".to_string()));
+    }
+    // Same per-image base64 cap as `/classify/batch`.
+    let max_b64 = config
+        .server
+        .classify_image_limit_mb
+        .saturating_mul(1024 * 1024);
+    for (i, b64) in req.images.iter().enumerate() {
+        if b64.len() > max_b64 {
+            return Err(ApiError::PayloadTooLarge(format!(
+                "image[{}] base64 exceeds {} MiB limit",
+                i, config.server.classify_image_limit_mb
+            )));
+        }
     }
     let top_k    = req.top_k.clamp(1, 1000);
     let width    = req.model_width.clamp(1, 4096);
@@ -218,10 +253,13 @@ pub async fn stream_classify(
     let images   = req.into_inner().images;
     let total    = images.len();
     let backend  = state.into_inner().backend.clone();
+    // Build the preprocessing pipeline once for the whole stream — every
+    // image in this request shares the same target dimensions.
+    let pipeline = Arc::new(ImagePipeline::new(PreprocessConfig::imagenet(width, height)));
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
-    tokio::spawn(async move {
+    crate::spawn_safe::spawn_logged("classify_stream_writer", async move {
         use base64::Engine as _;
         let batch_start = Instant::now();
 
@@ -239,24 +277,40 @@ pub async fn stream_classify(
                 }
             };
 
-            let cfg = PreprocessConfig::imagenet(width, height);
-            let pipeline = ImagePipeline::new(cfg);
-            let batch = match pipeline.preprocess_batch(&[raw]) {
-                Ok(b) => b,
-                Err(e) => {
+            // Preprocess + inference for one image are CPU-bound. Offload
+            // to spawn_blocking so the SSE writer task can keep flushing
+            // earlier results to the client. Each item is bounded by
+            // `classify_item_timeout_secs` so a hung inference can't stall
+            // the rest of the batch.
+            let backend_b = backend.clone();
+            let pipeline_b = pipeline.clone();
+            let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Prediction>> {
+                let batch = pipeline_b.preprocess_batch(&[raw])?;
+                let mut v = backend_b.classify_nchw(batch, top_k)?;
+                Ok(v.pop().unwrap_or_default())
+            });
+
+            let preds = match tokio::time::timeout(item_timeout, blocking).await {
+                Ok(Ok(Ok(p))) => p,
+                Ok(Ok(Err(e))) => {
                     let ev = sse_event(&serde_json::json!({
                         "idx": idx, "total": total, "error": e.to_string()
                     }));
                     let _ = tx.send(Ok(ev)).await;
                     continue;
                 }
-            };
-
-            let preds = match backend.classify_nchw(batch, top_k).await {
-                Ok(mut v) => v.pop().unwrap_or_default(),
-                Err(e) => {
+                Ok(Err(join_err)) => {
                     let ev = sse_event(&serde_json::json!({
-                        "idx": idx, "total": total, "error": e.to_string()
+                        "idx": idx, "total": total, "error": format!("task join: {}", join_err)
+                    }));
+                    let _ = tx.send(Ok(ev)).await;
+                    continue;
+                }
+                Err(_) => {
+                    let ev = sse_event(&serde_json::json!({
+                        "idx": idx,
+                        "total": total,
+                        "error": format!("classify timeout after {}s", item_timeout.as_secs())
                     }));
                     let _ = tx.send(Ok(ev)).await;
                     continue;
@@ -325,9 +379,8 @@ pub mod tests {
         }
     }
 
-    #[async_trait]
     impl ClassificationBackend for MockClassificationBackend {
-        async fn classify_nchw(
+        fn classify_nchw(
             &self,
             batch: ndarray::Array4<f32>,
             top_k: usize,

@@ -10,9 +10,9 @@ module.exports = {
 
   // ── Sidebar nav — uses Playwright :has-text() pseudo-class
   navStatus:     'button.nav-item:has-text("Status")',
-  navTTS:        'button.nav-item:has-text("TTS Stream")',
+  navTTS:        'button.nav-item:has-text("TTS")',
   navClassify:   'button.nav-item:has-text("Classify")',
-  navLLM:        'button.nav-item:has-text("LLM Chat")',
+  navLLM:        'button.nav-item:has-text("Assistant")',
   navCompletion: 'button.nav-item:has-text("Completion")',
   navDashboard:  'button.nav-item:has-text("Dashboard")',
   navEndpoints:  'button.nav-item:has-text("Endpoints")',
@@ -21,7 +21,7 @@ module.exports = {
   panelStatus:     '#panel-status',
   panelTTS:        '#panel-tts',
   panelClassify:   '#panel-classify',
-  panelLLM:        '#panel-llm',
+  panelLLM:        '#panel-assistant',
   panelCompletion: '#panel-completion',
   panelDashboard:  '#panel-dashboard',
   panelEndpoints:  '#panel-endpoints',
@@ -35,13 +35,13 @@ module.exports = {
   sErrors:   '#s-errors',
   healthRaw: '#health-raw',
 
-  // ── TTS panel ───────────────────────────────────────────
-  ttsText:      '#tts-text',
+  // ── TTS panel (WebSocket streaming) ─────────────────────
+  ttsText:      '#ws-tts-text',
   ttsEngine:    '#tts-engine',
-  ttsVoice:     '#tts-voice',
-  ttsSpeed:     '#tts-speed',
-  ttsBtn:       '#tts-btn',
-  ttsStatus:    '#tts-status',
+  ttsVoice:     '#ws-tts-voice',
+  ttsSpeed:     '#ws-tts-speed',
+  ttsBtn:       '#ws-tts-btn',
+  ttsStatus:    '#ws-tts-status',
   ttsAudioWrap: '#tts-audio-wrap',
   ttsAudio:     '#tts-audio',
 
@@ -55,15 +55,15 @@ module.exports = {
   clsBtn:     '#cls-btn',
   clsOut:     '#cls-out',
 
-  // ── LLM Chat panel ──────────────────────────────────────
-  chatHistory: '#chat-history',
-  chatInput:   '#chat-input',
-  chatBtn:     '#chat-btn',
-  chatModel:   '#chat-model',
-  chatMaxtok:  '#chat-maxtok',
-  chatTemp:    '#chat-temp',
+  // ── LLM Chat panel (Assistant) ──────────────────────────
+  chatHistory: '#llm-chat-box',
+  chatInput:   '#llm-input',
+  chatBtn:     '#llm-send-btn',
+  chatModel:   '#llm-model',
+  chatMaxtok:  '#llm-max-tokens',
+  chatTemp:    '#llm-temp',
 
-  // ── Completion panel ────────────────────────────────────
+  // ── Completion panel (not implemented) ──────────────────
   cmpPrompt: '#cmp-prompt',
   cmpModel:  '#cmp-model',
   cmpMaxtok: '#cmp-maxtok',
@@ -171,7 +171,7 @@ module.exports = {
   sysConfigContent: '#sys-config-content',
 
   // ── Audio panel ─────────────────────────────────────────
-  navAudio:         'button.nav-item:has-text("Audio")',
+  navAudio:         'button.nav-item:has-text("STT")',
   panelAudio:       '#panel-audio',
   audioHealthBadge: '#audio-health-badge',
   audioDropzone:    '#audio-dropzone',

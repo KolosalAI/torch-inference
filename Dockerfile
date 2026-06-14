@@ -1,152 +1,82 @@
 # syntax=docker/dockerfile:1
+#
+# Multi-stage Dockerfile for the Rust torch-inference server.
+# Builds the release binary in one stage, then drops it into a slim runtime
+# image with the ONNX Runtime shared library and ffmpeg/libsndfile for audio.
 
-# Multi-stage Dockerfile for PyTorch Inference Framework
-# Optimized for size, performance, and security
+# ── builder ──────────────────────────────────────────────────────────────────
+FROM rust:1.81-bookworm AS builder
 
-# Build stage for dependencies
-FROM python:3.10.11-slim AS builder
+WORKDIR /build
 
-# Build arguments
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
-ARG PYTORCH_VERSION=2.1.0
-ARG CUDA_VERSION=cu121
-
-# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    pkg-config \
+    libssl-dev \
     cmake \
-    curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment for better dependency isolation
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Pre-cache deps. Copy manifests first so Cargo's dep build is cached
+# independently of source changes.
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "" > src/lib.rs && \
+    cargo build --release --no-default-features --features production --bin torch-inference-server || true && \
+    rm -rf src
 
-# Upgrade pip and install build tools
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+COPY src ./src
+COPY benches ./benches
 
-# Copy dependency files first for better layer caching
-COPY requirements.txt requirements-base.txt requirements-tensorrt.txt pyproject.toml ./
+RUN cargo build --release --no-default-features --features production --bin torch-inference-server
 
-# Install base Python dependencies first using pip for reliability
-# Split installation to avoid I/O errors with large packages
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=tmpfs,target=/tmp,size=4G \
-    pip install --no-cache-dir -r requirements-base.txt
+# ── runtime ──────────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim AS production
 
-# Install TensorRT packages separately with fallback strategy
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=tmpfs,target=/tmp,size=4G \
-    pip install --no-cache-dir --retries 5 -r requirements-tensorrt.txt || \
-    (echo "TensorRT installation failed, continuing without TensorRT optimizations..." && \
-     echo "Application will run without TensorRT acceleration")
-
-# Install PyTorch with CUDA support (if needed) with robust error handling
-# Don't use tmpfs for PyTorch as packages are very large (2GB+)
-RUN --mount=type=cache,target=/root/.cache/pip \
-    if [ "$TARGETPLATFORM" != "linux/arm64" ]; then \
-        pip install --no-cache-dir --retries 5 \
-            torch==${PYTORCH_VERSION}+${CUDA_VERSION} \
-            torchvision \
-            torchaudio \
-            --index-url https://download.pytorch.org/whl/${CUDA_VERSION} || \
-        (echo "PyTorch CUDA installation failed, trying CPU version..." && \
-         pip install --no-cache-dir torch torchvision torchaudio); \
-    else \
-        pip install --no-cache-dir torch torchvision torchaudio; \
-    fi
-
-# Production stage
-FROM python:3.10.11-slim AS production
-
-# Set environment variables for Python optimization
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=random \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Essential runtime libraries
-    libc6 \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
+    ca-certificates \
+    libssl3 \
     libgomp1 \
-    # Audio processing libraries for TTS
     libsndfile1 \
     ffmpeg \
-    # Network utilities
     curl \
-    # Clean up in same layer to reduce image size
+    wget \
+    unzip \
     && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean \
-    && apt-get autoremove -y
+    && apt-get clean
 
-# Create non-root user for security
+# Install the ONNX Runtime dynamic library. ort = "2.0.0-rc.10" with
+# `load-dynamic` requires libonnxruntime.so at runtime.
+ARG ORT_VERSION=1.18.0
+RUN ARCH="$(uname -m)" && \
+    case "$ARCH" in \
+        x86_64)  ORT_PKG="onnxruntime-linux-x64-${ORT_VERSION}.tgz" ;; \
+        aarch64) ORT_PKG="onnxruntime-linux-aarch64-${ORT_VERSION}.tgz" ;; \
+        *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+    esac && \
+    cd /tmp && \
+    wget -q "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_PKG}" && \
+    tar -xzf "$ORT_PKG" && \
+    cp onnxruntime-*/lib/libonnxruntime.so* /usr/local/lib/ && \
+    ldconfig && \
+    rm -rf /tmp/onnxruntime-* /tmp/*.tgz
+
+ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
+
 ARG UID=10001
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/app" \
-    --shell "/sbin/nologin" \
-    --uid "${UID}" \
-    appuser
+RUN adduser --disabled-password --gecos "" --home /app --shell /sbin/nologin --uid ${UID} appuser
 
-# Set working directory
 WORKDIR /app
 
-# Copy virtual environment from builder stage
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+COPY --from=builder /build/target/release/torch-inference-server /app/torch-inference-server
+COPY --chown=appuser:appuser config.toml /app/config.toml
+RUN mkdir -p /app/models /app/logs && chown -R appuser:appuser /app
 
-# Copy application code with proper ownership
-COPY --chown=appuser:appuser . .
-
-# Create necessary directories with proper permissions
-RUN mkdir -p logs models/cache calibration_cache kernel_cache \
-    && chown -R appuser:appuser /app
-
-# Switch to non-root user
 USER appuser
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Expose port
 EXPOSE 8000
 
-# Use exec form for better signal handling
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health/live >/dev/null || exit 1
 
-# Development stage (optional)
-FROM production AS development
-
-# Switch back to root to install dev dependencies
-USER root
-
-# Install development tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    vim \
-    htop \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install development Python packages
-RUN pip install --no-cache-dir \
-    jupyter \
-    ipython \
-    pytest \
-    black \
-    ruff
-
-# Switch back to appuser
-USER appuser
-
-# Override CMD for development
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--log-level", "debug"]
+CMD ["/app/torch-inference-server"]

@@ -239,13 +239,13 @@ pub async fn download_model(req: web::Json<DownloadRequest>) -> Result<HttpRespo
                 })));
             }
 
-            // Spawn async download task
+            // Spawn async download task. Use spawn_logged_result so panics
+            // and Err(...) returns are surfaced via tracing instead of the
+            // default behaviour, which silently drops them.
             let model_id = req.model_id.clone();
             let model_clone = model.clone();
-            tokio::spawn(async move {
-                if let Err(e) = download_model_async(&model_id, &model_clone).await {
-                    log::error!("Failed to download {}: {}", model_id, e);
-                }
+            crate::spawn_safe::spawn_logged_result("download_model_async", async move {
+                download_model_async(&model_id, &model_clone).await
             });
 
             Ok(HttpResponse::Ok().json(serde_json::json!({
@@ -473,8 +473,12 @@ async fn download_huggingface_repo(
                 && !path.contains("example")
         })
         .filter(|file_path| {
-            // Guard against path traversal
-            if file_path.contains("..") || std::path::Path::new(file_path.as_str()).is_absolute() {
+            // Guard against path traversal. Also reject Unix-style absolute
+            // paths (starting with '/') which is_absolute() misses on Windows.
+            if file_path.contains("..")
+                || file_path.starts_with('/')
+                || std::path::Path::new(file_path.as_str()).is_absolute()
+            {
                 log::warn!(
                     "Skipping suspicious path from HuggingFace API: {}",
                     file_path
@@ -541,6 +545,7 @@ mod handler_coverage_tests {
 
     /// list_models() calls get_registry() and returns 200 with JSON.
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_models_handler_returns_200() {
         let result = list_models().await;
         assert!(result.is_ok());
@@ -550,6 +555,7 @@ mod handler_coverage_tests {
 
     /// get_model() with a model_id that does not exist returns 404.
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_get_model_handler_not_found() {
         let path = web::Path::from("zzz-does-not-exist-ever".to_string());
         let result = get_model(path).await;
@@ -617,6 +623,7 @@ mod handler_coverage_tests {
     /// health handler: record requests so total_requests > 0, triggering line 123 (ratio calc).
     /// This test exercises the health handler via the full HTTP test service with Monitor recording.
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_health_handler_with_requests_computes_error_rate() {
         // The health handler in models.rs is in src/api/health.rs — this mod tests the models.rs
         // download_model handler's error_rate branch that calls get_registry().
@@ -631,6 +638,7 @@ mod handler_coverage_tests {
 
     /// list_downloaded_models() always returns 200.
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_list_downloaded_models_handler_returns_200() {
         let result = list_downloaded_models().await;
         assert!(result.is_ok());
@@ -640,6 +648,7 @@ mod handler_coverage_tests {
 
     /// download_model() with a nonexistent model returns 404.
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_download_model_handler_not_found() {
         let req = web::Json(DownloadRequest {
             model_id: "zzz-completely-nonexistent-model-xyz".to_string(),
@@ -652,6 +661,7 @@ mod handler_coverage_tests {
 
     /// get_model_comparison() returns 200 with a models array.
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_get_model_comparison_handler_returns_200() {
         let result = get_model_comparison().await;
         assert!(result.is_ok());
@@ -661,6 +671,7 @@ mod handler_coverage_tests {
 
     /// configure() registers the expected routes (smoke test via actix-web test service).
     #[actix_web::test]
+    #[serial_test::serial]
     async fn test_configure_registers_routes() {
         let app = test::init_service(App::new().configure(configure)).await;
 
@@ -808,6 +819,7 @@ mod handler_coverage_tests {
 
     /// download_model_async: note with no http URL → config branch skipped.
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_download_model_async_resolve_url_note_no_http() {
         let server = MockServer::start().await;
         let model_content = b"model bytes";
@@ -1625,6 +1637,7 @@ mod tests {
             })
             .filter(|file_path| {
                 if file_path.contains("..")
+                    || file_path.starts_with('/')
                     || std::path::Path::new(file_path.as_str()).is_absolute()
                 {
                     return false;

@@ -8,11 +8,8 @@
 use lazy_static::lazy_static;
 #[cfg(feature = "metrics")]
 use prometheus::{
-    Counter, CounterVec, Encoder, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts,
-    Registry, TextEncoder,
+    CounterVec, Encoder, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
 };
-#[cfg(feature = "metrics")]
-use std::sync::Arc;
 
 #[cfg(feature = "metrics")]
 lazy_static! {

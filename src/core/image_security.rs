@@ -102,6 +102,36 @@ impl ImageSecurityValidator {
             });
         }
 
+        // Peek at dimensions BEFORE decoding pixels. The `image` crate fully
+        // decodes into memory in `load_from_memory`; a 10 MiB compressed PNG
+        // with a 30 000 × 30 000 header would produce ~3.6 GB of pixels and
+        // crash the worker before the dimension check below runs. Reject
+        // anything bigger than the configured maximum up front.
+        let dims_pre = image::ImageReader::new(std::io::Cursor::new(image_data))
+            .with_guessed_format()
+            .ok()
+            .and_then(|r| r.into_dimensions().ok());
+        if let Some((w, h)) = dims_pre {
+            if w > self.max_dimension || h > self.max_dimension {
+                threats.push(ThreatInfo {
+                    threat_type: ThreatType::ExcessiveSize,
+                    severity: Severity::High,
+                    description: format!(
+                        "Image dimensions {}x{} exceed limit {} (rejected pre-decode)",
+                        w, h, self.max_dimension
+                    ),
+                    confidence: 1.0,
+                });
+                return Ok(ImageSecurityResult {
+                    is_safe: false,
+                    security_level,
+                    threats_detected: threats,
+                    confidence: 1.0,
+                    sanitized: false,
+                });
+            }
+        }
+
         // Load image
         let img = match image::load_from_memory(image_data) {
             Ok(img) => img,
@@ -376,7 +406,7 @@ mod tests {
         let mut out = Vec::new();
         img.write_to(
             &mut std::io::Cursor::new(&mut out),
-            image::ImageOutputFormat::Png,
+            image::ImageFormat::Png,
         )
         .unwrap();
         out
@@ -390,7 +420,7 @@ mod tests {
         let mut out = Vec::new();
         img.write_to(
             &mut std::io::Cursor::new(&mut out),
-            image::ImageOutputFormat::Png,
+            image::ImageFormat::Png,
         )
         .unwrap();
         out
@@ -1068,7 +1098,7 @@ mod tests {
         let mut png = Vec::new();
         img.write_to(
             &mut std::io::Cursor::new(&mut png),
-            image::ImageOutputFormat::Png,
+            image::ImageFormat::Png,
         )
         .unwrap();
 
@@ -1101,7 +1131,7 @@ mod tests {
         let mut png = Vec::new();
         img.write_to(
             &mut std::io::Cursor::new(&mut png),
-            image::ImageOutputFormat::Png,
+            image::ImageFormat::Png,
         )
         .unwrap();
 
@@ -1299,7 +1329,7 @@ mod tests {
         let mut png = Vec::new();
         img.write_to(
             &mut std::io::Cursor::new(&mut png),
-            image::ImageOutputFormat::Png,
+            image::ImageFormat::Png,
         )
         .unwrap();
 

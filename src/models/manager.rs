@@ -321,15 +321,15 @@ impl ModelManager {
         let idx = self.onnx_replica_idx.fetch_add(1, AtomicOrdering::Relaxed) % models.len();
         let model = &models[idx];
 
-        // Run inference — ORT `session.run()` is synchronous and CPU-bound.
-        // `block_in_place` tells Tokio "this thread will block" so the runtime
-        // can migrate other tasks off the current thread before we start.
-        // This keeps the async executor responsive under concurrent load.
-        let result = tokio::task::block_in_place(|| {
-            self.onnx_loader
-                .infer(model, input, &metadata)
-                .map_err(|e| InferenceError::ModelLoadError(e.to_string()))
-        })?;
+        // NOTE: actix-web uses a `current_thread` runtime — `block_in_place` panics
+        // on it. When `OnnxModelLoader::infer` is implemented for real (it currently
+        // returns the input as a stub), the real `session.run` call MUST be moved
+        // onto the blocking pool via `tokio::task::spawn_blocking` (and the model
+        // store changed to hold `Arc<LoadedOnnxModel>` so it can move).
+        let result = self
+            .onnx_loader
+            .infer(model, input, &metadata)
+            .map_err(|e| InferenceError::ModelLoadError(e.to_string()))?;
 
         // Mark as used
         self.registry
@@ -1322,9 +1322,10 @@ mod tests {
 
     // ── load_onnx_model – ONNX format, invalid file (exercises device_ids branch) ──
 
-    #[tokio::test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_load_onnx_model_with_device_ids_invalid_onnx() {
+        crate::test_utils::ort_test_setup();
         // Use device_ids = Some(vec![0]) so the Some branch on line 173-174 executes.
         // The file exists but is not valid ONNX, so ORT fails at commit_from_file.
         // Lines 173-185 (loop body, map_err) are still exercised before the error.
@@ -1346,9 +1347,10 @@ mod tests {
         assert!(result.is_err(), "loading invalid ONNX should fail");
     }
 
-    #[tokio::test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_load_onnx_model_without_device_ids_invalid_onnx() {
+        crate::test_utils::ort_test_setup();
         // Use device_ids = None so the else branch on line 175-177 executes.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fake2.onnx");
@@ -1370,9 +1372,10 @@ mod tests {
 
     // ── initialize_default_models – auto_load ONNX triggers lines 420-424 ────
 
-    #[tokio::test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[tokio::test(flavor = "current_thread")]
+    #[serial_test::serial]
     async fn test_initialize_default_models_auto_load_onnx_invalid_file() {
+        crate::test_utils::ort_test_setup();
         // Register an ONNX model in the registry, then set it as auto_load.
         // initialize_default_models will try load_onnx_model which will fail
         // (invalid bytes), hitting the warn branch on lines 421-423.

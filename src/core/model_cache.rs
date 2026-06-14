@@ -2,7 +2,7 @@
 use anyhow::Result;
 use lru::LruCache;
 use parking_lot::Mutex;
-use serde::{de::DeserializeOwned, Serialize};
+use std::any::Any;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -62,11 +62,13 @@ pub struct CacheStats {
 
 /// Model-agnostic LRU result cache.
 ///
-/// Results are serialized to JSON bytes and stored in an `Arc<Vec<u8>>`.
-/// On a hit, only the `Arc` pointer is cloned (~5 ns); deserialization happens
-/// on the way out. Works for any `T: Serialize + DeserializeOwned`.
+/// Results are stored as `Arc<dyn Any + Send + Sync>` — the concrete value lives
+/// on the heap behind a type-erased pointer.  On a hit the `Arc` pointer is
+/// cloned (~5 ns) and then downcast back to `T` via `downcast_ref` + `T::clone`.
+/// No serialization or deserialization ever touches the hot path.
+/// Works for any `T: Any + Send + Sync + Clone + 'static`.
 pub struct ModelCache {
-    cache: Mutex<LruCache<u64, Arc<Vec<u8>>>>,
+    cache: Mutex<LruCache<u64, Arc<dyn Any + Send + Sync>>>,
     capacity: usize,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -86,31 +88,31 @@ impl ModelCache {
     /// Return a cached result for `key`, or run `f`, cache its result, and return it.
     pub fn get_or_run<T, F>(&self, key: u64, f: F) -> Result<T>
     where
-        T: Serialize + DeserializeOwned,
+        T: Any + Send + Sync + Clone + 'static,
         F: FnOnce() -> Result<T>,
     {
-        // Check cache (hold lock only while reading — release before calling f).
+        // Check cache (hold lock only while reading).
         let cached = {
             let mut guard = self.cache.lock();
-            guard.get(&key).cloned()
+            guard.get(&key).cloned() // clones the Arc pointer, not the data
         };
 
-        if let Some(bytes) = cached {
-            self.hits.fetch_add(1, Ordering::Relaxed);
-            let value: T = serde_json::from_slice(&bytes)
-                .map_err(|e| anyhow::anyhow!("cache deserialize failed: {}", e))?;
-            return Ok(value);
+        if let Some(arc) = cached {
+            // Downcast: if the stored type matches T, return a clone.
+            // Mismatch is treated as a cache miss (impossible in practice).
+            if let Some(val) = arc.downcast_ref::<T>() {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                return Ok(val.clone());
+            }
         }
 
         self.misses.fetch_add(1, Ordering::Relaxed);
         let result = f()?;
 
-        // Serialize and store.
-        let bytes = serde_json::to_vec(&result)
-            .map_err(|e| anyhow::anyhow!("cache serialize failed: {}", e))?;
+        // Store the concrete value wrapped in Arc<dyn Any + Send + Sync>.
         {
             let mut guard = self.cache.lock();
-            guard.put(key, Arc::new(bytes));
+            guard.put(key, Arc::new(result.clone()) as Arc<dyn Any + Send + Sync>);
         }
 
         Ok(result)
@@ -287,6 +289,24 @@ mod tests {
     fn test_new_zero_capacity_clamps_to_one() {
         let cache = ModelCache::new(0);
         assert_eq!(cache.capacity(), 1);
+    }
+
+    #[test]
+    fn test_get_or_run_no_serde_on_hit() {
+        // With Arc<dyn Any>, hitting the cache never calls serde.
+        // We verify this by caching a value that is NOT Serialize/Deserialize —
+        // if it compiles and works, there's no serde on the hot path.
+        #[derive(Clone, Debug, PartialEq)]
+        struct NoSerde { x: u32 }
+
+        let cache = ModelCache::new(4);
+        let key = cache_key("m", b"input", b"params");
+
+        let r1: NoSerde = cache.get_or_run(key, || Ok(NoSerde { x: 42 })).unwrap();
+        assert_eq!(r1.x, 42);
+
+        let r2: NoSerde = cache.get_or_run(key, || Ok(NoSerde { x: 99 })).unwrap();
+        assert_eq!(r2.x, 42, "cached value must be returned on hit");
     }
 
     #[test]

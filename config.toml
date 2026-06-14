@@ -2,7 +2,10 @@
 # This configuration enables all performance optimizations
 
 [server]
-host = "0.0.0.0"
+# Bind to loopback by default. Set to "0.0.0.0" only when you intentionally
+# want the server reachable from the network — and ensure auth + TLS are in
+# place first (auth.enabled = true, jwt_secret set, behind a reverse proxy).
+host = "127.0.0.1"
 port = 8000
 log_level = "info"
 workers = 8  # Auto-detected based on CPU cores
@@ -87,7 +90,10 @@ enable_cuda_graphs = true  # CUDA graphs for lower latency (NVIDIA only)
 
 [auth]
 # Authentication configuration
-enabled = true
+# Off by default so the playground and curl examples work out of the box.
+# Flip to true (and set jwt_secret to a real value) before exposing the
+# server to anything beyond loopback.
+enabled = false
 jwt_secret = "your-secret-key-here-change-in-production"
 jwt_algorithm = "HS256"
 access_token_expire_minutes = 60
@@ -98,6 +104,9 @@ refresh_token_expire_days = 7
 auto_load = ["example"]  # Models to auto-load on startup
 cache_dir = "models"  # Directory for model cache
 max_loaded_models = 5  # Maximum number of models to keep in memory
+classify_model = "models/classify/efficientnet-lite4-11.onnx"
+classify_labels = "models/classify/imagenet1000.txt"
+audio_model_dir = "models/audio"
 
 [guard]
 # System Guards - Protection & Auto-Mitigation

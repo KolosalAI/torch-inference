@@ -13,26 +13,24 @@ test.describe('LLM Chat', () => {
     await expect(page.locator(S.chatBtn)).toBeVisible();
   });
 
-  test('chat history shows welcome message on load', async ({ page }) => {
-    // JS seeds one assistant welcome message; no user messages yet
-    await expect(page.locator(S.chatHistory).locator('.msg.user')).toHaveCount(0);
-    await expect(page.locator(S.chatHistory).locator('.msg.asst')).toHaveCount(1);
+  test('chat history welcome screen is shown on load', async ({ page }) => {
+    await expect(page.locator(S.chatHistory).locator('.chat-row.user')).toHaveCount(0);
+    await expect(page.locator('#chat-welcome')).toBeVisible();
   });
 
   test('parameter fields have correct defaults', async ({ page }) => {
-    await expect(page.locator(S.chatModel)).toHaveValue('default');
-    await expect(page.locator(S.chatMaxtok)).toHaveValue('256');
     await expect(page.locator(S.chatTemp)).toHaveValue('0.7');
+    await expect(page.locator(S.chatMaxtok)).toHaveValue('1024');
   });
 
   test('sending a message adds it to history', async ({ page }) => {
     await page.locator(S.chatInput).fill('Hello there');
     await page.locator(S.chatBtn).click();
     await expect(
-      page.locator(S.chatHistory).locator('.msg.user')
+      page.locator(S.chatHistory).locator('.chat-row.user')
     ).toHaveCount(1, { timeout: 5000 });
     await expect(
-      page.locator(S.chatHistory).locator('.msg.user .msg-body')
+      page.locator(S.chatHistory).locator('.chat-row.user .chat-bubble')
     ).toHaveText('Hello there');
   });
 
@@ -40,7 +38,7 @@ test.describe('LLM Chat', () => {
     await page.locator(S.chatInput).fill('Enter key test');
     await page.locator(S.chatInput).press('Enter');
     await expect(
-      page.locator(S.chatHistory).locator('.msg.user')
+      page.locator(S.chatHistory).locator('.chat-row.user')
     ).toHaveCount(1, { timeout: 5000 });
   });
 
@@ -54,59 +52,18 @@ test.describe('LLM Chat', () => {
     await page.locator(S.chatInput).fill('Hi');
     await page.locator(S.chatBtn).click();
     await expect(page.locator(S.chatBtn)).toBeEnabled({ timeout: 30000 });
-    // welcome(1 asst) + user(1) + response/error(1 asst) = 1 user + 2 asst
-    await expect(page.locator(S.chatHistory).locator('.msg.user')).toHaveCount(1);
-    await expect(page.locator(S.chatHistory).locator('.msg.asst')).toHaveCount(2);
+    await expect(page.locator(S.chatHistory).locator('.chat-row.user')).toHaveCount(1);
+    await expect(page.locator(S.chatHistory).locator('.chat-row.asst')).toHaveCount(1);
   });
 
-  test('Clear chat button removes user messages from history', async ({ page }) => {
+  test('New chat button clears user messages from history', async ({ page }) => {
     await page.locator(S.chatInput).fill('Hello');
     await page.locator(S.chatBtn).click();
     await expect(
-      page.locator(S.chatHistory).locator('.msg.user')
+      page.locator(S.chatHistory).locator('.chat-row.user')
     ).toHaveCount(1, { timeout: 5000 });
-    await page.locator(S.panelLLM).locator('button:has-text("Clear chat")').click();
-    // clearChat() re-seeds a "Chat cleared" assistant message; no user messages remain
-    await expect(page.locator(S.chatHistory).locator('.msg.user')).toHaveCount(0);
-    await expect(page.locator(S.chatHistory).locator('.msg.asst')).toHaveCount(1);
-  });
-});
-
-test.describe('Text Completion', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.locator(S.navCompletion).click();
-    await expect(page.locator(S.panelCompletion)).toHaveClass(/active/);
-  });
-
-  test('prompt textarea renders with default content', async ({ page }) => {
-    await expect(page.locator(S.cmpPrompt)).toBeVisible();
-    const value = await page.locator(S.cmpPrompt).inputValue();
-    expect(value.length).toBeGreaterThan(0);
-  });
-
-  test('parameter fields render with defaults', async ({ page }) => {
-    await expect(page.locator(S.cmpModel)).toHaveValue('default');
-    await expect(page.locator(S.cmpMaxtok)).toHaveValue('128');
-    await expect(page.locator(S.cmpTemp)).toHaveValue('0.7');
-    await expect(page.locator(S.cmpTopp)).toHaveValue('1.0');
-  });
-
-  test('Complete button is enabled', async ({ page }) => {
-    await expect(page.locator(S.cmpBtn)).toBeEnabled();
-  });
-
-  test('output starts as "waiting…"', async ({ page }) => {
-    await expect(page.locator(S.cmpOut)).toHaveText('waiting…');
-  });
-
-  test('prompt textarea accepts custom input', async ({ page }) => {
-    await page.locator(S.cmpPrompt).fill('The quick brown fox');
-    await expect(page.locator(S.cmpPrompt)).toHaveValue('The quick brown fox');
-  });
-
-  test('clicking Complete updates the output box', async ({ page }) => {
-    await page.locator(S.cmpBtn).click();
-    await expect(page.locator(S.cmpOut)).not.toHaveText('waiting…', { timeout: 30000 });
+    await page.locator(S.panelLLM).locator('button:has-text("New chat")').click();
+    await expect(page.locator(S.chatHistory).locator('.chat-row.user')).toHaveCount(0);
+    await expect(page.locator('#chat-welcome')).toBeVisible();
   });
 });

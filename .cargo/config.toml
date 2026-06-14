@@ -1,5 +1,11 @@
 [env]
-# Tells ORT where to find libonnxruntime.dylib when running `cargo test`.
+# Tells ORT where to find the ONNX Runtime library when running `cargo test`.
 # The server sets this at runtime; tests need it too.
+#
+# Cargo's [env] is not platform-conditional, so the active value targets this
+# checkout's host. On macOS (Apple Silicon) ORT loads the Homebrew dylib.
+#
+# For the Windows GPU deployment, swap to the extracted GPU runtime instead:
+#   ORT_DYLIB_PATH = { value = "ort-gpu-1.22.0/onnxruntime-win-x64-gpu-1.22.0/lib/onnxruntime.dll", relative = true }
 ORT_DYLIB_PATH = "/opt/homebrew/lib/libonnxruntime.dylib"
 DYLD_LIBRARY_PATH = "/opt/homebrew/lib"

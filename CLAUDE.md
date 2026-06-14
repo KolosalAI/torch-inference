@@ -37,7 +37,7 @@ cargo bench --bench detection_bench
 ```
 src/
   main.rs           — server startup, state init (TTS 6 engines, ORT, GPU)
-  config.rs         — Config struct; reads config.yaml or env vars
+  config.rs         — Config struct; reads config.toml
   lib.rs            — crate root, re-exports all modules
   api/
     handlers.rs     — playground.html embedded via include_str!
@@ -73,8 +73,7 @@ src/
 - **Cache keys**: FNV-1a 64-bit hash with NUL byte separators. Never use `DefaultHasher` (not stable across runs).
 - **Async**: actix-web uses `current_thread` executor. Never use `tokio::task::block_in_place` inside handlers — use `reqwest::blocking::Client` or `spawn_blocking` instead.
 - **ORT**: Always enabled (`ort = "=2.0.0-rc.10"`). Loads `/opt/homebrew/lib/libonnxruntime.dylib` on macOS at runtime.
-- **Candle feature**: Optional (`--features candle`). Not used in production — do not enable.
-- **Config**: `config.yaml` or environment variables. Only fields mapped in `Config` struct affect runtime.
+- **Config**: `config.toml` (read by `Config::load()`). Env vars are not auto-loaded — only fields mapped in `Config` struct affect runtime.
 - **Error handling**: Use `anyhow::Result` internally; map to `actix_web::Error` at handler boundary.
 - **Logging**: `tracing` crate with JSON output. Use `tracing::info!`, `tracing::error!`, etc.
 
@@ -85,8 +84,38 @@ Located in `models/kokoro-82m/`:
 
 Server loads 6 TTS engines at startup via `TTSManager::initialize_defaults()`.
 
+## Open follow-ups (deferred from the audit landed across commits cf2b566 → dcd7cf2)
+
+These are intentionally not in any of the audit batches because each needs
+either (a) representative benchmarks to validate or (b) a design RFC. Pick
+them up only with the relevant supporting work in hand.
+
+- **Whisper KV-cache decoder** (`src/core/whisper_onnx.rs`): the greedy
+  decode loop currently re-runs the full decoder over the full prefix
+  per token (O(N²) compute) and clones the encoder output (~3 MB) on
+  every iteration. A KV-cache rewrite is the single biggest STT
+  latency win, but it needs a bench harness.
+- **Sharded TTS synthesis cache** (`src/core/tts_manager.rs`): single
+  global `Mutex<LruCache>` clones full `AudioData` inside the lock.
+  Sharded LRU (16-way like `dedup.rs`) plus `Arc<AudioData>` would
+  remove the contention point but the AudioData → Arc<AudioData>
+  change is a public API churn.
+- **Drop ModelCache serde round-trip** (`src/core/model_cache.rs`):
+  every cache hit deserializes JSON. Replace with `Arc<dyn Any>`.
+- **YOLO preprocess on the SIMD pipeline** (`src/core/ort_yolo.rs`):
+  goes through `image::imageops::Lanczos3` + scalar normalize. The
+  classifier path already uses `fast_image_resize` + `wide::f32x8`;
+  routing YOLO through the same pipeline would 3-5× preprocess.
+- **Error envelope unification across handlers** — currently four
+  shapes (ApiError, registry::ApiResponse, predict ad-hoc, OpenAI).
+  Pick one and migrate; needs a small RFC to settle which.
+- **Audio resampler cache** (`src/core/audio.rs`): `FftFixedInOut`
+  is rebuilt per call. Cache-by-key, but the resampler is `&mut self`
+  per-process so a pool is needed. Worth 5-15 ms per STT request.
+
 ## Configuration
-`config.yaml` key sections (runtime-relevant):
-- `server.host`, `server.port` (default `0.0.0.0:8000`)
-- `tts.*` — engine settings
-- `security.*` — API key, rate limits
+`config.toml` key sections (runtime-relevant):
+- `server.host`, `server.port` — default `127.0.0.1:8000`. Use `0.0.0.0` only with auth + TLS in front.
+- `models.*` — cache dir, registry path
+- `auth.*` — JWT secret (must be set, no placeholder), bcrypt cost
+- `microservices.*` — LLM/STT proxy upstream URLs

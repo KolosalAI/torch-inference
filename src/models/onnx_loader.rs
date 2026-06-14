@@ -220,7 +220,18 @@ impl OnnxModelLoader {
             debug!("  ✓ CUDA execution provider configured as fallback");
         }
 
-        // 3. CoreML (Apple Silicon / macOS)
+        // 3. DirectML (Windows — vendor-neutral DX12 fallback after CUDA)
+        #[cfg(target_os = "windows")]
+        {
+            execution_providers.push(
+                ort::execution_providers::DirectMLExecutionProvider::default()
+                    .with_device_id(target_device as i32)
+                    .build(),
+            );
+            debug!("  ✓ DirectML execution provider configured as Windows fallback");
+        }
+
+        // 4. CoreML (Apple Silicon / macOS)
         //    Use ALL compute units so the Neural Engine (ANE) and GPU are engaged
         //    alongside the CPU.  with_subgraphs(true) partitions more ops into
         //    the CoreML graph; with_compute_units(All) routes them to the fastest
@@ -238,7 +249,7 @@ impl OnnxModelLoader {
             );
         }
 
-        // 4. CPU (Always fallback)
+        // 5. CPU (Always fallback)
         execution_providers.push(ort::execution_providers::CPUExecutionProvider::default().build());
 
         // Register providers
@@ -596,8 +607,9 @@ mod tests {
     // ===== load_model with existing-but-invalid file (covers EP setup paths) =====
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[serial_test::serial]
     fn test_onnx_loader_load_model_invalid_file_cpu_only() {
+        crate::test_utils::ort_test_setup();
         // Create a temp file with garbage content (not a valid ONNX model).
         // load_model will proceed past the `!path.exists()` check, execute all
         // execution-provider setup code (lines 153-232), and then fail at
@@ -612,8 +624,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[serial_test::serial]
     fn test_onnx_loader_load_model_invalid_file_with_explicit_device_id() {
+        crate::test_utils::ort_test_setup();
         // Exercise `device_id.unwrap_or(self.device_id)` branch (line 153) by
         // passing Some(device_id) explicitly.
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -625,8 +638,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[serial_test::serial]
     fn test_onnx_loader_load_model_invalid_file_with_tensorrt() {
+        crate::test_utils::ort_test_setup();
         // Exercise the TensorRT EP setup branch (lines 160-199) by creating
         // a loader with use_tensorrt = true. The TensorRT EP itself will not
         // be available in CI, but all configuration code still runs before
@@ -641,8 +655,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[serial_test::serial]
     fn test_onnx_loader_load_model_tensorrt_fp32_precision() {
+        crate::test_utils::ort_test_setup();
         // Exercise TensorRT FP32 branch (line 184)
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), b"fake").unwrap();
@@ -657,24 +672,22 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
     fn test_onnx_loader_load_model_tensorrt_int8_precision() {
-        // Exercise TensorRT INT8 branch (lines 180-181)
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), b"fake").unwrap();
-
+        // Verify INT8 is parsed from the environment variable.
+        // Calling load_model() with INT8 TensorRT is not tested here because
+        // ort::TensorRTExecutionProvider::with_int8() aborts the process on
+        // platforms without NVIDIA TensorRT (e.g. macOS/CPU-only CI).
         std::env::set_var("TENSORRT_PRECISION", "int8");
         let loader = OnnxModelLoader::new(true, 0, None);
         std::env::remove_var("TENSORRT_PRECISION");
 
         assert_eq!(loader.tensorrt_config.precision, TensorRTPrecision::INT8);
-        let result = loader.load_model(tmp.path(), None);
-        assert!(result.is_err());
     }
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[serial_test::serial]
     fn test_onnx_loader_load_model_tensorrt_no_cache_dir() {
+        crate::test_utils::ort_test_setup();
         // Exercise TensorRT with cache_dir = None (skip engine cache path)
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), b"fake").unwrap();
@@ -694,8 +707,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires libonnxruntime.dylib"]
+    #[serial_test::serial]
     fn test_onnx_loader_load_model_device_id_none_uses_self_device() {
+        crate::test_utils::ort_test_setup();
         // When device_id arg is None, target_device = self.device_id
         let tmp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(tmp.path(), b"garbage").unwrap();

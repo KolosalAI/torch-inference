@@ -6,6 +6,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+// Health thresholds. These were previously magic numbers scattered through
+// `readiness` and `health`; pulling them out makes them tunable in one
+// place and self-documents what each branch means.
+//
+// Absolute values (active-request counts) are deliberately not scaled by
+// worker count yet — the readiness handler doesn't take Config, and a
+// machine-dependent threshold would make the existing health tests
+// non-deterministic. Tracked as a follow-up: scale by
+// `config.performance.max_workers` once Config is plumbed in.
+
+/// Readiness fails if the rolling error rate is at/above this percentage.
+const READY_ERROR_RATE_DOWN_PCT: f64 = 10.0;
+/// `health` reports `degraded` between `OK` and `DOWN`; `down` ≥ 10% as well.
+const HEALTH_ERROR_RATE_DEGRADED_PCT: f64 = 5.0;
+const HEALTH_ERROR_RATE_DOWN_PCT: f64 = 10.0;
+/// Readiness fails if the rolling p50 response time exceeds this.
+const READY_LATENCY_DEGRADED_MS: f64 = 5000.0;
+/// `health` reports degraded above this, down above the second.
+const HEALTH_LATENCY_DEGRADED_MS: f64 = 1000.0;
+const HEALTH_LATENCY_DOWN_MS: f64 = 5000.0;
+/// Queue-depth thresholds. Absolute today; should scale with worker count.
+const READY_ACTIVE_REQUESTS_DEGRADED: u64 = 1000;
+const HEALTH_ACTIVE_REQUESTS_DEGRADED: u64 = 500;
+const HEALTH_ACTIVE_REQUESTS_DOWN: u64 = 1000;
+
 #[derive(Serialize, Deserialize)]
 pub struct HealthCheck {
     pub status: String,
@@ -30,18 +55,19 @@ pub struct ComponentHealth {
     pub latency_ms: u64,
 }
 
-/// Liveness probe - basic health check
-/// Returns 200 if service is alive (even if degraded)
+/// Liveness probe — answers only "is the process alive and responding?".
+///
+/// Always returns 200 with status `"alive"`. Subsystem health (error
+/// rate, latency, queue depth) is reported via `/readiness` and
+/// `/health`; conflating them into liveness causes Kubernetes to kill
+/// degraded-but-recoverable pods that are still reachable. If the
+/// process can serve this request at all, it is alive.
 pub async fn liveness(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Result<HttpResponse> {
     let correlation_id = get_correlation_id(&req);
     let health = monitor.get_health_status();
 
     let response = HealthCheck {
-        status: if health.healthy {
-            "healthy".to_string()
-        } else {
-            "degraded".to_string()
-        },
+        status: "alive".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
         uptime_seconds: health.uptime_seconds,
@@ -74,7 +100,11 @@ pub async fn readiness(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Re
         0.0
     };
 
-    let error_status = if error_rate < 10.0 { "up" } else { "down" };
+    let error_status = if error_rate < READY_ERROR_RATE_DOWN_PCT {
+        "up"
+    } else {
+        "down"
+    };
     checks.insert(
         "error_rate".to_string(),
         ComponentHealth {
@@ -85,7 +115,7 @@ pub async fn readiness(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Re
     );
 
     // Check active requests (queue depth)
-    let queue_status = if health.active_requests < 1000 {
+    let queue_status = if (health.active_requests as u64) < READY_ACTIVE_REQUESTS_DEGRADED {
         "up"
     } else {
         "degraded"
@@ -100,7 +130,7 @@ pub async fn readiness(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Re
     );
 
     // Check response time
-    let latency_status = if health.response_time_ms < 5000.0 {
+    let latency_status = if health.response_time_ms < READY_LATENCY_DEGRADED_MS {
         "up"
     } else {
         "degraded"
@@ -170,9 +200,9 @@ pub async fn health(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Resul
         0.0
     };
 
-    let error_status = if error_rate < 5.0 {
+    let error_status = if error_rate < HEALTH_ERROR_RATE_DEGRADED_PCT {
         "up"
-    } else if error_rate < 10.0 {
+    } else if error_rate < HEALTH_ERROR_RATE_DOWN_PCT {
         "degraded"
     } else {
         "down"
@@ -188,9 +218,9 @@ pub async fn health(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Resul
     );
 
     // Performance
-    let perf_status = if health.response_time_ms < 1000.0 {
+    let perf_status = if health.response_time_ms < HEALTH_LATENCY_DEGRADED_MS {
         "up"
-    } else if health.response_time_ms < 5000.0 {
+    } else if health.response_time_ms < HEALTH_LATENCY_DOWN_MS {
         "degraded"
     } else {
         "down"
@@ -206,9 +236,9 @@ pub async fn health(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Resul
     );
 
     // Capacity
-    let capacity_status = if health.active_requests < 500 {
+    let capacity_status = if (health.active_requests as u64) < HEALTH_ACTIVE_REQUESTS_DEGRADED {
         "up"
-    } else if health.active_requests < 1000 {
+    } else if (health.active_requests as u64) < HEALTH_ACTIVE_REQUESTS_DOWN {
         "degraded"
     } else {
         "down"
@@ -250,9 +280,18 @@ pub async fn health(req: HttpRequest, monitor: web::Data<Arc<Monitor>>) -> Resul
         error_rate: Some(error_rate_fraction),
     };
 
-    Ok(HttpResponse::Ok()
-        .insert_header(("x-correlation-id", correlation_id.as_str()))
-        .json(response))
+    // Return 503 when a "down" component drives `unhealthy`. Most LB
+    // probes look at status code; conflating unhealthy with 200 hides the
+    // problem from anything that isn't actively reading the JSON body.
+    if overall_status == "unhealthy" {
+        Ok(HttpResponse::ServiceUnavailable()
+            .insert_header(("x-correlation-id", correlation_id.as_str()))
+            .json(response))
+    } else {
+        Ok(HttpResponse::Ok()
+            .insert_header(("x-correlation-id", correlation_id.as_str()))
+            .json(response))
+    }
 }
 
 #[cfg(test)]
@@ -295,6 +334,28 @@ mod handler_tests {
             "liveness response must have a version field"
         );
         assert!(body["uptime_seconds"].is_number());
+    }
+
+    /// Liveness must always report `alive` and 200, even when the
+    /// monitor would otherwise mark the service degraded. Subsystem
+    /// health belongs in `/readiness` and `/health`; conflating them
+    /// into liveness causes orchestrators to evict pods that are still
+    /// reachable.
+    #[actix_web::test]
+    async fn test_liveness_is_alive_even_when_degraded() {
+        let monitor_inner = Arc::new(Monitor::new());
+        // Drive the rolling error rate to 100% — would mark the service
+        // unhealthy in `/health` and not_ready in `/readiness`.
+        for _ in 0..10 {
+            monitor_inner.record_request_start();
+            monitor_inner.record_request_end(10, "/test", false);
+        }
+        let monitor = web::Data::new(monitor_inner);
+        let resp = liveness(bare_request(), monitor).await.unwrap();
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body_bytes = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["status"], "alive");
     }
 
     // ── readiness handler ────────────────────────────────────────────────────

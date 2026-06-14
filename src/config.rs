@@ -91,6 +91,32 @@ pub struct ServerConfig {
     /// Timeout for outbound proxy requests to microservices (seconds). Default: 300.
     #[serde(default = "default_proxy_timeout_secs")]
     pub proxy_timeout_secs: u64,
+    /// Per-request cap on multipart audio uploads (MiB). Default: 100.
+    /// Protects `/stt/transcribe` from OOM via oversized files.
+    #[serde(default = "default_multipart_audio_limit_mb")]
+    pub multipart_audio_limit_mb: usize,
+    /// Per-request cap on multipart image uploads (MiB). Default: 10.
+    /// Protects `/yolo/detect` from OOM via oversized files.
+    #[serde(default = "default_multipart_image_limit_mb")]
+    pub multipart_image_limit_mb: usize,
+    /// Per-image cap on base64 strings inside JSON requests (MiB). Default: 5.
+    /// Protects `/classify/batch` and `/classify/stream` from OOM via large
+    /// individual items even when the batch as a whole fits within
+    /// `json_body_limit_mb`.
+    #[serde(default = "default_classify_image_limit_mb")]
+    pub classify_image_limit_mb: usize,
+    /// Maximum decoded audio duration (seconds). Default: 1800 (30 min).
+    /// Applied during WAV validation and Symphonia decode to bound memory.
+    #[serde(default = "default_audio_max_duration_secs")]
+    pub audio_max_duration_secs: u32,
+    /// Per-chunk timeout for `/tts/stream` (seconds). Default: 30.
+    /// A stuck engine no longer holds the connection open indefinitely.
+    #[serde(default = "default_tts_chunk_timeout_secs")]
+    pub tts_chunk_timeout_secs: u64,
+    /// Per-image timeout for `/classify/stream` (seconds). Default: 30.
+    /// A hung inference task no longer blocks subsequent images.
+    #[serde(default = "default_classify_item_timeout_secs")]
+    pub classify_item_timeout_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -106,6 +132,12 @@ impl Default for ServerConfig {
             shutdown_timeout_secs: default_shutdown_timeout_secs(),
             json_body_limit_mb: default_json_body_limit_mb(),
             proxy_timeout_secs: default_proxy_timeout_secs(),
+            multipart_audio_limit_mb: default_multipart_audio_limit_mb(),
+            multipart_image_limit_mb: default_multipart_image_limit_mb(),
+            classify_image_limit_mb: default_classify_image_limit_mb(),
+            audio_max_duration_secs: default_audio_max_duration_secs(),
+            tts_chunk_timeout_secs: default_tts_chunk_timeout_secs(),
+            classify_item_timeout_secs: default_classify_item_timeout_secs(),
         }
     }
 }
@@ -119,6 +151,13 @@ fn default_stt_port() -> u16 {
 fn default_llm_port() -> u16 {
     8001
 }
+// Multipart / per-item limits introduced by the upstream hardening batches.
+fn default_multipart_audio_limit_mb() -> usize { 100 }
+fn default_multipart_image_limit_mb() -> usize { 10 }
+fn default_classify_image_limit_mb() -> usize { 5 }
+fn default_audio_max_duration_secs() -> u32 { 1800 }
+fn default_tts_chunk_timeout_secs() -> u64 { 30 }
+fn default_classify_item_timeout_secs() -> u64 { 30 }
 
 /// Microservice host/port configuration. The main server spawns these as child
 /// processes and proxies requests to them.
@@ -444,13 +483,75 @@ impl Config {
     }
 
     pub fn load_from_path(path: &std::path::Path) -> anyhow::Result<Self> {
-        if path.exists() {
+        let config: Config = if path.exists() {
             let content = std::fs::read_to_string(path)?;
-            let config: Config = toml::from_str(&content)?;
-            Ok(config)
+            toml::from_str(&content)?
         } else {
-            Ok(Config::default())
+            Config::default()
+        };
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Reject configurations that would ship insecure or nonsensical defaults.
+    /// Called at the end of `Config::load`.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.auth.enabled {
+            if self.auth.jwt_secret == "your-secret-key-here" {
+                anyhow::bail!(
+                    "auth.enabled is true but jwt_secret is the placeholder \
+                     'your-secret-key-here'; set a real secret in config.toml \
+                     under [auth] or via the deployment environment"
+                );
+            }
+            if self.auth.jwt_secret.len() < 32 {
+                anyhow::bail!(
+                    "auth.enabled is true but jwt_secret is shorter than 32 chars \
+                     ({}); use a high-entropy secret",
+                    self.auth.jwt_secret.len()
+                );
+            }
         }
+
+        if self.server.port == 0 {
+            anyhow::bail!("server.port must be in 1..=65535 (got 0)");
+        }
+
+        let min_w = self.performance.min_workers;
+        let max_w = self.performance.max_workers;
+        if min_w == 0 || max_w == 0 {
+            anyhow::bail!(
+                "performance.min_workers and max_workers must both be >= 1 \
+                 (min={}, max={})",
+                min_w,
+                max_w
+            );
+        }
+        if min_w > max_w {
+            anyhow::bail!(
+                "performance.min_workers ({}) must be <= max_workers ({})",
+                min_w,
+                max_w
+            );
+        }
+
+        let conf = self.models.yolo_conf_threshold;
+        if !(0.0..=1.0).contains(&conf) || conf.is_nan() {
+            anyhow::bail!(
+                "models.yolo_conf_threshold must be in [0.0, 1.0] (got {})",
+                conf
+            );
+        }
+        let iou = self.models.yolo_iou_threshold;
+        if !(0.0..=1.0).contains(&iou) || iou.is_nan() {
+            anyhow::bail!(
+                "models.yolo_iou_threshold must be in [0.0, 1.0] (got {})",
+                iou
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -468,6 +569,12 @@ impl Default for Config {
                 shutdown_timeout_secs: 30,
                 json_body_limit_mb: 50,
                 proxy_timeout_secs: 300,
+                multipart_audio_limit_mb: 100,
+                multipart_image_limit_mb: 10,
+                classify_image_limit_mb: 5,
+                audio_max_duration_secs: 1800,
+                tts_chunk_timeout_secs: 30,
+                classify_item_timeout_secs: 30,
             },
             device: DeviceConfig {
                 device_type: "auto".to_string(),
@@ -520,7 +627,13 @@ impl Default for Config {
                 enable_zero_scaling: false,
             },
             auth: AuthConfig {
-                enabled: true,
+                // Default is disabled: a server with no `[auth]` section in
+                // config.toml runs unauthenticated. To enable auth, set
+                // `auth.enabled = true` *and* provide a real `auth.jwt_secret`
+                // (>= 32 chars, not the placeholder). `Config::validate`
+                // refuses to start if the placeholder is paired with
+                // `enabled = true`.
+                enabled: false,
                 jwt_secret: "your-secret-key-here".to_string(),
                 jwt_algorithm: "HS256".to_string(),
                 access_token_expire_minutes: 60,
@@ -618,10 +731,89 @@ mod tests {
     #[test]
     fn test_auth_config_defaults() {
         let config = Config::default();
-        assert!(config.auth.enabled);
+        // Auth is disabled in the default Config so that a fresh checkout boots
+        // without forcing the operator to provision a JWT secret. Operators
+        // turning auth on must also set a non-placeholder secret — see
+        // `test_validate_rejects_placeholder_jwt_when_auth_enabled`.
+        assert!(!config.auth.enabled);
         assert_eq!(config.auth.jwt_algorithm, "HS256");
         assert_eq!(config.auth.access_token_expire_minutes, 60);
         assert_eq!(config.auth.refresh_token_expire_days, 7);
+    }
+
+    #[test]
+    fn test_validate_accepts_default_config() {
+        let config = Config::default();
+        assert!(
+            config.validate().is_ok(),
+            "default config should validate (auth disabled)"
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_placeholder_jwt_when_auth_enabled() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        // jwt_secret is still the placeholder
+        let err = config.validate().unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("placeholder"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_validate_rejects_short_jwt_when_auth_enabled() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        config.auth.jwt_secret = "short".to_string();
+        let err = config.validate().unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("32 chars"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_validate_accepts_strong_jwt_with_auth_enabled() {
+        let mut config = Config::default();
+        config.auth.enabled = true;
+        config.auth.jwt_secret = "x".repeat(64);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_port_zero() {
+        let mut config = Config::default();
+        config.server.port = 0;
+        let err = config.validate().unwrap_err();
+        assert!(format!("{err}").contains("server.port"));
+    }
+
+    #[test]
+    fn test_validate_rejects_min_greater_than_max_workers() {
+        let mut config = Config::default();
+        config.performance.min_workers = 8;
+        config.performance.max_workers = 4;
+        let err = config.validate().unwrap_err();
+        assert!(format!("{err}").contains("min_workers"));
+    }
+
+    #[test]
+    fn test_validate_rejects_zero_workers() {
+        let mut config = Config::default();
+        config.performance.min_workers = 0;
+        let err = config.validate().unwrap_err();
+        assert!(format!("{err}").contains(">= 1"));
+    }
+
+    #[test]
+    fn test_validate_rejects_yolo_threshold_out_of_range() {
+        let mut config = Config::default();
+        config.models.yolo_conf_threshold = 1.5;
+        let err = config.validate().unwrap_err();
+        assert!(format!("{err}").contains("yolo_conf_threshold"));
+
+        let mut config = Config::default();
+        config.models.yolo_iou_threshold = -0.1;
+        let err = config.validate().unwrap_err();
+        assert!(format!("{err}").contains("yolo_iou_threshold"));
     }
 
     #[test]
@@ -902,6 +1094,7 @@ mod tests {
     /// config.toml does not exist in the working directory.
     /// Loads config from a path where no config.toml exists — exercises the else branch.
     #[test]
+    #[serial_test::serial]
     fn test_config_load_without_config_file() {
         let non_existent = std::path::Path::new("/tmp/torch_inference_test_definitely_absent.toml");
         let result = Config::load_from_path(non_existent);

@@ -1,7 +1,7 @@
 # Makefile for torch-inference
 # Provides convenient commands for building and running
 
-.PHONY: help build run dev test coverage clean install doctor flamegraph
+.PHONY: help build run dev test coverage clean install doctor flamegraph prod
 
 # Default target
 .DEFAULT_GOAL := help
@@ -188,6 +188,27 @@ flamegraph: ## Generate CPU flamegraph (requires: cargo install flamegraph)
 
 stt-run: ## Run faster-whisper STT service on port 8002
 	python3 services/stt/server.py
+
+# ── Production ────────────────────────────────────────────────────────────────
+.PHONY: prod
+
+prod: ## Build everything and launch main server + all microservices
+	@echo "Building main server..."
+	$(CARGO) build --release --no-default-features --features production
+	@echo "Building LLM service..."
+	cd services/llm && cargo build --release
+	@echo "Stopping any prior STT/LLM microservices on 8001/8002..."
+	@-lsof -ti :8001 | xargs -r kill -TERM 2>/dev/null || true
+	@-lsof -ti :8002 | xargs -r kill -TERM 2>/dev/null || true
+	@sleep 1
+	@-lsof -ti :8001 | xargs -r kill -KILL 2>/dev/null || true
+	@-lsof -ti :8002 | xargs -r kill -KILL 2>/dev/null || true
+	@echo "Starting STT service..."
+	python3 services/stt/server.py &
+	@echo "Starting LLM service..."
+	cd services/llm && ./target/release/llm-service &
+	@echo "Starting main server..."
+	./target/release/torch-inference-server
 
 # ── LLM Microservice ──────────────────────────────────────────────────────────
 .PHONY: llm-build llm-run llm-download hrm-export hrm-download
