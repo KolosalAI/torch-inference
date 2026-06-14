@@ -1,4 +1,4 @@
-# Performance Improvements — Kolosal Inference Server
+# Performance Improvements — Torch Inference Engine Server
 
 **Date:** 2026-05-01  
 **Status:** Approved  

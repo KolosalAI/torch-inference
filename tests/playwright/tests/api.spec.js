@@ -428,7 +428,7 @@ test.describe('GET / (root)', () => {
     expect(res.headers()['content-type']).toMatch(/text\/html/);
   });
 
-  test('body contains "Netra RT"', () => { expect(text).toContain('Netra RT'); });
+  test('body contains "Torch Inference Engine"', () => { expect(text).toContain('Torch Inference Engine'); });
 });
 
 // ── 404 for unknown routes ────────────────────────────────────────────────────

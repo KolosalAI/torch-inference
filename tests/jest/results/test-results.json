@@ -7,7 +7,7 @@
   "success": false,
   "testResults": [
     {
-      "testFilePath": "/Users/evintleovonzko/Documents/works/netraRT/torch-inference/tests/jest/tests/models.test.js",
+      "testFilePath": "/Users/evintleovonzko/Documents/projects/evint/torch-inference/tests/jest/tests/models.test.js",
       "numPassingTests": 11,
       "numFailingTests": 0,
       "testResults": [
@@ -80,7 +80,7 @@
       ]
     },
     {
-      "testFilePath": "/Users/evintleovonzko/Documents/works/netraRT/torch-inference/tests/jest/tests/tts.test.js",
+      "testFilePath": "/Users/evintleovonzko/Documents/projects/evint/torch-inference/tests/jest/tests/tts.test.js",
       "numPassingTests": 10,
       "numFailingTests": 0,
       "testResults": [
@@ -147,7 +147,7 @@
       ]
     },
     {
-      "testFilePath": "/Users/evintleovonzko/Documents/works/netraRT/torch-inference/tests/jest/tests/registry.test.js",
+      "testFilePath": "/Users/evintleovonzko/Documents/projects/evint/torch-inference/tests/jest/tests/registry.test.js",
       "numPassingTests": 11,
       "numFailingTests": 0,
       "testResults": [
@@ -220,7 +220,7 @@
       ]
     },
     {
-      "testFilePath": "/Users/evintleovonzko/Documents/works/netraRT/torch-inference/tests/jest/tests/api_models.test.js",
+      "testFilePath": "/Users/evintleovonzko/Documents/projects/evint/torch-inference/tests/jest/tests/api_models.test.js",
       "numPassingTests": 8,
       "numFailingTests": 0,
       "testResults": [
@@ -275,7 +275,7 @@
       ]
     },
     {
-      "testFilePath": "/Users/evintleovonzko/Documents/works/netraRT/torch-inference/tests/jest/tests/image.test.js",
+      "testFilePath": "/Users/evintleovonzko/Documents/projects/evint/torch-inference/tests/jest/tests/image.test.js",
       "numPassingTests": 7,
       "numFailingTests": 0,
       "testResults": [

@@ -7,7 +7,7 @@
 
 ## Overview
 
-Add a new **Dashboard** panel to the existing Kolosal Inference playground (`src/api/playground.html`). The panel provides real-time inference metrics pushed via Server-Sent Events (SSE) and a model download manager with live progress tracking. The existing Status, TTS, Classify, LLM Chat, Completion, and Endpoints panels are preserved unchanged.
+Add a new **Dashboard** panel to the existing Torch Inference Engine playground (`src/api/playground.html`). The panel provides real-time inference metrics pushed via Server-Sent Events (SSE) and a model download manager with live progress tracking. The existing Status, TTS, Classify, LLM Chat, Completion, and Endpoints panels are preserved unchanged.
 
 ---
 

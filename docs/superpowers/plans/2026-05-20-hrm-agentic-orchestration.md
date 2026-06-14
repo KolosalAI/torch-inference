@@ -1735,7 +1735,7 @@ impl HttpFetchTool {
             reqwest::redirect::Policy::none()
         };
         let client = reqwest::Client::builder()
-            .user_agent("kolosal-agent/0.1")
+            .user_agent("torch-inference-agent/0.1")
             .redirect(policy)
             .build()
             .expect("build http_fetch client");

@@ -112,7 +112,7 @@ A new script `scripts/export_hrm_text.py` runs on a developer or CI machine — 
 8. Optional: `onnxruntime.quantization.quantize_dynamic` to produce an int8 variant (~½ size). Gated behind a `--quantize` flag on the export script. Default is fp16.
 9. Place output under `services/llm/models/hrm-text-1b/`.
 
-A companion shell script `scripts/download_hrm_text_artifacts.sh` downloads a pre-exported tarball from a GitHub Release on `KolosalAI/torch-inference` so individual developers don't have to run the export. The release tag and asset name are recorded in this spec's §10 release notes.
+A companion shell script `scripts/download_hrm_text_artifacts.sh` downloads a pre-exported tarball from a GitHub Release on `Evintkoo/torch-inference` so individual developers don't have to run the export. The release tag and asset name are recorded in this spec's §10 release notes.
 
 A `Makefile` target `make hrm-export` invokes the Python script in the right env.
 
@@ -340,7 +340,7 @@ A `cargo deny` rule or a tiny test that fails if `llama-cpp-2` reappears in `Car
 
 ### Open questions (must be resolved before plan execution)
 
-1. **Artifact hosting:** GitHub Releases on `KolosalAI/torch-inference`. Release tag and asset filename TBD when the export script lands. Confirm.
+1. **Artifact hosting:** GitHub Releases on `Evintkoo/torch-inference`. Release tag and asset filename TBD when the export script lands. Confirm.
 2. **Default quantization for v0:** fp16 (recommended for quality) or int8 (smaller, faster, possibly quality regression)? Default in this spec is fp16; the `--quantize` flag on the export script is available if you want to flip later.
 3. **Vision-bridge concurrency:** classify and detect can be called serially (~300 ms total) or in parallel (~150 ms total). Parallel adds two simultaneous requests to the main server — fine in dev, possibly a concern at high concurrency. Default in this spec is serial; flag if you want parallel.
 

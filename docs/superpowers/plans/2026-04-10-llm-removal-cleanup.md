@@ -160,10 +160,10 @@ EOF
 
 - [ ] **Step 1: Baseline grep**
 
-Run: `grep -n 'KOLOSAL_LLM\|proxy_base_url\|llm/' CLAUDE.md`
+Run: `grep -n 'TORCH_LLM\|proxy_base_url\|llm/' CLAUDE.md`
 Expected current output:
 ```
-36:KOLOSAL_LLM_BASE_URL=http://localhost:11434 ./target/release/torch-inference-server
+36:TORCH_LLM_BASE_URL=http://localhost:11434 ./target/release/torch-inference-server
 73:    llm/            — HTTP proxy stub; do not extend
 107:- `llm.proxy_base_url` — ignored for playground (LLM UI removed)
 ```
@@ -173,7 +173,7 @@ Expected current output:
 Delete these two lines (line 35 is the comment, line 36 is the command):
 ```
 # Run with custom LLM proxy URL (ignored, but configurable via env)
-KOLOSAL_LLM_BASE_URL=http://localhost:11434 ./target/release/torch-inference-server
+TORCH_LLM_BASE_URL=http://localhost:11434 ./target/release/torch-inference-server
 ```
 
 Also remove the blank line that would be left between the preceding `./target/release/torch-inference-server` line and the following `# Run all tests` line, so the code block stays tidy (one blank line between commands).
@@ -194,7 +194,7 @@ Delete this bullet from the `config.yaml` key sections list:
 
 - [ ] **Step 5: Verify the grep is now empty**
 
-Run: `grep -n 'KOLOSAL_LLM\|proxy_base_url\|llm/' CLAUDE.md`
+Run: `grep -n 'TORCH_LLM\|proxy_base_url\|llm/' CLAUDE.md`
 Expected: no output (exit code 1).
 
 Note: the "LLM — Explicitly out of scope" directive section (lines 16–24 in the original file) MUST be preserved. That section tells future engineers not to add LLM features — it is guidance, not a stale reference to deleted code.
@@ -211,7 +211,7 @@ git add CLAUDE.md
 git commit -m "$(cat <<'EOF'
 docs(claude): remove stale LLM env var, tree entry, and config bullet
 
-Deletes the KOLOSAL_LLM_BASE_URL build example, the llm/ directory line
+Deletes the TORCH_LLM_BASE_URL build example, the llm/ directory line
 in the architecture tree, and the llm.proxy_base_url bullet in the
 Configuration section. The "LLM — Explicitly out of scope" directive
 is preserved since it is active guidance, not a stale reference.
@@ -309,7 +309,7 @@ Expected: no output (exit code 1).
 
 Then run:
 ```bash
-grep -n 'KOLOSAL_LLM\|proxy_base_url\|llm/' CLAUDE.md
+grep -n 'TORCH_LLM\|proxy_base_url\|llm/' CLAUDE.md
 ```
 Expected: no output (exit code 1).
 
@@ -323,7 +323,7 @@ Expected: exactly one match.
 
 Run:
 ```bash
-grep -rn 'KOLOSAL_LLM\|proxy_base_url' src/ Cargo.toml config.yaml CLAUDE.md docs/CONFIGURATION.md
+grep -rn 'TORCH_LLM\|proxy_base_url' src/ Cargo.toml config.yaml CLAUDE.md docs/CONFIGURATION.md
 ```
 Expected: no output (exit code 1). Archived plans under `docs/superpowers/plans/` may still mention `tokenizers` — that is acceptable historical content and is explicitly out of scope for this plan.
 

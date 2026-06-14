@@ -6,8 +6,8 @@ test.describe('Navigation', () => {
     await page.goto('/');
   });
 
-  test('page title contains Netra RT', async ({ page }) => {
-    await expect(page).toHaveTitle(/Netra RT/);
+  test('page title contains Torch Inference Engine', async ({ page }) => {
+    await expect(page).toHaveTitle(/Torch Inference Engine/);
   });
 
   test('sidebar renders 11 nav items', async ({ page }) => {

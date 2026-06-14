@@ -52,7 +52,7 @@ This is a cosmetic/hygienic cleanup. There is no architecture, no new code, and 
 ### 3. `CLAUDE.md`
 
 - **Build & Run section:** remove the example line
-  `KOLOSAL_LLM_BASE_URL=http://localhost:11434 ./target/release/torch-inference-server`
+  `TORCH_LLM_BASE_URL=http://localhost:11434 ./target/release/torch-inference-server`
   and its accompanying "Run with custom LLM proxy URL" comment.
 - **Configuration section:** remove the bullet `llm.proxy_base_url — ignored for playground (LLM UI removed)`.
 
@@ -67,7 +67,7 @@ After the changes:
 1. `cargo build --release` exits 0 with no *new* warnings (the two pre-existing dead-code warnings are allowed to remain).
 2. `cargo check --all-targets` exits 0.
 3. `grep -rni 'llm\|tokenizers' Cargo.toml config.yaml CLAUDE.md docs/CONFIGURATION.md` returns no matches other than intentional ones (none expected in these four files).
-4. `grep -rn 'KOLOSAL_LLM\|proxy_base_url' .` returns no matches in tracked non-archived files.
+4. `grep -rn 'TORCH_LLM\|proxy_base_url' .` returns no matches in tracked non-archived files.
 
 ## Risks
 

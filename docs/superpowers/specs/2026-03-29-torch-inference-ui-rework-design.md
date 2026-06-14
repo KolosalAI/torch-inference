@@ -1,19 +1,19 @@
-# Kolosal Vanilla UI Rework — Design Spec
+# Torch Inference Engine UI Rework — Design Spec
 Date: 2026-03-29
 
 ## Overview
 
-Rework `src/api/playground.html` (1532-line single-file embedded dashboard) from a custom dark indigo theme to the **Kolosal vanilla design system** (light theme). Source: [KolosalAI/kolosal-library-vanilla](https://github.com/KolosalAI/kolosal-library-vanilla).
+Rework `src/api/playground.html` (1532-line single-file embedded dashboard) from a custom dark indigo theme to the **Torch Inference Engine vanilla design system** (light theme). Source: [KolosalAI/kolosal-library-vanilla](https://github.com/KolosalAI/kolosal-library-vanilla).
 
-Approach: **Option A — Full 1:1 design token translation**. Translate all CSS vars and component classes to Kolosal vanilla tokens in plain CSS. No build step, no SCSS compilation. File stays a single self-contained HTML embedded in Rust via `include_str!`.
+Approach: **Option A — Full 1:1 design token translation**. Translate all CSS vars and component classes to Torch Inference Engine vanilla tokens in plain CSS. No build step, no SCSS compilation. File stays a single self-contained HTML embedded in Rust via `include_str!`.
 
 ---
 
 ## 1. Color & Typography Tokens
 
-All dark theme CSS vars replaced with Kolosal vanilla light palette:
+All dark theme CSS vars replaced with Torch Inference Engine vanilla light palette:
 
-| Role | Old | New (Kolosal token) |
+| Role | Old | New (Torch Inference Engine token) |
 |---|---|---|
 | Page background | `#08080f` | `#F8F9F9` — `color-grey-500` |
 | Surface (sidebar/topbar) | `#0e0e1a` | `#FFFFFF` — `color-neutral-white` |
@@ -90,7 +90,7 @@ All dark theme CSS vars replaced with Kolosal vanilla light palette:
 - Card title: `11px`, uppercase, `color: #9C9FA1`, `letter-spacing: 0.06em`, `margin-bottom: 14px`
 
 ### Buttons
-Kolosal `btn-md` (36px height, `border-radius: 10px`) with variants:
+Torch Inference Engine `btn-md` (36px height, `border-radius: 10px`) with variants:
 
 | Usage | Class |
 |---|---|
@@ -98,7 +98,7 @@ Kolosal `btn-md` (36px height, `border-radius: 10px`) with variants:
 | Secondary/cancel (Stop, Clear, Refresh) | `btn-md btn-outline` (white bg, grey border) |
 | Destructive | `btn-md btn-danger` |
 
-Button styles verbatim from Kolosal — including the `inset 0px 2px 0px 0px rgba(255,255,255,0.25)` inner highlight and the red→blue gradient hover on primary.
+Button styles verbatim from Torch Inference Engine — including the `inset 0px 2px 0px 0px rgba(255,255,255,0.25)` inner highlight and the red→blue gradient hover on primary.
 
 ### Inputs
 All `input[type=text]`, `input[type=number]`, `select` → `input-text-md` style:

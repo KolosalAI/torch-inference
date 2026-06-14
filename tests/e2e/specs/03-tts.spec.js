@@ -38,7 +38,7 @@ test.describe('TTS Panel', () => {
     await page.locator('#tts-engine').selectOption('');
 
     // Use short text so it finishes quickly
-    await page.locator('#tts-text').fill('Hello Kolosal.');
+    await page.locator('#tts-text').fill('Hello Torch Inference.');
     await page.locator('#tts-speed').fill('1.0');
     await page.locator('#tts-btn').click();
 

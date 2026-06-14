@@ -1,4 +1,4 @@
-# Kolosal Inference — Engineering Guidelines
+# Torch Inference Engine — Engineering Guidelines
 
 ## Project
 High-performance multimodal inference server written in Rust (actix-web). Serves TTS synthesis, audio/STT transcription, image classification, YOLO object detection, and LLM chat completion over HTTP.

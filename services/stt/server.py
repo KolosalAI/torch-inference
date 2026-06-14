@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kolosal STT microservice — openai-whisper backed.
+Torch Inference Engine STT microservice — openai-whisper backed.
 Loads model from models/whisper/ (no external download needed after first run).
 Listens on 127.0.0.1:8002.
 Proxied by the main server at /stt/{tail}.

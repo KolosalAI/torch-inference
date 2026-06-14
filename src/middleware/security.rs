@@ -221,7 +221,7 @@ where
         } else {
             Box::pin(async move {
                 let resp = HttpResponse::Unauthorized()
-                    .insert_header(("WWW-Authenticate", r#"Bearer realm="kolosal""#))
+                    .insert_header(("WWW-Authenticate", r#"Bearer realm="torch-inference""#))
                     .json(serde_json::json!({
                         "error": "authentication required",
                         "status": 401

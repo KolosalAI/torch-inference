@@ -1,8 +1,8 @@
-# Netra RT Rebrand Implementation Plan
+# Torch Inference Engine Rebrand Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Visually rebrand `src/api/playground.html` from Kolosal (blue, rounded) to Netra RT (orange, square, flat) using the netrart.com design language, preserving all HTML structure and JavaScript logic.
+**Goal:** Visually rebrand `src/api/playground.html` from Torch Inference Engine (blue, rounded) to Torch Inference Engine (orange, square, flat) using the netrart.com design language, preserving all HTML structure and JavaScript logic.
 
 **Architecture:** CSS-variable-first reskin — replace token blocks, remove shadows, zero non-circular border-radii, swap hardcoded blue hex/rgba values, update brand strings. No structural HTML or JS changes.
 
@@ -599,11 +599,11 @@ Run this task BEFORE the Python pass (Task 8) — the Python pass must not touch
 
 Replace:
 ```html
-<title>Kolosal Torch Inference</title>
+<title>Torch Inference Engine</title>
 ```
 With:
 ```html
-<title>Netra RT — Torch Inference</title>
+<title>Torch Inference Engine</title>
 ```
 
 - [ ] **Step 2: Update favicon SVG (text KI→NR, rx=8→0, fill blue→orange)**
@@ -632,34 +632,34 @@ With:
 
 Replace:
 ```html
-      <span class="logo-name">Kolosal</span>
+      <span class="logo-name">Torch Inference Engine</span>
 ```
 With:
 ```html
-      <span class="logo-name">Netra RT</span>
+      <span class="logo-name">Torch Inference Engine</span>
 ```
 
 - [ ] **Step 5: Update button comment in CSS (cosmetic)**
 
 Replace:
 ```css
-  /* Buttons — Kolosal vanilla */
+  /* Buttons — Torch Inference Engine vanilla */
 ```
 With:
 ```css
   /* Buttons */
 ```
 
-- [ ] **Step 6: Verify no "Kolosal" remains**
+- [ ] **Step 6: Verify no "Torch Inference Engine" remains**
 ```bash
-grep -in "kolosal" src/api/playground.html
+grep -in "torch-inference" src/api/playground.html
 ```
 Expected: zero results.
 
 - [ ] **Step 7: Commit**
 ```bash
 git add src/api/playground.html
-git commit -m "brand: rename Kolosal → Netra RT; NR logo mark, orange favicon"
+git commit -m "brand: rename Torch Inference Engine → Torch Inference Engine; NR logo mark, orange favicon"
 ```
 
 ---
@@ -827,7 +827,7 @@ git commit -m "style: zero all remaining px border-radii; mop up blue rgba value
 
 - [ ] **Step 1: Final colour audit**
 ```bash
-grep -cn "0066F5\|0052C4\|F0F6FE\|4D94FF\|1A5FCC\|0D1F3C\|Kolosal\|Geist" src/api/playground.html
+grep -cn "0066F5\|0052C4\|F0F6FE\|4D94FF\|1A5FCC\|0D1F3C\|Torch Inference Engine\|Geist" src/api/playground.html
 ```
 Expected: `0`
 
@@ -850,7 +850,7 @@ open http://localhost:8000/playground
 ```
 Visually verify:
 - Logo mark shows `NR` in an orange square
-- Topbar shows "Netra RT" in serif font
+- Topbar shows "Torch Inference Engine" in serif font
 - All cards and inputs have square (0px) corners
 - No blue anywhere; accent color is orange
 - Dark mode toggle still works and shows the dark orange palette

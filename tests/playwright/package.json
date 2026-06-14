@@ -1,7 +1,7 @@
 {
   "name": "torch-inference-playwright-tests",
   "version": "1.0.0",
-  "description": "Playwright E2E UI tests for the Kolosal Inference dashboard",
+  "description": "Playwright E2E UI tests for the Torch Inference Engine dashboard",
   "private": true,
   "scripts": {
     "test": "playwright test",

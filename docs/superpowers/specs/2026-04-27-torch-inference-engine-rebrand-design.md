@@ -1,4 +1,4 @@
-# Netra RT Torch Inference — Rebrand Design Spec
+# Torch Inference Engine — Rebrand Design Spec
 
 **Date:** 2026-04-27  
 **Approach:** Option A — CSS-variable + string reskin of `src/api/playground.html`  
@@ -78,14 +78,14 @@ Replace the existing `:root` block and `[data-theme="dark"]` block.
 
 | Location | Old | New |
 |----------|-----|-----|
-| `<title>` | `Kolosal Torch Inference` | `Netra RT — Torch Inference` |
+| `<title>` | `Torch Inference Engine` | `Torch Inference Engine` |
 | Favicon `<title>` text | `KI` | `NR` |
 | Favicon `fill` | `#0066F5` | `#ff4800` |
 | `.logo-mark` text | `KI` | `NR` |
 | `.logo-mark` background | `var(--accent)` → blue | `#ff4800` (explicit) |
-| `.logo-name` text | `Kolosal` | `Netra RT` |
+| `.logo-name` text | `Torch Inference Engine` | `Torch Inference Engine` |
 | `.logo-sub` text | `Torch Inference` | `Torch Inference` (unchanged) |
-| All `Kolosal` occurrences in body text | `Kolosal` | `Netra RT` |
+| All `Torch Inference Engine` occurrences in body text | `Torch Inference Engine` | `Torch Inference Engine` |
 
 ---
 

@@ -8,8 +8,8 @@ test.describe('Navigation', () => {
   });
 
   test('page loads with correct title and branding', async ({ page }) => {
-    await expect(page).toHaveTitle('Kolosal Inference');
-    await expect(page.locator('.logo-name')).toContainText('Kolosal');
+    await expect(page).toHaveTitle('Torch Inference Engine');
+    await expect(page.locator('.logo-name')).toContainText('Torch Inference');
     await expect(page.locator('.topbar')).toBeVisible();
     await expect(page.locator('.sidebar')).toBeVisible();
   });

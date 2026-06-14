@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # Downloads pre-exported HRM-Text-1B artifacts from a GitHub Release on
-# KolosalAI/torch-inference. Set RELEASE_TAG to pin a specific release.
+# Evintkoo/torch-inference. Set RELEASE_TAG to pin a specific release.
 
 RELEASE_TAG="${RELEASE_TAG:-hrm-text-1b-v0}"
 ASSET_NAME="hrm-text-1b.tar.gz"
 OUT_DIR="services/llm/models/hrm-text-1b"
-URL="https://github.com/KolosalAI/torch-inference/releases/download/${RELEASE_TAG}/${ASSET_NAME}"
+URL="https://github.com/Evintkoo/torch-inference/releases/download/${RELEASE_TAG}/${ASSET_NAME}"
 
 if [ -f "${OUT_DIR}/model.onnx" ]; then
     echo "Artifacts already present at ${OUT_DIR}/. Delete to re-download."

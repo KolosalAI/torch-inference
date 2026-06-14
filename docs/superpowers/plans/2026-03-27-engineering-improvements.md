@@ -100,7 +100,7 @@ mod tests {
 - [ ] **Step 3: Run the tests to confirm they fail**
 
 ```bash
-cd /Users/evintleovonzko/Documents/Works/Kolosal/torch-inference
+cd /Users/evintleovonzko/Documents/Works/Torch Inference Engine/torch-inference
 cargo test -p torch_inference test_download_file_streaming 2>&1 | head -30
 ```
 

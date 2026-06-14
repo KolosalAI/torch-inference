@@ -632,7 +632,7 @@ git commit -m "feat: add Dashboard Overview tab HTML"
             <div class="card-title">Input</div>
             <div class="field">
               <label>Text</label>
-              <textarea id="pg-tts-text">Hello! This is a streaming TTS demo from Kolosal Inference.</textarea>
+              <textarea id="pg-tts-text">Hello! This is a streaming TTS demo from Torch Inference Engine.</textarea>
             </div>
             <div class="row">
               <div class="field"><label>Engine (optional)</label><input type="text" id="pg-tts-engine" placeholder="default" /></div>

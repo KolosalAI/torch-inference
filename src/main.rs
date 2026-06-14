@@ -753,7 +753,7 @@ async fn async_main() -> std::io::Result<()> {
     );
     eprintln!(
         "\n╔══════════════════════════════════════════════════════════╗\
-         \n║          Netra RT — Torch Inference  (ready)            ║\
+         \n║             Torch Inference Engine  (ready)              ║\
          \n╚══════════════════════════════════════════════════════════╝\
          \n\n  WebApp:   http://{}/playground\
          \n  API:      http://{}\

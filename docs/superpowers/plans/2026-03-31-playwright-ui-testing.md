@@ -45,7 +45,7 @@
 {
   "name": "torch-inference-playwright-tests",
   "version": "1.0.0",
-  "description": "Playwright E2E UI tests for the Kolosal Inference dashboard",
+  "description": "Playwright E2E UI tests for the Torch Inference Engine dashboard",
   "private": true,
   "scripts": {
     "test":            "playwright test",
@@ -476,8 +476,8 @@ test.describe('Navigation', () => {
     await page.goto('/');
   });
 
-  test('page title contains Kolosal', async ({ page }) => {
-    await expect(page).toHaveTitle(/Kolosal/);
+  test('page title contains Torch Inference Engine', async ({ page }) => {
+    await expect(page).toHaveTitle(/Torch Inference Engine/);
   });
 
   test('sidebar renders 7 nav items', async ({ page }) => {

@@ -5,7 +5,7 @@
 
 ## Overview
 
-A standalone Rust microservice that runs 1-bit (IQ1_S/Q2_K) multimodal LLM inference alongside the existing Kolosal Torch Inference server. Lives in `services/llm/` — a separate Cargo crate, not part of the main workspace. Exposes an OpenAI-compatible API on port 8001. The main server proxies `/llm/*` to it and returns 503 when it is not running.
+A standalone Rust microservice that runs 1-bit (IQ1_S/Q2_K) multimodal LLM inference alongside the existing Torch Inference Engine server. Lives in `services/llm/` — a separate Cargo crate, not part of the main workspace. Exposes an OpenAI-compatible API on port 8001. The main server proxies `/llm/*` to it and returns 503 when it is not running.
 
 ## Repository Structure
 

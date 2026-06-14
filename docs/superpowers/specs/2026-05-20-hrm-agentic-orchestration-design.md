@@ -157,10 +157,10 @@ The arg parser is permissive: `top_k=3` and `top_k="3"` both work; bools accept 
 `http_fetch` is opt-in per host:
 
 - `allowlist` is empty by default → **all requests denied** with `ToolError::Denied`.
-- Hosts matched by glob: `["api.openai.com", "*.kolosal.internal"]`.
+- Hosts matched by glob: `["api.openai.com", "*.torch-inference.internal"]`.
 - Private CIDRs (`10/8`, `172.16/12`, `192.168/16`, `127/8`, `::1`) are **always blocked** unless the host explicitly matches an `*.internal` entry.
 - No redirects (`reqwest::redirect::Policy::none()`).
-- User-Agent: `kolosal-agent/0.1`.
+- User-Agent: `torch-inference-agent/0.1`.
 - Response body truncated to `max_bytes` (default 64 KiB).
 - All denials emitted as `step_result{ok:false, error:"http_fetch denied: …"}`.
 

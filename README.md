@@ -1,4 +1,4 @@
-# Kolosal Inference
+# Torch Inference Engine
 
 High-performance multimodal inference server written in Rust (actix-web). Serves TTS synthesis, STT transcription, image classification, YOLO object detection, and LLM chat completion over HTTP.
 
@@ -151,4 +151,4 @@ src/
 
 ## License
 
-Copyright © 2025 Kolosal
+Copyright © 2025 Torch Inference Engine

@@ -1,14 +1,14 @@
-# Kolosal Vanilla UI Rework — Implementation Plan
+# Torch Inference Engine UI Rework — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rework `src/api/playground.html` from a custom dark indigo theme to the Kolosal vanilla light design system using Remix Icons.
+**Goal:** Rework `src/api/playground.html` from a custom dark indigo theme to the Torch Inference Engine vanilla light design system using Remix Icons.
 
 **Architecture:** Single-file edit. The existing CSS uses custom properties throughout, so updating `:root` handles ~80% of the color swap. Remaining hardcoded `rgba()` colors and component-specific CSS blocks (buttons, badges) need explicit rewrites. HTML body requires icon class swaps and 3 inline color fixes.
 
 **Tech Stack:** HTML/CSS/JS — no build step. Remix Icons v4.7.0 via CDN. Google Fonts: Inter + Geist Mono.
 
-**Spec:** `docs/superpowers/specs/2026-03-29-kolosal-ui-rework-design.md`
+**Spec:** `docs/superpowers/specs/2026-03-29-torch-inference-ui-rework-design.md`
 
 **Visual verification:** Open `src/api/playground.html` directly in a browser (no server needed for layout/style review — JS API calls will fail but layout renders fine).
 
@@ -42,7 +42,7 @@ Open `src/api/playground.html` in a browser. Open DevTools → Network tab. Conf
 
 ---
 
-### Task 2: Replace CSS `:root` custom properties with Kolosal tokens
+### Task 2: Replace CSS `:root` custom properties with Torch Inference Engine tokens
 
 **Files:**
 - Modify: `src/api/playground.html` lines 14–33 (the `:root { }` block inside `<style>`)
@@ -114,7 +114,7 @@ Open the file in a browser. The page should now be light: white sidebar, grey-50
 **Files:**
 - Modify: `src/api/playground.html` — the button section inside `<style>` (lines ~148–165)
 
-The existing `.btn-primary` uses `var(--accent)` (now blue). Per Kolosal design, primary buttons are **black** with a gradient hover. `.btn-ghost` becomes an outline-style button.
+The existing `.btn-primary` uses `var(--accent)` (now blue). Per Torch Inference Engine design, primary buttons are **black** with a gradient hover. `.btn-ghost` becomes an outline-style button.
 
 - [ ] **Step 1: Replace button CSS block**
 
@@ -144,7 +144,7 @@ Find:
 
 Replace with:
 ```css
-  /* Buttons — Kolosal vanilla */
+  /* Buttons — Torch Inference Engine vanilla */
   .btn {
     display: inline-flex; align-items: center; gap: 6px;
     height: 36px; padding: 0 14px;
@@ -201,7 +201,7 @@ In the browser, check the Status panel. The "↺ Refresh" button should be white
 **Files:**
 - Modify: `src/api/playground.html` — badge, dot, live-badge, method badge, dl-status-badge sections
 
-Multiple sections have hardcoded `rgba()` colors. All need explicit Kolosal token replacements.
+Multiple sections have hardcoded `rgba()` colors. All need explicit Torch Inference Engine token replacements.
 
 - [ ] **Step 1: Replace `.badge` and `.dot` block**
 
@@ -946,12 +946,12 @@ In DevTools, use the color picker or inspect `computed styles` on: `.shell`, `bo
 
 ```bash
 git add src/api/playground.html
-git commit -m "feat: rework dashboard UI to Kolosal vanilla light design system
+git commit -m "feat: rework dashboard UI to Torch Inference Engine vanilla light design system
 
-- Replace dark indigo theme with Kolosal vanilla light tokens
+- Replace dark indigo theme with Torch Inference Engine vanilla light tokens
 - Swap JetBrains Mono for Geist Mono, add Remix Icons v4.7.0
 - Rewrite button CSS: primary=black with gradient hover, outline style for secondary
-- Update all hardcoded rgba() colors to Kolosal token equivalents
+- Update all hardcoded rgba() colors to Torch Inference Engine token equivalents
 - Replace all Unicode symbols with ri- Remix Icon classes
 - Cards: 12px radius, subtle shadow; inputs: 36px height, 10px radius
 

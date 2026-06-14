@@ -1,4 +1,4 @@
-# Test Coverage Design — Kolosal Inference Server
+# Test Coverage Design — Torch Inference Engine Server
 
 **Date:** 2026-04-13
 **Goal:** Reach ≥ 95% line coverage (tarpaulin) with all tests passing; add Rust HTTP integration tests.
