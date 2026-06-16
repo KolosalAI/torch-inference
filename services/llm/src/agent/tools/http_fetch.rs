@@ -19,7 +19,26 @@ pub struct HttpFetchTool {
 impl HttpFetchTool {
     pub fn new(allowlist: Vec<String>, max_bytes: usize, follow_redirects: bool, enabled: bool) -> Arc<Self> {
         let policy = if follow_redirects {
-            reqwest::redirect::Policy::limited(3)
+            // SECURITY: re-run the SAME allowlist + private-host checks on every
+            // redirect target. `Policy::limited` would happily follow a 302 from
+            // an allowlisted host to an internal/private one, escaping the sandbox
+            // that invoke() only applies to the initial URL.
+            let allow = allowlist.clone();
+            reqwest::redirect::Policy::custom(move |attempt| {
+                if attempt.previous().len() >= 3 {
+                    return attempt.stop();
+                }
+                let host = attempt.url().host_str().unwrap_or("");
+                let host_ok = allow.iter().any(|p| host_matches_glob(host, p));
+                let internal_ok = allow.iter()
+                    .any(|p| p.ends_with(".internal") && host_matches_glob(host, p));
+                if host_ok && !(is_private_host(host) && !internal_ok) {
+                    attempt.follow()
+                } else {
+                    // Don't follow into a disallowed host; return the 3xx as-is.
+                    attempt.stop()
+                }
+            })
         } else {
             reqwest::redirect::Policy::none()
         };
@@ -47,11 +66,26 @@ fn host_matches_glob(host: &str, pat: &str) -> bool {
     }
 }
 
-// TODO(security/v2): DNS rebinding. We only check the hostname string,
-// not the resolved IP. An allowlisted `evil.example` whose A-record
-// resolves to 127.0.0.1 reaches the loopback. Defenses: resolve once
-// up-front and pin the IP, or use a custom resolver that rejects
-// private addresses.
+/// Block the IPv4 ranges that must never be reachable from the SSRF sandbox:
+/// loopback, RFC1918 private, link-local, unspecified (0.0.0.0), CGNAT
+/// (100.64.0.0/10), and the limited broadcast address.
+fn is_private_v4(v4: std::net::Ipv4Addr) -> bool {
+    let o = v4.octets();
+    v4.is_loopback()
+        || v4.is_private()
+        || v4.is_unspecified()                 // 0.0.0.0
+        || (o[0] == 169 && o[1] == 254)        // link-local 169.254.0.0/16
+        || (o[0] == 100 && (o[1] & 0xc0) == 0x40) // CGNAT 100.64.0.0/10
+        || o == [255, 255, 255, 255]           // limited broadcast
+}
+
+// TODO(security/v2): DNS rebinding. `is_private_host` now blocks a broader set
+// of literal IP ranges (incl. CGNAT/unspecified/broadcast and IPv4-mapped IPv6),
+// but it still inspects the hostname STRING, not the resolved IP. An allowlisted
+// `evil.example` whose A-record resolves to 127.0.0.1 still reaches the loopback.
+// The complete fix is a custom `reqwest::dns::Resolve` that rejects any resolved
+// private address and pins the connection to that IP via `resolve_to_addrs`,
+// re-checked on every redirect hop. Tracked as a follow-up.
 fn is_private_host(host: &str) -> bool {
     use std::net::{IpAddr, Ipv4Addr};
     // `reqwest::Url::host_str` strips the brackets from IPv6 literals, but a
@@ -60,13 +94,9 @@ fn is_private_host(host: &str) -> bool {
     let trimmed = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = trimmed.parse::<IpAddr>() {
         match ip {
-            IpAddr::V4(v4) => {
-                let o = v4.octets();
-                v4.is_loopback() || v4.is_private()
-                    || (o[0] == 169 && o[1] == 254)   // link-local
-            }
+            IpAddr::V4(v4) => is_private_v4(v4),
             IpAddr::V6(v6) => {
-                if v6.is_loopback() { return true; }
+                if v6.is_loopback() || v6.is_unspecified() { return true; }
                 let segs = v6.segments();
                 // IPv4-mapped IPv6 `::ffff:0:0/96` — extract the embedded
                 // IPv4 and recurse. This closes the `::ffff:127.0.0.1`
@@ -78,9 +108,7 @@ fn is_private_host(host: &str) -> bool {
                         (segs[6] >> 8) as u8, (segs[6] & 0xff) as u8,
                         (segs[7] >> 8) as u8, (segs[7] & 0xff) as u8,
                     );
-                    let o = v4.octets();
-                    return v4.is_loopback() || v4.is_private()
-                        || (o[0] == 169 && o[1] == 254);
+                    return is_private_v4(v4);
                 }
                 // Unique-local addresses (ULA): fc00::/7
                 if segs[0] & 0xfe00 == 0xfc00 { return true; }
@@ -127,7 +155,7 @@ impl Tool for HttpFetchTool {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() { return Err(ToolError::Timeout(0)); }
 
-        let resp = self.client.get(parsed)
+        let mut resp = self.client.get(parsed)
             .timeout(remaining)
             .send().await
             .map_err(|e| if e.is_timeout() {
@@ -137,10 +165,34 @@ impl Tool for HttpFetchTool {
             })?;
 
         let status = resp.status().as_u16();
-        let bytes  = resp.bytes().await
-            .map_err(|e| ToolError::Upstream(format!("http_fetch body: {}", e)))?;
-        let truncated_len = bytes.len().min(max_bytes);
-        let body = String::from_utf8_lossy(&bytes[..truncated_len]).to_string();
+
+        // Reject an advertised body that already exceeds the cap, before reading
+        // any bytes.
+        if let Some(len) = resp.content_length() {
+            if len > max_bytes as u64 {
+                return Err(ToolError::Upstream(format!(
+                    "http_fetch body too large: Content-Length {} > max_bytes {}",
+                    len, max_bytes)));
+            }
+        }
+
+        // Stream the body and stop once we have `max_bytes`. Buffering the whole
+        // response (resp.bytes()) before truncating let a lying/absent
+        // Content-Length amplify memory into an OOM — the exact failure mode this
+        // service is hardened against elsewhere.
+        let mut buf: Vec<u8> = Vec::new();
+        while buf.len() < max_bytes {
+            match resp.chunk().await
+                .map_err(|e| ToolError::Upstream(format!("http_fetch body: {}", e)))?
+            {
+                Some(chunk) => {
+                    let take = (max_bytes - buf.len()).min(chunk.len());
+                    buf.extend_from_slice(&chunk[..take]);
+                }
+                None => break,
+            }
+        }
+        let body = String::from_utf8_lossy(&buf).to_string();
 
         Ok(json!({ "status": status, "body": body }))
     }
@@ -221,6 +273,23 @@ mod tests {
                 "expected private-host denial, got: {}", s),
             other => panic!("expected Denied(private host), got {:?}", other),
         }
+    }
+
+    #[test]
+    fn is_private_host_blocks_extra_ranges() {
+        // Ranges that should never be reachable from an SSRF sandbox.
+        assert!(is_private_host("0.0.0.0"), "unspecified 0.0.0.0");
+        assert!(is_private_host("100.64.0.1"), "CGNAT 100.64.0.0/10 low");
+        assert!(is_private_host("100.127.255.254"), "CGNAT 100.64.0.0/10 high");
+        assert!(is_private_host("255.255.255.255"), "broadcast");
+        assert!(is_private_host("::"), "IPv6 unspecified");
+        // Existing coverage still holds.
+        assert!(is_private_host("127.0.0.1"));
+        assert!(is_private_host("10.0.0.1"));
+        // Public addresses must still pass through.
+        assert!(!is_private_host("8.8.8.8"), "public IP must not be blocked");
+        assert!(!is_private_host("100.63.255.255"), "just below CGNAT is public");
+        assert!(!is_private_host("100.128.0.0"), "just above CGNAT is public");
     }
 
     #[test]
